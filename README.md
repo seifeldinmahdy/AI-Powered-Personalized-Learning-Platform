@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="https" alt="Project Banner" width="700"/>
-</p>
-
 <h1 align="center">AI-Powered Personalized Educational Platform</h1>
 
 <p align="center">
@@ -17,8 +13,8 @@ The goal is to build an intelligent, emotionally responsive, and personalized AI
 
 The platform is built around a core set of AI-driven and interactive features to create an engaging experience.
 
-| Feature | Description | Status |
-| :--- | :--- | :---: |
+| Feature | Description |
+| :--- | :--- |
 | 🤖 **Personalized Learning Agent** | The core AI tutor that delivers lessons adaptively based on learner progress.
 | 🗣️ **Live 1-on-1 Voice Sessions** | Real-time, voice-based interaction (ASR/TTS) between student and AI tutor.
 | 🖥️ **Synchronized Slides** | AI generates and displays structured learning slides, changing them contextually.
@@ -30,10 +26,6 @@ The platform is built around a core set of AI-driven and interactive features to
 ## 🛠️ Tech Stack & Architecture
 
 This project uses a hybrid Python backend to separate core API logic from high-throughput asynchronous tasks. Django serves as the robust core for data and authentication, while FastAPI provides a high-performance engine for real-time AI agent interactions.
-
-<p align="center">
-  <img src="" alt="Architecture Diagram" width="800"/>
-</p>
 
 ### **Frontend**
 * **Framework:** **ReactJS** (Chosen for its simplicity, modularity, and strong community support)
