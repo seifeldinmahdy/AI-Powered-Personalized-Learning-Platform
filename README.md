@@ -1,4 +1,4 @@
-<h1 align="center">AI-Powered Personalized Educational Platform</h1>
+<h1 align="center">AI-Powered Personalized Learning Platform</h1>
 
 <p align="center">
 An adaptive, real-time one-on-one AI tutoring system that personalizes learning through voice interaction, emotion-aware responses, dynamic content generation, and live coding, all running directly in the browser.</p>
