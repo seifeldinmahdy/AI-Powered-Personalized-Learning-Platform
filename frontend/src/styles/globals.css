@@ -1,0 +1,295 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --font-size: 16px;
+  
+  /* Modern Color System */
+  --background: #F7F9FC;
+  --foreground: #1F2937;
+  --card: #FFFFFF;
+  --card-foreground: #1F2937;
+  --popover: #FFFFFF;
+  --popover-foreground: #1F2937;
+  --primary: #1E2A78;
+  --primary-foreground: #FFFFFF;
+  --secondary: #4C6FFF;
+  --secondary-foreground: #FFFFFF;
+  --muted: #E5E7EB;
+  --muted-foreground: #6B7280;
+  --accent: #A78BFA;
+  --accent-foreground: #FFFFFF;
+  --destructive: #EF4444;
+  --destructive-foreground: #FFFFFF;
+  --border: #E5E7EB;
+  --input: #E5E7EB;
+  --input-background: #FFFFFF;
+  --switch-background: #E5E7EB;
+  --ring: #4C6FFF;
+  
+  /* Modern radius - soft rounded corners */
+  --radius: 12px;
+  
+  /* Typography weights */
+  --font-weight-bold: 800;
+  --font-weight-semibold: 600;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  
+  /* Chart colors */
+  --chart-1: #1E2A78;
+  --chart-2: #4C6FFF;
+  --chart-3: #A78BFA;
+  --chart-4: #60A5FA;
+  --chart-5: #34D399;
+  
+  /* Sidebar */
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #1F2937;
+  --sidebar-primary: #1E2A78;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #F7F9FC;
+  --sidebar-accent-foreground: #1F2937;
+  --sidebar-border: #E5E7EB;
+  --sidebar-ring: #4C6FFF;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Helvetica', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/**
+ * Base typography - Modern, clean headings
+ */
+@layer base {
+  :where(:not(:has([class*=' text-']), :not(:has([class^='text-'])))) {
+    h1 {
+      font-size: 2.5rem;
+      font-weight: var(--font-weight-bold);
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+    }
+
+    h2 {
+      font-size: 2rem;
+      font-weight: var(--font-weight-bold);
+      line-height: 1.3;
+      letter-spacing: -0.01em;
+    }
+
+    h3 {
+      font-size: 1.5rem;
+      font-weight: var(--font-weight-semibold);
+      line-height: 1.4;
+    }
+
+    h4 {
+      font-size: 1.25rem;
+      font-weight: var(--font-weight-semibold);
+      line-height: 1.5;
+    }
+
+    h5 {
+      font-size: 1rem;
+      font-weight: var(--font-weight-semibold);
+      line-height: 1.5;
+    }
+
+    h6 {
+      font-size: 0.875rem;
+      font-weight: var(--font-weight-semibold);
+      line-height: 1.5;
+    }
+
+    label {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    button {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    input {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-normal);
+      line-height: 1.5;
+    }
+
+    p {
+      line-height: 1.6;
+    }
+  }
+}
+
+html {
+  font-size: var(--font-size);
+}
+
+/* Custom Animations */
+@keyframes gradient-shift {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes gradient-slow {
+  0%, 100% {
+    background-position: 0% 0%;
+  }
+  50% {
+    background-position: 100% 100%;
+  }
+}
+
+@keyframes float-slow {
+  0%, 100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  33% {
+    transform: translate(30px, -30px) rotate(120deg);
+  }
+  66% {
+    transform: translate(-20px, 20px) rotate(240deg);
+  }
+}
+
+@keyframes float-slower {
+  0%, 100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  33% {
+    transform: translate(-40px, 30px) rotate(-120deg);
+  }
+  66% {
+    transform: translate(30px, -20px) rotate(-240deg);
+  }
+}
+
+@keyframes float-particle {
+  0%, 100% {
+    transform: translateY(0px) translateX(0px);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-100vh) translateX(50px);
+    opacity: 0;
+  }
+}
+
+@keyframes float-blob {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(50px, -50px) scale(1.1);
+  }
+  66% {
+    transform: translate(-30px, 30px) scale(0.9);
+  }
+}
+
+@keyframes float-blob-reverse {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(-50px, 50px) scale(1.1);
+  }
+  66% {
+    transform: translate(30px, -30px) scale(0.9);
+  }
+}
+
+.animate-gradient-shift {
+  background-size: 200% 200%;
+  animation: gradient-shift 15s ease infinite;
+}
+
+.animate-gradient-slow {
+  background-size: 200% 200%;
+  animation: gradient-slow 20s ease infinite;
+}
+
+.animate-float-slow {
+  animation: float-slow 30s ease-in-out infinite;
+}
+
+.animate-float-slower {
+  animation: float-slower 40s ease-in-out infinite;
+}
+
+.animate-float-particle {
+  animation: float-particle linear infinite;
+}
+
+.animate-float-blob {
+  animation: float-blob 25s ease-in-out infinite;
+}
+
+.animate-float-blob-reverse {
+  animation: float-blob-reverse 30s ease-in-out infinite;
+}
