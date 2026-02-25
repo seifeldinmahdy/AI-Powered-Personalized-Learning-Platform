@@ -26,11 +26,14 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # Third-party
     "rest_framework",
+    "rest_framework.authtoken",
     "corsheaders",
     # Local apps
     "apps.core",
     "apps.users",
     "apps.courses",
+    "apps.progress",
+    "apps.gamification",
 ]
 
 MIDDLEWARE = [
@@ -64,20 +67,23 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-# ---------- Database (Supabase PostgreSQL) ----------
+# ---------- Database (PostgreSQL) ----------
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": os.getenv("DB_NAME", "postgres"),
         "USER": os.getenv("DB_USER", "postgres"),
-        "PASSWORD": os.getenv("DB_PASSWORD", ""),
-        "HOST": os.getenv("DB_HOST", ""),
+        "PASSWORD": os.getenv("DB_PASSWORD", "postgres"),
+        "HOST": os.getenv("DB_HOST"),
         "PORT": os.getenv("DB_PORT", "5432"),
-        "OPTIONS": {
-            "sslmode": "require",
+        'OPTIONS': {
+            'sslmode': 'require',  
         },
     }
 }
+# Enable SSL for production (e.g., Supabase). Set DB_SSLMODE=require in .env.
+if os.getenv("DB_SSLMODE"):
+    DATABASES["default"]["OPTIONS"] = {"sslmode": os.getenv("DB_SSLMODE")}
 
 # ---------- Auth ----------
 AUTH_PASSWORD_VALIDATORS = [
@@ -116,8 +122,9 @@ REST_FRAMEWORK = {
 # ---------- CORS ----------
 CORS_ALLOWED_ORIGINS = os.getenv(
     "CORS_ALLOWED_ORIGINS",
-    "http://localhost:3000",
+    "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173",
 ).split(",")
+CORS_ALLOW_CREDENTIALS = True
 
 # ---------- FastAPI AI Service ----------
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
