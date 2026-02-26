@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate
 from .models import User
 from .serializers import UserSerializer
@@ -33,12 +34,14 @@ class UserViewSet(viewsets.ModelViewSet):
         user = authenticate(username=login_id, password=password)
 
         if user is not None:
+            token, _ = Token.objects.get_or_create(user=user)
             return Response({
                 'status': 'success',
                 'id': user.id,
                 'username': user.username,
                 'email': user.email,
                 'role': user.role,
+                'token': token.key,
             })
         else:
             return Response({'error': 'Invalid credentials'},
@@ -62,12 +65,14 @@ class UserViewSet(viewsets.ModelViewSet):
         # Create the user securely (hashes password)
         try:
             user = User.objects.create_user(username=username, email=email, password=password, role=role)
+            token, _ = Token.objects.get_or_create(user=user)
             return Response({
                 'status': 'success',
                 'id': user.id,
                 'username': user.username,
                 'email': user.email,
-                'role': user.role
+                'role': user.role,
+                'token': token.key,
             }, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)

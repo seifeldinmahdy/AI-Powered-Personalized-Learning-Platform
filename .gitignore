@@ -38,3 +38,6 @@ Thumbs.db
 
 # Docker
 docker-compose.override.yml
+
+# Claude temp files
+tmpclaude-*
