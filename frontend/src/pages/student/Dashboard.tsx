@@ -7,6 +7,8 @@ import { useAuth } from '../../contexts/AuthContext';
 export default function Dashboard() {
   const { user } = useAuth();
 
+  const displayName = user?.full_name || user?.username || 'Learner';
+
   const currentCourse = {
     id: 'python-101',
     name: 'Python 101',
@@ -46,7 +48,7 @@ export default function Dashboard() {
   return (
     <>
       <Header
-        title="Welcome back, Alex Chen"
+        title={`Welcome back, ${displayName}`}
         subtitle="Continue your learning journey"
       />
 

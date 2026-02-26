@@ -30,6 +30,7 @@ interface SidebarProps {
 // --------------- Navigation configs ---------------
 const studentNavItems: NavItem[] = [
   { path: "/dashboard", label: "Dashboard", icon: Home },
+  { path: "/courses", label: "Courses", icon: BookOpen },
   { path: "/profile", label: "Profile", icon: User },
 ];
 
@@ -50,7 +51,7 @@ export function Sidebar({
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout } = useAuth();
 
   const navItems = variant === "admin" ? adminNavItems : studentNavItems;
 

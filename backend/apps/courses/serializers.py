@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Course, Enrollment
+from .models import Course, Module, Lesson, Slide, CodeChallenge, Enrollment
 
 
 class CourseSerializer(serializers.ModelSerializer):
@@ -9,9 +9,38 @@ class CourseSerializer(serializers.ModelSerializer):
         model = Course
         fields = [
             "id", "title", "description", "instructor", "instructor_name",
-            "difficulty", "tags", "is_published", "created_at",
+            "difficulty", "status", "tags", "is_published", "price",
+            "total_lessons_count", "avg_rating", "created_at",
         ]
         read_only_fields = ["id", "created_at"]
+
+
+class ModuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Module
+        fields = ["id", "course", "title", "module_order"]
+        read_only_fields = ["id"]
+
+
+class LessonSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lesson
+        fields = ["id", "module", "title", "lesson_order"]
+        read_only_fields = ["id"]
+
+
+class SlideSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Slide
+        fields = ["id", "lesson", "content_json", "slide_order"]
+        read_only_fields = ["id"]
+
+
+class CodeChallengeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CodeChallenge
+        fields = ["id", "lesson", "problem_text", "starter_code", "solution_code", "test_cases_json", "hint_text"]
+        read_only_fields = ["id"]
 
 
 class EnrollmentSerializer(serializers.ModelSerializer):
@@ -19,5 +48,9 @@ class EnrollmentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Enrollment
-        fields = ["id", "student", "course", "course_title", "progress", "enrolled_at"]
-        read_only_fields = ["id", "enrolled_at"]
+        fields = [
+            "id", "student", "course", "course_title",
+            "current_lesson", "progress_percentage", "current_score",
+            "is_paid", "enrolled_at", "last_accessed",
+        ]
+        read_only_fields = ["id", "enrolled_at", "last_accessed"]

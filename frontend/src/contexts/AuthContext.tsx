@@ -1,10 +1,12 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
+import { loginUser, signupUser, type AuthResponse } from "../services/auth";
 
 // --------------- Types ---------------
 export type UserRole = "student" | "admin";
 
 export interface User {
     id: number;
+    username: string;
     email: string;
     full_name: string;
     role: UserRole;
@@ -15,12 +17,15 @@ interface AuthContextType {
     isAuthenticated: boolean;
     isAdmin: boolean;
     isStudent: boolean;
-    login: (email: string, password: string) => void;
+    login: (email: string, password: string) => Promise<AuthResponse>;
+    signup: (name: string, email: string, password: string) => Promise<AuthResponse>;
     logout: () => void;
 }
 
 // --------------- Context ---------------
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const STORAGE_KEY = "auth_user";
 
 // --------------- Provider ---------------
 interface AuthProviderProps {
@@ -29,8 +34,7 @@ interface AuthProviderProps {
 
 export function AuthProvider({ children }: AuthProviderProps) {
     const [user, setUser] = useState<User | null>(() => {
-        // Check localStorage for persisted user session
-        const stored = localStorage.getItem("auth_user");
+        const stored = localStorage.getItem(STORAGE_KEY);
         if (stored) {
             try {
                 return JSON.parse(stored) as User;
@@ -45,34 +49,51 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const isAdmin = user?.role === "admin";
     const isStudent = user?.role === "student";
 
-    const login = useCallback((email: string, _password: string) => {
-        // Demo login: determine role from email
-        // In production, this would call the API and get the role from the server
-        const role: UserRole = email.toLowerCase().includes("admin")
-            ? "admin"
-            : "student";
+    useEffect(() => {
+        if (user) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
+        } else {
+            localStorage.removeItem(STORAGE_KEY);
+        }
+    }, [user]);
 
-        const demoUser: User = {
-            id: 1,
-            email,
-            full_name: role === "admin" ? "Admin User" : "Alex Chen",
-            role,
+    const login = useCallback(async (email: string, password: string) => {
+        const data = await loginUser(email, password);
+        const loggedInUser: User = {
+            id: data.id,
+            username: data.username,
+            email: data.email,
+            full_name: data.username,
+            role: (data.role as UserRole) || "student",
         };
+        localStorage.setItem("token", data.token);
+        setUser(loggedInUser);
+        return data;
+    }, []);
 
-        localStorage.setItem("auth_user", JSON.stringify(demoUser));
-        localStorage.setItem("token", "demo-token");
-        setUser(demoUser);
+    const signup = useCallback(async (name: string, email: string, password: string) => {
+        const data = await signupUser(name, email, password);
+        const newUser: User = {
+            id: data.id,
+            username: data.username,
+            email: data.email,
+            full_name: name,
+            role: (data.role as UserRole) || "student",
+        };
+        localStorage.setItem("token", data.token);
+        setUser(newUser);
+        return data;
     }, []);
 
     const logout = useCallback(() => {
-        localStorage.removeItem("auth_user");
+        localStorage.removeItem(STORAGE_KEY);
         localStorage.removeItem("token");
         setUser(null);
     }, []);
 
     return (
         <AuthContext.Provider
-            value={{ user, isAuthenticated, isAdmin, isStudent, login, logout }}
+            value={{ user, isAuthenticated, isAdmin, isStudent, login, signup, logout }}
         >
             {children}
         </AuthContext.Provider>

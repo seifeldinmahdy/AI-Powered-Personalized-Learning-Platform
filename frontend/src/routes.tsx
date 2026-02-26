@@ -3,7 +3,7 @@ import Login from "./pages/auth/Login";
 import Dashboard from "./pages/student/Dashboard";
 import LiveSession from "./pages/student/LiveSession";
 import AdminDashboard from "./pages/admin/AdminDashboard";
-import Profile from "./pages/student/Profile";
+import Profile from "./pages/Profile";
 import NotFound from "./pages/shared/NotFound";
 import StudentLayout from "./layouts/StudentLayout";
 import AdminLayout from "./layouts/AdminLayout";
@@ -23,6 +23,7 @@ export const router = createBrowserRouter([
         children: [
             { path: "/", element: <Navigate to="/dashboard" replace /> },
             { path: "dashboard", Component: Dashboard },
+            { path: "courses", lazy: () => import("./pages/Courses").then(m => ({ Component: m.default })) },
             { path: "profile", Component: Profile },
             { path: "course/:courseId/lesson/:lessonId", Component: LiveSession },
         ],

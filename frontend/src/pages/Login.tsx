@@ -1,52 +1,38 @@
-import { useState } from "react";
-import { useNavigate, useLocation } from "react-router";
-import { Mail, Lock, ArrowRight, Sparkles, Shield } from "lucide-react";
-import { TypewriterEffect } from "../../components/TypewriterEffect";
-import { FloatingParticles } from "../../components/FloatingParticles";
-import { useAuth } from "../../contexts/AuthContext";
-
-interface LocationState {
-  from?: { pathname: string };
-}
+import { useState } from 'react';
+import { useNavigate } from 'react-router';
+import { Mail, Lock, ArrowRight, Sparkles, Loader2 } from 'lucide-react';
+import { TypewriterEffect } from '../components/TypewriterEffect';
+import { FloatingParticles } from '../components/FloatingParticles';
+import { useAuth } from '../contexts/AuthContext';
+import axios from 'axios';
 
 export default function Login() {
   const navigate = useNavigate();
-  const location = useLocation();
   const { login, signup } = useAuth();
-
   const [isLogin, setIsLogin] = useState(true);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [error, setError] = useState("");
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
+    setError('');
     setLoading(true);
 
     try {
-      let data;
       if (isLogin) {
-        data = await login(email, password);
+        await login(email, password);
       } else {
-        data = await signup(name, email, password);
+        await signup(name, email, password);
       }
-
-      // Navigate to the page they were trying to visit, or role-based default
-      const state = location.state as LocationState;
-      if (state?.from) {
-        navigate(state.from.pathname);
+      navigate('/dashboard');
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.data?.error) {
+        setError(err.response.data.error);
       } else {
-        navigate(data.role === "admin" ? "/admin" : "/dashboard");
-      }
-    } catch (err: unknown) {
-      if (err && typeof err === "object" && "response" in err) {
-        const axiosErr = err as { response?: { data?: { error?: string } } };
-        setError(axiosErr.response?.data?.error || "Authentication failed. Please try again.");
-      } else {
-        setError("Something went wrong. Please try again.");
+        setError('Something went wrong. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -102,13 +88,8 @@ export default function Login() {
                 <span className="text-2xl">🎯</span>
               </div>
               <div>
-                <h4 className="text-white mb-1 text-base">
-                  Personalized Learning Paths
-                </h4>
-                <p className="text-white/60 text-sm leading-relaxed">
-                  AI adapts to your pace and style, creating a unique curriculum
-                  just for you.
-                </p>
+                <h4 className="text-white mb-1 text-base">Personalized Learning Paths</h4>
+                <p className="text-white/60 text-sm leading-relaxed">AI adapts to your pace and style, creating a unique curriculum just for you.</p>
               </div>
             </div>
 
@@ -117,13 +98,8 @@ export default function Login() {
                 <span className="text-2xl">⚡</span>
               </div>
               <div>
-                <h4 className="text-white mb-1 text-base">
-                  Real-Time Feedback
-                </h4>
-                <p className="text-white/60 text-sm leading-relaxed">
-                  Get instant guidance and corrections as you learn, powered by
-                  advanced AI.
-                </p>
+                <h4 className="text-white mb-1 text-base">Real-Time Feedback</h4>
+                <p className="text-white/60 text-sm leading-relaxed">Get instant guidance and corrections as you learn, powered by advanced AI.</p>
               </div>
             </div>
 
@@ -132,13 +108,8 @@ export default function Login() {
                 <span className="text-2xl">🧠</span>
               </div>
               <div>
-                <h4 className="text-white mb-1 text-base">
-                  Intelligent Analytics
-                </h4>
-                <p className="text-white/60 text-sm leading-relaxed">
-                  Track your progress with detailed insights and personalized
-                  recommendations.
-                </p>
+                <h4 className="text-white mb-1 text-base">Intelligent Analytics</h4>
+                <p className="text-white/60 text-sm leading-relaxed">Track your progress with detailed insights and personalized recommendations.</p>
               </div>
             </div>
           </div>
@@ -146,21 +117,15 @@ export default function Login() {
           {/* Stats */}
           <div className="mt-16 grid grid-cols-3 gap-8">
             <div>
-              <p className="text-4xl font-bold text-white mb-1 bg-gradient-to-r from-[#4C6FFF] to-[#A78BFA] bg-clip-text text-transparent">
-                10K+
-              </p>
+              <p className="text-4xl font-bold text-white mb-1 bg-gradient-to-r from-[#4C6FFF] to-[#A78BFA] bg-clip-text text-transparent">10K+</p>
               <p className="text-white/60 text-sm">Active Learners</p>
             </div>
             <div>
-              <p className="text-4xl font-bold text-white mb-1 bg-gradient-to-r from-[#A78BFA] to-[#4C6FFF] bg-clip-text text-transparent">
-                98%
-              </p>
+              <p className="text-4xl font-bold text-white mb-1 bg-gradient-to-r from-[#A78BFA] to-[#4C6FFF] bg-clip-text text-transparent">98%</p>
               <p className="text-white/60 text-sm">Success Rate</p>
             </div>
             <div>
-              <p className="text-4xl font-bold text-white mb-1 bg-gradient-to-r from-[#4C6FFF] to-[#A78BFA] bg-clip-text text-transparent">
-                24/7
-              </p>
+              <p className="text-4xl font-bold text-white mb-1 bg-gradient-to-r from-[#4C6FFF] to-[#A78BFA] bg-clip-text text-transparent">24/7</p>
               <p className="text-white/60 text-sm">AI Support</p>
             </div>
           </div>
@@ -174,29 +139,28 @@ export default function Login() {
               {/* Header */}
               <div className="mb-8">
                 <h1 className="text-3xl font-bold text-[#1F2937] mb-2">
-                  {isLogin ? "Welcome Back" : "Get Started"}
+                  {isLogin ? 'Welcome Back' : 'Get Started'}
                 </h1>
                 <p className="text-[#6B7280]">
                   {isLogin
-                    ? "Continue your learning journey"
-                    : "Create your account and start learning"}
+                    ? 'Continue your learning journey'
+                    : 'Create your account and start learning'
+                  }
                 </p>
               </div>
 
+              {/* Error Message */}
+              {error && (
+                <div className="mb-5 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
+                  {error}
+                </div>
+              )}
+
               {/* Form */}
               <form onSubmit={handleSubmit} className="space-y-5">
-                {error && (
-                  <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
-                    {error}
-                  </div>
-                )}
-
                 {!isLogin && (
                   <div>
-                    <label
-                      htmlFor="name"
-                      className="block text-sm font-semibold text-[#1F2937] mb-2"
-                    >
+                    <label htmlFor="name" className="block text-sm font-semibold text-[#1F2937] mb-2">
                       Full Name
                     </label>
                     <div className="relative">
@@ -208,16 +172,14 @@ export default function Login() {
                         placeholder="Enter your full name"
                         className="w-full px-4 py-3.5 bg-[#F7F9FC] border-2 border-[#E5E7EB] rounded-xl text-[#1F2937] placeholder-[#9CA3AF] focus:outline-none focus:border-[#4C6FFF] focus:bg-white transition-all"
                         required
+                        disabled={loading}
                       />
                     </div>
                   </div>
                 )}
 
                 <div>
-                  <label
-                    htmlFor="email"
-                    className="block text-sm font-semibold text-[#1F2937] mb-2"
-                  >
+                  <label htmlFor="email" className="block text-sm font-semibold text-[#1F2937] mb-2">
                     Email Address
                   </label>
                   <div className="relative">
@@ -232,15 +194,13 @@ export default function Login() {
                       placeholder="you@example.com"
                       className="w-full pl-12 pr-4 py-3.5 bg-[#F7F9FC] border-2 border-[#E5E7EB] rounded-xl text-[#1F2937] placeholder-[#9CA3AF] focus:outline-none focus:border-[#4C6FFF] focus:bg-white transition-all"
                       required
+                      disabled={loading}
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label
-                    htmlFor="password"
-                    className="block text-sm font-semibold text-[#1F2937] mb-2"
-                  >
+                  <label htmlFor="password" className="block text-sm font-semibold text-[#1F2937] mb-2">
                     Password
                   </label>
                   <div className="relative">
@@ -255,6 +215,7 @@ export default function Login() {
                       placeholder="Enter your password"
                       className="w-full pl-12 pr-4 py-3.5 bg-[#F7F9FC] border-2 border-[#E5E7EB] rounded-xl text-[#1F2937] placeholder-[#9CA3AF] focus:outline-none focus:border-[#4C6FFF] focus:bg-white transition-all"
                       required
+                      disabled={loading}
                     />
                   </div>
                 </div>
@@ -268,10 +229,7 @@ export default function Login() {
                       />
                       <span className="text-[#6B7280]">Remember me</span>
                     </label>
-                    <a
-                      href="#"
-                      className="text-[#4C6FFF] hover:text-[#A78BFA] font-semibold transition-colors"
-                    >
+                    <a href="#" className="text-[#4C6FFF] hover:text-[#A78BFA] font-semibold transition-colors">
                       Forgot password?
                     </a>
                   </div>
@@ -282,19 +240,22 @@ export default function Login() {
                   disabled={loading}
                   className="w-full py-4 bg-gradient-to-r from-[#4C6FFF] to-[#A78BFA] text-white font-semibold rounded-xl shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 group disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:scale-100"
                 >
-                  <span>{loading ? (isLogin ? "Signing In..." : "Creating Account...") : (isLogin ? "Sign In" : "Create Account")}</span>
-                  {!loading && (
-                    <ArrowRight
-                      size={20}
-                      className="group-hover:translate-x-1 transition-transform"
-                    />
+                  {loading ? (
+                    <>
+                      <Loader2 size={20} className="animate-spin" />
+                      <span>{isLogin ? 'Signing In...' : 'Creating Account...'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>{isLogin ? 'Sign In' : 'Create Account'}</span>
+                      <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                    </>
                   )}
                 </button>
 
                 {!isLogin && (
                   <p className="text-xs text-[#6B7280] text-center leading-relaxed">
-                    By creating an account, you agree to our Terms of Service
-                    and Privacy Policy.
+                    By creating an account, you agree to our Terms of Service and Privacy Policy.
                   </p>
                 )}
               </form>
@@ -308,27 +269,11 @@ export default function Login() {
 
               {/* Toggle */}
               <button
-                onClick={() => setIsLogin(!isLogin)}
+                onClick={() => { setIsLogin(!isLogin); setError(''); }}
                 className="w-full py-3.5 bg-[#F7F9FC] text-[#1F2937] font-semibold rounded-xl border-2 border-[#E5E7EB] hover:border-[#4C6FFF] hover:bg-white transition-all"
               >
-                {isLogin
-                  ? "Don't have an account? Sign Up"
-                  : "Already have an account? Sign In"}
+                {isLogin ? "Don't have an account? Sign Up" : 'Already have an account? Sign In'}
               </button>
-
-              {/* Notice */}
-              <div className="mt-6 p-4 bg-[#F0F4FF] rounded-xl border border-[#E0E7FF]">
-                <div className="flex items-start gap-3">
-                  <Shield size={18} className="text-[#4C6FFF] mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="text-xs font-semibold text-[#1F2937] mb-1">Getting Started</p>
-                    <p className="text-xs text-[#6B7280] leading-relaxed">
-                      Sign up with your email and password to create an account,
-                      then sign in to start learning.
-                    </p>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         </div>
