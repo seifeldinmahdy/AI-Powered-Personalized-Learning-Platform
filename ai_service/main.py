@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routers import health, asr
+from routers import coding
 
 # Configure logging
 logging.basicConfig(
@@ -49,3 +50,5 @@ async def root():
 app.include_router(health.router)
 app.include_router(asr.router)
 
+
+app.include_router(coding.router)

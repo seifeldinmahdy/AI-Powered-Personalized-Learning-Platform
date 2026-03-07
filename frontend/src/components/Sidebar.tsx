@@ -9,6 +9,7 @@ import {
   Users,
   BarChart,
   Shield,
+  Code2,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useState } from "react";
@@ -31,6 +32,7 @@ interface SidebarProps {
 const studentNavItems: NavItem[] = [
   { path: "/dashboard", label: "Dashboard", icon: Home },
   { path: "/courses", label: "Courses", icon: BookOpen },
+  { path: "/practice", label: "Practice", icon: Code2 },
   { path: "/profile", label: "Profile", icon: User },
 ];
 

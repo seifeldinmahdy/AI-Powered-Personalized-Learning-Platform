@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router";
 import Login from "./pages/auth/Login";
 import Dashboard from "./pages/student/Dashboard";
 import LiveSession from "./pages/student/LiveSession";
+import PracticeArea from "./pages/student/PracticeArea";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import Profile from "./pages/Profile";
 import NotFound from "./pages/shared/NotFound";
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
             { path: "/", element: <Navigate to="/dashboard" replace /> },
             { path: "dashboard", Component: Dashboard },
             { path: "courses", lazy: () => import("./pages/Courses").then(m => ({ Component: m.default })) },
+            { path: "practice", Component: PracticeArea },
             { path: "profile", Component: Profile },
             { path: "course/:courseId/lesson/:lessonId", Component: LiveSession },
         ],

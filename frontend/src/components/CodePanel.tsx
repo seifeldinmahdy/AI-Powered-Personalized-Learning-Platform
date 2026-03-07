@@ -1,16 +1,18 @@
 import { Play, RotateCcw, ChevronDown, Lightbulb, Code2 } from 'lucide-react';
 import { useState } from 'react';
+import Editor from '@monaco-editor/react';
 
-export function CodePanel() {
-  const [code, setCode] = useState(`# Challenge: Create Variables
+const DEFAULT_CODE = `# Challenge: Create Variables
 age = 
 city = 
 is_student = 
 
 print(age)
 print(city)
-print(is_student)`);
+print(is_student)`;
 
+export function CodePanel() {
+  const [code, setCode] = useState(DEFAULT_CODE);
   const [output, setOutput] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [showHint, setShowHint] = useState(false);
@@ -46,8 +48,8 @@ True
       {/* Task Description */}
       <div className="px-4 py-3 bg-muted/30 border-b border-border">
         <p className="text-xs text-foreground/80 leading-relaxed">
-          Create three variables: <code className="px-1 py-0.5 bg-card rounded text-xs font-mono">age</code> (integer), 
-          <code className="px-1 py-0.5 bg-card rounded text-xs font-mono mx-1">city</code> (string), 
+          Create three variables: <code className="px-1 py-0.5 bg-card rounded text-xs font-mono">age</code> (integer),
+          <code className="px-1 py-0.5 bg-card rounded text-xs font-mono mx-1">city</code> (string),
           and <code className="px-1 py-0.5 bg-card rounded text-xs font-mono">is_student</code> (boolean).
         </p>
       </div>
@@ -64,23 +66,23 @@ True
           <span className="text-xs text-[#858585] font-mono">Python</span>
         </div>
 
-        <div className="flex-1 flex overflow-hidden bg-[#1e1e1e]">
-          {/* Line Numbers */}
-          <div className="w-10 bg-[#252526] border-r border-[#3e3e42] flex flex-col py-3 text-right">
-            {code.split('\n').map((_, index) => (
-              <div key={index} className="px-2 text-xs font-mono text-[#858585] leading-6">
-                {index + 1}
-              </div>
-            ))}
-          </div>
-
-          {/* Code Area */}
-          <textarea
+        {/* Monaco Editor replaces the old textarea */}
+        <div className="flex-1 min-h-0">
+          <Editor
+            height="100%"
+            language="python"
+            theme="vs-dark"
             value={code}
-            onChange={(e) => setCode(e.target.value)}
-            className="flex-1 px-3 py-3 font-mono text-sm bg-[#1e1e1e] text-[#d4d4d4] resize-none focus:outline-none leading-6"
-            spellCheck={false}
-            style={{ fontFamily: 'Monaco, Consolas, "Courier New", monospace' }}
+            onChange={(v) => setCode(v ?? '')}
+            options={{
+              minimap: { enabled: false },
+              scrollBeyondLastLine: false,
+              fontSize: 14,
+              lineNumbersMinChars: 3,
+              padding: { top: 8, bottom: 8 },
+              wordWrap: 'on',
+              automaticLayout: true,
+            }}
           />
         </div>
 
@@ -95,14 +97,7 @@ True
             <span>{isRunning ? 'Running...' : 'Run Code'}</span>
           </button>
           <button
-            onClick={() => setCode(`# Challenge: Create Variables
-age = 
-city = 
-is_student = 
-
-print(age)
-print(city)
-print(is_student)`)}
+            onClick={() => setCode(DEFAULT_CODE)}
             className="px-3 py-2.5 border-2 border-border rounded-lg hover:border-secondary transition-colors"
             title="Reset"
           >
@@ -115,7 +110,7 @@ print(is_student)`)}
           <div className="border-t border-border bg-[#1e1e1e]">
             <div className="px-4 py-2 bg-[#252526] border-b border-[#3e3e42] flex items-center justify-between">
               <span className="text-xs font-semibold text-[#cccccc]">Output</span>
-              <button 
+              <button
                 onClick={() => setOutput('')}
                 className="text-xs text-[#858585] hover:text-[#cccccc]"
               >
