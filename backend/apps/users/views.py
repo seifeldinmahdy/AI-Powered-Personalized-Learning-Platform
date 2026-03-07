@@ -14,7 +14,7 @@ class UserViewSet(viewsets.ModelViewSet):
     # ---------------------------------------------------------
     # 1. Login Action
     # ---------------------------------------------------------
-    @action(detail=False, methods=['post'], permission_classes=[AllowAny])
+    @action(detail=False, methods=['post'], permission_classes=[AllowAny], authentication_classes=[])
     def login(self, request):
         login_id = request.data.get('username', '').strip()
         password = request.data.get('password')
@@ -51,7 +51,7 @@ class UserViewSet(viewsets.ModelViewSet):
     # 2. Signup Action
     # Endpoint: POST /api/users/signup/
     # ---------------------------------------------------------
-    @action(detail=False, methods=['post'], permission_classes=[AllowAny])
+    @action(detail=False, methods=['post'], permission_classes=[AllowAny], authentication_classes=[])
     def signup(self, request):
         username = request.data.get('username')
         email = request.data.get('email')
