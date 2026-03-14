@@ -1,0 +1,156 @@
+/* =============================================================================
+   SLIDE.CSS - Slide Container & Layout Styles
+   ============================================================================= */
+
+/* Main slide container area */
+.slide-container {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-xl);
+    gap: var(--space-lg);
+}
+
+/* Navigation buttons */
+.nav-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    background: var(--bg-elevated);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 50%;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+}
+
+.nav-btn:hover:not(:disabled) {
+    background: var(--accent-primary);
+    color: white;
+    border-color: var(--accent-primary);
+    box-shadow: var(--shadow-glow);
+}
+
+.nav-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+/* Slide wrapper */
+.slide-wrapper {
+    flex: 1;
+    max-width: 900px;
+    display: flex;
+    justify-content: center;
+}
+
+/* =============================================================================
+   SLIDE CARD - Main slide container
+   ============================================================================= */
+
+.slide {
+    width: 100%;
+    background: var(--bg-card);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-lg);
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Slide header with title */
+.slide-header {
+    padding: var(--space-lg) var(--space-xl);
+    background: linear-gradient(135deg, var(--bg-elevated), var(--bg-card));
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.slide-title {
+    font-size: var(--text-2xl);
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+/* =============================================================================
+   LAYOUT: Content_Visual (two-column)
+   ============================================================================= */
+
+.slide-content {
+    padding: var(--space-xl);
+}
+
+.layout-content-visual .slide-content {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-xl);
+    align-items: start;
+}
+
+.layout-content-visual .slide-body {
+    order: 1;
+}
+
+.layout-content-visual .slide-visual {
+    order: 2;
+}
+
+/* =============================================================================
+   LAYOUT: List_View (single column text)
+   ============================================================================= */
+
+.layout-list-view .slide-content {
+    display: block;
+}
+
+.layout-list-view .slide-body {
+    max-width: 100%;
+}
+
+/* =============================================================================
+   LAYOUT: Code_Main (code-focused)
+   ============================================================================= */
+
+.layout-code-main .slide-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.layout-code-main .slide-code {
+    flex: 1;
+}
+
+.layout-code-main .slide-body {
+    font-size: var(--text-sm);
+}
+
+/* =============================================================================
+   Responsive adjustments
+   ============================================================================= */
+
+@media (max-width: 768px) {
+    .slide-container {
+        padding: var(--space-md);
+    }
+
+    .layout-content-visual .slide-content {
+        grid-template-columns: 1fr;
+    }
+
+    .layout-content-visual .slide-visual {
+        order: 1;
+    }
+
+    .layout-content-visual .slide-body {
+        order: 2;
+    }
+
+    .nav-btn {
+        width: 40px;
+        height: 40px;
+    }
+}
