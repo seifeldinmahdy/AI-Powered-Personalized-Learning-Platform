@@ -33,7 +33,7 @@ export default function Profile() {
   useEffect(() => {
     if (!user) return;
     setLoading(true);
-    getProfile(user.id)
+    getProfile()
       .then((profile) => {
         setUsername(profile.username || '');
         setEmail(profile.email || '');
@@ -57,7 +57,7 @@ export default function Profile() {
     setSaving(true);
     setSaveSuccess(false);
     try {
-      await updateProfile(user.id, { username, email, bio });
+      await updateProfile({ username, email, bio });
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err) {

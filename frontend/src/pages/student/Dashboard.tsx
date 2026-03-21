@@ -1,49 +1,102 @@
 import { Header } from '../../components/Header';
 import { CircularProgress } from '../../components/CircularProgress';
-import { Play, Clock, Award, TrendingUp, BookOpen, Target, Zap, Calendar } from 'lucide-react';
+import { Play, Clock, Award, TrendingUp, BookOpen, Target, Loader2 } from 'lucide-react';
 import { Link } from 'react-router';
 import { useAuth } from '../../contexts/AuthContext';
+import { useState, useEffect } from 'react';
+import { getEnrollments } from '../../services/api';
+import { getLessonCompletions, type LessonCompletion } from '../../services/progress';
+import { getMyAchievements, getDailyStats, type UserAchievement, type DailyStudyStats } from '../../services/gamification';
+import { getStudentProfile, type StudentProfile } from '../../services/profile';
+
+interface EnrollmentData {
+  id: number;
+  course: number;
+  course_title: string;
+  current_lesson: number | null;
+  progress_percentage: string;
+  current_score: number;
+}
 
 export default function Dashboard() {
   const { user } = useAuth();
-
   const displayName = user?.full_name || user?.username || 'Learner';
 
-  const currentCourse = {
-    id: 'python-101',
-    name: 'Python 101',
-    progress: 45,
-    currentLesson: 'variables',
-    currentLessonTitle: 'Intro to Python Variables',
-    totalLessons: 12,
-    completedLessons: 8,
-    timeSpent: '4h 32m',
+  const [loading, setLoading] = useState(true);
+  const [enrollments, setEnrollments] = useState<EnrollmentData[]>([]);
+  const [completions, setCompletions] = useState<LessonCompletion[]>([]);
+  const [achievements, setAchievements] = useState<UserAchievement[]>([]);
+  const [dailyStats, setDailyStats] = useState<DailyStudyStats[]>([]);
+  const [profile, setProfile] = useState<StudentProfile | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const [enrollRes, completionsRes, achievementsRes, statsRes, profileRes] =
+          await Promise.allSettled([
+            getEnrollments(),
+            getLessonCompletions(),
+            getMyAchievements(),
+            getDailyStats(),
+            getStudentProfile(),
+          ]);
+
+        if (cancelled) return;
+
+        if (enrollRes.status === 'fulfilled') {
+          const raw = enrollRes.value.data;
+          setEnrollments(Array.isArray(raw) ? raw : raw.results ?? []);
+        }
+        if (completionsRes.status === 'fulfilled') setCompletions(completionsRes.value);
+        if (achievementsRes.status === 'fulfilled') setAchievements(achievementsRes.value);
+        if (statsRes.status === 'fulfilled') setDailyStats(statsRes.value);
+        if (profileRes.status === 'fulfilled') setProfile(profileRes.value);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Derived values
+  const currentEnrollment = enrollments[0] as EnrollmentData | undefined;
+  const progress = currentEnrollment ? parseFloat(currentEnrollment.progress_percentage) : 0;
+  const completedCount = completions.filter((c) => c.status === 'Completed').length;
+  const totalMinutes = profile?.total_minutes_learned ?? 0;
+  const streak = profile?.current_streak ?? 0;
+
+  const formatTime = (minutes: number) => {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
   };
 
   const stats = [
-    { label: 'Total Time', value: '18h 45m', icon: Clock, color: 'bg-secondary' },
-    { label: 'Streak', value: '7 days', icon: TrendingUp, color: 'bg-accent' },
-    { label: 'Challenges', value: '7/15', icon: Target, color: 'bg-primary' },
+    { label: 'Total Time', value: formatTime(totalMinutes), icon: Clock, color: 'bg-secondary' },
+    { label: 'Streak', value: `${streak} days`, icon: TrendingUp, color: 'bg-accent' },
+    { label: 'Completed', value: `${completedCount} lessons`, icon: Target, color: 'bg-primary' },
   ];
 
-  const recentActivity = [
-    { lesson: 'Functions Basics', date: '2 days ago', completed: true, module: 'Module 4' },
-    { lesson: 'Control Flow', date: '3 days ago', completed: true, module: 'Module 3' },
-    { lesson: 'Data Types', date: '5 days ago', completed: true, module: 'Module 2' },
-  ];
+  // Recent completed lessons
+  const recentActivity = completions
+    .filter((c) => c.status === 'Completed')
+    .slice(0, 3);
 
-  const upcomingLessons = [
-    { title: 'Lists & Tuples', duration: '15 min', difficulty: 'Easy' },
-    { title: 'Dictionaries', duration: '20 min', difficulty: 'Medium' },
-    { title: 'File Handling', duration: '25 min', difficulty: 'Medium' },
-  ];
+  // Weekly stats
+  const weekStats = dailyStats.slice(-7);
 
-  const achievements = [
-    { title: 'First Steps', description: 'Complete your first lesson', earned: true, icon: '🎯' },
-    { title: 'Consistent Learner', description: '7-day learning streak', earned: true, icon: '🔥' },
-    { title: 'Code Master', description: 'Complete 10 challenges', earned: false, icon: '⚡' },
-    { title: 'Night Owl', description: 'Study past midnight', earned: true, icon: '🦉' },
-  ];
+  if (loading) {
+    return (
+      <>
+        <Header title={`Welcome back, ${displayName}`} subtitle="Loading your data..." />
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 size={40} className="animate-spin text-secondary" />
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -74,193 +127,215 @@ export default function Dashboard() {
           </div>
 
           {/* Current Course Hero */}
-          <section className="mb-8">
-            <div className="bg-gradient-to-br from-primary to-secondary rounded-2xl p-8 text-white shadow-xl">
-              <div className="flex items-start justify-between gap-8">
-                <div className="flex-1">
-                  <div className="inline-block px-3 py-1 bg-white/20 rounded-full text-xs font-semibold mb-4 backdrop-blur-sm">
-                    CURRENT COURSE
-                  </div>
-                  <h1 className="mb-3 text-white">{currentCourse.name}</h1>
-                  <p className="text-white/90 mb-6 text-lg">
-                    Lesson {currentCourse.completedLessons + 1} of {currentCourse.totalLessons}: {currentCourse.currentLessonTitle}
-                  </p>
-
-                  {/* Progress Bar */}
-                  <div className="mb-6">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm text-white/80">Progress</span>
-                      <span className="text-sm font-semibold text-white">{currentCourse.progress}%</span>
+          {currentEnrollment ? (
+            <section className="mb-8">
+              <div className="bg-gradient-to-br from-primary to-secondary rounded-2xl p-8 text-white shadow-xl">
+                <div className="flex items-start justify-between gap-8">
+                  <div className="flex-1">
+                    <div className="inline-block px-3 py-1 bg-white/20 rounded-full text-xs font-semibold mb-4 backdrop-blur-sm">
+                      CURRENT COURSE
                     </div>
-                    <div className="h-3 bg-white/20 rounded-full overflow-hidden backdrop-blur-sm">
-                      <div
-                        className="h-full bg-accent rounded-full transition-all duration-500"
-                        style={{ width: `${currentCourse.progress}%` }}
-                      />
-                    </div>
-                  </div>
+                    <h1 className="mb-3 text-white">{currentEnrollment.course_title}</h1>
+                    <p className="text-white/90 mb-6 text-lg">
+                      {completedCount} lessons completed &middot; Score: {currentEnrollment.current_score}
+                    </p>
 
-                  <div className="flex items-center gap-4">
-                    <Link
-                      to={`/course/${currentCourse.id}/lesson/${currentCourse.currentLesson}`}
-                      className="px-8 py-4 bg-white text-primary rounded-xl font-semibold hover:shadow-lg transition-all flex items-center gap-3 group"
-                    >
-                      <Play size={20} fill="currentColor" className="group-hover:scale-110 transition-transform" />
-                      <span>Resume Learning</span>
-                    </Link>
-
-                    <div className="flex gap-4 px-6 py-3 bg-white/10 rounded-xl backdrop-blur-sm">
-                      <div className="flex items-center gap-2">
-                        <Clock size={18} className="opacity-80" />
-                        <span className="text-sm font-medium">{currentCourse.timeSpent}</span>
+                    {/* Progress Bar */}
+                    <div className="mb-6">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm text-white/80">Progress</span>
+                        <span className="text-sm font-semibold text-white">{progress.toFixed(0)}%</span>
                       </div>
-                      <div className="w-px bg-white/20" />
-                      <div className="flex items-center gap-2">
-                        <BookOpen size={18} className="opacity-80" />
-                        <span className="text-sm font-medium">{currentCourse.completedLessons}/{currentCourse.totalLessons}</span>
+                      <div className="h-3 bg-white/20 rounded-full overflow-hidden backdrop-blur-sm">
+                        <div
+                          className="h-full bg-accent rounded-full transition-all duration-500"
+                          style={{ width: `${progress}%` }}
+                        />
                       </div>
                     </div>
-                  </div>
-                </div>
 
-                <div className="hidden lg:block">
-                  <div className="relative">
-                    <div className="w-32 h-32 rounded-full bg-white/10 backdrop-blur-sm flex items-center justify-center">
-                      <CircularProgress percentage={currentCourse.progress} size={120} strokeWidth={8} />
+                    <div className="flex items-center gap-4">
+                      <Link
+                        to={
+                          currentEnrollment.current_lesson
+                            ? `/course/${currentEnrollment.course}/lesson/${currentEnrollment.current_lesson}`
+                            : `/courses`
+                        }
+                        className="px-8 py-4 bg-white text-primary rounded-xl font-semibold hover:shadow-lg transition-all flex items-center gap-3 group"
+                      >
+                        <Play size={20} fill="currentColor" className="group-hover:scale-110 transition-transform" />
+                        <span>Resume Learning</span>
+                      </Link>
+
+                      <div className="flex gap-4 px-6 py-3 bg-white/10 rounded-xl backdrop-blur-sm">
+                        <div className="flex items-center gap-2">
+                          <Clock size={18} className="opacity-80" />
+                          <span className="text-sm font-medium">{formatTime(totalMinutes)}</span>
+                        </div>
+                        <div className="w-px bg-white/20" />
+                        <div className="flex items-center gap-2">
+                          <BookOpen size={18} className="opacity-80" />
+                          <span className="text-sm font-medium">{completedCount} done</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="hidden lg:block">
+                    <div className="relative">
+                      <div className="w-32 h-32 rounded-full bg-white/10 backdrop-blur-sm flex items-center justify-center">
+                        <CircularProgress percentage={progress} size={120} strokeWidth={8} />
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
-          </section>
+            </section>
+          ) : (
+            <section className="mb-8">
+              <div className="bg-gradient-to-br from-primary to-secondary rounded-2xl p-8 text-white shadow-xl text-center">
+                <h2 className="text-white mb-4">No courses yet</h2>
+                <p className="text-white/80 mb-6">Browse our catalog and enroll in your first course!</p>
+                <Link
+                  to="/courses"
+                  className="inline-block px-8 py-4 bg-white text-primary rounded-xl font-semibold hover:shadow-lg transition-all"
+                >
+                  Browse Courses
+                </Link>
+              </div>
+            </section>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Recent Activity */}
             <section className="lg:col-span-2">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="mb-0">Recent Activity</h2>
-                <button className="text-sm text-secondary hover:text-primary transition-colors font-medium">
-                  View All
-                </button>
               </div>
               <div className="bg-card rounded-xl shadow-sm border border-border overflow-hidden">
-                {recentActivity.map((activity, index) => (
-                  <div
-                    key={index}
-                    className={`flex items-center justify-between px-6 py-5 ${index !== recentActivity.length - 1 ? 'border-b border-border' : ''
-                      } hover:bg-muted/50 transition-colors group`}
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white shadow-md">
-                        <Award size={20} />
-                      </div>
-                      <div>
-                        <h4 className="mb-1 group-hover:text-primary transition-colors">{activity.lesson}</h4>
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs text-muted-foreground">{activity.module}</span>
-                          <span className="text-xs text-muted-foreground">•</span>
-                          <span className="text-xs text-muted-foreground">{activity.date}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <button className="px-4 py-2 rounded-lg border border-border bg-card hover:border-secondary hover:text-secondary transition-colors text-sm font-medium">
-                      Review
-                    </button>
+                {recentActivity.length === 0 ? (
+                  <div className="px-6 py-8 text-center text-muted-foreground">
+                    <p className="text-sm">No completed lessons yet. Start learning!</p>
                   </div>
-                ))}
-              </div>
-
-              {/* Upcoming Lessons */}
-              <div className="mt-8">
-                <h3 className="mb-4">Up Next</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {upcomingLessons.map((lesson, index) => (
+                ) : (
+                  recentActivity.map((activity, index) => (
                     <div
-                      key={index}
-                      className="bg-card rounded-xl p-5 border border-border hover:border-secondary hover:shadow-md transition-all cursor-pointer group"
+                      key={activity.id}
+                      className={`flex items-center justify-between px-6 py-5 ${
+                        index !== recentActivity.length - 1 ? 'border-b border-border' : ''
+                      } hover:bg-muted/50 transition-colors group`}
                     >
-                      <div className="flex items-center gap-2 mb-3">
-                        <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center text-muted-foreground group-hover:bg-secondary group-hover:text-white transition-colors">
-                          <Zap size={16} />
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white shadow-md">
+                          <Award size={20} />
                         </div>
-                        <span className={`text-xs font-semibold px-2 py-1 rounded ${lesson.difficulty === 'Easy' ? 'bg-green-100 text-green-700' :
-                          lesson.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
-                            'bg-red-100 text-red-700'
-                          }`}>
-                          {lesson.difficulty}
-                        </span>
-                      </div>
-                      <h5 className="mb-2 group-hover:text-secondary transition-colors">{lesson.title}</h5>
-                      <div className="flex items-center gap-2 text-muted-foreground">
-                        <Clock size={14} />
-                        <span className="text-xs">{lesson.duration}</span>
+                        <div>
+                          <h4 className="mb-1 group-hover:text-primary transition-colors">
+                            {activity.lesson_title}
+                          </h4>
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs text-muted-foreground">
+                              Score: {activity.score}
+                            </span>
+                            {activity.completed_at && (
+                              <>
+                                <span className="text-xs text-muted-foreground">&middot;</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {new Date(activity.completed_at).toLocaleDateString()}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  ))}
-                </div>
+                  ))
+                )}
               </div>
             </section>
 
-            {/* Sidebar - Achievements & Calendar */}
+            {/* Sidebar - Achievements & Weekly Stats */}
             <section className="space-y-8">
               {/* Achievements */}
               <div>
                 <h3 className="mb-4">Achievements</h3>
                 <div className="space-y-3">
-                  {achievements.map((achievement, index) => (
-                    <div
-                      key={index}
-                      className={`bg-card rounded-xl p-4 border transition-all ${achievement.earned
-                        ? 'border-accent shadow-sm hover:shadow-md'
-                        : 'border-border opacity-60'
-                        }`}
-                    >
-                      <div className="flex items-start gap-3">
-                        <span className="text-2xl">{achievement.icon}</span>
-                        <div className="flex-1">
-                          <h5 className="mb-1">{achievement.title}</h5>
-                          <p className="text-xs text-muted-foreground">{achievement.description}</p>
-                        </div>
-                        {achievement.earned && (
-                          <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-white text-xs">
-                            ✓
-                          </div>
-                        )}
-                      </div>
+                  {achievements.length === 0 ? (
+                    <div className="bg-card rounded-xl p-4 border border-border text-center">
+                      <p className="text-xs text-muted-foreground">No achievements yet. Keep learning!</p>
                     </div>
-                  ))}
+                  ) : (
+                    achievements.map((ua) => (
+                      <div
+                        key={ua.id}
+                        className="bg-card rounded-xl p-4 border border-accent shadow-sm hover:shadow-md transition-all"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
+                            {ua.achievement.icon_url ? (
+                              <img src={ua.achievement.icon_url} alt="" className="w-6 h-6" />
+                            ) : (
+                              <Award size={20} className="text-accent" />
+                            )}
+                          </div>
+                          <div className="flex-1">
+                            <h5 className="mb-1">{ua.achievement.name}</h5>
+                            <p className="text-xs text-muted-foreground">{ua.achievement.description}</p>
+                          </div>
+                          <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-white text-xs">
+                            +{ua.achievement.xp_reward}
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
-              {/* Study Calendar */}
+              {/* Weekly Study Stats */}
               <div>
                 <h3 className="mb-4">This Week</h3>
                 <div className="bg-card rounded-xl p-5 border border-border shadow-sm">
-                  <div className="space-y-3">
-                    {[
-                      { day: 'Monday', hours: 2.5, completed: true },
-                      { day: 'Tuesday', hours: 1.5, completed: true },
-                      { day: 'Wednesday', hours: 3.0, completed: true },
-                      { day: 'Thursday', hours: 2.0, completed: false },
-                      { day: 'Friday', hours: 0, completed: false },
-                    ].map((day, index) => (
-                      <div key={index} className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-2 h-2 rounded-full ${day.completed ? 'bg-accent' : 'bg-muted'}`} />
-                          <span className={`text-sm ${day.completed ? 'text-foreground' : 'text-muted-foreground'}`}>
-                            {day.day}
-                          </span>
-                        </div>
-                        <span className={`text-sm font-mono ${day.hours > 0 ? 'text-foreground font-semibold' : 'text-muted-foreground'}`}>
-                          {day.hours > 0 ? `${day.hours}h` : '—'}
+                  {weekStats.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center">No study data yet.</p>
+                  ) : (
+                    <>
+                      <div className="space-y-3">
+                        {weekStats.map((day) => (
+                          <div key={day.id} className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <div
+                                className={`w-2 h-2 rounded-full ${
+                                  parseFloat(day.hours_spent) > 0 ? 'bg-accent' : 'bg-muted'
+                                }`}
+                              />
+                              <span className="text-sm text-foreground">{day.study_date}</span>
+                            </div>
+                            <span
+                              className={`text-sm font-mono ${
+                                parseFloat(day.hours_spent) > 0
+                                  ? 'text-foreground font-semibold'
+                                  : 'text-muted-foreground'
+                              }`}
+                            >
+                              {parseFloat(day.hours_spent) > 0
+                                ? `${day.hours_spent}h`
+                                : '\u2014'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-4 pt-4 border-t border-border flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">Weekly Total</span>
+                        <span className="text-lg font-bold text-primary">
+                          {weekStats
+                            .reduce((sum, d) => sum + parseFloat(d.hours_spent), 0)
+                            .toFixed(1)}
+                          h
                         </span>
                       </div>
-                    ))}
-                  </div>
-                  <div className="mt-4 pt-4 border-t border-border flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Weekly Total</span>
-                    <span className="text-lg font-bold text-primary">9.0h</span>
-                  </div>
+                    </>
+                  )}
                 </div>
               </div>
             </section>

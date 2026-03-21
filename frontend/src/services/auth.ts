@@ -33,3 +33,7 @@ export async function signupUser(
     });
     return response.data;
 }
+
+export async function logoutUser(): Promise<void> {
+    await api.post('/users/logout/');
+}

@@ -37,9 +37,29 @@ class SlideSerializer(serializers.ModelSerializer):
 
 
 class CodeChallengeSerializer(serializers.ModelSerializer):
+    """Full serializer for admin/instructor use."""
     class Meta:
         model = CodeChallenge
         fields = ["id", "lesson", "problem_text", "starter_code", "solution_code", "test_cases_json", "hint_text"]
+        read_only_fields = ["id"]
+
+
+class CodeChallengeStudentSerializer(serializers.ModelSerializer):
+    """Safe serializer for students — hides solution_code and test_cases_json."""
+    class Meta:
+        model = CodeChallenge
+        fields = ["id", "lesson", "problem_text", "starter_code", "hint_text"]
+        read_only_fields = ["id"]
+
+
+class LessonDetailSerializer(serializers.ModelSerializer):
+    """Lesson with nested slides and code challenges (read-only detail view)."""
+    slides = SlideSerializer(many=True, read_only=True)
+    code_challenges = CodeChallengeStudentSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Lesson
+        fields = ["id", "module", "title", "lesson_order", "slides", "code_challenges"]
         read_only_fields = ["id"]
 
 
@@ -53,4 +73,4 @@ class EnrollmentSerializer(serializers.ModelSerializer):
             "current_lesson", "progress_percentage", "current_score",
             "is_paid", "enrolled_at", "last_accessed",
         ]
-        read_only_fields = ["id", "enrolled_at", "last_accessed"]
+        read_only_fields = ["id", "student", "enrolled_at", "last_accessed"]
