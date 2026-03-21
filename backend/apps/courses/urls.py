@@ -8,4 +8,5 @@ router.register(r"enrollments", views.EnrollmentViewSet, basename="enrollment")
 
 urlpatterns = [
     path("", include(router.urls)),
+    path("coding/evaluate/", views.evaluate_student_code, name="evaluate_code"),
 ]

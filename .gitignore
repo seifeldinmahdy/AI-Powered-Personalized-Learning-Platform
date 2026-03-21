@@ -41,3 +41,21 @@ docker-compose.override.yml
 
 # Claude temp files
 tmpclaude-*
+
+# Model Weights & Large Files
+ai_service/models/clean_question_model/
+*.safetensors
+*.bin
+*.h5
+*.gguf
+*.onnx
+*.pt
+*.pth
+
+# HuggingFace / PyTorch cache
+.cache/
+*.lock
+
+# Training data
+*.csv
+*.parquet
