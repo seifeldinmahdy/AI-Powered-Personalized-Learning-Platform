@@ -86,6 +86,15 @@ export function CodePanel({ challenge }: CodePanelProps) {
             theme="vs-dark"
             value={code}
             onChange={(val) => setCode(val ?? '')}
+            options={{
+              minimap: { enabled: false },
+              scrollBeyondLastLine: false,
+              fontSize: 14,
+              lineNumbersMinChars: 3,
+              padding: { top: 8, bottom: 8 },
+              wordWrap: 'on',
+              automaticLayout: true,
+            }}
           />
         </div>
 
