@@ -1,28 +1,109 @@
 import { Header } from '../../components/Header';
-import { User, Mail, Calendar, Award, Bell, Lock, Palette, Globe, Shield, Zap } from 'lucide-react';
-import { useState } from 'react';
+import { User, Mail, Calendar, Award, Bell, Lock, Palette, Globe, Shield, Zap, Loader2 } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
+import {
+  getProfile, updateProfile,
+  getStudentProfile, updateStudentProfile,
+  getPreferences, updatePreferences,
+  type UserProfile, type StudentProfile, type UserPreferences,
+} from '../../services/profile';
 
 export default function Profile() {
-  const [notifications, setNotifications] = useState({
-    email: true,
-    voice: true,
-    reminders: true,
-  });
+  const { user } = useAuth();
+
+  // --- data state ---
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null);
+  const [prefs, setPrefs] = useState<UserPreferences | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savingPrefs, setSavingPrefs] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  // --- form state ---
+  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
+  const [bio, setBio] = useState('');
+  const [location, setLocation] = useState('');
+  const [timezone, setTimezone] = useState('');
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [p, sp, prefs] = await Promise.all([
+        getProfile(),
+        getStudentProfile(),
+        getPreferences(),
+      ]);
+      setProfile(p);
+      setStudentProfile(sp);
+      setPrefs(prefs);
+      setUsername(p.username ?? '');
+      setEmail(p.email ?? '');
+      setBio(sp.bio ?? p.bio ?? '');
+      setLocation(sp.location ?? '');
+      setTimezone(sp.timezone ?? '');
+    } catch {
+      setMessage('Failed to load profile.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setMessage(null);
+    try {
+      const updatedUser = await updateProfile({ username, email, bio });
+      setProfile(updatedUser);
+      await updateStudentProfile({ bio, location, timezone });
+      setMessage('Profile saved successfully.');
+    } catch {
+      setMessage('Failed to save profile.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTogglePref = async (key: keyof Omit<UserPreferences, 'id'>, value: boolean) => {
+    if (!prefs) return;
+    const updated = { ...prefs, [key]: value };
+    setPrefs(updated);
+    setSavingPrefs(true);
+    try {
+      await updatePreferences({ [key]: value });
+    } catch {
+      setPrefs(prefs); // revert on error
+    } finally {
+      setSavingPrefs(false);
+    }
+  };
 
   const stats = [
-    { label: 'Days Active', value: '42', icon: Calendar, color: 'from-primary to-secondary' },
-    { label: 'Achievements', value: '8', icon: Award, color: 'from-secondary to-accent' },
-    { label: 'Messages', value: '15', icon: Mail, color: 'from-accent to-primary' },
+    { label: 'Days Active', value: studentProfile?.days_active ?? '-', icon: Calendar, color: 'from-primary to-secondary' },
+    { label: 'Level', value: studentProfile?.level ?? '-', icon: Award, color: 'from-secondary to-accent' },
+    { label: 'XP', value: studentProfile?.current_xp ?? '-', icon: Zap, color: 'from-accent to-primary' },
   ];
 
-  const achievements = [
-    { title: 'First Steps', description: 'Complete your first lesson', icon: '🎯', earned: true },
-    { title: 'Consistent Learner', description: '7-day learning streak', icon: '🔥', earned: true },
-    { title: 'Night Owl', description: 'Study past midnight', icon: '🦉', earned: true },
-    { title: 'Code Master', description: 'Complete 10 challenges', icon: '⚡', earned: false },
-    { title: 'Perfect Score', description: 'Score 100% on a quiz', icon: '💯', earned: false },
-    { title: 'Helper', description: 'Help another student', icon: '🤝', earned: false },
-  ];
+  const displayName = profile?.username ?? user?.username ?? 'User';
+  const joinedDate = profile?.created_at
+    ? new Date(profile.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+    : '';
+
+  if (loading) {
+    return (
+      <>
+        <Header title="Profile & Settings" subtitle="Manage your account and preferences" />
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="animate-spin text-secondary" size={32} />
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -33,39 +114,46 @@ export default function Profile() {
 
       <div className="flex-1 overflow-y-auto">
         <div className="p-8 max-w-7xl mx-auto">
+
+          {/* Success/Error message */}
+          {message && (
+            <div className={`mb-4 p-3 rounded-xl text-sm font-medium ${
+              message.includes('success') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+            }`}>
+              {message}
+            </div>
+          )}
+
           {/* Profile Header Card */}
           <div className="bg-gradient-to-br from-primary via-secondary to-accent rounded-2xl p-8 text-white shadow-xl mb-8">
             <div className="flex items-start justify-between">
               <div className="flex items-start gap-6">
-                {/* Avatar */}
                 <div className="relative">
                   <div className="w-32 h-32 rounded-2xl bg-white/20 backdrop-blur-sm border-4 border-white/30 flex items-center justify-center shadow-xl">
                     <User size={64} className="text-white" />
                   </div>
-                  <button className="absolute -bottom-3 -right-3 w-10 h-10 bg-white text-primary rounded-xl shadow-lg hover:shadow-xl transition-shadow flex items-center justify-center font-bold">
-                    ✎
-                  </button>
                 </div>
-
-                {/* Info */}
                 <div>
-                  <h1 className="mb-2 text-white">Alex Chen</h1>
-                  <p className="text-white/90 mb-4 text-lg">Student · Python Learner</p>
+                  <h1 className="mb-2 text-white">{displayName}</h1>
+                  <p className="text-white/90 mb-4 text-lg">{profile?.role ?? 'Student'} · {email}</p>
                   <div className="flex flex-wrap gap-2">
+                    {location && (
+                      <span className="px-3 py-1 bg-white/20 backdrop-blur-sm rounded-lg text-sm font-semibold">
+                        {location}
+                      </span>
+                    )}
+                    {joinedDate && (
+                      <span className="px-3 py-1 bg-white/20 backdrop-blur-sm rounded-lg text-sm font-semibold">
+                        Joined {joinedDate}
+                      </span>
+                    )}
                     <span className="px-3 py-1 bg-white/20 backdrop-blur-sm rounded-lg text-sm font-semibold">
-                      📍 San Francisco, CA
-                    </span>
-                    <span className="px-3 py-1 bg-white/20 backdrop-blur-sm rounded-lg text-sm font-semibold">
-                      🎓 Joined Feb 2026
-                    </span>
-                    <span className="px-3 py-1 bg-white/20 backdrop-blur-sm rounded-lg text-sm font-semibold">
-                      ⚡ Level 5
+                      Level {studentProfile?.level ?? 1}
                     </span>
                   </div>
                 </div>
               </div>
 
-              {/* Stats */}
               <div className="flex gap-4">
                 {stats.map((stat, index) => {
                   const Icon = stat.icon;
@@ -93,26 +181,16 @@ export default function Profile() {
                   </h3>
                 </div>
                 <div className="p-6">
-                  <form className="space-y-5">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label htmlFor="firstName" className="block mb-2 text-sm">First Name</label>
-                        <input
-                          id="firstName"
-                          type="text"
-                          defaultValue="Alex"
-                          className="w-full px-4 py-3 border-2 border-border rounded-xl bg-input-background focus:outline-none focus:border-secondary transition-colors"
-                        />
-                      </div>
-                      <div>
-                        <label htmlFor="lastName" className="block mb-2 text-sm">Last Name</label>
-                        <input
-                          id="lastName"
-                          type="text"
-                          defaultValue="Chen"
-                          className="w-full px-4 py-3 border-2 border-border rounded-xl bg-input-background focus:outline-none focus:border-secondary transition-colors"
-                        />
-                      </div>
+                  <form className="space-y-5" onSubmit={handleSaveProfile}>
+                    <div>
+                      <label htmlFor="username" className="block mb-2 text-sm">Username</label>
+                      <input
+                        id="username"
+                        type="text"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        className="w-full px-4 py-3 border-2 border-border rounded-xl bg-input-background focus:outline-none focus:border-secondary transition-colors"
+                      />
                     </div>
 
                     <div>
@@ -120,7 +198,8 @@ export default function Profile() {
                       <input
                         id="email"
                         type="email"
-                        defaultValue="alex.chen@example.com"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
                         className="w-full px-4 py-3 border-2 border-border rounded-xl bg-input-background focus:outline-none focus:border-secondary transition-colors"
                       />
                     </div>
@@ -131,8 +210,9 @@ export default function Profile() {
                         id="bio"
                         placeholder="Tell us about yourself..."
                         rows={4}
+                        value={bio}
+                        onChange={(e) => setBio(e.target.value)}
                         className="w-full px-4 py-3 border-2 border-border rounded-xl bg-input-background focus:outline-none focus:border-secondary transition-colors resize-none"
-                        defaultValue="Learning Python to transition into data science. Passionate about coding and problem-solving."
                       />
                     </div>
 
@@ -142,28 +222,31 @@ export default function Profile() {
                         <input
                           id="location"
                           type="text"
-                          defaultValue="San Francisco, CA"
+                          value={location}
+                          onChange={(e) => setLocation(e.target.value)}
                           className="w-full px-4 py-3 border-2 border-border rounded-xl bg-input-background focus:outline-none focus:border-secondary transition-colors"
                         />
                       </div>
                       <div>
                         <label htmlFor="timezone" className="block mb-2 text-sm">Timezone</label>
-                        <select
+                        <input
                           id="timezone"
+                          type="text"
+                          value={timezone}
+                          onChange={(e) => setTimezone(e.target.value)}
+                          placeholder="e.g. PST, EST, UTC"
                           className="w-full px-4 py-3 border-2 border-border rounded-xl bg-input-background focus:outline-none focus:border-secondary transition-colors"
-                        >
-                          <option>PST (GMT-8)</option>
-                          <option>EST (GMT-5)</option>
-                          <option>UTC (GMT+0)</option>
-                        </select>
+                        />
                       </div>
                     </div>
 
                     <button
                       type="submit"
-                      className="px-6 py-3 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold hover:shadow-lg transition-all"
+                      disabled={saving}
+                      className="px-6 py-3 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold hover:shadow-lg transition-all disabled:opacity-50 flex items-center gap-2"
                     >
-                      Save Changes
+                      {saving && <Loader2 size={16} className="animate-spin" />}
+                      {saving ? 'Saving...' : 'Save Changes'}
                     </button>
                   </form>
                 </div>
@@ -174,7 +257,7 @@ export default function Profile() {
                 <div className="px-6 py-4 border-b border-border bg-gradient-to-r from-accent/5 to-primary/5">
                   <h3 className="mb-0 flex items-center gap-2">
                     <Palette size={20} className="text-accent" />
-                    Preferences
+                    Preferences {savingPrefs && <Loader2 size={14} className="animate-spin text-muted-foreground" />}
                   </h3>
                 </div>
                 <div className="p-6 space-y-5">
@@ -191,8 +274,8 @@ export default function Profile() {
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={notifications.email}
-                        onChange={(e) => setNotifications({ ...notifications, email: e.target.checked })}
+                        checked={prefs?.email_notifications ?? true}
+                        onChange={(e) => handleTogglePref('email_notifications', e.target.checked)}
                         className="sr-only peer"
                       />
                       <div className="w-11 h-6 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-secondary"></div>
@@ -212,8 +295,8 @@ export default function Profile() {
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={notifications.voice}
-                        onChange={(e) => setNotifications({ ...notifications, voice: e.target.checked })}
+                        checked={prefs?.ai_tutor_voice_enabled ?? true}
+                        onChange={(e) => handleTogglePref('ai_tutor_voice_enabled', e.target.checked)}
                         className="sr-only peer"
                       />
                       <div className="w-11 h-6 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-secondary"></div>
@@ -233,8 +316,8 @@ export default function Profile() {
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={notifications.reminders}
-                        onChange={(e) => setNotifications({ ...notifications, reminders: e.target.checked })}
+                        checked={prefs?.study_reminders ?? true}
+                        onChange={(e) => handleTogglePref('study_reminders', e.target.checked)}
                         className="sr-only peer"
                       />
                       <div className="w-11 h-6 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-secondary"></div>
@@ -252,27 +335,27 @@ export default function Profile() {
                   </h3>
                 </div>
                 <div className="p-6 space-y-4">
-                  <button className="w-full flex items-center justify-between p-4 bg-muted/30 rounded-xl hover:bg-muted/50 transition-colors text-left">
+                  <button className="w-full flex items-center justify-between p-4 bg-muted/30 rounded-xl hover:bg-muted/50 transition-colors text-left opacity-60 cursor-not-allowed" disabled title="Coming soon">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-lg bg-secondary/10 flex items-center justify-center">
                         <Lock size={20} className="text-secondary" />
                       </div>
                       <div>
                         <h5 className="mb-1">Change Password</h5>
-                        <p className="text-xs text-muted-foreground">Update your password</p>
+                        <p className="text-xs text-muted-foreground">Coming soon</p>
                       </div>
                     </div>
                     <span className="text-secondary">→</span>
                   </button>
 
-                  <button className="w-full flex items-center justify-between p-4 bg-muted/30 rounded-xl hover:bg-muted/50 transition-colors text-left">
+                  <button className="w-full flex items-center justify-between p-4 bg-muted/30 rounded-xl hover:bg-muted/50 transition-colors text-left opacity-60 cursor-not-allowed" disabled title="Coming soon">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
                         <Globe size={20} className="text-accent" />
                       </div>
                       <div>
                         <h5 className="mb-1">Active Sessions</h5>
-                        <p className="text-xs text-muted-foreground">Manage your active devices</p>
+                        <p className="text-xs text-muted-foreground">Coming soon</p>
                       </div>
                     </div>
                     <span className="text-accent">→</span>
@@ -281,65 +364,35 @@ export default function Profile() {
               </div>
             </div>
 
-            {/* Achievements Sidebar */}
+            {/* Sidebar — Streak & Stats */}
             <div className="space-y-6">
-              {/* Achievements */}
               <div className="bg-card rounded-2xl shadow-sm border border-border overflow-hidden">
                 <div className="px-6 py-4 border-b border-border bg-gradient-to-r from-accent/5 to-secondary/5">
                   <h3 className="mb-0 flex items-center gap-2">
                     <Award size={20} className="text-accent" />
-                    Achievements
+                    Stats
                   </h3>
                 </div>
-                <div className="p-4 space-y-3 max-h-[600px] overflow-y-auto">
-                  {achievements.map((achievement, index) => (
-                    <div
-                      key={index}
-                      className={`rounded-xl p-4 transition-all ${achievement.earned
-                        ? 'bg-gradient-to-br from-accent/10 to-secondary/10 border-2 border-accent/30 shadow-sm'
-                        : 'bg-muted/30 border-2 border-transparent opacity-60'
-                        }`}
-                    >
-                      <div className="flex items-start gap-3">
-                        <span className="text-3xl">{achievement.icon}</span>
-                        <div className="flex-1">
-                          <h5 className="mb-1 text-sm">{achievement.title}</h5>
-                          <p className="text-xs text-muted-foreground">{achievement.description}</p>
-                        </div>
-                        {achievement.earned && (
-                          <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-white text-xs flex-shrink-0">
-                            ✓
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Learning Stats */}
-              <div className="bg-gradient-to-br from-primary to-secondary rounded-2xl p-6 text-white shadow-xl">
-                <h4 className="mb-4 text-white">Weekly Activity</h4>
-                <div className="space-y-3">
-                  {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, index) => (
-                    <div key={day} className="flex items-center gap-3">
-                      <span className="text-sm w-8">{day}</span>
-                      <div className="flex-1 h-2 bg-white/20 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-white/80 rounded-full transition-all"
-                          style={{ width: `${[80, 60, 90, 70, 0, 0, 40][index]}%` }}
-                        />
-                      </div>
-                      <span className="text-sm font-mono w-10 text-right">
-                        {[2.5, 1.8, 3.2, 2.1, 0, 0, 1.2][index]}h
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-4 pt-4 border-t border-white/20">
+                <div className="p-6 space-y-4">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm opacity-90">Total This Week</span>
-                    <span className="text-xl font-bold">11.8h</span>
+                    <span className="text-sm text-muted-foreground">Current Streak</span>
+                    <span className="font-bold">{studentProfile?.current_streak ?? 0} days</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Longest Streak</span>
+                    <span className="font-bold">{studentProfile?.longest_streak ?? 0} days</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Total Learning</span>
+                    <span className="font-bold">{studentProfile?.total_minutes_learned ?? 0} min</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Daily Goal</span>
+                    <span className="font-bold">{studentProfile?.daily_goal_minutes ?? 30} min</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Messages Sent</span>
+                    <span className="font-bold">{studentProfile?.messages_count ?? 0}</span>
                   </div>
                 </div>
               </div>

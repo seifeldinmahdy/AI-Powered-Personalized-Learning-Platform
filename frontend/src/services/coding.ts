@@ -33,8 +33,7 @@ export interface EvaluateCodeRequest {
 }
 
 export interface EvaluateCodeResponse {
-    grade: number | string;
-    passed: boolean;
+    status: "Pass" | "Needs Work" | string;
     feedback: string;
     [key: string]: unknown; // allow extra fields from the AI
 }

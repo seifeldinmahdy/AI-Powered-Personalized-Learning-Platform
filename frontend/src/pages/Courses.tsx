@@ -2,7 +2,9 @@ import { Header } from '../components/Header';
 import { Search, Filter, BookOpen, Clock, Star, ChevronRight, Loader2, GraduationCap } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { getCourses, Course } from '../services/courses';
-import { Link, useSearchParams } from 'react-router';
+import { getEnrollments, enroll } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
+import { Link, useSearchParams, useNavigate } from 'react-router';
 
 const DIFFICULTY_OPTIONS = ['All', 'Beginner', 'Intermediate', 'Advanced'];
 const SORT_OPTIONS = [
@@ -14,12 +16,17 @@ const SORT_OPTIONS = [
 
 export default function Courses() {
     const [searchParams] = useSearchParams();
+    const navigate = useNavigate();
+    const { isAuthenticated } = useAuth();
     const [courses, setCourses] = useState<Course[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState(searchParams.get('search') || '');
     const [difficulty, setDifficulty] = useState('All');
     const [ordering, setOrdering] = useState('-created_at');
     const [totalCount, setTotalCount] = useState(0);
+    const [enrollmentMap, setEnrollmentMap] = useState<Map<number, { lessonId: number | null }>>(new Map());
+    const [enrollingId, setEnrollingId] = useState<number | null>(null);
+    const enrolledCourseIds = new Set(enrollmentMap.keys());
 
     const fetchCourses = useCallback(async () => {
         setLoading(true);
@@ -42,6 +49,37 @@ export default function Courses() {
         const timeout = setTimeout(fetchCourses, 300);
         return () => clearTimeout(timeout);
     }, [fetchCourses]);
+
+    // Fetch enrollment map: courseId -> { lessonId }
+    useEffect(() => {
+        if (!isAuthenticated) return;
+        getEnrollments()
+            .then(({ data: raw }) => {
+                const list: Array<{ course: number; current_lesson: number | null }> =
+                    Array.isArray(raw) ? raw : raw.results ?? [];
+                const map = new Map(list.map((e) => [e.course, { lessonId: e.current_lesson }]));
+                setEnrollmentMap(map);
+            })
+            .catch(() => {});
+    }, [isAuthenticated]);
+
+    const handleEnroll = async (courseId: number) => {
+        if (!isAuthenticated) {
+            navigate('/login');
+            return;
+        }
+        setEnrollingId(courseId);
+        try {
+            const { data } = await enroll(courseId);
+            const lessonId: number | null = data.current_lesson;
+            setEnrollmentMap((prev) => new Map(prev).set(courseId, { lessonId }));
+            navigate(lessonId ? `/course/${courseId}/lesson/${lessonId}` : '/dashboard');
+        } catch {
+            alert('Failed to enroll. You may already be enrolled.');
+        } finally {
+            setEnrollingId(null);
+        }
+    };
 
     const difficultyColor = (d: string) => {
         switch (d) {
@@ -192,13 +230,29 @@ export default function Courses() {
                                         )}
 
                                         {/* CTA */}
-                                        <Link
-                                            to={`/course/${course.id}/lesson/1`}
-                                            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold text-sm hover:shadow-lg transition-all group-hover:shadow-md"
-                                        >
-                                            <span>View Course</span>
-                                            <ChevronRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
-                                        </Link>
+                                        {enrolledCourseIds.has(course.id) ? (
+                                            <Link
+                                                to={(() => {
+                                                    const lessonId = enrollmentMap.get(course.id)?.lessonId;
+                                                    return lessonId
+                                                        ? `/course/${course.id}/lesson/${lessonId}`
+                                                        : '/dashboard';
+                                                })()}
+                                                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold text-sm hover:shadow-lg transition-all group-hover:shadow-md"
+                                            >
+                                                <span>Continue Learning</span>
+                                                <ChevronRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
+                                            </Link>
+                                        ) : (
+                                            <button
+                                                onClick={() => handleEnroll(course.id)}
+                                                disabled={enrollingId === course.id}
+                                                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-primary to-secondary text-white rounded-xl font-semibold text-sm hover:shadow-lg transition-all disabled:opacity-50"
+                                            >
+                                                <span>{enrollingId === course.id ? 'Enrolling...' : 'Enroll Now'}</span>
+                                                <ChevronRight size={16} />
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             ))}

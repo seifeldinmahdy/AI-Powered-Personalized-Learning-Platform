@@ -1,11 +1,11 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate
-from .models import User
-from .serializers import UserSerializer
+from .models import User, StudentProfile, UserPreferences
+from .serializers import UserSerializer, StudentProfileSerializer, UserPreferencesSerializer
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
@@ -79,33 +79,70 @@ class UserViewSet(viewsets.ModelViewSet):
 
     # ---------------------------------------------------------
     # 3. Profile Action (GET / PATCH)
-    # Endpoint: GET  /api/users/me/?user_id=<id>
+    # Endpoint: GET  /api/users/me/
     #           PATCH /api/users/me/
     # ---------------------------------------------------------
-    @action(detail=False, methods=['get', 'patch'], permission_classes=[AllowAny])
+    @action(detail=False, methods=['get', 'patch'], permission_classes=[permissions.IsAuthenticated])
     def me(self, request):
+        user = request.user
+
         if request.method == 'GET':
-            user_id = request.query_params.get('user_id')
-            if not user_id:
-                return Response({'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-            try:
-                user = User.objects.get(id=user_id)
-            except User.DoesNotExist:
-                return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
             serializer = UserSerializer(user)
             return Response(serializer.data)
 
         # PATCH — update profile
-        user_id = request.data.get('user_id')
-        if not user_id:
-            return Response({'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-
         serializer = UserSerializer(user, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    # ---------------------------------------------------------
+    # 4. Student Profile (GET / PATCH)
+    # Endpoint: GET/PATCH /api/users/student-profile/
+    # ---------------------------------------------------------
+    @action(detail=False, methods=['get', 'patch'], url_path='student-profile',
+            permission_classes=[permissions.IsAuthenticated])
+    def student_profile(self, request):
+        profile, _ = StudentProfile.objects.get_or_create(user=request.user)
+
+        if request.method == 'GET':
+            serializer = StudentProfileSerializer(profile)
+            return Response(serializer.data)
+
+        serializer = StudentProfileSerializer(profile, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    # ---------------------------------------------------------
+    # 5. User Preferences (GET / PATCH)
+    # Endpoint: GET/PATCH /api/users/preferences/
+    # ---------------------------------------------------------
+    @action(detail=False, methods=['get', 'patch'],
+            permission_classes=[permissions.IsAuthenticated])
+    def preferences(self, request):
+        prefs, _ = UserPreferences.objects.get_or_create(user=request.user)
+
+        if request.method == 'GET':
+            serializer = UserPreferencesSerializer(prefs)
+            return Response(serializer.data)
+
+        serializer = UserPreferencesSerializer(prefs, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    # ---------------------------------------------------------
+    # 6. Logout Action
+    # Endpoint: POST /api/users/logout/
+    # ---------------------------------------------------------
+    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def logout(self, request):
+        try:
+            request.user.auth_token.delete()
+        except Token.DoesNotExist:
+            pass
+        return Response({'status': 'logged out'}, status=status.HTTP_200_OK)

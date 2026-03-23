@@ -196,31 +196,20 @@ export default function PracticeArea() {
                             <div className="rounded-xl border border-border overflow-hidden">
                                 {/* Status bar */}
                                 <div
-                                    className={`px-4 py-3 flex items-center justify-between ${feedback.passed
+                                    className={`px-4 py-3 flex items-center gap-2 ${feedback.status === "Pass"
                                         ? "bg-green-50 border-b border-green-200"
                                         : "bg-red-50 border-b border-red-200"
                                         }`}
                                 >
-                                    <div className="flex items-center gap-2">
-                                        {feedback.passed ? (
-                                            <CheckCircle2 size={20} className="text-green-600" />
-                                        ) : (
-                                            <XCircle size={20} className="text-red-600" />
-                                        )}
-                                        <span
-                                            className={`font-semibold text-sm ${feedback.passed ? "text-green-700" : "text-red-700"
-                                                }`}
-                                        >
-                                            {feedback.passed ? "Passed" : "Not Passed"}
-                                        </span>
-                                    </div>
+                                    {feedback.status === "Pass" ? (
+                                        <CheckCircle2 size={20} className="text-green-600" />
+                                    ) : (
+                                        <XCircle size={20} className="text-red-600" />
+                                    )}
                                     <span
-                                        className={`px-3 py-1 rounded-lg text-xs font-bold ${feedback.passed
-                                            ? "bg-green-200 text-green-800"
-                                            : "bg-red-200 text-red-800"
-                                            }`}
+                                        className={`font-semibold text-sm ${feedback.status === "Pass" ? "text-green-700" : "text-red-700"}`}
                                     >
-                                        Grade: {feedback.grade}
+                                        {feedback.status === "Pass" ? "Passed" : "Needs Work"}
                                     </span>
                                 </div>
 
