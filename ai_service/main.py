@@ -7,7 +7,7 @@ import logging
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import health, asr, tts, fer, ser
+from routers import health, asr, tts, fer, ser, tutor
 
 # Configure logging
 logging.basicConfig(
@@ -50,6 +50,11 @@ async def root():
             "ser_predict": "/ser/predict",
             "ser_predict_stream": "/ser/predict-stream",
             "ser_health": "/ser/health",
+            "tutor_start": "/tutor/start",
+            "tutor_continue": "/tutor/continue",
+            "tutor_ask": "/tutor/ask",
+            "tutor_status": "/tutor/status",
+            "tutor_health": "/tutor/health",
         }
     }
 
@@ -59,4 +64,5 @@ app.include_router(asr.router)
 app.include_router(tts.router)
 app.include_router(fer.router)
 app.include_router(ser.router)
+app.include_router(tutor.router)
 

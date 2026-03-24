@@ -12,6 +12,7 @@ import RequireAuth from "./components/RequireAuth";
 export const router = createBrowserRouter([
     // Public routes
     { path: "/login", Component: Login },
+    { path: "/test-tutor", lazy: () => import("./pages/TestTutor").then(m => ({ Component: m.default })) },
 
     // Student / User routes
     {

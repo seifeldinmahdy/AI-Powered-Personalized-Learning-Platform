@@ -2,7 +2,7 @@
 ASR Service using Whisper model for speech-to-text transcription.
 """
 
-import whisper
+
 import numpy as np
 import time
 import tempfile
@@ -24,6 +24,7 @@ class ASRService:
         Args:
             model_size: Size of Whisper model (tiny, base, small, medium, large)
         """
+        import whisper
         logger.info(f"Loading Whisper {model_size} model...")
         self.model = whisper.load_model(model_size)
         logger.info("Whisper model loaded successfully")
