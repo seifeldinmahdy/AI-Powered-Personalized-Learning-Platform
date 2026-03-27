@@ -96,19 +96,37 @@ def process_chunk(
     # ---- Agent 2: Visual Classifier (runs on raw chunk for richer signal) ----
     classification = classify_visual(chunk, model_path=classifier_model_path)
 
-    # ---- Agent 3: Visual Gate ----
-    visual_decision = should_render_visual(
-        classification, profile.composition_mode.value
-    )
-
+    # ---- Agent 3: Visual Gate & Fallback Generation ----
     visual = None
     template_id = None
     visual_params = {}
-    if visual_decision:
-        template_id = visual_decision["template_id"]
-        # LLM-based param generation (with deterministic fallback)
-        visual_params = generate_visual_params(template_id, bullets, title)
-        visual = VisualTemplate(template=template_id, params=visual_params)
+    
+    # Try the top 3 template candidates in order
+    for candidate in classification.get("top_3", []):
+        # Package raw candidate so should_render_visual can evaluate it honestly
+        candidate_classification = {
+            "template_id": candidate["template_id"],
+            "confidence": candidate["confidence"],
+            "category": classification.get("category", "none") # Proxy for gate
+        }
+        
+        visual_decision = should_render_visual(
+            candidate_classification, profile.composition_mode.value
+        )
+        
+        if visual_decision is not None:
+            attempted_template_id = visual_decision["template_id"]
+            
+            # Agent 3b: LLM-based param generation (with deterministic fallback)
+            # If the template is bar_chart or pie_chart, this might return None if it fails
+            attempted_params = generate_visual_params(attempted_template_id, bullets, title)
+            
+            if attempted_params is not None:
+                # Success! Use this template and break the fallback loop
+                template_id = attempted_template_id
+                visual_params = attempted_params
+                visual = VisualTemplate(template=template_id, params=visual_params)
+                break
 
     # ---- Agent 4: Code Extractor ----
     code_data = extract_code(chunk)

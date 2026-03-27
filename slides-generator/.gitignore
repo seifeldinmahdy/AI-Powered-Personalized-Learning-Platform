@@ -58,3 +58,9 @@ models/
 
 # Testing Cache
 .pytest_cache/
+
+# Evaluation & Audit Results
+results/
+
+# Jupyter Notebook
+.ipynb_checkpoints/

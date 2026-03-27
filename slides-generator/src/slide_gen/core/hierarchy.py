@@ -2,7 +2,7 @@
 Hierarchical Visual Template Classification — Category Definitions.
 
 Two-level hierarchy:
-  Level 1 (Category): data_structure, flow_diagram, comparison, chart, conceptual, none
+  Level 1 (Category): data_structure, flow_diagram, comparison, conceptual, none
   Level 2 (Template): specific template_id within each category
 
 Used by both training (train_classifier.py) and inference (visual_classifier.py).
@@ -17,19 +17,19 @@ from __future__ import annotations
 
 CATEGORY_HIERARCHY: dict[str, list[str]] = {
     "data_structure": [
-        "linear_chain", "binary_tree", "stack", "queue", "graph", "layers",
+        "linear_chain", "binary_tree", "stack", "queue", "graph",
     ],
     "flow_diagram": [
-        "flowchart", "process_flow", "cycle", "sequence",
+        "flowchart", "cycle",
     ],
     "comparison": [
-        "comparison", "venn", "grid",
+        "comparison", "grid",
     ],
     "chart": [
-        "bar_chart", "pie_chart", "line_chart", "timeline",
+        "bar_chart", "pie_chart",
     ],
     "conceptual": [
-        "concept_box", "info_card", "definition_box",
+        "concept_box",
     ],
     "none": [],
 }

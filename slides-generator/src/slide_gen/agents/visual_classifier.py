@@ -19,6 +19,7 @@ from slide_gen.core.hierarchy import (
     CATEGORY_LIST,
     CATEGORY_HIERARCHY,
     LEVEL2_LABELS,
+    TEMPLATE_TO_CATEGORY,
 )
 
 
@@ -184,43 +185,44 @@ def classify_visual(
     l1_model, l1_tokenizer, l1_labels = _load_level1(model_base)
     l1_result = _predict(l1_model, l1_tokenizer, l1_labels, text)
 
-    category = l1_result["label"]
-    l1_confidence = l1_result["confidence"]
+    # Step 2: Calculate Global Top 3 Templates
+    all_template_probs = {}
+    
+    # Evaluate the top 3 Level 1 categories to find the best overall templates
+    # (Multiplying Category Probability × Template Probability)
+    sorted_categories = sorted(l1_result["probabilities"].items(), key=lambda x: x[1], reverse=True)
+    
+    for cat, l1_prob in sorted_categories[:3]:
+        if cat == "none":
+            all_template_probs["none"] = l1_prob
+            continue
+            
+        l2_data = _load_level2(model_base, cat)
+        if l2_data is not None:
+            l2_model, l2_tokenizer, l2_labels = l2_data
+            l2_result = _predict(l2_model, l2_tokenizer, l2_labels, text)
+            for tmpl, l2_prob in l2_result["probabilities"].items():
+                all_template_probs[tmpl] = l1_prob * l2_prob
+        else:
+            # Fallback for categories without Level 2 models (like 'conceptual')
+            templates = CATEGORY_HIERARCHY.get(cat, [])
+            default_tmpl = templates[0] if templates else "concept_box"
+            all_template_probs[default_tmpl] = l1_prob
 
-    # If "none", no visual needed
-    if category == "none":
-        return {
-            "template_id": "none",
-            "category": "none",
-            "confidence": l1_confidence,
-            "l1_confidence": l1_confidence,
-            "l2_confidence": 1.0,
-            "probabilities": l1_result["probabilities"],
-        }
-
-    # Step 2: Level 2 — Template prediction within category
-    l2_data = _load_level2(model_base, category)
-
-    if l2_data is not None:
-        l2_model, l2_tokenizer, l2_labels = l2_data
-        l2_result = _predict(l2_model, l2_tokenizer, l2_labels, text)
-        template_id = l2_result["label"]
-        l2_confidence = l2_result["confidence"]
-    else:
-        # No Level 2 model — use first template in category as default
-        templates = CATEGORY_HIERARCHY.get(category, [])
-        template_id = templates[0] if templates else "concept_box"
-        l2_confidence = 1.0
-
-    # Step 3: Combined confidence
-    combined_confidence = l1_confidence * l2_confidence
+    # Sort all template probabilities descending
+    top_templates = sorted(all_template_probs.items(), key=lambda x: x[1], reverse=True)
+    top_3 = [{"template_id": k, "confidence": round(v, 4)} for k, v in top_templates[:3]]
+    
+    # The absolute best template is the #1 item
+    template_id = top_templates[0][0]
+    combined_confidence = top_templates[0][1]
+    category = TEMPLATE_TO_CATEGORY.get(template_id, "none")
 
     return {
         "template_id": template_id,
         "category": category,
         "confidence": combined_confidence,
-        "l1_confidence": l1_confidence,
-        "l2_confidence": l2_confidence,
+        "top_3": top_3,
         "probabilities": l1_result["probabilities"],
     }
 

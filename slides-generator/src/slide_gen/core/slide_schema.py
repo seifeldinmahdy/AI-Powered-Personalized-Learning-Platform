@@ -110,12 +110,14 @@ class SlideInstruction(BaseModel):
 
 # List of valid template IDs for validation
 VALID_TEMPLATES = [
-    # Graphviz
-    "linear_chain", "binary_tree", "stack", "queue", "graph", "layers",
-    # Mermaid
-    "flowchart", "sequence", "cycle", "comparison", "timeline", "process_flow",
-    # Matplotlib
-    "bar_chart", "pie_chart", "grid", "line_chart", "venn",
-    # Fallback (for abstract concepts)
-    "concept_box", "info_card", "definition_box",
+    # Data Structures (Graphviz)
+    "linear_chain", "binary_tree", "stack", "queue", "graph",
+    # Flow Diagrams (Mermaid)
+    "flowchart", "cycle",
+    # Comparison
+    "comparison", "grid",
+    # Quantitative
+    "bar_chart", "pie_chart",
+    # Conceptual (Fallback)
+    "concept_box",
 ]

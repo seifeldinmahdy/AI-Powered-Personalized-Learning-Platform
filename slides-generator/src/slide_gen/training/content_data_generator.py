@@ -131,15 +131,15 @@ def validate_content_output(
         if not isinstance(b, dict) or "text" not in b:
             return False, "invalid_bullet_format"
 
-    # Rule 5: Bullet count by composition mode
+    # Rule 5: Bullet count by composition mode (relaxed)
     count = len(bullets)
     mode = profile.composition_mode
 
     if mode == CompositionMode.VISUAL_HEAVY:
-        if count > 3:
+        if count > 4:
             return False, "visual_heavy_too_many_bullets"
     elif mode == CompositionMode.TEXT_HEAVY:
-        if count < 4:
+        if count < 3:
             return False, "text_heavy_too_few_bullets"
     elif mode == CompositionMode.BALANCED:
         if count < 2 or count > 5:
@@ -155,11 +155,7 @@ def validate_content_output(
         if len(b["text"].strip()) < 10:
             return False, "bullet_too_short"
 
-    # Rule 8: Highlight variety for 4+ bullets
-    if len(bullets) >= 4:
-        highlight_types = [b.get("highlight_type", "none") for b in bullets]
-        if len(set(highlight_types)) == 1:
-            return False, "no_highlight_variety"
+    # Rule 8: (REMOVED — highlight variety is nice but not worth rejecting data for)
 
     # Rule 9: Valid highlight types
     valid_highlights = {"none", "definition", "example", "key_concept", "attention", "code"}
@@ -181,9 +177,9 @@ def validate_content_output(
         if len(text) > 0 and code_chars / len(text) > 0.08:
             return False, "bullet_has_code"
 
-    # Rule 11: Definition validation
+    # Rule 11: Definition validation (relaxed to 3 max)
     definitions = [b for b in bullets if b.get("term")]
-    if len(definitions) > 2:
+    if len(definitions) > 3:
         return False, "too_many_definitions"
     for d in definitions:
         term = d["term"].strip()
@@ -217,16 +213,16 @@ CONTENT_ERROR_FEEDBACK = {
         "Example: {\"text\": \"Your point here\", \"highlight_type\": \"none\"}"
     ),
     "visual_heavy_too_many_bullets": (
-        "ERROR: Visual_Heavy mode should have 1-2 bullet points (max 3), but you included more. "
-        "Reduce to 2 concise bullet points."
+        "ERROR: Visual_Heavy mode should have 1-4 bullet points, but you included more. "
+        "Reduce to 2-3 concise bullet points."
     ),
     "text_heavy_too_few_bullets": (
-        "ERROR: Text_Heavy mode should have 4-6 bullet points, but you only included a few. "
+        "ERROR: Text_Heavy mode should have 3-6 bullet points, but you only included a few. "
         "Add more detailed bullet points to explain the concept thoroughly."
     ),
     "balanced_wrong_bullet_count": (
-        "ERROR: Balanced mode should have 2-4 bullet points. "
-        "Adjust your bullets to have exactly 3 bullet points."
+        "ERROR: Balanced mode should have 2-5 bullet points. "
+        "Adjust your bullets to have 3-4 bullet points."
     ),
     "duplicate_bullets": (
         "ERROR: Your bullets have duplicate text. "
@@ -235,10 +231,6 @@ CONTENT_ERROR_FEEDBACK = {
     "bullet_too_short": (
         "ERROR: One or more bullets are too short (less than 10 characters). "
         "Each bullet must have meaningful content, not just a few words."
-    ),
-    "no_highlight_variety": (
-        "ERROR: You have 4+ bullets but all have the same highlight_type. "
-        "Use a MIX of highlight types: definition, example, key_concept, none."
     ),
     "invalid_highlight_type": (
         "ERROR: Invalid highlight_type. Valid types are: none, definition, "
@@ -341,7 +333,7 @@ class ContentDataGenerator:
         }
 
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=120)
+            response = requests.post(url, json=payload, headers=headers, timeout=180)
             response.raise_for_status()
             result = response.json()
             return result.get("response", "")
@@ -405,6 +397,7 @@ class ContentDataGenerator:
 
             if not response_text:
                 last_error = "no_response"
+                self._track_error("no_response")
                 continue
 
             # Parse JSON
@@ -425,6 +418,8 @@ class ContentDataGenerator:
             if not is_valid:
                 last_error = error_code
                 self._track_error(error_code)
+                if self.stats.get("_show_errors", False):
+                    tqdm.write(f"    ⚠ Validation failed: {error_code} (attempt {attempt+1}/{self.max_retries})")
                 continue
 
             # Success! Format as T5 training example
@@ -508,12 +503,23 @@ class ContentDataGenerator:
             if checkpoint_path.exists():
                 checkpoint_path.unlink()
 
+        # Load error counts from checkpoint if available
+        resumed_error_counts = {}
+        if resume and checkpoint_path.exists():
+            try:
+                with open(checkpoint_path, "r") as f:
+                    ckpt = json.loads(f.read())
+                resumed_error_counts = ckpt.get("error_counts", {})
+            except Exception:
+                pass
+
         # Reset stats (accumulate from checkpoint)
         self.stats = {
             "generated": already_generated,
             "failed": already_failed,
             "discarded_chunk": discarded,
-            "error_counts": {},
+            "error_counts": resumed_error_counts,
+            "_show_errors": True,  # Enable real-time error logging
         }
 
         print(f"\n📊 Chunk Quality Control:")
@@ -624,8 +630,8 @@ class ContentDataGenerator:
         self._print_summary(output_path, valid_chunks, variations)
         return self.stats["generated"], len(valid_chunks)
 
-    @staticmethod
     def _save_checkpoint(
+        self,
         path: Path,
         chunk_idx: int,
         var_idx: int,
@@ -633,12 +639,15 @@ class ContentDataGenerator:
         failed: int,
         completed_iterations: int,
     ):
-        """Save progress checkpoint to disk."""
+        """Save progress checkpoint to disk (including error_counts)."""
+        # Filter out internal keys starting with _
+        error_counts = {k: v for k, v in self.stats.get("error_counts", {}).items()}
         checkpoint = {
             "chunk_idx": chunk_idx,
             "var_idx": var_idx,
             "generated": generated,
             "failed": failed,
+            "error_counts": error_counts,
             "completed_iterations": completed_iterations,
         }
         with open(path, "w") as f:
@@ -649,7 +658,9 @@ class ContentDataGenerator:
         total_iterations = len(valid_chunks) * len(variations)
         generated = self.stats["generated"]
         failed = self.stats["failed"]
-        success_rate = generated / max(total_iterations, 1) * 100
+        processed = generated + failed
+        success_rate_processed = generated / max(processed, 1) * 100
+        progress_pct = processed / max(total_iterations, 1) * 100
 
         print(f"\n{'=' * 70}")
         print("📊 CONTENT DATA GENERATION ANALYTICS")
@@ -659,10 +670,11 @@ class ContentDataGenerator:
         print(f"\n📋 Overview:")
         print(f"   Valid chunks:          {len(valid_chunks)}")
         print(f"   Variations per chunk:  {len(variations)}")
-        print(f"   Total attempts:        {total_iterations}")
+        print(f"   Total planned:         {total_iterations}")
+        print(f"   Processed:             {processed} ({progress_pct:.1f}%)")
         print(f"   Successfully generated: {generated}")
         print(f"   Failed:                {failed}")
-        print(f"   Success rate:          {success_rate:.1f}%")
+        print(f"   Success rate:          {success_rate_processed:.1f}% (of processed)")
 
         # ── Read generated data for detailed analytics ──
         if output_path.exists() and generated > 0:
@@ -770,8 +782,8 @@ class ContentDataGenerator:
 
                 # ── Data Quality Warnings ──
                 warnings = []
-                if success_rate < 80:
-                    warnings.append(f"⚠️  Low success rate ({success_rate:.1f}%) — consider relaxing validation or improving prompts")
+                if success_rate_processed < 70:
+                    warnings.append(f"⚠️  Low success rate ({success_rate_processed:.1f}% of processed) — consider relaxing validation or improving prompts")
                 if any(count < len(samples) * 0.05 for count in mastery_counts.values()):
                     underrep = [m for m, c in mastery_counts.items() if c < len(samples) * 0.05]
                     warnings.append(f"⚠️  Underrepresented mastery levels: {underrep}")

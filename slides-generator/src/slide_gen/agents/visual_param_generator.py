@@ -70,13 +70,6 @@ TEMPLATE_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "example": {"nodes": ["A", "B", "C", "D"], "edges": [[0, 1], [1, 2], [2, 3], [3, 0]], "directed": True},
     },
-    "layers": {
-        "description": "Layered architecture diagram showing abstraction levels",
-        "schema": {
-            "layers": "list of strings — layer names from top to bottom",
-        },
-        "example": {"layers": ["User Interface", "Business Logic", "Data Access", "Database"]},
-    },
 
     # --- Mermaid Diagrams ---
     "flowchart": {
@@ -99,22 +92,6 @@ TEMPLATE_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
                 {"from": "B", "to": "D", "label": "No"},
             ],
             "direction": "TD",
-        },
-    },
-    "sequence": {
-        "description": "A sequence diagram showing message exchanges between actors",
-        "schema": {
-            "actors": "list of strings — participant names",
-            "messages": "list of objects with {from: string, to: string, text: string, type: 'solid'|'dashed'}",
-        },
-        "example": {
-            "actors": ["Client", "Server", "Database"],
-            "messages": [
-                {"from": "Client", "to": "Server", "text": "HTTP Request", "type": "solid"},
-                {"from": "Server", "to": "Database", "text": "Query", "type": "solid"},
-                {"from": "Database", "to": "Server", "text": "Results", "type": "dashed"},
-                {"from": "Server", "to": "Client", "text": "Response", "type": "dashed"},
-            ],
         },
     },
     "cycle": {
@@ -140,31 +117,8 @@ TEMPLATE_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
             "right_items": ["O(1) insertion", "Dynamic size", "Extra memory for pointers"],
         },
     },
-    "timeline": {
-        "description": "A timeline showing events in chronological order",
-        "schema": {
-            "title": "string — timeline title",
-            "events": "list of objects with {time: string, description: string}",
-        },
-        "example": {
-            "title": "Python History",
-            "events": [
-                {"time": "1991", "description": "Python 1.0 released"},
-                {"time": "2000", "description": "Python 2.0 released"},
-                {"time": "2008", "description": "Python 3.0 released"},
-            ],
-        },
-    },
-    "process_flow": {
-        "description": "A simple sequential process: step1 → step2 → step3",
-        "schema": {
-            "steps": "list of strings — sequential process steps",
-            "direction": "string — 'LR' (left-right) or 'TD' (top-down), default 'LR'",
-        },
-        "example": {"steps": ["Input Data", "Validate", "Process", "Output"], "direction": "LR"},
-    },
 
-    # --- Matplotlib Charts ---
+    # --- Charts (Quantitative) ---
     "bar_chart": {
         "description": "A bar chart comparing categories with numerical values",
         "schema": {
@@ -184,39 +138,6 @@ TEMPLATE_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
             "title": "string — chart title",
         },
         "example": {"labels": ["Stack", "Heap", "Code"], "values": [30, 50, 20], "title": "Memory Layout"},
-    },
-    "grid": {
-        "description": "A data grid/table with rows and columns",
-        "schema": {
-            "data": "list of lists — 2D array of cell values",
-            "col_labels": "list of strings — column headers (optional)",
-            "row_labels": "list of strings — row headers (optional)",
-            "title": "string — table title",
-        },
-        "example": {"data": [["O(1)", "O(n)"], ["O(n)", "O(1)"]], "col_labels": ["Access", "Insert"], "row_labels": ["Array", "LinkedList"], "title": "Time Complexity"},
-    },
-    "line_chart": {
-        "description": "A line chart showing trends over a continuous axis",
-        "schema": {
-            "x_values": "list of numbers/strings — x-axis points",
-            "y_values": "list of numbers — y-axis values",
-            "title": "string — chart title",
-            "xlabel": "string — x-axis label",
-            "ylabel": "string — y-axis label",
-        },
-        "example": {"x_values": [1, 2, 4, 8, 16], "y_values": [1, 2, 4, 8, 16], "title": "Linear Growth", "xlabel": "Input Size", "ylabel": "Time"},
-    },
-    "venn": {
-        "description": "A Venn diagram showing set relationships and overlap",
-        "schema": {
-            "set_a_label": "string — label for set A",
-            "set_b_label": "string — label for set B",
-            "set_a_only": "string — what's unique to A",
-            "set_b_only": "string — what's unique to B",
-            "intersection": "string — what A and B share",
-            "title": "string — diagram title",
-        },
-        "example": {"set_a_label": "Python", "set_b_label": "JavaScript", "set_a_only": "Indentation syntax", "set_b_only": "Browser runtime", "intersection": "Dynamic typing", "title": "Language Comparison"},
     },
 
     # --- Fallback ---
@@ -298,7 +219,11 @@ def generate_visual_params(
         if validated:
             return validated
 
-    # Fallback: generate basic params deterministically
+    # If the LLM failed to generate a chart, drop the visual entirely.
+    if template_id in ("bar_chart", "pie_chart"):
+        return None
+
+    # Fallback: generate basic params deterministically for text-based diagrams
     return _deterministic_fallback(template_id, bullets, title)
 
 
@@ -411,55 +336,18 @@ def _deterministic_fallback(
             "left_items": bullets[:mid] if mid > 0 else bullets[:1],
             "right_items": bullets[mid:] if mid > 0 else bullets[1:],
         }
-    elif template_id in ("process_flow",):
-        return {"steps": bullets, "direction": "LR"}
-    elif template_id == "timeline":
-        return {
-            "title": title,
-            "events": [{"time": f"Step {i+1}", "description": b} for i, b in enumerate(bullets)],
-        }
     elif template_id in ("stack", "queue"):
         return {"items": bullets}
     elif template_id in ("linear_chain", "cycle"):
         return {"nodes": bullets}
-    elif template_id == "layers":
-        return {"layers": bullets}
     elif template_id == "flowchart":
         nodes = [{"id": chr(65 + i), "label": b[:30], "type": "box"} for i, b in enumerate(bullets)]
         edges = [{"from": chr(65 + i), "to": chr(66 + i)} for i in range(len(bullets) - 1)]
         return {"nodes": nodes, "edges": edges, "direction": "TD"}
-    elif template_id == "sequence":
-        return {
-            "actors": ["Actor A", "Actor B"],
-            "messages": [{"from": "Actor A", "to": "Actor B", "text": b[:30], "type": "solid"} for b in bullets],
-        }
-    elif template_id in ("bar_chart", "pie_chart"):
-        return {
-            "labels": [b[:20] for b in bullets],
-            "values": [100 // max(len(bullets), 1)] * len(bullets),
-            "title": title,
-        }
-    elif template_id == "line_chart":
-        return {
-            "x_values": list(range(1, len(bullets) + 1)),
-            "y_values": list(range(1, len(bullets) + 1)),
-            "title": title,
-            "xlabel": "X",
-            "ylabel": "Y",
-        }
     elif template_id == "grid":
         return {
             "data": [[b] for b in bullets],
             "col_labels": ["Content"],
-            "title": title,
-        }
-    elif template_id == "venn":
-        return {
-            "set_a_label": bullets[0][:20] if len(bullets) > 0 else "A",
-            "set_b_label": bullets[1][:20] if len(bullets) > 1 else "B",
-            "set_a_only": bullets[0] if len(bullets) > 0 else "A only",
-            "set_b_only": bullets[1] if len(bullets) > 1 else "B only",
-            "intersection": bullets[2] if len(bullets) > 2 else "Shared",
             "title": title,
         }
     else:
