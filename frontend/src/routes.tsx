@@ -24,7 +24,18 @@ export const router = createBrowserRouter([
         children: [
             { path: "/", element: <Navigate to="/dashboard" replace /> },
             { path: "dashboard", Component: Dashboard },
-            { path: "courses", lazy: () => import("./pages/Courses").then(m => ({ Component: m.default })) },
+            {
+                path: "courses",
+                lazy: () => import("./pages/Courses").then(m => ({ Component: m.default })),
+            },
+            {
+                path: "courses/:courseId",
+                lazy: () => import("./pages/CourseDetail").then(m => ({ Component: m.default })),
+            },
+            {
+                path: "courses/:courseId/assessment",
+                lazy: () => import("./pages/Assessment").then(m => ({ Component: m.default })),
+            },
             { path: "practice", Component: PracticeArea },
             { path: "profile", Component: Profile },
             { path: "course/:courseId/lesson/:lessonId", Component: LiveSession },
@@ -40,11 +51,6 @@ export const router = createBrowserRouter([
         ),
         children: [
             { path: "admin", Component: AdminDashboard },
-            // Future admin sub-pages go here:
-            // { path: "admin/courses", Component: AdminCourses },
-            // { path: "admin/students", Component: AdminStudents },
-            // { path: "admin/analytics", Component: AdminAnalytics },
-            // { path: "admin/settings", Component: AdminSettings },
         ],
     },
 

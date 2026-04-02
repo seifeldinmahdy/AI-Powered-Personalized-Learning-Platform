@@ -4,13 +4,18 @@ from .models import Course, Module, Lesson, Slide, CodeChallenge, Enrollment
 
 class CourseSerializer(serializers.ModelSerializer):
     instructor_name = serializers.ReadOnlyField(source="instructor.username")
+    total_lessons_count = serializers.SerializerMethodField()
+
+    def get_total_lessons_count(self, obj):
+        from .models import Lesson
+        return Lesson.objects.filter(module__course=obj).count()
 
     class Meta:
         model = Course
         fields = [
             "id", "title", "description", "instructor", "instructor_name",
             "difficulty", "status", "tags", "is_published", "price",
-            "total_lessons_count", "avg_rating", "created_at",
+            "total_lessons_count", "avg_rating", "created_at", "syllabus",
         ]
         read_only_fields = ["id", "created_at"]
 

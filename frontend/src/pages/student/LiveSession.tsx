@@ -1,11 +1,10 @@
 import { Header } from '../../components/Header';
-import { CodePanel, type CodePanelChallenge } from '../../components/CodePanel';
 import { SlidesViewer } from '../../components/SlidesViewer';
 import { CompactTutor } from '../../components/CompactTutor';
 import { SessionControls } from '../../components/SessionControls';
 import { useParams, useNavigate } from 'react-router';
 import { useState, useEffect, useCallback } from 'react';
-import { getLesson, getModules, type LessonDetail } from '../../services/lessons';
+import { getLesson, getModules, getLessons, type LessonDetail, type Lesson } from '../../services/lessons';
 import { getEnrollments } from '../../services/api';
 import {
   getLessonCompletions,
@@ -13,6 +12,7 @@ import {
   markLessonComplete,
 } from '../../services/progress';
 import { Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function LiveSession() {
   const { courseId, lessonId } = useParams();
@@ -25,6 +25,9 @@ export default function LiveSession() {
   const [moduleTitle, setModuleTitle] = useState('');
   const [courseTitle, setCourseTitle] = useState('');
   const [isCompleting, setIsCompleting] = useState(false);
+
+  // Ordered list of all lessons in the course for prev/next navigation
+  const [allLessons, setAllLessons] = useState<Lesson[]>([]);
 
   useEffect(() => {
     if (!lessonId) return;
@@ -42,19 +45,33 @@ export default function LiveSession() {
         const lessonData = await getLesson(id);
         if (cancelled) return;
         setLesson(lessonData);
+        setCurrentSlide(0);
 
-        // Fetch module title for breadcrumb
         if (courseId) {
           try {
             const modules = await getModules(Number(courseId));
             const mod = modules.find((m) => m.id === lessonData.module);
             if (mod) setModuleTitle(mod.title);
+
+            // Build ordered lesson list across all modules
+            const lessonArrays = await Promise.all(
+              modules
+                .sort((a, b) => a.module_order - b.module_order)
+                .map((m) => getLessons(m.id))
+            );
+            const ordered = lessonArrays.flat().sort((a, b) => {
+              const aMod = modules.find((m) => m.id === a.module)?.module_order ?? 0;
+              const bMod = modules.find((m) => m.id === b.module)?.module_order ?? 0;
+              if (aMod !== bMod) return aMod - bMod;
+              return a.lesson_order - b.lesson_order;
+            });
+            if (!cancelled) setAllLessons(ordered);
           } catch {
             // non-critical
           }
         }
 
-        // Try to get course title from enrollment
+        // Get course title from enrollment
         try {
           const { data: raw } = await getEnrollments();
           const enrollments = Array.isArray(raw) ? raw : raw.results ?? [];
@@ -74,27 +91,46 @@ export default function LiveSession() {
     }
 
     load();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [lessonId, courseId]);
+
+  // Current lesson index in the full ordered list
+  const currentLessonIndex = allLessons.findIndex((l) => l.id === Number(lessonId));
+  const prevLesson = currentLessonIndex > 0 ? allLessons[currentLessonIndex - 1] : null;
+  const nextLesson = currentLessonIndex >= 0 && currentLessonIndex < allLessons.length - 1
+    ? allLessons[currentLessonIndex + 1]
+    : null;
+
+  const handlePrevSlideOrLesson = () => {
+    if (currentSlide > 0) {
+      setCurrentSlide((i) => i - 1);
+    } else if (prevLesson) {
+      navigate(`/course/${courseId}/lesson/${prevLesson.id}`);
+    }
+  };
+
+  const handleNextSlideOrLesson = () => {
+    if (lesson && currentSlide < lesson.slides.length - 1) {
+      setCurrentSlide((i) => i + 1);
+    } else if (nextLesson) {
+      navigate(`/course/${courseId}/lesson/${nextLesson.id}`);
+    }
+  };
 
   const handleComplete = useCallback(async () => {
     if (!lesson || !courseId) return;
     setIsCompleting(true);
     try {
-      // Find the enrollment for this course
       const { data: raw } = await getEnrollments();
       const enrollments = Array.isArray(raw) ? raw : raw.results ?? [];
       const enrollment = enrollments.find(
         (e: { course: number }) => String(e.course) === String(courseId),
       );
       if (!enrollment) {
-        alert('You are not enrolled in this course.');
+        toast.error('You are not enrolled in this course.');
         return;
       }
 
-      // Check if completion record exists
       const completions = await getLessonCompletions(enrollment.id);
       const existing = completions.find(
         (c) => String(c.lesson) === String(lesson.id),
@@ -111,23 +147,19 @@ export default function LiveSession() {
         await markLessonComplete(created.id);
       }
 
-      navigate('/dashboard');
+      // Go to next lesson if available, otherwise dashboard
+      if (nextLesson) {
+        navigate(`/course/${courseId}/lesson/${nextLesson.id}`);
+      } else {
+        toast.success('Course complete! Great work!');
+        navigate('/dashboard');
+      }
     } catch {
-      alert('Failed to mark lesson as complete.');
+      toast.error('Failed to mark lesson as complete. Please try again.');
     } finally {
       setIsCompleting(false);
     }
-  }, [lesson, courseId, navigate]);
-
-  // Build challenge for CodePanel from lesson data
-  const challenge: CodePanelChallenge | undefined =
-    lesson?.code_challenges?.[0]
-      ? {
-          problem_text: lesson.code_challenges[0].problem_text,
-          starter_code: lesson.code_challenges[0].starter_code,
-          hint_text: lesson.code_challenges[0].hint_text || undefined,
-        }
-      : undefined;
+  }, [lesson, courseId, navigate, nextLesson]);
 
   if (loading) {
     return (
@@ -151,23 +183,21 @@ export default function LiveSession() {
     );
   }
 
-  const headerTitle = courseTitle
-    ? `${courseTitle}: ${lesson.title}`
-    : lesson.title;
+  const headerTitle = courseTitle ? `${courseTitle}: ${lesson.title}` : lesson.title;
+
+  const totalSlides = Math.max(lesson.slides.length, 1);
+  const isLastSlideOfLastLesson = !nextLesson && currentSlide === totalSlides - 1;
 
   return (
     <>
       <Header
         title={headerTitle}
-        backLink="/dashboard"
-        backLabel="Dashboard"
+        backLink={`/courses/${courseId}`}
+        backLabel="Course"
       />
 
       <div className="flex-1 flex overflow-hidden gap-0">
-        {/* Left Panel - Code Editor (30%) */}
-        <CodePanel challenge={challenge} />
-
-        {/* Center - Slides Viewer (50%) */}
+        {/* Slides Viewer (65%) */}
         <SlidesViewer
           slides={lesson.slides}
           currentIndex={currentSlide}
@@ -176,20 +206,21 @@ export default function LiveSession() {
           onSlideChange={setCurrentSlide}
         />
 
-        {/* Right Panel - Compact Tutor (20%) */}
-        <CompactTutor />
+        {/* AI Tutor (35%) */}
+        <CompactTutor lessonTitle={lesson.title} />
       </div>
 
       {/* Bottom Controls */}
       <SessionControls
         currentSlide={currentSlide}
-        totalSlides={Math.max(lesson.slides.length, 1)}
-        onPrev={() => setCurrentSlide((i) => Math.max(0, i - 1))}
-        onNext={() =>
-          setCurrentSlide((i) => Math.min(lesson.slides.length - 1, i + 1))
-        }
+        totalSlides={totalSlides}
+        onPrev={handlePrevSlideOrLesson}
+        onNext={handleNextSlideOrLesson}
         onComplete={handleComplete}
         isCompleting={isCompleting}
+        hasPrevLesson={currentSlide === 0 && !!prevLesson}
+        hasNextLesson={currentSlide === totalSlides - 1 && !!nextLesson}
+        isLastLesson={isLastSlideOfLastLesson}
       />
     </>
   );

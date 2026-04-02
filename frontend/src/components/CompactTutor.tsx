@@ -1,13 +1,17 @@
 import { Mic, MicOff, Volume2, VolumeX, MessageCircle, Pause, Play } from 'lucide-react';
 import { useState } from 'react';
 
-export function CompactTutor() {
+interface CompactTutorProps {
+  lessonTitle?: string;
+}
+
+export function CompactTutor({ lessonTitle }: CompactTutorProps) {
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(true);
   const [showChat, setShowChat] = useState(false);
 
   return (
-    <div className="w-[20%] border-l-2 border-border bg-card flex flex-col">
+    <div className="w-[35%] border-l-2 border-border bg-card flex flex-col">
       {/* Tutor Header */}
       <div className="px-4 py-3 border-b border-border bg-gradient-to-br from-primary/5 to-accent/5">
         <div className="flex items-center gap-2 mb-2">
@@ -109,7 +113,7 @@ export function CompactTutor() {
       <div className="px-4 py-4 border-b border-border bg-muted/20">
         <div className="text-xs text-muted-foreground mb-1">Currently Explaining:</div>
         <p className="text-sm font-semibold text-foreground leading-snug">
-          Variable Assignment & Data Types
+          {lessonTitle || 'Lesson Content'}
         </p>
       </div>
 

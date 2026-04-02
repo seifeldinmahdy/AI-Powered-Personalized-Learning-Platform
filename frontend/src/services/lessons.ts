@@ -39,19 +39,21 @@ export interface LessonDetail extends Lesson {
 // ---------- Modules ----------
 
 export async function getModules(courseId: number): Promise<Module[]> {
-    const response = await api.get<Module[]>('/courses/modules/', {
+    const response = await api.get<Module[] | { results: Module[] }>('/courses/modules/', {
         params: { course_id: courseId },
     });
-    return response.data;
+    const data = response.data;
+    return Array.isArray(data) ? data : data.results ?? [];
 }
 
 // ---------- Lessons ----------
 
 export async function getLessons(moduleId: number): Promise<Lesson[]> {
-    const response = await api.get<Lesson[]>('/courses/lessons/', {
+    const response = await api.get<Lesson[] | { results: Lesson[] }>('/courses/lessons/', {
         params: { module_id: moduleId },
     });
-    return response.data;
+    const data = response.data;
+    return Array.isArray(data) ? data : data.results ?? [];
 }
 
 export async function getLesson(id: number): Promise<LessonDetail> {
