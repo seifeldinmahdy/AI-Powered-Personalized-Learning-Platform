@@ -74,9 +74,9 @@ export default function Dashboard() {
   };
 
   const stats = [
-    { label: 'Total Time', value: formatTime(totalMinutes), icon: Clock, color: 'bg-secondary' },
-    { label: 'Streak', value: `${streak} days`, icon: TrendingUp, color: 'bg-accent' },
-    { label: 'Completed', value: `${completedCount} lessons`, icon: Target, color: 'bg-primary' },
+    { label: 'Total Time', value: formatTime(totalMinutes), icon: Clock, iconBg: 'bg-secondary/10', iconColor: 'text-secondary', tint: 'from-secondary/5 to-transparent' },
+    { label: 'Day Streak', value: `${streak} days`, icon: TrendingUp, iconBg: 'bg-accent/10', iconColor: 'text-accent', tint: 'from-accent/5 to-transparent' },
+    { label: 'Lessons Done', value: completedCount, icon: Target, iconBg: 'bg-primary/10', iconColor: 'text-primary', tint: 'from-primary/5 to-transparent' },
   ];
 
   // Recent completed lessons
@@ -114,13 +114,15 @@ export default function Dashboard() {
               return (
                 <div
                   key={index}
-                  className={`${stat.color} text-white rounded-xl p-6 shadow-lg hover:shadow-xl transition-shadow`}
+                  className={`bg-card rounded-2xl border border-border p-6 shadow-sm hover:shadow-md transition-all bg-gradient-to-br ${stat.tint}`}
                 >
-                  <div className="flex items-center justify-between mb-3">
-                    <Icon size={24} className="opacity-90" />
-                    <span className="text-sm font-medium opacity-90">{stat.label}</span>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className={`w-10 h-10 rounded-xl ${stat.iconBg} flex items-center justify-center`}>
+                      <Icon size={20} className={stat.iconColor} />
+                    </div>
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{stat.label}</span>
                   </div>
-                  <p className="text-3xl font-bold">{stat.value}</p>
+                  <p className="text-3xl font-bold text-foreground">{stat.value}</p>
                 </div>
               );
             })}

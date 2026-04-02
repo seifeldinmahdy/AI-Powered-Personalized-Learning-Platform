@@ -10,22 +10,20 @@ interface HeaderProps {
 
 export function Header({ title, subtitle, backLink, backLabel = 'Back' }: HeaderProps) {
   return (
-    <header className="border-b border-border bg-background px-8 py-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          {backLink && (
-            <Link
-              to={backLink}
-              className="flex items-center gap-2 px-3 py-2 border border-border hover:border-foreground transition-colors"
-            >
-              <ArrowLeft size={16} />
-              <span className="text-sm">{backLabel}</span>
-            </Link>
-          )}
-          <div>
-            <h2 className="mb-0">{title}</h2>
-            {subtitle && <p className="text-sm opacity-70">{subtitle}</p>}
-          </div>
+    <header className="border-b border-border bg-background px-6 py-3 shrink-0">
+      <div className="flex items-center gap-4">
+        {backLink && (
+          <Link
+            to={backLink}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors no-underline"
+          >
+            <ArrowLeft size={15} />
+            <span>{backLabel}</span>
+          </Link>
+        )}
+        <div>
+          <p className="font-semibold text-base text-foreground leading-tight m-0">{title}</p>
+          {subtitle && <p className="text-xs text-muted-foreground mt-0.5 m-0">{subtitle}</p>}
         </div>
       </div>
     </header>
