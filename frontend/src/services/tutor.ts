@@ -84,6 +84,19 @@ export async function stopTutorSession(session_id: string): Promise<void> {
   });
 }
 
+export async function transcribeAudio(audioBlob: Blob): Promise<string> {
+  const formData = new FormData();
+  formData.append('audio_file', audioBlob, 'recording.wav');
+  formData.append('language', 'en');
+  const res = await fetch(`${AI_URL}/asr/transcribe`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) throw new Error('Failed to transcribe audio');
+  const data = await res.json();
+  return data.transcription as string;
+}
+
 export function playAudioBase64(base64: string): HTMLAudioElement {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);

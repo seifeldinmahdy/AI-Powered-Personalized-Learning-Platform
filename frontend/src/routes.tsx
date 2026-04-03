@@ -4,6 +4,7 @@ import Dashboard from "./pages/student/Dashboard";
 import LiveSession from "./pages/student/LiveSession";
 import PracticeArea from "./pages/student/PracticeArea";
 import AdminDashboard from "./pages/admin/AdminDashboard";
+import AdminStudents from "./pages/admin/AdminStudents";
 import Profile from "./pages/Profile";
 import NotFound from "./pages/shared/NotFound";
 import StudentLayout from "./layouts/StudentLayout";
@@ -52,6 +53,7 @@ export const router = createBrowserRouter([
         ),
         children: [
             { path: "admin", Component: AdminDashboard },
+            { path: "admin/students", Component: AdminStudents },
         ],
     },
 

@@ -136,15 +136,23 @@ export default function LiveSession() {
         (c) => String(c.lesson) === String(lesson.id),
       );
 
+      let result;
       if (existing) {
-        await markLessonComplete(existing.id);
+        result = await markLessonComplete(existing.id);
       } else {
         const created = await createLessonCompletion({
           enrollment: enrollment.id,
           lesson: lesson.id,
           status: 'Completed',
         });
-        await markLessonComplete(created.id);
+        result = await markLessonComplete(created.id);
+      }
+
+      // Show achievement toasts
+      if (result.newly_earned_achievements?.length) {
+        for (const ach of result.newly_earned_achievements) {
+          toast.success(`${ach.icon_url} Achievement unlocked: ${ach.name} (+${ach.xp_reward} XP)`);
+        }
       }
 
       // Go to next lesson if available, otherwise dashboard
@@ -207,7 +215,7 @@ export default function LiveSession() {
         />
 
         {/* AI Tutor (35%) */}
-        <CompactTutor lessonTitle={lesson.title} />
+        <CompactTutor key={lessonId} lessonTitle={lesson.title} />
       </div>
 
       {/* Bottom Controls */}

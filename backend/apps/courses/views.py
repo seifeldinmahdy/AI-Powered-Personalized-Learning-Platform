@@ -99,12 +99,14 @@ class CodeChallengeViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class EnrollmentViewSet(viewsets.ModelViewSet):
-    """CRUD operations for enrollments."""
+    """CRUD operations for enrollments. Admins see all; students see their own."""
 
     serializer_class = EnrollmentSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
+        if self.request.user.role == "admin":
+            return Enrollment.objects.select_related("student", "course").all()
         return Enrollment.objects.filter(student=self.request.user)
 
     def perform_create(self, serializer):
@@ -113,6 +115,54 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             module__course=course
         ).order_by("module__module_order", "lesson_order").first()
         serializer.save(student=self.request.user, current_lesson=first_lesson)
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def admin_stats(request):
+    """Summary stats for the admin dashboard."""
+    if request.user.role != "admin":
+        return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+    from apps.users.models import User
+    from apps.progress.models import LessonCompletion
+
+    total_students = User.objects.filter(role="student").count()
+    total_courses = Course.objects.count()
+    active_courses = Course.objects.filter(status="Published").count()
+    total_enrollments = Enrollment.objects.count()
+    completed_lessons = LessonCompletion.objects.filter(status="Completed").count()
+
+    # Avg completion % across all enrollments
+    enrollments = Enrollment.objects.all()
+    avg_completion = (
+        sum(e.progress_percentage or 0 for e in enrollments) / enrollments.count()
+        if enrollments.count() > 0 else 0
+    )
+
+    # Recent enrollments (last 5)
+    recent_enrollments = (
+        Enrollment.objects.select_related("student", "course")
+        .order_by("-enrolled_at")[:5]
+    )
+    recent = [
+        {
+            "student": e.student.username,
+            "course": e.course.title,
+            "enrolled_at": e.enrolled_at,
+        }
+        for e in recent_enrollments
+    ]
+
+    return Response({
+        "total_students": total_students,
+        "total_courses": total_courses,
+        "active_courses": active_courses,
+        "total_enrollments": total_enrollments,
+        "completed_lessons": completed_lessons,
+        "avg_completion": round(avg_completion, 1),
+        "recent_enrollments": recent,
+    })
 
 
 @api_view(['POST'])
