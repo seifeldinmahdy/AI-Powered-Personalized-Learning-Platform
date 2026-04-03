@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useParams, useLocation } from "react-router";
 import { Header } from "../../components/Header";
 import Editor from "@monaco-editor/react";
 import {
@@ -34,8 +35,12 @@ const TOPIC_CATEGORIES = [
 ];
 
 export default function PracticeArea() {
+    const { topic: topicParam } = useParams<{ topic: string }>();
+    const location = useLocation();
+    const lessonTopic = (location.state as { topic?: string } | null)?.topic || (topicParam ? decodeURIComponent(topicParam) : null);
+
     // --- state ---
-    const [topic, setTopic] = useState(TOPIC_CATEGORIES[0].topics[0]);
+    const [topic, setTopic] = useState(lessonTopic || TOPIC_CATEGORIES[0].topics[0]);
     const [generating, setGenerating] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [question, setQuestion] = useState<GenerateQuestionResponse | null>(null);
@@ -43,13 +48,19 @@ export default function PracticeArea() {
     const [feedback, setFeedback] = useState<EvaluateCodeResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
 
+    // Auto-generate when arriving from a lesson
+    useEffect(() => {
+        if (lessonTopic) handleGenerate(lessonTopic);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
     // --- handlers ---
-    const handleGenerate = async () => {
+    const handleGenerate = async (overrideTopic?: string) => {
+        const topicToUse = overrideTopic ?? topic;
         setGenerating(true);
         setError(null);
         setFeedback(null);
         try {
-            const data = await generateQuestion(topic);
+            const data = await generateQuestion(topicToUse);
             setQuestion(data);
             setCode(data.starter_code ?? "");
         } catch (err: unknown) {
@@ -126,7 +137,7 @@ export default function PracticeArea() {
 
                         <button
                             id="generate-btn"
-                            onClick={handleGenerate}
+                            onClick={() => handleGenerate()}
                             disabled={generating}
                             style={{ marginTop: 16, width: '100%', padding: '12px 0', background: 'linear-gradient(to right, var(--secondary, #6366f1), var(--accent, #8b5cf6))', color: '#fff', borderRadius: 12, fontWeight: 600, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: generating ? 0.6 : 1, transition: 'all 0.2s' }}
                         >
