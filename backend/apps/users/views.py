@@ -146,3 +146,39 @@ class UserViewSet(viewsets.ModelViewSet):
         except Token.DoesNotExist:
             pass
         return Response({'status': 'logged out'}, status=status.HTTP_200_OK)
+
+    # ---------------------------------------------------------
+    # 7. Admin: List all students with profiles
+    # Endpoint: GET /api/users/admin-students/
+    # ---------------------------------------------------------
+    @action(detail=False, methods=['get'], url_path='admin-students',
+            permission_classes=[permissions.IsAuthenticated])
+    def admin_students(self, request):
+        if request.user.role != 'admin':
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+        from apps.gamification.models import UserAchievement
+        from apps.courses.models import Enrollment
+
+        students = User.objects.filter(role='student').prefetch_related(
+            'student_profile', 'earned_achievements'
+        )
+        result = []
+        for student in students:
+            profile = getattr(student, 'student_profile', None)
+            enrollment_count = Enrollment.objects.filter(student=student).count()
+            achievement_count = UserAchievement.objects.filter(user=student).count()
+            result.append({
+                'id': student.id,
+                'username': student.username,
+                'email': student.email,
+                'joined': student.date_joined,
+                'level': profile.level if profile else 1,
+                'current_xp': profile.current_xp if profile else 0,
+                'current_streak': profile.current_streak if profile else 0,
+                'total_minutes_learned': profile.total_minutes_learned if profile else 0,
+                'enrollments': enrollment_count,
+                'achievements': achievement_count,
+            })
+
+        return Response(result)

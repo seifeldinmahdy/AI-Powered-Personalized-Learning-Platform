@@ -1,4 +1,4 @@
-import { Mic, Volume2, VolumeX, MessageCircle, Pause, Play, Send, Loader2, Code2 } from 'lucide-react';
+import { Mic, MicOff, Volume2, VolumeX, MessageCircle, Pause, Play, Send, Loader2, Code2 } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import {
@@ -6,6 +6,7 @@ import {
   continueTutorSession,
   askTutor,
   stopTutorSession,
+  transcribeAudio,
 } from '../services/tutor';
 
 interface TranscriptEntry {
@@ -34,6 +35,9 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
   const [error, setError] = useState('');
   const [started, setStarted] = useState(false);
 
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioBlobUrlRef = useRef<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -42,6 +46,7 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
   const isFinishedRef = useRef(false);
   const isLoadingRef = useRef(false);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const mediaRecorderRef = useRef<{ stop: () => void } | null>(null);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -167,10 +172,19 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
     audioRef.current.muted = next;
   };
 
-  const handleAskQuestion = async () => {
-    if (!sessionIdRef.current || !question.trim() || isAsking) return;
-    const q = question.trim();
+  const handleAskQuestion = async (overrideQuestion?: string) => {
+    const q = (overrideQuestion ?? question).trim();
+    if (!sessionIdRef.current || !q || isAsking) return;
     setQuestion('');
+
+    // If lecture audio is currently playing, queue the question and pause
+    if (isSpeaking && !isPausedRef.current) {
+      audioRef.current?.pause();
+      isPausedRef.current = true;
+      setIsPaused(true);
+      setIsSpeaking(false);
+    }
+
     setIsAsking(true);
     setTranscript((prev) => [...prev, { role: 'student', text: q }]);
     try {
@@ -182,6 +196,9 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
       if (res.audio_base64) {
         setAudioSrc(res.audio_base64);
         setIsSpeaking(true);
+        // After answer audio ends, resume lecture if it was paused for this question
+        isPausedRef.current = false;
+        setIsPaused(false);
       }
     } catch {
       setTranscript((prev) => [
@@ -190,6 +207,79 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
       ]);
     } finally {
       setIsAsking(false);
+    }
+  };
+
+  const handleVoiceInput = async () => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      // Use Web Audio API to capture raw PCM, then encode as WAV
+      // (avoids webm format which requires ffmpeg on the server)
+      const audioCtx = new AudioContext({ sampleRate: 16000 });
+      const source = audioCtx.createMediaStreamSource(stream);
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      const pcmChunks: Float32Array[] = [];
+
+      processor.onaudioprocess = (e) => {
+        pcmChunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+      };
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
+
+      // Store stop function in ref so button click can trigger it
+      const stopRecording = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        processor.disconnect();
+        source.disconnect();
+        await audioCtx.close();
+        setIsRecording(false);
+        setIsTranscribing(true);
+        setShowChat(true);
+
+        try {
+          // Combine all PCM chunks
+          const totalLength = pcmChunks.reduce((s, c) => s + c.length, 0);
+          const pcm = new Float32Array(totalLength);
+          let offset = 0;
+          for (const chunk of pcmChunks) { pcm.set(chunk, offset); offset += chunk.length; }
+
+          // Encode as 16-bit PCM WAV
+          const numSamples = pcm.length;
+          const sampleRate = 16000;
+          const buffer = new ArrayBuffer(44 + numSamples * 2);
+          const view = new DataView(buffer);
+          const write = (o: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
+          write(0, 'RIFF'); view.setUint32(4, 36 + numSamples * 2, true);
+          write(8, 'WAVE'); write(12, 'fmt '); view.setUint32(16, 16, true);
+          view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+          view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
+          view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+          write(36, 'data'); view.setUint32(40, numSamples * 2, true);
+          for (let i = 0; i < numSamples; i++) {
+            view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, pcm[i])) * 0x7fff, true);
+          }
+
+          const blob = new Blob([buffer], { type: 'audio/wav' });
+          const text = await transcribeAudio(blob);
+          setQuestion(text);
+        } catch {
+          setError('Failed to transcribe voice input.');
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+
+      // Override mediaRecorderRef to store the stop function
+      mediaRecorderRef.current = { stop: stopRecording } as unknown as MediaRecorder;
+      setIsRecording(true);
+    } catch {
+      setError('Microphone access denied.');
     }
   };
 
@@ -362,13 +452,13 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
                 type="text"
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleAskQuestion()}
+                onKeyDown={(e) => e.key === 'Enter' && handleAskQuestion(question)}
                 placeholder="Ask Dr. Nova..."
                 className="flex-1 text-sm px-3 py-2 rounded-xl border border-border bg-background focus:outline-none focus:border-secondary"
                 disabled={isAsking}
               />
               <button
-                onClick={handleAskQuestion}
+                onClick={() => handleAskQuestion()}
                 disabled={!question.trim() || isAsking}
                 className="p-2 bg-gradient-to-r from-secondary to-accent text-white rounded-xl disabled:opacity-50"
               >
@@ -384,9 +474,22 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
               <span>Ask Question</span>
             </button>
           )}
-          <button className="w-full py-2 border-2 border-border rounded-xl hover:border-secondary transition-colors flex items-center justify-center gap-2 text-sm font-medium">
-            <Mic size={16} />
-            <span>Voice Input</span>
+          <button
+            onClick={handleVoiceInput}
+            disabled={isTranscribing}
+            className={`w-full py-2 border-2 rounded-xl transition-colors flex items-center justify-center gap-2 text-sm font-medium disabled:opacity-50 ${
+              isRecording
+                ? 'border-red-500 bg-red-50 text-red-600 animate-pulse'
+                : 'border-border hover:border-secondary'
+            }`}
+          >
+            {isTranscribing ? (
+              <><Loader2 size={16} className="animate-spin" /><span>Transcribing…</span></>
+            ) : isRecording ? (
+              <><MicOff size={16} /><span>Stop Recording</span></>
+            ) : (
+              <><Mic size={16} /><span>Voice Input</span></>
+            )}
           </button>
         </div>
       )}

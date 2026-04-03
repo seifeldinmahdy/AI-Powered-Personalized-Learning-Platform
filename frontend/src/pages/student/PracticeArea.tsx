@@ -74,6 +74,10 @@ export default function PracticeArea() {
 
     const handleSubmit = async () => {
         if (!question) return;
+        if (!code.trim()) {
+            setFeedback({ status: "Needs Work", feedback: "No code submitted. Write your solution in the editor and try again." });
+            return;
+        }
         setSubmitting(true);
         setError(null);
         try {
