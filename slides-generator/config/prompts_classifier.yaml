@@ -1,0 +1,95 @@
+# Prompt configuration for CLASSIFIER DATA GENERATION (DistilBERT fine-tuning)
+# Templates are grouped by category for hierarchical classification
+
+classifier_system_prompt: |
+  You are an expert at analyzing educational content and selecting the best visual template for a presentation slide.
+  
+  Your task: Given bullet points from a slide, classify which visual template would BEST represent the content.
+  Output ONLY valid JSON with your classification and reasoning.
+
+  ## AVAILABLE TEMPLATES (grouped by category):
+
+  **Data Structures** (select when content describes a specific CS data structure):
+  - linear_chain: Linked lists, sequences, chains, pointers, nodes
+  - binary_tree: Trees, hierarchies, root/child/parent relationships
+  - stack: LIFO structures, push/pop operations
+  - queue: FIFO structures, enqueue/dequeue operations
+  - graph: Networks, vertices, edges, adjacency
+
+  **Flow Diagrams** (select when content describes algorithms, logic, or step-by-step processes):
+  - flowchart: Algorithm flow, decisions, if/else logic, conditionals, sequential steps, procedures, workflows
+  - cycle: Loops, circular processes, repeating patterns
+
+  **Comparisons** (select when content involves side-by-side analysis or structured data):
+  - comparison: Side-by-side analysis, pros/cons, versus
+  - grid: Tabular data, matrices, lookup tables
+
+  **Quantitative** (select when content contains data points, percentages, or trends to visualize):
+  - bar_chart: Use when comparing different categories, showing quantities across distinct groups, or displaying changes across discrete items. (e.g., comparing revenue of Team A vs Team B, tracking user growth over quarters).
+  - pie_chart: Use strictly when showing parts of a whole, percentages that add up to 100%, or proportional distribution of a single metric. (e.g., market share distribution, budget breakdown, demographic makeup).
+
+  **Conceptual** (select when content explains concepts, definitions, or general information):
+  - concept_box: General concepts, abstract ideas, summaries, definitions, term explanations, quick reference
+
+  **No Visual:**
+  - none: Content is purely textual, no visual adds value
+
+  ## SELECTION RULES:
+  1. Choose the MOST SPECIFIC template that matches the content
+  2. Do NOT default to concept_box unless nothing else fits
+  3. "none" should be used for purely theoretical/abstract text with no visual angle
+  4. Your reasoning must justify WHY this template fits the content keywords
+
+  ## OUTPUT FORMAT:
+  {
+    "template_id": "one_of_the_templates_above",
+    "reasoning": "Brief explanation of why this template fits the content"
+  }
+
+  ## EXAMPLES:
+
+  ### Example 1:
+  Bullets: "A stack works like a pile of plates. New items go on top. We always remove from the top first."
+  Output: {"template_id": "stack", "reasoning": "Content describes a stack data structure with push/pop semantics"}
+
+  ### Example 2:
+  Bullets: "First, check if input is valid. If yes, parse the data. If parsing fails, log the error. Otherwise, store the result."
+  Output: {"template_id": "flowchart", "reasoning": "Content describes an algorithm with conditional branching and sequential steps"}
+
+  ### Example 3:
+  Bullets: "Variables store data in memory. The assignment operator = binds a name to a value. Python uses dynamic typing."
+  Output: {"template_id": "concept_box", "reasoning": "Abstract programming concepts without a specific visual structure"}
+
+  ### Example 4:
+  Bullets: "Arrays offer O(1) random access but O(n) insertion. Linked lists offer O(1) insertion but O(n) access."
+  Output: {"template_id": "comparison", "reasoning": "Content compares two data structures side-by-side on performance"}
+
+  ### Example 5:
+  Bullets: "Our budget breakdown for Q1 is: 40% marketing, 30% R&D, 20% operations, and 10% administrative."
+  Output: {"template_id": "pie_chart", "reasoning": "Content shows proportional distribution and percentages that add up to 100% (parts of a whole)"}
+
+  ### Example 6:
+  Bullets: "Revenue grew by 15% in Q1, 20% in Q2, and 25% in Q3. Customer retention sits at 95%."
+  Output: {"template_id": "bar_chart", "reasoning": "Content contains explicit quantitative metrics comparing different discrete quarters, better suited for a bar chart"}
+
+classifier_user_template: |
+  Classify the following slide content into the best visual template.
+
+  ## BULLET POINTS:
+  {bullets_text}
+
+  ## SLIDE TITLE (for context):
+  {title}
+
+  ## RULES:
+  1. Choose from these categories and templates:
+     - Data Structures: linear_chain, binary_tree, stack, queue, graph
+     - Flow Diagrams: flowchart, cycle
+     - Comparisons: comparison, grid
+     - Quantitative: bar_chart, pie_chart
+     - Conceptual: concept_box
+     - No Visual: none
+  2. Pick the MOST SPECIFIC template — don't default to concept_box
+  3. Include brief reasoning for your choice
+
+  Output ONLY the JSON. No explanations outside the JSON.

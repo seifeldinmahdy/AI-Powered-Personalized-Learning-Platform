@@ -1,4 +1,5 @@
-import { Home, BookOpen, Code2, User, LogOut, Bell, Shield } from 'lucide-react';
+import { Home, BookOpen, Brain, Code2, User, LogOut, Bell, Shield, Users } from 'lucide-react';
+
 import { Link, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -20,14 +21,14 @@ interface TopNavProps {
 }
 
 const studentNavItems: NavItem[] = [
-  { path: '/dashboard', label: 'Dashboard', icon: Home },
+  { path: '/dashboard', label: 'Home', icon: Home },
   { path: '/courses', label: 'Courses', icon: BookOpen },
   { path: '/practice', label: 'Practice', icon: Code2 },
 ];
 
 const adminNavItems: NavItem[] = [
   { path: '/admin', label: 'Overview', icon: Home },
-  { path: '/admin/courses', label: 'Courses', icon: BookOpen },
+  { path: '/admin/students', label: 'Students', icon: Users },
 ];
 
 export function TopNav({ variant = 'student' }: TopNavProps) {
@@ -40,6 +41,7 @@ export function TopNav({ variant = 'student' }: TopNavProps) {
   const isActive = (path: string) => {
     if (path === '/dashboard') return location.pathname === '/' || location.pathname === '/dashboard';
     if (path === '/admin') return location.pathname === '/admin';
+    if (path === '/admin/students') return location.pathname.startsWith('/admin/students');
     return location.pathname.startsWith(path);
   };
 
@@ -48,43 +50,25 @@ export function TopNav({ variant = 'student' }: TopNavProps) {
     navigate('/login');
   };
 
-  const initials = user?.full_name
-    ?.split(' ')
-    .map((n) => n[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2) || 'AC';
-
-  const brandGradient =
-    variant === 'admin'
-      ? 'from-rose-500 via-purple-600 to-indigo-600'
-      : 'from-primary via-secondary to-accent';
-
-  const activePill =
-    variant === 'admin'
-      ? 'bg-gradient-to-r from-rose-500 to-purple-600 text-white shadow-sm'
-      : 'bg-gradient-to-r from-secondary to-accent text-white shadow-sm';
+  const displayName = user?.full_name || user?.username || 'User';
+  const initials = displayName.slice(0, 2).toUpperCase();
 
   return (
     <header className="h-16 border-b border-border bg-card flex items-center px-6 shrink-0 z-40">
       {/* Left — Brand */}
-      <Link to={variant === 'admin' ? '/admin' : '/dashboard'} className="flex items-center gap-3 mr-10 no-underline">
-        <div
-          className={`w-9 h-9 rounded-xl bg-gradient-to-br ${brandGradient} flex items-center justify-center shadow-md`}
-        >
-          {variant === 'admin' ? (
-            <Shield size={18} className="text-white" />
-          ) : (
-            <span className="text-white font-bold text-sm">AI</span>
-          )}
-        </div>
-        <span className="font-bold text-base text-foreground">
-          {variant === 'admin' ? 'Admin Panel' : 'AI Tutor'}
+      <Link to={variant === 'admin' ? '/admin' : '/dashboard'} className="flex items-center gap-3 no-underline flex-shrink-0" style={{ marginRight: '3rem' }}>
+        {variant === 'admin' ? (
+          <Shield size={26} style={{ color: 'var(--primary)' }} />
+        ) : (
+          <Brain size={26} style={{ color: 'var(--primary)' }} />
+        )}
+        <span className="font-bold text-base text-foreground whitespace-nowrap">
+          {variant === 'admin' ? 'Admin Panel' : 'AI Learning Platform'}
         </span>
       </Link>
 
       {/* Center — Nav links */}
-      <nav className="flex items-center gap-1 flex-1">
+      <nav className="flex items-center gap-1 flex-1 min-w-0">
         {navItems.map((item) => {
           const Icon = item.icon;
           const active = isActive(item.path);
@@ -92,14 +76,14 @@ export function TopNav({ variant = 'student' }: TopNavProps) {
             <Link
               key={item.path}
               to={item.path}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all no-underline ${
-                active
-                  ? activePill
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/60'
-              }`}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all no-underline"
+              style={active ? {
+                background: 'linear-gradient(to right, var(--secondary), var(--accent))',
+                color: '#fff',
+              } : {}}
             >
-              <Icon size={16} />
-              <span>{item.label}</span>
+              <Icon size={16} className={active ? 'text-white' : 'text-muted-foreground'} />
+              <span className={active ? 'text-white' : 'text-muted-foreground'}>{item.label}</span>
             </Link>
           );
         })}
@@ -115,15 +99,16 @@ export function TopNav({ variant = 'student' }: TopNavProps) {
         {/* Avatar dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="flex items-center gap-2.5 px-2 py-1.5 rounded-xl hover:bg-muted/60 transition-colors">
+            <button className="flex items-center gap-3 px-3 py-1.5 rounded-xl hover:bg-muted/60 transition-colors">
               <div
-                className={`w-8 h-8 rounded-lg bg-gradient-to-br ${brandGradient} flex items-center justify-center text-white text-xs font-bold shadow`}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold shadow"
+                style={{ background: 'linear-gradient(135deg, var(--primary), var(--accent))' }}
               >
                 {initials}
               </div>
               <div className="text-left">
-                <p className="text-sm font-semibold leading-none text-foreground">
-                  {user?.full_name?.split(' ')[0] || 'User'}
+                <p className="text-sm font-semibold leading-none text-foreground truncate max-w-[100px]">
+                  {displayName}
                 </p>
                 <p className="text-xs text-muted-foreground capitalize mt-0.5">
                   {user?.role || variant}

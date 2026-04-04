@@ -157,6 +157,30 @@ async def _call_ollama(system_prompt: str, user_prompt: str) -> str:
         return data["message"]["content"].strip()
 
 
+# ── Relevance check ──
+
+async def check_relevance(question: str, lesson_title: str) -> bool:
+    """Return True if the question is relevant to the lesson or educational in general."""
+    system = (
+        "You are a relevance classifier for an AI tutoring platform. "
+        "Your only job is to decide if a student's question is relevant to the lesson topic or is a legitimate educational/technical question. "
+        "Reply with exactly one word: YES or NO. Nothing else."
+    )
+    user = (
+        f"Lesson topic: {lesson_title}\n"
+        f"Student question: {question}\n\n"
+        "Is this question relevant to the lesson topic or a legitimate educational/technical question? "
+        "Answer YES if it is related to programming, computer science, math, science, or the lesson topic. "
+        "Answer NO only if it is completely unrelated to education (e.g. sports results, celebrity gossip, entertainment, politics). "
+        "Reply with exactly one word: YES or NO."
+    )
+    try:
+        answer = await _call_ollama(system, user)
+        return answer.strip().upper().startswith("YES")
+    except Exception:
+        return True  # Default to allowing the question if the check fails
+
+
 # ── Public API ──
 
 def create_session(

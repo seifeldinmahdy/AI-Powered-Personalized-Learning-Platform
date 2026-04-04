@@ -1,0 +1,101 @@
+/* =============================================================================
+   CODE.CSS - Code Block Styles
+   ============================================================================= */
+
+/* Code block container */
+.slide-code {
+    background: #1e1e2e;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Code header with language label */
+.code-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-sm) var(--space-md);
+    background: rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.code-language {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--accent-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.code-copy-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: var(--text-xs);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
+}
+
+.code-copy-btn:hover {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+}
+
+/* Code content */
+.code-content {
+    padding: var(--space-md);
+    overflow-x: auto;
+}
+
+.code-content pre {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: 1.6;
+    tab-size: 4;
+}
+
+.code-content code {
+    font-family: inherit;
+    background: none;
+    padding: 0;
+}
+
+/* Override Prism theme for consistency */
+.code-content pre[class*="language-"],
+.code-content code[class*="language-"] {
+    background: transparent;
+    text-shadow: none;
+}
+
+/* Line numbers (optional) */
+.code-content.with-line-numbers {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--space-md);
+}
+
+.line-numbers {
+    display: flex;
+    flex-direction: column;
+    text-align: right;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-family: var(--font-mono);
+    user-select: none;
+    padding-right: var(--space-md);
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Inline code (in body content) */
+code.inline-code {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    background: var(--bg-elevated);
+    padding: 0.15em 0.4em;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}

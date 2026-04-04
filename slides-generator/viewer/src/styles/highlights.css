@@ -1,0 +1,141 @@
+/* =============================================================================
+   HIGHLIGHTS.CSS - Text Highlight Type Styles
+   ============================================================================= */
+
+/* Body content list */
+.slide-body ul {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.slide-body li {
+    position: relative;
+    padding-left: var(--space-lg);
+    line-height: 1.7;
+}
+
+/* Default bullet */
+.slide-body li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.6em;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+
+/* =============================================================================
+   HIGHLIGHT TYPE: none (default)
+   ============================================================================= */
+
+.highlight-none {
+    color: var(--text-primary);
+}
+
+.highlight-none::before {
+    background: var(--text-muted);
+}
+
+/* =============================================================================
+   HIGHLIGHT TYPE: definition
+   ============================================================================= */
+
+.highlight-definition {
+    font-weight: 600;
+    color: var(--accent-info);
+}
+
+.highlight-definition::before {
+    background: var(--accent-info);
+    box-shadow: 0 0 6px var(--accent-info);
+}
+
+/* =============================================================================
+   HIGHLIGHT TYPE: example
+   ============================================================================= */
+
+.highlight-example {
+    font-style: italic;
+    color: var(--accent-success);
+}
+
+.highlight-example::before {
+    background: var(--accent-success);
+    box-shadow: 0 0 6px var(--accent-success);
+}
+
+/* =============================================================================
+   HIGHLIGHT TYPE: key_concept
+   ============================================================================= */
+
+.highlight-key_concept {
+    font-weight: 700;
+    color: var(--accent-secondary);
+}
+
+.highlight-key_concept::before {
+    background: var(--accent-secondary);
+    box-shadow: 0 0 6px var(--accent-secondary);
+}
+
+/* =============================================================================
+   HIGHLIGHT TYPE: attention
+   ============================================================================= */
+
+.highlight-attention {
+    font-weight: 700;
+    color: var(--accent-warning);
+    background: rgba(245, 158, 11, 0.1);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+    margin-left: calc(var(--space-lg) * -1);
+    padding-left: var(--space-lg);
+}
+
+.highlight-attention::before {
+    background: var(--accent-warning);
+    box-shadow: 0 0 6px var(--accent-warning);
+}
+
+/* =============================================================================
+   HIGHLIGHT TYPE: code (inline code)
+   ============================================================================= */
+
+.highlight-code {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    background: var(--bg-elevated);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.highlight-code::before {
+    background: var(--accent-primary);
+}
+
+/* =============================================================================
+   Alt text indicator
+   ============================================================================= */
+
+.alt-text-indicator {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    margin-top: var(--space-lg);
+    padding: var(--space-md);
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+}
+
+.alt-text-indicator::before {
+    content: '♿';
+    font-size: var(--text-base);
+}

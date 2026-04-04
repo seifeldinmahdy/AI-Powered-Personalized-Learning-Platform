@@ -2,6 +2,12 @@ import api from './api';
 
 // ---------- Types ----------
 
+export interface NewlyEarnedAchievement {
+    name: string;
+    icon_url: string;
+    xp_reward: number;
+}
+
 export interface LessonCompletion {
     id: number;
     enrollment: number;
@@ -10,6 +16,7 @@ export interface LessonCompletion {
     status: 'Started' | 'In Progress' | 'Completed';
     score: number;
     completed_at: string | null;
+    newly_earned_achievements?: NewlyEarnedAchievement[];
 }
 
 export interface ActivityLog {

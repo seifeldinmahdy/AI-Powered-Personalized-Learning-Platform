@@ -29,13 +29,32 @@ class LessonCompletionViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):
         """Mark a lesson completion as Completed and set completed_at."""
+        from apps.gamification.models import UserAchievement
+
         completion = self.get_object()
+        user = request.user
+
+        # Snapshot achievements before save so we can detect newly earned ones
+        before_ids = set(
+            UserAchievement.objects.filter(user=user).values_list("achievement_id", flat=True)
+        )
+
         completion.status = "Completed"
         completion.completed_at = timezone.now()
         if "score" in request.data:
             completion.score = request.data["score"]
-        completion.save()
-        return Response(LessonCompletionSerializer(completion).data)
+        completion.save()  # triggers gamification signal
+
+        # Detect newly awarded achievements
+        after = UserAchievement.objects.filter(user=user).select_related("achievement")
+        newly_earned = [
+            {"name": ua.achievement.name, "icon_url": ua.achievement.icon_url, "xp_reward": ua.achievement.xp_reward}
+            for ua in after if ua.achievement_id not in before_ids
+        ]
+
+        data = LessonCompletionSerializer(completion).data
+        data["newly_earned_achievements"] = newly_earned
+        return Response(data)
 
 
 class SystemActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
