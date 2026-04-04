@@ -3,12 +3,18 @@ FastAPI AI Service — entry point.
 """
 
 import os
+import sys
 import logging
 from dotenv import load_dotenv
 from fastapi import FastAPI
+
+# Add intent_model to path before any routers are imported
+_intent_model_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "intent_model")
+if _intent_model_dir not in sys.path:
+    sys.path.insert(0, _intent_model_dir)
 from fastapi.middleware.cors import CORSMiddleware
 from routers import health, asr, coding
-from routers import intent, tts, fer, ser, tutor
+from routers import intent, tts, fer, ser, tutor, rag
 
 # Configure logging
 logging.basicConfig(
@@ -72,3 +78,4 @@ app.include_router(tts.router)
 app.include_router(fer.router)
 app.include_router(ser.router)
 app.include_router(tutor.router)
+app.include_router(rag.router)

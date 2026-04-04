@@ -1,4 +1,5 @@
-import { Home, BookOpen, Code2, User, LogOut, Bell, Shield, Users } from 'lucide-react';
+import { Home, BookOpen, Brain, Code2, User, LogOut, Bell, Shield, Users } from 'lucide-react';
+
 import { Link, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -20,7 +21,7 @@ interface TopNavProps {
 }
 
 const studentNavItems: NavItem[] = [
-  { path: '/dashboard', label: 'Dashboard', icon: Home },
+  { path: '/dashboard', label: 'Home', icon: Home },
   { path: '/courses', label: 'Courses', icon: BookOpen },
   { path: '/practice', label: 'Practice', icon: Code2 },
 ];
@@ -55,19 +56,14 @@ export function TopNav({ variant = 'student' }: TopNavProps) {
   return (
     <header className="h-16 border-b border-border bg-card flex items-center px-6 shrink-0 z-40">
       {/* Left — Brand */}
-      <Link to={variant === 'admin' ? '/admin' : '/dashboard'} className="flex items-center gap-3 mr-6 no-underline flex-shrink-0">
-        <div
-          className="w-9 h-9 rounded-xl flex items-center justify-center shadow-md"
-          style={{ background: variant === 'admin' ? 'linear-gradient(135deg, #f43f5e, #9333ea)' : 'linear-gradient(135deg, var(--primary), var(--accent))' }}
-        >
-          {variant === 'admin' ? (
-            <Shield size={18} className="text-white" />
-          ) : (
-            <span className="text-white font-bold text-sm">AI</span>
-          )}
-        </div>
+      <Link to={variant === 'admin' ? '/admin' : '/dashboard'} className="flex items-center gap-3 no-underline flex-shrink-0" style={{ marginRight: '3rem' }}>
+        {variant === 'admin' ? (
+          <Shield size={26} style={{ color: 'var(--primary)' }} />
+        ) : (
+          <Brain size={26} style={{ color: 'var(--primary)' }} />
+        )}
         <span className="font-bold text-base text-foreground whitespace-nowrap">
-          {variant === 'admin' ? 'Admin Panel' : 'AI Tutor'}
+          {variant === 'admin' ? 'Admin Panel' : 'AI Learning Platform'}
         </span>
       </Link>
 
@@ -82,9 +78,7 @@ export function TopNav({ variant = 'student' }: TopNavProps) {
               to={item.path}
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all no-underline"
               style={active ? {
-                background: variant === 'admin'
-                  ? 'linear-gradient(to right, #f43f5e, #9333ea)'
-                  : 'linear-gradient(to right, var(--secondary), var(--accent))',
+                background: 'linear-gradient(to right, var(--secondary), var(--accent))',
                 color: '#fff',
               } : {}}
             >
@@ -105,10 +99,10 @@ export function TopNav({ variant = 'student' }: TopNavProps) {
         {/* Avatar dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="flex items-center gap-2.5 px-2 py-1.5 rounded-xl hover:bg-muted/60 transition-colors">
+            <button className="flex items-center gap-3 px-3 py-1.5 rounded-xl hover:bg-muted/60 transition-colors">
               <div
                 className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold shadow"
-                style={{ background: variant === 'admin' ? 'linear-gradient(135deg, #f43f5e, #9333ea)' : 'linear-gradient(135deg, var(--primary), var(--accent))' }}
+                style={{ background: 'linear-gradient(135deg, var(--primary), var(--accent))' }}
               >
                 {initials}
               </div>

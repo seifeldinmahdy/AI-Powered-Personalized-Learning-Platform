@@ -97,6 +97,61 @@ export async function transcribeAudio(audioBlob: Blob): Promise<string> {
   return data.transcription as string;
 }
 
+export interface RAGSource {
+  book: string;
+  page_start: number;
+  page_end: number;
+  topic: string;
+  relevance_score: number;
+}
+
+export interface RAGAnswer {
+  answer: string;
+  sources: RAGSource[];
+}
+
+export async function askRag(question: string, topic?: string): Promise<RAGAnswer> {
+  const res = await fetch(`${AI_URL}/rag/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, topic, top_k: 5 }),
+  });
+  if (!res.ok) throw new Error('RAG unavailable');
+  return res.json();
+}
+
+export async function checkRelevance(question: string, lessonTitle: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${AI_URL}/tutor/relevance`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, lesson_title: lessonTitle }),
+    });
+    if (!res.ok) return true;
+    const data = await res.json();
+    return data.relevant as boolean;
+  } catch {
+    return true; // fail open
+  }
+}
+
+export type IntentName = 'On-Topic Question' | 'Off-Topic Question' | 'Emotional-State' | 'Pace-Related' | 'Repeat/clarification';
+
+export async function classifyIntent(text: string, sessionContext = ''): Promise<IntentName> {
+  try {
+    const res = await fetch(`${AI_URL}/intent/classify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ student_input: text, session_context: sessionContext }),
+    });
+    if (!res.ok) return 'On-Topic Question';
+    const data = await res.json();
+    return data.predictions?.[0]?.intent_name as IntentName ?? 'On-Topic Question';
+  } catch {
+    return 'On-Topic Question';
+  }
+}
+
 export function playAudioBase64(base64: string): HTMLAudioElement {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
