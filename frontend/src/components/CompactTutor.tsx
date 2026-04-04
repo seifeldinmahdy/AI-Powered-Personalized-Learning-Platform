@@ -211,7 +211,12 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
       } else if (emotionKeywords.some(k => lower.includes(k))) {
         intent = 'Emotional-State';
       } else {
-        intent = await classifyIntent(q, lessonTitle || '');
+        // Format context to match the model's training format so it can
+        // correctly judge what is on-topic vs off-topic for this lesson.
+        const sessionContext = lessonTitle
+          ? `topic:${lessonTitle} | prev:${lessonTitle} | emotion:neutral | pace:normal`
+          : '';
+        intent = await classifyIntent(q, sessionContext);
       }
 
       // Handle each intent differently
