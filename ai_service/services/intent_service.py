@@ -10,36 +10,46 @@ from typing import List, Dict, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Add the intent classifier project explicitly to python path so we can import TinyBert
-# Resolve the path relative to the current service file
-INTENT_MODEL_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "Intent_Classifier_Model"))
-
-if INTENT_MODEL_DIR not in sys.path:
-    sys.path.insert(0, INTENT_MODEL_DIR)
-
-try:
-    from TinyBert import IntentClassifier, CompoundSentenceSplitter
-except ImportError as e:
-    logger.error(f"Failed to import IntentClassifier from {INTENT_MODEL_DIR}. Error: {e}")
-    # Will raise when service is initialized if not fixed
-
 class IntentService:
     def __init__(self, model_path: str = "prod_tinybert.pt"):
-        
-        self.model_path = os.path.join(INTENT_MODEL_DIR, model_path)
+        # Resolve intent_model dir relative to this file, falling back to cwd
+        base = os.path.dirname(os.path.abspath(__file__)) if os.path.isabs(__file__) else os.getcwd()
+        intent_model_dir = os.path.abspath(os.path.join(base, "intent_model")) \
+            if "services" not in base \
+            else os.path.abspath(os.path.join(base, "..", "intent_model"))
+
+        if intent_model_dir not in sys.path:
+            sys.path.insert(0, intent_model_dir)
+
+        logger.info(f"IntentService: loading TinyBert from {intent_model_dir}")
+
+        import importlib
+        tb = importlib.import_module("TinyBert")
+        IntentClassifier_ = tb.IntentClassifier
+        CompoundSentenceSplitter_ = tb.CompoundSentenceSplitter
+
+        self.intent_model_dir = intent_model_dir
+        self.model_path = os.path.join(intent_model_dir, model_path)
         logger.info(f"Initializing IntentService using model: {self.model_path}")
-        
+
         # Initialize the wrapper class
-        self.classifier = IntentClassifier(num_classes=5)
-        self.splitter = CompoundSentenceSplitter()
+        self.classifier = IntentClassifier_(num_classes=5)
+        self.splitter = CompoundSentenceSplitter_()
         
         # Load the production weights
         if os.path.exists(self.model_path):
             self.classifier.load_model(self.model_path)
             logger.info("Intent model loaded successfully.")
         else:
-            logger.error(f"Model file not found at: {self.model_path}")
-            raise FileNotFoundError(f"Missing intent model: {self.model_path}")
+            # Try cwd-based path as fallback
+            fallback = os.path.join(os.getcwd(), "intent_model", model_path)
+            if os.path.exists(fallback):
+                self.model_path = fallback
+                self.classifier.load_model(self.model_path)
+                logger.info("Intent model loaded from fallback path.")
+            else:
+                logger.error(f"Model file not found at: {self.model_path}")
+                raise FileNotFoundError(f"Missing intent model: {self.model_path}")
             
     def classify(self, student_input: str, session_context: str = "", split_compound: bool = True) -> Tuple[List[Dict], float]:
         """

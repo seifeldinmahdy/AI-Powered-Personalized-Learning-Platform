@@ -7,12 +7,15 @@ import {
   askTutor,
   stopTutorSession,
   transcribeAudio,
+  classifyIntent,
+  askRag,
 } from '../services/tutor';
 
 interface TranscriptEntry {
   role: 'tutor' | 'student';
   text: string;
   topic?: string;
+  sources?: { book: string; page_start: number; page_end: number }[];
 }
 
 interface CompactTutorProps {
@@ -75,7 +78,11 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
     audioBlobUrlRef.current = URL.createObjectURL(blob);
     audio.muted = isMutedRef.current;
     audio.src = audioBlobUrlRef.current;
-    // play() immediately after src assignment — browser allows since audio was unlocked
+    // Don't autoplay if user has paused
+    if (isPausedRef.current) {
+      setIsSpeaking(false);
+      return;
+    }
     audio.play().catch(() => setIsSpeaking(false));
   }
 
@@ -141,16 +148,18 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
   };
 
   const handlePlayPause = () => {
-    if (!audioRef.current) return;
+    const audio = audioRef.current;
+    console.log('[Pause] audio:', !!audio, 'isPausedRef:', isPausedRef.current, 'paused:', audio?.paused, 'src:', audio?.src?.slice(0,40));
+    if (!audio) return;
     if (isPausedRef.current) {
       isPausedRef.current = false;
       setIsPaused(false);
-      audioRef.current.play().catch(() => {});
+      audio.play().catch((e) => console.log('[Pause] play error:', e));
       setIsSpeaking(true);
     } else {
       isPausedRef.current = true;
       setIsPaused(true);
-      audioRef.current.pause();
+      audio.pause();
       setIsSpeaking(false);
     }
   };
@@ -177,7 +186,7 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
     if (!sessionIdRef.current || !q || isAsking) return;
     setQuestion('');
 
-    // If lecture audio is currently playing, queue the question and pause
+    // If lecture audio is currently playing, pause it
     if (isSpeaking && !isPausedRef.current) {
       audioRef.current?.pause();
       isPausedRef.current = true;
@@ -187,24 +196,129 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
 
     setIsAsking(true);
     setTranscript((prev) => [...prev, { role: 'student', text: q }]);
+
     try {
-      const res = await askTutor(sessionIdRef.current, q, !isMutedRef.current);
-      setTranscript((prev) => [
-        ...prev,
-        { role: 'tutor', text: res.answer, topic: 'Answer' },
-      ]);
+      // Keyword override before calling the model — catches short/ambiguous phrases
+      const repeatKeywords = ['repeat', 'again', 'replay', 'rewind', 'say that again', 'once more', 'didn\'t get that', 'missed that'];
+      const paceKeywords = ['slow down', 'too fast', 'speed up', 'faster', 'slower', 'skip'];
+      const emotionKeywords = ['confused', 'lost', 'frustrated', 'don\'t understand', 'hard', 'difficult', 'give up', 'struggling'];
+      const lower = q.toLowerCase();
+      let intent: import('../services/tutor').IntentName;
+      if (repeatKeywords.some(k => lower.includes(k))) {
+        intent = 'Repeat/clarification';
+      } else if (paceKeywords.some(k => lower.includes(k))) {
+        intent = 'Pace-Related';
+      } else if (emotionKeywords.some(k => lower.includes(k))) {
+        intent = 'Emotional-State';
+      } else {
+        intent = await classifyIntent(q, lessonTitle || '');
+      }
+
+      // Handle each intent differently
+      const resumeLecture = () => {
+        if (audioRef.current && isPausedRef.current) {
+          audioRef.current.play().catch(() => {});
+          isPausedRef.current = false;
+          setIsPaused(false);
+          setIsSpeaking(true);
+        }
+      };
+
+      if (intent === 'Off-Topic Question') {
+        setTranscript((prev) => [...prev, {
+          role: 'tutor',
+          text: "That seems off-topic. Let's stay focused on the current lesson. Feel free to ask anything related to what we're covering!",
+          topic: 'Off-Topic',
+        }]);
+        resumeLecture();
+        setIsAsking(false);
+        return;
+      }
+
+      if (intent === 'Emotional-State') {
+        // Re-explain the current topic instead of just encouraging
+        const res = await askTutor(
+          sessionIdRef.current,
+          `The student said: "${q}". Please offer brief encouragement and re-explain the current topic in a simpler way.`,
+          !isMutedRef.current,
+        );
+        setTranscript((prev) => [...prev, { role: 'tutor', text: res.answer, topic: 'Encouragement' }]);
+        if (res.audio_base64) {
+          isPausedRef.current = false;
+          setIsPaused(false);
+          setAudioSrc(res.audio_base64);
+          setIsSpeaking(true);
+        }
+        setIsAsking(false);
+        return;
+      }
+
+      if (intent === 'Pace-Related') {
+        setTranscript((prev) => [...prev, {
+          role: 'tutor',
+          text: "Got it! You can use the Pause button to take a break or Next to skip ahead. I'll keep going at your pace.",
+          topic: 'Pace',
+        }]);
+        resumeLecture();
+        setIsAsking(false);
+        return;
+      }
+
+      if (intent === 'Repeat/clarification') {
+        if (audioBlobUrlRef.current && audioRef.current) {
+          // If audio already ended, replay from start; otherwise just unpause
+          if (audioRef.current.ended || audioRef.current.currentTime === 0) {
+            audioRef.current.currentTime = 0;
+          }
+          audioRef.current.play().catch(() => {});
+          setIsSpeaking(true);
+          isPausedRef.current = false;
+          setIsPaused(false);
+          setTranscript((prev) => [...prev, {
+            role: 'tutor',
+            text: "Sure! Let me repeat that for you.",
+            topic: 'Repeat',
+          }]);
+          setIsAsking(false);
+          return;
+        }
+        // Fallback: ask tutor to re-explain if no audio cached
+      }
+
+      // On-Topic Question (or Repeat/clarification fallback)
+      // Try RAG first to ground the answer in textbook content
+      let ragContext = '';
+      let ragSources: { book: string; page_start: number; page_end: number }[] = [];
+      try {
+        const ragRes = await askRag(q, lessonTitle);
+        // Only use RAG context if it found real sources (not the "could not find" fallback)
+        if (ragRes.answer && ragRes.sources.length > 0 && !ragRes.answer.includes('could not find')) {
+          ragContext = `\n\nRelevant textbook context:\n${ragRes.answer}`;
+          ragSources = ragRes.sources.map(s => ({ book: s.book, page_start: s.page_start, page_end: s.page_end }));
+        }
+      } catch {
+        // RAG unavailable — fall back to pure LLM
+      }
+
+      const augmentedQuestion = ragContext ? `${q}${ragContext}` : q;
+      const res = await askTutor(sessionIdRef.current, augmentedQuestion, !isMutedRef.current);
+      setTranscript((prev) => [...prev, {
+        role: 'tutor',
+        text: res.answer,
+        topic: 'Answer',
+        sources: ragSources.length > 0 ? ragSources : undefined,
+      }]);
       if (res.audio_base64) {
-        setAudioSrc(res.audio_base64);
-        setIsSpeaking(true);
-        // After answer audio ends, resume lecture if it was paused for this question
         isPausedRef.current = false;
         setIsPaused(false);
+        setAudioSrc(res.audio_base64);
+        setIsSpeaking(true);
       }
     } catch {
-      setTranscript((prev) => [
-        ...prev,
-        { role: 'tutor', text: 'Sorry, I could not process your question.' },
-      ]);
+      setTranscript((prev) => [...prev, {
+        role: 'tutor',
+        text: 'Sorry, I could not process your question.',
+      }]);
     } finally {
       setIsAsking(false);
     }
@@ -284,10 +398,14 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
   };
 
   return (
-    <div className="w-[35%] border-l-2 border-border bg-card flex flex-col">
+    <div className="w-[35%] min-w-0 border-l-2 border-border bg-card flex flex-col overflow-hidden">
       <audio
         ref={audioRef}
-        onEnded={() => setIsSpeaking(false)}
+        onEnded={() => {
+          setIsSpeaking(false);
+          isPausedRef.current = false;
+          setIsPaused(false);
+        }}
         style={{ display: 'none' }}
       />
 
@@ -304,12 +422,12 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
       </div>
 
       {/* Avatar */}
-      <div className="px-4 py-4 flex flex-col items-center border-b border-border bg-gradient-to-br from-primary/5 via-secondary/5 to-accent/5">
-        <div className="relative mb-3">
-          <div className="absolute inset-0 bg-gradient-to-br from-secondary to-accent rounded-full blur-xl opacity-20" />
-          <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-primary via-secondary to-accent p-1 shadow-xl">
+      <div className={`px-4 flex flex-col items-center border-b border-border bg-gradient-to-br from-primary/5 via-secondary/5 to-accent/5 ${started ? 'py-2' : 'py-4'}`}>
+        <div className={`relative ${started ? 'mb-2' : 'mb-3'}`}>
+          <div className="absolute inset-0 bg-gradient-to-br from-secondary to-accent rounded-full blur-xl opacity-20 pointer-events-none" />
+          <div className={`relative rounded-full bg-gradient-to-br from-primary via-secondary to-accent p-1 shadow-xl ${started ? 'w-16 h-16' : 'w-24 h-24'}`}>
             <div className="w-full h-full rounded-full bg-background flex items-center justify-center overflow-hidden">
-              <svg viewBox="0 0 200 200" className="w-20 h-20" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <svg viewBox="0 0 200 200" className={started ? 'w-12 h-12' : 'w-20 h-20'} fill="none" xmlns="http://www.w3.org/2000/svg">
                 <circle cx="100" cy="70" r="30" fill="url(#grad1)" />
                 <ellipse cx="100" cy="135" rx="38" ry="48" fill="url(#grad2)" />
                 <path d="M 68 108 Q 48 118 50 138" stroke="url(#grad2)" strokeWidth="14" strokeLinecap="round" fill="none" />
@@ -384,7 +502,7 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
         )}
 
         {isFinished && (
-          <div className="flex flex-col items-center gap-2 mt-2">
+          <div className="flex flex-col items-center gap-1 mt-1">
             <p className="text-xs text-muted-foreground">Lecture complete</p>
             <button
               onClick={() => navigate(`/practice/${encodeURIComponent(lessonTitle || 'Programming')}`, { state: { topic: lessonTitle } })}
@@ -425,19 +543,28 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
         {transcript.map((entry, i) => (
           <div
             key={i}
-            className={`rounded-lg p-3 ${
+            className={`rounded-lg p-4 ${
               entry.role === 'tutor'
                 ? 'bg-primary/5 border-l-2 border-primary'
                 : 'bg-secondary/10 border-l-2 border-secondary ml-4'
             }`}
           >
             {entry.role === 'student' && (
-              <span className="text-xs font-semibold text-secondary block mb-1">You</span>
+              <span className="text-sm font-semibold text-secondary block mb-1">You</span>
             )}
             {entry.topic && entry.role === 'tutor' && (
-              <span className="text-xs font-semibold text-muted-foreground block mb-1">{entry.topic}</span>
+              <span className="text-sm font-semibold text-muted-foreground block mb-1">{entry.topic}</span>
             )}
-            <p className="text-xs text-foreground/80 leading-relaxed">{entry.text}</p>
+            <p className="text-sm text-foreground/80 leading-relaxed">{entry.text}</p>
+            {entry.sources && entry.sources.length > 0 && (
+              <div className="mt-2 space-y-0.5">
+                {entry.sources.map((s, si) => (
+                  <span key={si} className="inline-block text-xs bg-secondary/10 text-secondary rounded px-2 py-0.5 mr-1">
+                    📖 {s.book} p.{s.page_start}–{s.page_end}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         ))}
         <div ref={transcriptEndRef} />

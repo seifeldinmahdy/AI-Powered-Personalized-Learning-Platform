@@ -12,6 +12,7 @@ from services.tutor_service import (
     answer_question,
     stop_session,
     get_session_state,
+    check_relevance,
 )
 from services.tts_service import get_tts_service
 import base64
@@ -170,6 +171,22 @@ async def session_status(session_id: str):
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"success": True, **state}
+
+
+class RelevanceRequest(BaseModel):
+    question: str
+    lesson_title: str
+
+
+@router.post("/relevance")
+async def relevance_check(request: RelevanceRequest):
+    """Check if a student's question is relevant to the current lesson."""
+    try:
+        is_relevant = await check_relevance(request.question, request.lesson_title)
+        return {"relevant": is_relevant}
+    except Exception as e:
+        logger.error(f"Relevance check error: {e}")
+        return {"relevant": True}  # fail open
 
 
 @router.post("/stop")
