@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slide Viewer</title>
+    
+    <!-- Prism.js for syntax highlighting -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+    
+    <!-- App styles -->
+    <link rel="stylesheet" href="../src/styles/index.css">
+    <link rel="stylesheet" href="../src/styles/slide.css">
+    <link rel="stylesheet" href="../src/styles/highlights.css">
+    <link rel="stylesheet" href="../src/styles/visuals.css">
+    <link rel="stylesheet" href="../src/styles/code.css">
+</head>
+<body>
+    <div id="app">
+        <header class="app-header">
+            <h1>Slide Viewer</h1>
+            <div class="slide-counter">
+                <span id="current-slide">1</span> / <span id="total-slides">0</span>
+            </div>
+        </header>
+        
+        <main class="slide-container">
+            <button class="nav-btn prev-btn" id="prev-btn" aria-label="Previous slide">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="15,18 9,12 15,6"></polyline>
+                </svg>
+            </button>
+            
+            <div id="slide-wrapper" class="slide-wrapper">
+                <!-- Slide content renders here -->
+            </div>
+            
+            <button class="nav-btn next-btn" id="next-btn" aria-label="Next slide">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="9,18 15,12 9,6"></polyline>
+                </svg>
+            </button>
+        </main>
+        
+        <footer class="app-footer">
+            <label class="file-input-label">
+                <input type="file" id="file-input" accept=".json,.jsonl" hidden>
+                📂 Load Deck / JSONL
+            </label>
+        </footer>
+    </div>
+    
+    <!-- Prism.js for code highlighting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-java.min.js"></script>
+    
+    <!-- App modules -->
+    <script type="module" src="../src/app.js"></script>
+</body>
+</html>

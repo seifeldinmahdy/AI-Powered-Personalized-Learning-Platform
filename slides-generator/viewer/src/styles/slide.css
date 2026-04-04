@@ -1,0 +1,268 @@
+/* =============================================================================
+   SLIDE.CSS - Slide Container & Layout Styles
+   ============================================================================= */
+
+/* Main slide container area */
+.slide-container {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-xl);
+    gap: var(--space-lg);
+}
+
+/* Navigation buttons */
+.nav-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    background: var(--bg-elevated);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 50%;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+}
+
+.nav-btn:hover:not(:disabled) {
+    background: var(--accent-primary);
+    color: white;
+    border-color: var(--accent-primary);
+    box-shadow: var(--shadow-glow);
+}
+
+.nav-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+/* Slide wrapper */
+.slide-wrapper {
+    flex: 1;
+    max-width: 900px;
+    display: flex;
+    justify-content: center;
+}
+
+/* =============================================================================
+   SLIDE CARD - Main slide container
+   ============================================================================= */
+
+.slide {
+    width: 100%;
+    background: var(--bg-card);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-lg);
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Slide header with title */
+.slide-header {
+    padding: var(--space-lg) var(--space-xl);
+    background: linear-gradient(135deg, var(--bg-elevated), var(--bg-card));
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.slide-title {
+    font-size: var(--text-2xl);
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+/* =============================================================================
+   LAYOUT: Content_Visual (two-column)
+   ============================================================================= */
+
+.slide-content {
+    padding: var(--space-xl);
+}
+
+.layout-content-visual .slide-content {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-xl);
+    align-items: start;
+}
+
+.layout-content-visual .slide-body {
+    order: 1;
+}
+
+.layout-content-visual .slide-visual {
+    order: 2;
+}
+
+/* =============================================================================
+   LAYOUT: List_View (single column text)
+   ============================================================================= */
+
+.layout-list-view .slide-content {
+    display: block;
+}
+
+.layout-list-view .slide-body {
+    max-width: 100%;
+}
+
+/* =============================================================================
+   LAYOUT: Code_Main (code-focused)
+   ============================================================================= */
+
+.layout-code-main .slide-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.layout-code-main .slide-code {
+    flex: 1;
+}
+
+.layout-code-main .slide-body {
+    font-size: var(--text-sm);
+}
+
+/* =============================================================================
+   SLIDE TYPE BADGES
+   ============================================================================= */
+
+.slide-number-badge {
+    position: absolute;
+    top: var(--space-sm);
+    right: var(--space-sm);
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    font-weight: 600;
+}
+
+.slide-type-badge {
+    position: absolute;
+    top: var(--space-sm);
+    left: var(--space-sm);
+    padding: 2px 10px;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: var(--accent-primary);
+    color: white;
+}
+
+.slide {
+    position: relative;
+}
+
+/* =============================================================================
+   SLIDE TYPE: Title
+   ============================================================================= */
+
+.slide-type-title .slide-header {
+    padding: var(--space-2xl) var(--space-xl);
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    text-align: center;
+    min-height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.slide-type-title .slide-title {
+    font-size: 2.4rem;
+    background: linear-gradient(135deg, #e2e2e2, #ffffff, #a8dadc);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.slide-type-title .slide-type-badge {
+    background: linear-gradient(135deg, #e94560, #c23161);
+}
+
+/* =============================================================================
+   SLIDE TYPE: Agenda
+   ============================================================================= */
+
+.slide-type-agenda .slide-type-badge {
+    background: linear-gradient(135deg, #48bb78, #38a169);
+}
+
+.slide-type-agenda .slide-header {
+    background: linear-gradient(135deg, var(--bg-elevated), #1a2a1a);
+}
+
+/* =============================================================================
+   SLIDE TYPE: Section (Divider)
+   ============================================================================= */
+
+.slide-type-section .slide-header {
+    padding: var(--space-2xl) var(--space-xl);
+    background: linear-gradient(135deg, #2d1b69 0%, #1a1a2e 100%);
+    text-align: center;
+    min-height: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.slide-type-section .slide-title {
+    font-size: 2rem;
+    color: #a78bfa;
+}
+
+.slide-type-section .slide-type-badge {
+    background: linear-gradient(135deg, #805ad5, #6b46c1);
+}
+
+/* =============================================================================
+   SLIDE TYPE: Summary
+   ============================================================================= */
+
+.slide-type-summary .slide-header {
+    background: linear-gradient(135deg, #1a2a3a, var(--bg-elevated));
+    border-left: 4px solid #4299e1;
+}
+
+.slide-type-summary .slide-type-badge {
+    background: linear-gradient(135deg, #4299e1, #3182ce);
+}
+
+/* =============================================================================
+   Responsive adjustments
+   ============================================================================= */
+
+@media (max-width: 768px) {
+    .slide-container {
+        padding: var(--space-md);
+    }
+
+    .layout-content-visual .slide-content {
+        grid-template-columns: 1fr;
+    }
+
+    .layout-content-visual .slide-visual {
+        order: 1;
+    }
+
+    .layout-content-visual .slide-body {
+        order: 2;
+    }
+
+    .nav-btn {
+        width: 40px;
+        height: 40px;
+    }
+}

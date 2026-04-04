@@ -1,0 +1,219 @@
+/* =============================================================================
+   VISUALS.CSS - Visual Template Styles
+   ============================================================================= */
+
+/* Visual container */
+.slide-visual {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+/* =============================================================================
+   TEMPLATE: concept_box
+   ============================================================================= */
+
+.visual-concept-box {
+    background: var(--bg-elevated);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.visual-concept-box .visual-title {
+    padding: var(--space-md) var(--space-lg);
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    color: white;
+    font-weight: 600;
+    font-size: var(--text-base);
+}
+
+.visual-concept-box .visual-points {
+    list-style: none;
+    padding: var(--space-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.visual-concept-box .visual-points li {
+    position: relative;
+    padding-left: var(--space-lg);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+}
+
+.visual-concept-box .visual-points li::before {
+    content: '→';
+    position: absolute;
+    left: 0;
+    color: var(--accent-primary);
+}
+
+/* =============================================================================
+   TEMPLATE: comparison
+   ============================================================================= */
+
+.visual-comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-md);
+}
+
+.visual-comparison .comparison-side {
+    background: var(--bg-elevated);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.visual-comparison .comparison-left {
+    border-left: 3px solid var(--accent-success);
+}
+
+.visual-comparison .comparison-right {
+    border-left: 3px solid var(--accent-danger);
+}
+
+.visual-comparison .comparison-label {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: var(--space-sm);
+    color: var(--text-muted);
+}
+
+.visual-comparison .comparison-items {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.visual-comparison .comparison-items li {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+}
+
+/* =============================================================================
+   TEMPLATE: process_flow
+   ============================================================================= */
+
+.visual-process-flow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.visual-process-flow .flow-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.visual-process-flow .flow-step-box {
+    background: var(--bg-elevated);
+    border: 2px solid var(--accent-primary);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm) var(--space-md);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text-primary);
+    text-align: center;
+    min-width: 80px;
+}
+
+.visual-process-flow .flow-arrow {
+    color: var(--accent-primary);
+    font-size: var(--text-lg);
+}
+
+/* =============================================================================
+   TEMPLATE: stack
+   ============================================================================= */
+
+.visual-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-width: 200px;
+    margin: 0 auto;
+}
+
+.visual-stack .stack-item {
+    background: var(--bg-elevated);
+    border: 1px solid var(--accent-secondary);
+    padding: var(--space-sm) var(--space-md);
+    text-align: center;
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+}
+
+.visual-stack .stack-item:first-child {
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    background: var(--accent-primary);
+    color: white;
+    font-weight: 600;
+}
+
+.visual-stack .stack-item:last-child {
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+
+.visual-stack .stack-label {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-align: center;
+    margin-top: var(--space-xs);
+}
+
+/* =============================================================================
+   TEMPLATE: info_card / definition_box (fallbacks)
+   ============================================================================= */
+
+.visual-info-card,
+.visual-definition-box {
+    background: var(--bg-elevated);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.visual-info-card .visual-title,
+.visual-definition-box .visual-title {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--accent-secondary);
+    margin-bottom: var(--space-md);
+}
+
+.visual-info-card .visual-content,
+.visual-definition-box .visual-content {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: 1.7;
+}
+
+/* =============================================================================
+   TEMPLATE: generic fallback
+   ============================================================================= */
+
+.visual-generic {
+    background: var(--bg-elevated);
+    border: 1px dashed rgba(255, 255, 255, 0.2);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    text-align: center;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.visual-generic .template-name {
+    font-family: var(--font-mono);
+    color: var(--accent-primary);
+    margin-bottom: var(--space-xs);
+}
