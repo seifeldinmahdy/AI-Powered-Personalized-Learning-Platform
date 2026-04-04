@@ -51,7 +51,7 @@ ai_service/models/clean_question_model/
 *.onnx
 *.pt
 *.pth
-
+*.keras
 # HuggingFace / PyTorch cache
 .cache/
 *.lock
