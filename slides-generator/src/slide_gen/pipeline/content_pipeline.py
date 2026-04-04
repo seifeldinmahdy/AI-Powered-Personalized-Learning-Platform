@@ -1,13 +1,15 @@
 """
 Content Pipeline — Stage 3 of the presentation pipeline.
 
-Orchestrates the 4 agents for each text chunk to produce a content slide:
-1. Content Specialist (T5) → title + bullets
+Orchestrates the agents for each text chunk to produce a content slide:
+1. Content Specialist (Flan-T5-Large) → title + structured items
 2. Visual Classifier (DistilBERT) → template_id + confidence
 3. Visual Gate (rule-based) → render or skip
 4. Code Extractor (deterministic) → code_block or null
-5. Accessibility Worker (deterministic) → alt_text or null
+5. Accessibility Worker (deterministic) → alt_text
 """
+
+from pathlib import Path
 
 from slide_gen.agents.content_specialist import generate_content
 from slide_gen.agents.visual_classifier import classify_visual, should_render_visual
@@ -25,12 +27,46 @@ from slide_gen.core.slide_schema import (
 )
 from slide_gen.core.profile_schema import StudentProfile
 
+# Resolve local model paths
+_PIPELINE_DIR = Path(__file__).parent
+_PROJECT_ROOT = _PIPELINE_DIR.parent.parent.parent
+DEFAULT_T5_PATH = str(_PROJECT_ROOT / "models" / "content_specialist")
+DEFAULT_CLASSIFIER_PATH = str(_PROJECT_ROOT / "models" / "visual_classifier")
 
-def _assign_highlight_types(bullets: list[str]) -> list[ContentItem]:
+
+def _highlight_from_string(ht_str: str) -> HighlightType:
+    """Convert a highlight type string to the enum value."""
+    mapping = {
+        "none": HighlightType.NONE,
+        "definition": HighlightType.DEFINITION,
+        "example": HighlightType.EXAMPLE,
+        "key_concept": HighlightType.KEY_CONCEPT,
+        "attention": HighlightType.ATTENTION,
+        "code": HighlightType.CODE,
+    }
+    return mapping.get(ht_str, HighlightType.NONE)
+
+
+def _items_to_content(items: list[dict]) -> list[ContentItem]:
     """
-    Assign highlight types to bullets using simple heuristics.
+    Convert the structured items from Content Specialist into ContentItem objects.
 
-    In the fine-tuned model, we'd train for this. For now, use keywords.
+    Each item dict has: text, highlight_type, and optionally term.
+    """
+    content_items = []
+    for item in items:
+        content_items.append(ContentItem(
+            text=item["text"],
+            highlight_type=_highlight_from_string(item.get("highlight_type", "none")),
+            term=item.get("term"),
+        ))
+    return content_items
+
+
+def _assign_highlight_types_heuristic(bullets: list[str]) -> list[ContentItem]:
+    """
+    Fallback: assign highlight types using simple heuristics.
+    Used when the model returns plain text without tags.
     """
     items = []
     for bullet in bullets:
@@ -59,20 +95,24 @@ def _choose_layout(
 ) -> Layout:
     """
     Choose slide layout based on content and preference.
+
+    Component 4 (Layout Selector) — deterministic rules:
+    - Code present → Code_Main
+    - Visual present → Content_Visual
+    - Text only → List_View
     """
     if has_code:
         return Layout.CODE_MAIN
     if has_visual:
         return Layout.CONTENT_VISUAL
-    # Text-only → always List_View
     return Layout.LIST_VIEW
 
 
 def process_chunk(
     chunk: str,
     profile: StudentProfile,
-    t5_model_path: str = "t5-base",
-    classifier_model_path: str = "distilbert-base-uncased",
+    t5_model_path: str = DEFAULT_T5_PATH,
+    classifier_model_path: str = DEFAULT_CLASSIFIER_PATH,
 ) -> SlideInstruction:
     """
     Process a single text chunk through the compound AI pipeline.
@@ -91,7 +131,10 @@ def process_chunk(
     # ---- Agent 1: Content Specialist ----
     content = generate_content(chunk, profile_dict, model_path=t5_model_path)
     title = content["title"]
-    bullets = content["bullets"]
+    items = content["items"]
+
+    # Convert structured items to ContentItem objects
+    body_content = _items_to_content(items)
 
     # ---- Agent 2: Visual Classifier (runs on raw chunk for richer signal) ----
     classification = classify_visual(chunk, model_path=classifier_model_path)
@@ -100,29 +143,29 @@ def process_chunk(
     visual = None
     template_id = None
     visual_params = {}
-    
+
     # Try the top 3 template candidates in order
     for candidate in classification.get("top_3", []):
-        # Package raw candidate so should_render_visual can evaluate it honestly
         candidate_classification = {
             "template_id": candidate["template_id"],
             "confidence": candidate["confidence"],
-            "category": classification.get("category", "none") # Proxy for gate
+            "category": classification.get("category", "none"),
         }
-        
+
         visual_decision = should_render_visual(
             candidate_classification, profile.composition_mode.value
         )
-        
+
         if visual_decision is not None:
             attempted_template_id = visual_decision["template_id"]
-            
-            # Agent 3b: LLM-based param generation (with deterministic fallback)
-            # If the template is bar_chart or pie_chart, this might return None if it fails
-            attempted_params = generate_visual_params(attempted_template_id, bullets, title)
-            
+
+            # Generate visual params (with deterministic fallback)
+            bullet_texts = [item["text"] for item in items]
+            attempted_params = generate_visual_params(
+                attempted_template_id, bullet_texts, title
+            )
+
             if attempted_params is not None:
-                # Success! Use this template and break the fallback loop
                 template_id = attempted_template_id
                 visual_params = attempted_params
                 visual = VisualTemplate(template=template_id, params=visual_params)
@@ -145,8 +188,7 @@ def process_chunk(
         screen_reader_active=profile.screen_reader_active,
     )
 
-    # ---- Assemble ----
-    body_content = _assign_highlight_types(bullets)
+    # ---- Layout Selection (Component 4) ----
     layout = _choose_layout(
         has_visual=visual is not None,
         has_code=code_block is not None,
@@ -164,13 +206,11 @@ def process_chunk(
     )
 
 
-
-
 def process_section_chunks(
     chunks: list[str],
     profile: StudentProfile,
-    t5_model_path: str = "t5-base",
-    classifier_model_path: str = "distilbert-base-uncased",
+    t5_model_path: str = DEFAULT_T5_PATH,
+    classifier_model_path: str = DEFAULT_CLASSIFIER_PATH,
 ) -> list[SlideInstruction]:
     """
     Process all chunks in a section.

@@ -1,5 +1,5 @@
 /**
- * parseSlide.js - Parse slide JSON from training data
+ * parseSlide.js - Parse slide data from training data or deck JSON
  */
 
 /**
@@ -8,12 +8,10 @@
  * @returns {Object} Parsed slide object
  */
 export function parseSlide(target) {
-    // If target is already an object, return it
     if (typeof target === 'object' && target !== null) {
         return target;
     }
 
-    // If it's a string, parse as JSON
     if (typeof target === 'string') {
         try {
             return JSON.parse(target);
@@ -27,7 +25,7 @@ export function parseSlide(target) {
 }
 
 /**
- * Parse a training example (input/target pair)
+ * Parse a training example (input/target pair) into a slide
  * @param {Object} example - Training example with input and target
  * @returns {Object} Parsed example with slide data and metadata
  */
@@ -43,12 +41,35 @@ export function parseTrainingExample(example) {
 }
 
 /**
+ * Parse a deck slide — already in SlideInstruction format
+ * @param {Object} slide - A slide from deck JSON
+ * @returns {Object} The same slide (already in correct format)
+ */
+export function parseDeckSlide(slide) {
+    return {
+        slide: slide,
+        metadata: {
+            slideType: slide.slide_type || 'Content',
+            slideNumber: slide.slide_number || null,
+            mastery: null,
+            mode: null,
+            language: null,
+            a11y: false,
+            context: ''
+        },
+        raw: slide
+    };
+}
+
+/**
  * Parse metadata from input string
  * @param {string} input - The input string with [TAGS]
  * @returns {Object} Parsed metadata
  */
 export function parseInputMetadata(input) {
     const metadata = {
+        slideType: 'Content',
+        slideNumber: null,
         mastery: null,
         mode: null,
         language: null,
@@ -86,6 +107,22 @@ export function getLayoutClass(layout) {
         'Code_Main': 'layout-code-main'
     };
     return layoutMap[layout] || 'layout-content-visual';
+}
+
+/**
+ * Get slide type CSS class
+ * @param {string} slideType - Slide type (Title, Agenda, Section, Content, Summary)
+ * @returns {string} CSS class
+ */
+export function getSlideTypeClass(slideType) {
+    const typeMap = {
+        'Title': 'slide-type-title',
+        'Agenda': 'slide-type-agenda',
+        'Section': 'slide-type-section',
+        'Content': 'slide-type-content',
+        'Summary': 'slide-type-summary'
+    };
+    return typeMap[slideType] || 'slide-type-content';
 }
 
 /**

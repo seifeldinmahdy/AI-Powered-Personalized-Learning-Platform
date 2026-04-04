@@ -1,8 +1,15 @@
 /**
  * Slide.js - Main slide component
+ *
+ * Renders slides with type-specific styling:
+ * - Title: Large centered title, accent gradient
+ * - Agenda: Numbered outline list
+ * - Section: Full-width divider with section number
+ * - Content: Standard layout with body + visual + code
+ * - Summary: Key takeaways card
  */
 
-import { getLayoutClass } from '../utils/parseSlide.js';
+import { getLayoutClass, getSlideTypeClass } from '../utils/parseSlide.js';
 import { renderSlideTitle } from './SlideTitle.js';
 import { renderSlideBody } from './SlideBody.js';
 import { renderCodeBlock } from './CodeBlock.js';
@@ -11,7 +18,7 @@ import { renderVisual } from './visuals/VisualRenderer.js';
 /**
  * Render a complete slide
  * @param {Object} slide - Slide data object
- * @param {Object} metadata - Optional metadata from input
+ * @param {Object} metadata - Optional metadata
  * @returns {HTMLElement} Slide element
  */
 export function renderSlide(slide, metadata = null) {
@@ -19,11 +26,29 @@ export function renderSlide(slide, metadata = null) {
         return createEmptySlide();
     }
 
+    const slideType = slide.slide_type || 'Content';
     const layoutClass = getLayoutClass(slide.layout);
+    const typeClass = getSlideTypeClass(slideType);
 
     // Create slide container
     const slideEl = document.createElement('article');
-    slideEl.className = `slide ${layoutClass}`;
+    slideEl.className = `slide ${layoutClass} ${typeClass}`;
+
+    // Slide number badge (top-right)
+    if (slide.slide_number) {
+        const numberBadge = document.createElement('div');
+        numberBadge.className = 'slide-number-badge';
+        numberBadge.textContent = slide.slide_number;
+        slideEl.appendChild(numberBadge);
+    }
+
+    // Slide type badge (top-left)
+    if (slideType !== 'Content') {
+        const typeBadge = document.createElement('div');
+        typeBadge.className = 'slide-type-badge';
+        typeBadge.textContent = slideType;
+        slideEl.appendChild(typeBadge);
+    }
 
     // Add header with title
     const header = document.createElement('header');
@@ -86,7 +111,7 @@ function createEmptySlide() {
         <div class="slide-content">
             <div class="slide-body">
                 <p style="color: var(--text-muted); text-align: center; padding: 2rem;">
-                    Load a JSONL file to view slides
+                    Load a JSON or JSONL file to view slides
                 </p>
             </div>
         </div>

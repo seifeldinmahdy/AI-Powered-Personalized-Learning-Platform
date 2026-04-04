@@ -1,16 +1,21 @@
 /**
  * app.js - Main application entry point
+ *
+ * Supports two data formats:
+ * 1. Deck JSON (.json) — array of SlideInstruction objects from the pipeline
+ * 2. Training JSONL (.jsonl) — input/target pairs from training data
  */
 
 import { renderSlide } from './components/Slide.js';
-import { loadJSONLFile, getSampleData } from './utils/loadData.js';
-import { parseTrainingExample } from './utils/parseSlide.js';
+import { loadJSONLFile, loadJSONFile, getSampleData, detectDataFormat } from './utils/loadData.js';
+import { parseTrainingExample, parseDeckSlide } from './utils/parseSlide.js';
 
 // Application State
 const state = {
     slides: [],
     currentIndex: 0,
-    metadata: []
+    metadata: [],
+    format: 'deck'  // 'deck' or 'training'
 };
 
 // DOM Elements
@@ -36,35 +41,56 @@ function init() {
     // Keyboard navigation
     document.addEventListener('keydown', handleKeyNavigation);
 
-    // Load sample data initially if no file selected
+    // Load sample data initially
     loadSampleData();
 }
 
 /**
- * Handle file input change
+ * Handle file input change — auto-detect JSON vs JSONL
  */
 async function handleFileLoad(event) {
     const file = event.target.files[0];
     if (!file) return;
 
     try {
-        const data = await loadJSONLFile(file);
+        let data;
+        const filename = file.name.toLowerCase();
 
-        if (data && data.length > 0) {
-            // Process data to extract slides and metadata
-            const processed = data.map(item => parseTrainingExample(item));
+        // Load based on file extension
+        if (filename.endsWith('.json')) {
+            data = await loadJSONFile(file);
+        } else {
+            data = await loadJSONLFile(file);
+        }
 
+        if (!data || data.length === 0) {
+            alert('No valid data found in file.');
+            return;
+        }
+
+        // Auto-detect format
+        const format = detectDataFormat(filename, data);
+        state.format = format;
+
+        if (format === 'deck') {
+            // Deck JSON: slides are already in SlideInstruction format
+            const processed = data.map(item => parseDeckSlide(item));
             state.slides = processed.map(p => p.slide).filter(s => s !== null);
             state.metadata = processed.map(p => p.metadata);
-            state.currentIndex = 0;
-
-            updateUI();
-
-            // Reset file input so same file can be loaded again
-            event.target.value = '';
         } else {
-            alert('No valid JSON data found in file.');
+            // Training JSONL: parse input/target pairs
+            const processed = data.map(item => parseTrainingExample(item));
+            state.slides = processed.map(p => p.slide).filter(s => s !== null);
+            state.metadata = processed.map(p => p.metadata);
         }
+
+        state.currentIndex = 0;
+        updateUI();
+
+        // Reset file input so same file can be loaded again
+        event.target.value = '';
+
+        console.log(`Loaded ${state.slides.length} slides (format: ${format})`);
     } catch (error) {
         console.error('Error loading file:', error);
         alert('Error loading file. Check console for details.');
@@ -76,10 +102,11 @@ async function handleFileLoad(event) {
  */
 function loadSampleData() {
     const data = getSampleData();
-    const processed = data.map(item => parseTrainingExample(item));
+    const processed = data.map(item => parseDeckSlide(item));
 
     state.slides = processed.map(p => p.slide);
     state.metadata = processed.map(p => p.metadata);
+    state.format = 'deck';
     state.currentIndex = 0;
 
     updateUI();
@@ -106,10 +133,6 @@ function updateUI() {
     if (currentSlide) {
         const slideEl = renderSlide(currentSlide, currentMetadata);
         elements.slideWrapper.appendChild(slideEl);
-
-        // Console log for debugging context
-        console.log('Current Slide:', currentSlide);
-        console.log('Metadata:', currentMetadata);
     }
 }
 

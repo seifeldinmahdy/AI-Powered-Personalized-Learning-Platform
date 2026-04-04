@@ -38,15 +38,18 @@ def assemble_deck(
     # 2. Agenda slide
     deck.append(structural_slides["agenda"])
 
-    # 3. Sections: divider → content → summary
+    # 3. Sections: divider → content → summary (only processed sections)
     for sid in section_ids:
+        # Skip sections that weren't processed
+        if sid not in content_slides:
+            continue
+
         # Section divider
         if sid in structural_slides["dividers"]:
             deck.append(structural_slides["dividers"][sid])
 
         # Content slides
-        if sid in content_slides:
-            deck.extend(content_slides[sid])
+        deck.extend(content_slides[sid])
 
         # Summary slide
         if sid in summary_slides:
