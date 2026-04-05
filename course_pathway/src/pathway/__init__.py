@@ -1,0 +1,1 @@
+"""Course Pathway Generator package."""

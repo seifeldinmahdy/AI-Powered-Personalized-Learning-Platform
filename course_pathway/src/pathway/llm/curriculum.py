@@ -1,0 +1,396 @@
+"""Top-down LLM curriculum designer.
+
+Replaces the bottom-up clustering pipeline (SectionBuilder → GraphBuilder →
+ordering.py) with a single LLM call that designs the entire curriculum.
+
+The LLM receives every unique topic tag from ChromaDB and returns a
+complete pedagogically ordered JSON curriculum with sessions, titles,
+topic groupings, and difficulty tiers.
+
+Uses the existing ``OllamaClient`` from ``llm.naming``.
+"""
+
+from __future__ import annotations
+
+import re
+from collections import defaultdict
+from difflib import SequenceMatcher
+
+import structlog
+
+from pathway.llm.naming import OllamaClient
+from pathway.llm.prompts import CURRICULUM_SYSTEM_PROMPT, CURRICULUM_USER_TEMPLATE
+from pathway.models.schemas import LLMCurriculumSession
+
+logger = structlog.get_logger(__name__)
+
+# ── Topic normalisation (reused from section_builder pattern) ────
+
+_STRIP_RE = re.compile(r"[^a-z0-9\s]")
+
+
+def _normalise(raw: str) -> str:
+    """Lowercase, strip punctuation, collapse whitespace."""
+    normed = raw.lower().strip()
+    normed = _STRIP_RE.sub("", normed)
+    return re.sub(r"\s+", " ", normed).strip()
+
+
+def _fuzzy_match(query: str, candidates: list[str], threshold: float = 0.80) -> str | None:
+    """Return the best fuzzy match from *candidates* for *query*, or None."""
+    query_n = _normalise(query)
+    if not query_n:
+        return None
+
+    best_score = 0.0
+    best_match: str | None = None
+
+    for candidate in candidates:
+        cand_n = _normalise(candidate)
+        if query_n == cand_n:
+            return candidate  # exact normalised match
+
+        score = SequenceMatcher(None, query_n, cand_n).ratio()
+        if score > best_score and score >= threshold:
+            best_score = score
+            best_match = candidate
+
+    return best_match
+
+
+# ── Boilerplate filter ───────────────────────────────────────────
+
+_BOILERPLATE_TOPICS = {
+    "index", "index entries", "glossary", "appendix", "bibliography",
+    "references", "table of contents", "contents", "preface",
+    "acknowledgments", "creative commons", "creative commons licensing",
+}
+
+
+def _is_boilerplate(topic: str) -> bool:
+    """Return True if *topic* is textbook boilerplate, not course content."""
+    return _normalise(topic) in _BOILERPLATE_TOPICS
+
+
+# ── Intent inference ─────────────────────────────────────────────
+
+
+def _infer_course_intent(
+    topics: list[str],
+    book_titles: list[str] | None = None,
+) -> str:
+    """Best-effort inference of course intent from available data."""
+    parts: list[str] = []
+
+    if book_titles:
+        parts.append("Based on the textbook(s): " + ", ".join(book_titles) + ".")
+
+    sample = topics[:20]
+    if sample:
+        parts.append(
+            "Representative topics include: " + ", ".join(sample) + "."
+        )
+
+    return " ".join(parts) if parts else "Introduction to Computer Science"
+
+
+# ── Prompt builder ───────────────────────────────────────────────
+
+
+def _build_topic_listing(topics: list[str]) -> str:
+    """Format topic list for the LLM prompt."""
+    lines: list[str] = []
+    for i, topic in enumerate(topics, 1):
+        lines.append(f"  {i}. \"{topic}\"")
+    return "\n".join(lines)
+
+
+# ── Alphabetical fallback ───────────────────────────────────────
+
+
+def _alphabetical_fallback(
+    topics: list[str],
+    topics_per_session: int = 10,
+) -> list[LLMCurriculumSession]:
+    """Group topics alphabetically into sessions as a safe fallback."""
+    sorted_topics = sorted(topics, key=lambda t: t.lower())
+    sessions: list[LLMCurriculumSession] = []
+
+    for i in range(0, len(sorted_topics), topics_per_session):
+        batch = sorted_topics[i : i + topics_per_session]
+        session_num = len(sessions) + 1
+        sessions.append(
+            LLMCurriculumSession(
+                session_number=session_num,
+                session_title=f"Topics: {batch[0]} – {batch[-1]}",
+                topics=batch,
+                difficulty="beginner",
+            )
+        )
+
+    logger.warning(
+        "curriculum_alphabetical_fallback",
+        total_sessions=len(sessions),
+        total_topics=len(topics),
+    )
+    return sessions
+
+
+# ── Missing topic recovery ───────────────────────────────────────
+
+
+def _assign_missing_topics(
+    missing: list[str],
+    sessions: list[LLMCurriculumSession],
+) -> list[LLMCurriculumSession]:
+    """Assign missing topics to the most semantically similar session.
+
+    Uses embedding cosine similarity between the missing topic and
+    each session title. Falls back to the last session if embeddings
+    fail.
+    """
+    if not missing or not sessions:
+        return sessions
+
+    try:
+        from sentence_transformers import SentenceTransformer
+        import numpy as np
+
+        model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        session_titles = [s.session_title for s in sessions]
+        title_embeddings = model.encode(session_titles, normalize_embeddings=True)
+
+        for topic in missing:
+            topic_emb = model.encode([topic], normalize_embeddings=True)
+            sims = topic_emb @ title_embeddings.T
+            best_idx = int(np.argmax(sims[0]))
+            sessions[best_idx].topics.append(topic)
+            logger.info(
+                "missing_topic_assigned",
+                topic=topic,
+                assigned_to=sessions[best_idx].session_title,
+                similarity=float(sims[0][best_idx]),
+            )
+    except Exception as exc:
+        logger.warning(
+            "embedding_fallback_for_missing_topics",
+            error=str(exc),
+            count=len(missing),
+        )
+        # Fallback: just add to the last session
+        for topic in missing:
+            sessions[-1].topics.append(topic)
+
+    return sessions
+
+
+# ── Main function ────────────────────────────────────────────────
+
+
+def design_curriculum(
+    client: OllamaClient,
+    topics: list[str],
+    course_intent: str = "",
+    book_titles: list[str] | None = None,
+    max_retries: int = 3,
+    timeout: int = 600,
+) -> list[LLMCurriculumSession]:
+    """Design a complete curriculum top-down using the LLM.
+
+    Parameters
+    ----------
+    client:
+        Configured Ollama Cloud client.
+    topics:
+        Every unique topic tag from ChromaDB for this course.
+    course_intent:
+        Course goal description. Auto-inferred if empty.
+    book_titles:
+        Optional book titles for intent inference.
+    max_retries:
+        Retries on validation failure before fallback.
+    timeout:
+        Timeout in seconds for the LLM call.
+
+    Returns
+    -------
+    list[LLMCurriculumSession]
+        The LLM-designed curriculum. Falls back to alphabetical
+        grouping on complete failure.
+    """
+    if not topics:
+        return []
+
+    # Filter boilerplate topics
+    clean_topics = [t for t in topics if not _is_boilerplate(t)]
+
+    logger.info(
+        "curriculum_design_start",
+        total_topics=len(clean_topics),
+        filtered_boilerplate=len(topics) - len(clean_topics),
+    )
+
+    if not clean_topics:
+        return []
+
+    # Resolve course intent
+    effective_intent = course_intent.strip()
+    if not effective_intent:
+        effective_intent = _infer_course_intent(clean_topics, book_titles)
+
+    # Build prompt
+    topic_listing = _build_topic_listing(clean_topics)
+    user_message = CURRICULUM_USER_TEMPLATE.format(
+        course_intent=effective_intent,
+        count=len(clean_topics),
+        topic_listing=topic_listing,
+    )
+
+    # Attempt LLM call with retries
+    for attempt in range(1, max_retries + 1):
+        try:
+            result = client.chat_json(
+                [
+                    {"role": "system", "content": CURRICULUM_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=0.2,
+                timeout_override=timeout,
+            )
+
+            raw_sessions = result.get("sessions", [])
+
+            if not isinstance(raw_sessions, list) or not raw_sessions:
+                logger.warning(
+                    "curriculum_invalid_response",
+                    attempt=attempt,
+                    got_type=type(raw_sessions).__name__,
+                )
+                continue
+
+            # Parse into Pydantic models
+            parsed_sessions: list[LLMCurriculumSession] = []
+            for raw in raw_sessions:
+                try:
+                    parsed_sessions.append(LLMCurriculumSession(**raw))
+                except Exception as parse_exc:
+                    logger.warning(
+                        "curriculum_session_parse_error",
+                        attempt=attempt,
+                        error=str(parse_exc),
+                        raw=str(raw)[:200],
+                    )
+
+            if not parsed_sessions:
+                logger.warning("curriculum_no_valid_sessions", attempt=attempt)
+                continue
+
+            # Validate topic strings — fuzzy match against original list
+            validated_sessions = _validate_topics(parsed_sessions, clean_topics)
+
+            # Check for missing topics and assign them
+            used_topics: set[str] = set()
+            for session in validated_sessions:
+                used_topics.update(session.topics)
+
+            missing = [t for t in clean_topics if t not in used_topics]
+
+            if missing:
+                logger.info(
+                    "curriculum_missing_topics",
+                    attempt=attempt,
+                    count=len(missing),
+                    sample=missing[:5],
+                )
+                validated_sessions = _assign_missing_topics(
+                    missing, validated_sessions
+                )
+
+            # Remove any sessions that ended up empty after validation
+            validated_sessions = [
+                s for s in validated_sessions if s.topics
+            ]
+
+            # Re-number sessions
+            for i, session in enumerate(validated_sessions, 1):
+                session.session_number = i
+
+            logger.info(
+                "curriculum_design_complete",
+                attempt=attempt,
+                sessions=len(validated_sessions),
+                total_topics=sum(len(s.topics) for s in validated_sessions),
+            )
+            return validated_sessions
+
+        except Exception as exc:
+            logger.warning(
+                "curriculum_llm_error",
+                attempt=attempt,
+                error=str(exc),
+            )
+
+    # All retries exhausted — fall back to alphabetical
+    logger.warning(
+        "curriculum_design_fallback",
+        reason="All retries exhausted",
+        max_retries=max_retries,
+    )
+    return _alphabetical_fallback(clean_topics)
+
+
+# ── Topic validation ─────────────────────────────────────────────
+
+
+def _validate_topics(
+    sessions: list[LLMCurriculumSession],
+    valid_topics: list[str],
+) -> list[LLMCurriculumSession]:
+    """Validate and clean topic strings in the LLM response.
+
+    For each topic string the LLM used:
+    - If it exactly matches a valid topic, keep it.
+    - If it fuzzy-matches a valid topic, replace with the valid form.
+    - If it matches nothing, remove it (invented topic).
+
+    Also deduplicates — a topic can only appear in one session.
+    """
+    valid_set = set(valid_topics)
+    used: set[str] = set()
+    invented_count = 0
+
+    for session in sessions:
+        cleaned: list[str] = []
+        for topic in session.topics:
+            # Exact match
+            if topic in valid_set and topic not in used:
+                cleaned.append(topic)
+                used.add(topic)
+                continue
+
+            # Fuzzy match
+            remaining = [t for t in valid_topics if t not in used]
+            match = _fuzzy_match(topic, remaining)
+            if match and match not in used:
+                cleaned.append(match)
+                used.add(match)
+                continue
+
+            # No match — invented topic
+            invented_count += 1
+            logger.debug(
+                "curriculum_invented_topic_removed",
+                topic=topic,
+                session=session.session_title,
+            )
+
+        session.topics = cleaned
+
+    if invented_count:
+        logger.info(
+            "curriculum_validation_complete",
+            invented_removed=invented_count,
+            topics_assigned=len(used),
+        )
+
+    return sessions
