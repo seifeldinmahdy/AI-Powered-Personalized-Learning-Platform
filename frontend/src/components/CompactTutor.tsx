@@ -9,7 +9,14 @@ import {
   transcribeAudio,
   classifyIntent,
   askRag,
+  analyzeSpeechEmotion,
+  synthesizeAudio,
+  setTutorPace,
+  type SERResult,
 } from '../services/tutor';
+import { logEmotionEvent, getRecentFusedEmotion } from '../services/emotionLogger';
+import { fuseEmotions } from '../services/emotionFusion';
+import { NovaAvatar } from './NovaAvatar';
 
 interface TranscriptEntry {
   role: 'tutor' | 'student';
@@ -21,9 +28,28 @@ interface TranscriptEntry {
 interface CompactTutorProps {
   lessonTitle?: string;
   subtopics?: string[];
+  fusedEmotion?: string;
+  currentSlideIndex?: number;
+  currentSlideTitle?: string;
+  onSessionStart?: () => void;
+  onLatestSER?: (ser: SERResult) => void;
+  onUpdateFusedEmotion?: (emotion: string) => void;
+  studentProfileSummary?: string;
+  isFloating?: boolean;
 }
 
-export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps) {
+export function CompactTutor({
+  lessonTitle,
+  subtopics = [],
+  fusedEmotion,
+  currentSlideIndex = 0,
+  currentSlideTitle,
+  onSessionStart,
+  onLatestSER,
+  onUpdateFusedEmotion,
+  studentProfileSummary,
+  isFloating = false,
+}: CompactTutorProps) {
   const navigate = useNavigate();
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -37,6 +63,7 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
   const [isAsking, setIsAsking] = useState(false);
   const [error, setError] = useState('');
   const [started, setStarted] = useState(false);
+  const [tutorEmotion, setTutorEmotion] = useState('calm');
 
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -91,7 +118,10 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
     isLoadingRef.current = true;
     setIsLoading(true);
     try {
-      const chunk = await continueTutorSession(sid, true);
+      setTutorEmotion('calm');
+      // Pass the latest fused emotion for tone adaptation
+      const currentEmotion = fusedEmotion || getRecentFusedEmotion();
+      const chunk = await continueTutorSession(sid, true, currentEmotion !== 'neutral' ? currentEmotion : undefined);
       setProgress(chunk.progress);
 
       if (chunk.text) {
@@ -135,10 +165,11 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
 
     // Step 2: fetch session + chunk (async, after unlock)
     try {
-      const session = await startTutorSession(lessonTitle, subtopics);
+      const session = await startTutorSession(lessonTitle, subtopics, undefined, studentProfileSummary);
       sessionIdRef.current = session.session_id;
       isLoadingRef.current = false;
       setIsLoading(false);
+      onSessionStart?.();
       await fetchAndPlay(session.session_id);
     } catch {
       setError('Dr. Nova is unavailable right now.');
@@ -149,7 +180,7 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
 
   const handlePlayPause = () => {
     const audio = audioRef.current;
-    console.log('[Pause] audio:', !!audio, 'isPausedRef:', isPausedRef.current, 'paused:', audio?.paused, 'src:', audio?.src?.slice(0,40));
+    console.log('[Pause] audio:', !!audio, 'isPausedRef:', isPausedRef.current, 'paused:', audio?.paused, 'src:', audio?.src?.slice(0, 40));
     if (!audio) return;
     if (isPausedRef.current) {
       isPausedRef.current = false;
@@ -181,7 +212,7 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
     audioRef.current.muted = next;
   };
 
-  const handleAskQuestion = async (overrideQuestion?: string) => {
+  const handleAskQuestion = async (overrideQuestion?: string, overrideEmotion?: string) => {
     const q = (overrideQuestion ?? question).trim();
     if (!sessionIdRef.current || !q || isAsking) return;
     setQuestion('');
@@ -222,20 +253,50 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
       // Handle each intent differently
       const resumeLecture = () => {
         if (audioRef.current && isPausedRef.current) {
-          audioRef.current.play().catch(() => {});
+          audioRef.current.play().catch(() => { });
           isPausedRef.current = false;
           setIsPaused(false);
           setIsSpeaking(true);
         }
       };
 
+      const currentEmotion = overrideEmotion || fusedEmotion || getRecentFusedEmotion();
+
+      const logInteraction = (responseSummary?: string) => {
+        logEmotionEvent({
+          timestamp: new Date().toISOString(),
+          slide_index: currentSlideIndex,
+          slide_title: currentSlideTitle,
+          subtopic: lessonTitle,
+          fused_emotion: currentEmotion,
+          event_type: 'question',
+          intent_classification: intent,
+          question_transcript: q,
+          dr_nova_response_summary: responseSummary?.slice(0, 200),
+        });
+      };
+
       if (intent === 'Off-Topic Question') {
+        const msg = "That seems off-topic. Let's stay focused on the current lesson. Feel free to ask anything related to what we're covering!";
         setTranscript((prev) => [...prev, {
           role: 'tutor',
-          text: "That seems off-topic. Let's stay focused on the current lesson. Feel free to ask anything related to what we're covering!",
+          text: msg,
           topic: 'Off-Topic',
         }]);
-        resumeLecture();
+        logInteraction(msg);
+        setTutorEmotion('confused');
+        setTutorEmotion('confused');
+        
+        try {
+          const b64 = await synthesizeAudio(msg, 'calm', sessionIdRef.current);
+          isPausedRef.current = false;
+          setIsPaused(false);
+          setAudioSrc(b64);
+          setIsSpeaking(true);
+        } catch {
+          resumeLecture();
+        }
+
         setIsAsking(false);
         return;
       }
@@ -246,8 +307,12 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
           sessionIdRef.current,
           `The student said: "${q}". Please offer brief encouragement and re-explain the current topic in a simpler way.`,
           !isMutedRef.current,
+          currentEmotion !== 'neutral' ? currentEmotion : undefined,
         );
         setTranscript((prev) => [...prev, { role: 'tutor', text: res.answer, topic: 'Encouragement' }]);
+        logInteraction(res.answer);
+        setTutorEmotion('happy');
+        setTutorEmotion('happy');
         if (res.audio_base64) {
           isPausedRef.current = false;
           setIsPaused(false);
@@ -259,12 +324,44 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
       }
 
       if (intent === 'Pace-Related') {
+        const textToAnalyze = q.toLowerCase();
+        let targetPace: 'slow' | 'normal' | 'fast' = 'normal';
+        if (textToAnalyze.includes('slow') || (textToAnalyze.includes('fast') && textToAnalyze.includes('too'))) {
+           targetPace = 'slow';
+        } else if (textToAnalyze.includes('fast') || (textToAnalyze.includes('slow') && textToAnalyze.includes('too'))) {
+           targetPace = 'fast';
+        }
+
+        try {
+           if (sessionIdRef.current) {
+             await setTutorPace(sessionIdRef.current, targetPace);
+           }
+        } catch { /* ignore */ }
+
+        const msg = targetPace === 'slow' 
+          ? "Got it! I will slow down my speaking pace for the rest of the session." 
+          : targetPace === 'fast'
+          ? "Got it! I will speak faster for the rest of the session."
+          : "Got it! You can use the Pause button to take a break or Next to skip ahead. I'll keep going at your pace.";
+
         setTranscript((prev) => [...prev, {
           role: 'tutor',
-          text: "Got it! You can use the Pause button to take a break or Next to skip ahead. I'll keep going at your pace.",
+          text: msg,
           topic: 'Pace',
         }]);
-        resumeLecture();
+        logInteraction(msg);
+        setTutorEmotion('calm');
+
+        try {
+          const b64 = await synthesizeAudio(msg, 'calm', sessionIdRef.current);
+          isPausedRef.current = false;
+          setIsPaused(false);
+          setAudioSrc(b64);
+          setIsSpeaking(true);
+        } catch {
+          resumeLecture();
+        }
+
         setIsAsking(false);
         return;
       }
@@ -275,15 +372,18 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
           if (audioRef.current.ended || audioRef.current.currentTime === 0) {
             audioRef.current.currentTime = 0;
           }
-          audioRef.current.play().catch(() => {});
+          audioRef.current.play().catch(() => { });
           setIsSpeaking(true);
           isPausedRef.current = false;
           setIsPaused(false);
+          const msg = "Sure! Let me repeat that for you.";
           setTranscript((prev) => [...prev, {
             role: 'tutor',
-            text: "Sure! Let me repeat that for you.",
+            text: msg,
             topic: 'Repeat',
           }]);
+          logInteraction(msg);
+          setTutorEmotion('excited');
           setIsAsking(false);
           return;
         }
@@ -306,13 +406,18 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
       }
 
       const augmentedQuestion = ragContext ? `${q}${ragContext}` : q;
-      const res = await askTutor(sessionIdRef.current, augmentedQuestion, !isMutedRef.current);
+      const res = await askTutor(sessionIdRef.current, augmentedQuestion, !isMutedRef.current, currentEmotion !== 'neutral' ? currentEmotion : undefined);
       setTranscript((prev) => [...prev, {
         role: 'tutor',
         text: res.answer,
         topic: 'Answer',
         sources: ragSources.length > 0 ? ragSources : undefined,
       }]);
+
+      logInteraction(res.answer);
+      setTutorEmotion('happy');
+      setTutorEmotion('happy');
+
       if (res.audio_base64) {
         isPausedRef.current = false;
         setIsPaused(false);
@@ -385,8 +490,50 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
           }
 
           const blob = new Blob([buffer], { type: 'audio/wav' });
-          const text = await transcribeAudio(blob);
-          setQuestion(text);
+
+          // Run ASR + SER in parallel for efficiency
+          const [text, serResult] = await Promise.allSettled([
+            transcribeAudio(blob),
+            analyzeSpeechEmotion(blob),
+          ]);
+
+          // Handle transcription result
+          if (text.status === 'fulfilled') {
+            setQuestion(text.value);
+          } else {
+            setError('Failed to transcribe voice input.');
+          }
+
+          let finalEmotion = fusedEmotion || getRecentFusedEmotion();
+
+          // Handle SER result — report to LiveSession for fusion
+          if (serResult.status === 'fulfilled' && onLatestSER) {
+            onLatestSER(serResult.value);
+
+            // Fuse SER with latest FER data
+            try {
+              const fusion = await fuseEmotions(
+                {
+                  fer_emotion: finalEmotion !== 'neutral' ? finalEmotion : undefined,
+                  ser_emotion: serResult.value.emotion,
+                  ser_confidence: serResult.value.confidence,
+                },
+                {
+                  slide_index: currentSlideIndex,
+                  slide_title: currentSlideTitle,
+                  subtopic: lessonTitle,
+                },
+              );
+              finalEmotion = fusion.fused_emotion;
+              onUpdateFusedEmotion?.(fusion.fused_emotion);
+            } catch {
+              // Fusion/logging errors are non-critical
+            }
+          }
+
+          if (text.status === 'fulfilled') {
+            handleAskQuestion(text.value, finalEmotion);
+          }
         } catch {
           setError('Failed to transcribe voice input.');
         } finally {
@@ -403,7 +550,12 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
   };
 
   return (
-    <div className="w-[35%] min-w-0 border-l-2 border-border bg-card flex flex-col overflow-hidden">
+    <div 
+      style={isFloating ? { width: 320, maxWidth: '90vw', top: 16, left: 16, maxHeight: '80vh' } : { width: 320, minWidth: 320 }}
+      className={isFloating
+      ? 'absolute rounded-2xl border border-border bg-card/95 backdrop-blur-md flex flex-col overflow-hidden shadow-2xl z-50'
+      : 'shrink-0 border-l-2 border-border bg-card flex flex-col overflow-hidden'
+    }>
       <audio
         ref={audioRef}
         onEnded={() => {
@@ -427,42 +579,20 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
       </div>
 
       {/* Avatar */}
-      <div className={`px-4 flex flex-col items-center border-b border-border bg-gradient-to-br from-primary/5 via-secondary/5 to-accent/5 ${started ? 'py-2' : 'py-4'}`}>
-        <div className={`relative ${started ? 'mb-2' : 'mb-3'}`}>
+      <div className={`px-4 flex flex-col items-center border-b border-border bg-gradient-to-br from-primary/5 via-secondary/5 to-accent/5 ${started || isFloating ? 'py-2' : 'py-4'}`}>
+        <div className={`relative ${started || isFloating ? 'mb-2' : 'mb-3'}`}>
           <div className="absolute inset-0 bg-gradient-to-br from-secondary to-accent rounded-full blur-xl opacity-20 pointer-events-none" />
-          <div className={`relative rounded-full bg-gradient-to-br from-primary via-secondary to-accent p-1 shadow-xl ${started ? 'w-16 h-16' : 'w-24 h-24'}`}>
-            <div className="w-full h-full rounded-full bg-background flex items-center justify-center overflow-hidden">
-              <svg viewBox="0 0 200 200" className={started ? 'w-12 h-12' : 'w-20 h-20'} fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="100" cy="70" r="30" fill="url(#grad1)" />
-                <ellipse cx="100" cy="135" rx="38" ry="48" fill="url(#grad2)" />
-                <path d="M 68 108 Q 48 118 50 138" stroke="url(#grad2)" strokeWidth="14" strokeLinecap="round" fill="none" />
-                <path d="M 132 108 Q 152 118 150 138" stroke="url(#grad2)" strokeWidth="14" strokeLinecap="round" fill="none" />
-                <defs>
-                  <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#1E2A78" />
-                    <stop offset="50%" stopColor="#4C6FFF" />
-                    <stop offset="100%" stopColor="#A78BFA" />
-                  </linearGradient>
-                  <linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#4C6FFF" />
-                    <stop offset="100%" stopColor="#A78BFA" />
-                  </linearGradient>
-                </defs>
-              </svg>
+          <div className={`relative rounded-full bg-gradient-to-br from-primary via-secondary to-accent p-1 shadow-xl ${isFloating ? 'w-14 h-14' : started ? 'w-16 h-16' : 'w-24 h-24'}`}>
+            <div className="w-full h-full rounded-full flex items-center justify-center overflow-hidden bg-background">
+              <NovaAvatar
+                audioRef={audioRef}
+                emotion={tutorEmotion}
+                isSpeaking={isSpeaking}
+                isLoading={isAsking || isLoading}
+                size={isFloating ? 48 : started ? 56 : 88}
+              />
             </div>
           </div>
-          {isSpeaking && !isPaused && (
-            <div className="absolute -bottom-1 -right-1 flex gap-0.5 bg-card rounded-full px-2 py-1 border border-border shadow-md">
-              <div className="w-1 h-3 bg-secondary rounded-full animate-pulse" style={{ animationDelay: '0ms' }} />
-              <div className="w-1 h-4 bg-secondary rounded-full animate-pulse" style={{ animationDelay: '150ms' }} />
-              <div className="w-1 h-3 bg-secondary rounded-full animate-pulse" style={{ animationDelay: '300ms' }} />
-            </div>
-          )}
-          {isLoading && (
-            <div className="absolute -bottom-1 -right-1 bg-card rounded-full p-1 border border-border shadow-md">
-              <Loader2 size={14} className="animate-spin text-secondary" />
-            </div>
-          )}
         </div>
 
         {/* Controls */}
@@ -480,9 +610,8 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
             <button
               onClick={handlePlayPause}
               disabled={isFinished}
-              className={`p-2 rounded-lg border-2 transition-all disabled:opacity-40 ${
-                !isPaused ? 'border-secondary bg-secondary text-white shadow-md' : 'border-border bg-card hover:border-secondary'
-              }`}
+              className={`p-2 rounded-lg border-2 transition-all disabled:opacity-40 ${!isPaused ? 'border-secondary bg-secondary text-white shadow-md' : 'border-border bg-card hover:border-secondary'
+                }`}
               title={isPaused ? 'Resume' : 'Pause'}
             >
               {isPaused ? <Play size={16} /> : <Pause size={16} />}
@@ -548,11 +677,10 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
         {transcript.map((entry, i) => (
           <div
             key={i}
-            className={`rounded-lg p-4 ${
-              entry.role === 'tutor'
+            className={`rounded-lg p-4 ${entry.role === 'tutor'
                 ? 'bg-primary/5 border-l-2 border-primary'
                 : 'bg-secondary/10 border-l-2 border-secondary ml-4'
-            }`}
+              }`}
           >
             {entry.role === 'student' && (
               <span className="text-sm font-semibold text-secondary block mb-1">You</span>
@@ -560,7 +688,7 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
             {entry.topic && entry.role === 'tutor' && (
               <span className="text-sm font-semibold text-muted-foreground block mb-1">{entry.topic}</span>
             )}
-            <p className="text-sm text-foreground/80 leading-relaxed">{entry.text}</p>
+            <p className="text-sm text-foreground/80 leading-relaxed break-words whitespace-pre-wrap">{entry.text}</p>
             {entry.sources && entry.sources.length > 0 && (
               <div className="mt-2 space-y-0.5">
                 {entry.sources.map((s, si) => (
@@ -609,11 +737,10 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
           <button
             onClick={handleVoiceInput}
             disabled={isTranscribing}
-            className={`w-full py-2 border-2 rounded-xl transition-colors flex items-center justify-center gap-2 text-sm font-medium disabled:opacity-50 ${
-              isRecording
+            className={`w-full py-2 border-2 rounded-xl transition-colors flex items-center justify-center gap-2 text-sm font-medium disabled:opacity-50 ${isRecording
                 ? 'border-red-500 bg-red-50 text-red-600 animate-pulse'
                 : 'border-border hover:border-secondary'
-            }`}
+              }`}
           >
             {isTranscribing ? (
               <><Loader2 size={16} className="animate-spin" /><span>Transcribing…</span></>
