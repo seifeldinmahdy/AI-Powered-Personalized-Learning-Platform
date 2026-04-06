@@ -125,56 +125,74 @@ def group_into_sections(
 # =============================================================================
 
 
+_title_model = None
+_title_tokenizer = None
+
+def _load_title_model():
+    """Lazy-load Flan-T5-Small for title generation."""
+    global _title_model, _title_tokenizer
+    if _title_model is None:
+        from transformers import T5ForConditionalGeneration, T5Tokenizer
+        model_name = "google/flan-t5-small"
+        _title_tokenizer = T5Tokenizer.from_pretrained(model_name, legacy=True)
+        _title_model = T5ForConditionalGeneration.from_pretrained(model_name)
+        _title_model.eval()
+    return _title_model, _title_tokenizer
+
+
 def generate_section_titles(
     sections: list[Section],
     all_chunks: list[str]
 ) -> list[Section]:
     """
-    Generate titles for each section using TF-IDF keyphrase extraction.
-
-    Finds the most distinctive words in each section compared to the
-    full document, then forms a readable title.
+    Generate readable short titles for each section using an AI summarizer.
 
     Args:
         sections: Sections with empty titles
-        all_chunks: All chunks for corpus-level TF-IDF
+        all_chunks: All chunks (unused in AI method, kept for signature)
 
     Returns:
-        Sections with titles filled in
+        Sections with natural language titles filled in
     """
     if not sections:
         return sections
 
-    # Build a "document" per section by joining its chunks
-    section_texts = [" ".join(s.chunks) for s in sections]
-
-    # Fit TF-IDF on all individual chunks for better IDF scores
-    vectorizer = TfidfVectorizer(
-        stop_words="english",
-        max_features=200,
-        ngram_range=(1, 2),  # Unigrams and bigrams
-        min_df=1,
-        max_df=0.9,
-    )
-    vectorizer.fit(all_chunks)
-
-    feature_names = vectorizer.get_feature_names_out()
+    try:
+        model, tokenizer = _load_title_model()
+    except Exception as e:
+        print(f"Failed to load title model: {e}")
+        model = None
 
     for section in sections:
-        section_text = " ".join(section.chunks)
-        tfidf_vector = vectorizer.transform([section_text]).toarray()[0]
+        # We grab the first chunk to establish the title context, up to ~1000 chars
+        context_text = section.chunks[0][:1000]
+        
+        if model is None:
+            # Absolute fallback
+            section.title = context_text.split(".")[0].strip()[:60].title()
+            continue
 
-        # Get top 3 terms by TF-IDF score
-        top_indices = tfidf_vector.argsort()[-3:][::-1]
-        top_terms = [feature_names[idx] for idx in top_indices if tfidf_vector[idx] > 0]
-
-        if top_terms:
-            # Capitalize and join into a readable title
-            section.title = " & ".join(term.title() for term in top_terms[:3])
-        else:
-            # Fallback: use first sentence of first chunk
-            first_sentence = section.chunks[0].split(".")[0].strip()
-            section.title = first_sentence[:60]
+        prompt = f"Write a very short, 3 to 5 word title for this text: {context_text}"
+        inputs = tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True)
+        
+        try:
+            outputs = model.generate(
+                **inputs,
+                max_length=12,        # Ensure output is very short
+                num_beams=2,
+                early_stopping=True,
+            )
+            title = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+            # Fallback if generation is totally empty
+            if len(title) < 2:
+                title = context_text.split(".")[0].strip()[:60]
+                
+            # Clean up casing gracefully
+            section.title = title.title()
+        except Exception as e:
+            # Fallback on failure
+            print(f"Title generation failed: {e}")
+            section.title = context_text.split(".")[0].strip()[:60].title()
 
     return sections
 

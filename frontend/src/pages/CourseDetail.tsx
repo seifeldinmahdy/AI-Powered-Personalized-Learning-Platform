@@ -178,6 +178,10 @@ export default function CourseDetail() {
         }
     };
 
+    const handleGeneratePathway = () => {
+        navigate(`/course/${id}/pathway`);
+    };
+
     // ── loading / error ───────────────────────────────────────────────────────
 
     if (loading) {
@@ -263,6 +267,7 @@ export default function CourseDetail() {
                                 isEnrolled={isEnrolled}
                                 enrolling={enrolling}
                                 onStart={handleStartAssessment}
+                                onGeneratePathway={handleGeneratePathway}
                                 enrollment={enrollment}
                                 courseId={id}
                             />
@@ -383,6 +388,7 @@ export default function CourseDetail() {
                         isEnrolled={isEnrolled}
                         enrolling={enrolling}
                         onStart={handleStartAssessment}
+                        onGeneratePathway={handleGeneratePathway}
                         enrollment={enrollment}
                         courseId={id}
                     />
@@ -399,6 +405,7 @@ function CtaCard({
     isEnrolled,
     enrolling,
     onStart,
+    onGeneratePathway,
     enrollment,
     courseId,
 }: {
@@ -406,6 +413,7 @@ function CtaCard({
     isEnrolled: boolean;
     enrolling: boolean;
     onStart: () => void;
+    onGeneratePathway: () => void;
     enrollment: EnrollmentInfo | null;
     courseId: number;
 }) {
@@ -462,6 +470,15 @@ function CtaCard({
                     )}
                 </button>
             )}
+
+            {/* Generate Pathway button */}
+            <button
+                onClick={onGeneratePathway}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-secondary text-secondary rounded-xl font-semibold text-sm hover:bg-secondary/5 transition-all"
+            >
+                Generate Pathway
+                <ChevronRight size={16} />
+            </button>
 
             {!isEnrolled && (
                 <p className="text-xs text-center text-muted-foreground">
