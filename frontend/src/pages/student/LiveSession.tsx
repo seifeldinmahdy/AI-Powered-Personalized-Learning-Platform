@@ -3,7 +3,7 @@ import { SlidesViewer } from '../../components/SlidesViewer';
 import { CompactTutor } from '../../components/CompactTutor';
 import { SessionControls } from '../../components/SessionControls';
 import { useParams, useNavigate } from 'react-router';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { getLesson, getModules, getLessons, type LessonDetail, type Lesson, type Module } from '../../services/lessons';
 import { getEnrollments } from '../../services/api';
@@ -12,8 +12,15 @@ import {
   createLessonCompletion,
   markLessonComplete,
 } from '../../services/progress';
-import { Loader2, BookOpen, CheckCircle2, PlayCircle, Lock, ChevronDown, ChevronRight } from 'lucide-react';
+import { Loader2, BookOpen, CheckCircle2, PlayCircle, Lock, ChevronDown, ChevronRight, Camera, CameraOff } from 'lucide-react';
 import { toast } from 'sonner';
+
+import { logEmotionEvent, getSessionLog, getRecentFusedEmotion, clearSessionLog } from '../../services/emotionLogger';
+import { fuseEmotions } from '../../services/emotionFusion';
+import type { SERResult } from '../../services/tutor';
+
+const AI_URL = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
 export default function LiveSession() {
   const { courseId, lessonId } = useParams();
@@ -33,6 +40,39 @@ export default function LiveSession() {
   const [completedLessonIds, setCompletedLessonIds] = useState<Set<number>>(new Set());
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [expandedModules, setExpandedModules] = useState<Set<number>>(new Set());
+
+  // ─── Emotion & FER state ──────────────────────────────────────
+  const [fusedEmotion, setFusedEmotion] = useState<string | undefined>();
+  const [cameraEnabled, setCameraEnabled] = useState(false);
+
+  // ─── Student profile for Dr. Nova personalization ─────────────
+  const [studentProfileSummary, setStudentProfileSummary] = useState<string | undefined>();
+
+  const webcamStreamRef = useRef<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const ferIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const latestSERRef = useRef<SERResult | null>(null);
+  const sessionStartedRef = useRef(false);
+
+  // ─── Fullscreen state ─────────────────────────────────────────
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    function onFsChange() { setIsFullscreen(!!document.fullscreenElement); }
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    if (!contentRef.current) return;
+    if (!document.fullscreenElement) {
+      contentRef.current.requestFullscreen().catch(() => { });
+    } else {
+      document.exitFullscreen().catch(() => { });
+    }
+  }, []);
 
   useEffect(() => {
     if (!lessonId) return;
@@ -106,6 +146,25 @@ export default function LiveSession() {
         } catch {
           // non-critical
         }
+
+        // Load student learning profile for Dr. Nova personalization (B4)
+        try {
+          const token = localStorage.getItem('token');
+          if (token) {
+            const profileRes = await fetch(`${API_URL}/progress/learning-profile/`, {
+              headers: { Authorization: `Token ${token}` },
+            });
+            if (profileRes.ok) {
+              const profileData = await profileRes.json();
+              if (profileData.profile_summary) {
+                setStudentProfileSummary(profileData.profile_summary);
+              }
+            }
+            // 404 = no profile yet — Dr. Nova starts fresh
+          }
+        } catch {
+          // non-critical — Dr. Nova starts fresh
+        }
       } catch {
         if (!cancelled) setError('Failed to load lesson data.');
       } finally {
@@ -113,9 +172,213 @@ export default function LiveSession() {
       }
     }
 
+    // Clear emotion log at the start of each lesson
+    clearSessionLog();
+
     load();
     return () => { cancelled = true; };
   }, [lessonId, courseId]);
+
+  // ─── Webcam & FER polling ─────────────────────────────────────
+
+  const startFERPolling = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      webcamStreamRef.current = stream;
+
+      // Attach to hidden video element
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => { });
+      }
+
+      // Poll every 25 seconds
+      ferIntervalRef.current = setInterval(async () => {
+        if (!videoRef.current || !canvasRef.current) return;
+
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+
+        // Ensure video has dimensions
+        if (video.videoWidth === 0 || video.videoHeight === 0) return;
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        ctx.drawImage(video, 0, 0);
+
+        // Convert to JPEG blob
+        const blob = await new Promise<Blob | null>((resolve) =>
+          canvas.toBlob(resolve, 'image/jpeg', 0.8)
+        );
+        if (!blob) return;
+
+        try {
+          // Send to FER — field name is "image" per fer.py
+          const formData = new FormData();
+          formData.append('image', blob, 'frame.jpg');
+          const res = await fetch(`${AI_URL}/fer/predict`, {
+            method: 'POST',
+            body: formData,
+          });
+          if (!res.ok) return;
+          const data = await res.json();
+
+          if (!data.face_detected) return;
+
+          // Fuse with latest SER result
+          const ferData = { fer_emotion: data.emotion, fer_confidence: data.confidence };
+          const serData = latestSERRef.current
+            ? { ser_emotion: latestSERRef.current.emotion, ser_confidence: latestSERRef.current.confidence }
+            : {};
+
+          const fusion = await fuseEmotions(
+            { ...ferData, ...serData },
+            {
+              slide_index: currentSlide,
+              subtopic: lesson?.title,
+            },
+          );
+
+          setFusedEmotion(fusion.fused_emotion);
+
+          // Log passive emotion event
+          logEmotionEvent({
+            timestamp: new Date().toISOString(),
+            slide_index: currentSlide,
+            subtopic: lesson?.title,
+            fer_emotion: data.emotion,
+            fer_confidence: data.confidence,
+            ser_emotion: latestSERRef.current?.emotion,
+            ser_confidence: latestSERRef.current?.confidence,
+            fused_emotion: fusion.fused_emotion,
+            event_type: 'passive',
+          });
+        } catch {
+          // FER/fusion errors are non-critical
+        }
+      }, 25_000);
+    } catch {
+      toast.error('Camera access denied. Emotion tracking disabled.');
+      setCameraEnabled(false);
+    }
+  }, [lesson, currentSlide]);
+
+  const stopFERPolling = useCallback(() => {
+    if (ferIntervalRef.current) {
+      clearInterval(ferIntervalRef.current);
+      ferIntervalRef.current = null;
+    }
+    if (webcamStreamRef.current) {
+      webcamStreamRef.current.getTracks().forEach((t) => t.stop());
+      webcamStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, []);
+
+  // Toggle camera on/off
+  const handleCameraToggle = useCallback(() => {
+    if (cameraEnabled) {
+      stopFERPolling();
+      setCameraEnabled(false);
+    } else {
+      setCameraEnabled(true);
+      startFERPolling();
+    }
+  }, [cameraEnabled, startFERPolling, stopFERPolling]);
+
+  // Cleanup webcam on unmount
+  useEffect(() => {
+    return () => {
+      stopFERPolling();
+    };
+  }, [stopFERPolling]);
+
+  // ─── Session end: profile update + audit log (fire-and-forget) ─
+
+  const fireAndForgetProfiler = useCallback(async () => {
+    try {
+      const log = getSessionLog();
+      // Skip profiling if fewer than 3 events — not enough data
+      if (log.length < 3) {
+        clearSessionLog();
+        return;
+      }
+
+      const token = localStorage.getItem('token');
+      const authUser = localStorage.getItem('auth_user');
+      const studentId = authUser ? JSON.parse(authUser).id : 0;
+
+      // 1. GET existing learning profile from Django
+      let existingProfileSummary = '';
+      let existingProfileData = {};
+      let existingSessionsCount = 0;
+      if (token) {
+        try {
+          const existingRes = await fetch(`${API_URL}/progress/learning-profile/`, {
+            headers: { Authorization: `Token ${token}` },
+          });
+          if (existingRes.ok) {
+            const existing = await existingRes.json();
+            existingProfileSummary = existing.profile_summary || '';
+            existingProfileData = existing.profile_data || {};
+            existingSessionsCount = existing.sessions_count || 0;
+          }
+        } catch {
+          // No existing profile — first session
+        }
+      }
+
+      // 2. Call POST /profiler/update on the AI service
+      const profilerRes = await fetch(`${AI_URL}/profiler/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          student_id: studentId,
+          lesson_title: lesson?.title || '',
+          session_log: log,
+          existing_profile_summary: existingProfileSummary,
+          existing_profile_data: existingProfileData,
+        }),
+      });
+
+      if (profilerRes.ok) {
+        const profilerData = await profilerRes.json();
+
+        // 3. POST to Django to overwrite the learning profile
+        if (token) {
+          await fetch(`${API_URL}/progress/learning-profile/`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Token ${token}`,
+            },
+            body: JSON.stringify({
+              sessions_count: existingSessionsCount + 1,
+              profile_summary: profilerData.profile_summary || '',
+              profile_data: {
+                profile_summary: profilerData.profile_summary || '',
+                ...(profilerData.profile_data || {}),
+              },
+            }),
+          });
+        }
+      }
+
+      // 4. Clear the session emotion cache
+      clearSessionLog();
+    } catch {
+      // Fire-and-forget — entire block is non-blocking
+      console.warn('[LiveSession] Profiler update failed (non-blocking)');
+      clearSessionLog();
+    }
+  }, [lessonId, lesson]);
+
+  // ─── Navigation callbacks ─────────────────────────────────────
 
   // Current lesson index in the full ordered list
   const currentLessonIndex = allLessons.findIndex((l) => l.id === Number(lessonId));
@@ -143,6 +406,11 @@ export default function LiveSession() {
   const handleComplete = useCallback(async () => {
     if (!lesson || !courseId) return;
     setIsCompleting(true);
+
+    // Fire-and-forget profiler before navigating away
+    fireAndForgetProfiler();
+    stopFERPolling();
+
     try {
       const { data: raw } = await getEnrollments();
       const enrollments = Array.isArray(raw) ? raw : raw.results ?? [];
@@ -193,7 +461,19 @@ export default function LiveSession() {
     } finally {
       setIsCompleting(false);
     }
-  }, [lesson, courseId, navigate, nextLesson]);
+  }, [lesson, courseId, navigate, nextLesson, fireAndForgetProfiler, stopFERPolling]);
+
+  // ─── Callbacks for CompactTutor ───────────────────────────────
+
+  const handleSessionStart = useCallback(() => {
+    sessionStartedRef.current = true;
+  }, []);
+
+  const handleLatestSER = useCallback((ser: SERResult) => {
+    latestSERRef.current = ser;
+  }, []);
+
+  // ─── Render ───────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -221,6 +501,13 @@ export default function LiveSession() {
 
   const totalSlides = Math.max(lesson.slides.length, 1);
   const isLastSlideOfLastLesson = !nextLesson && currentSlide === totalSlides - 1;
+  const currentSlideTitle = lesson.slides?.[currentSlide]?.content_json?.title;
+
+  // Extract subtopics from slide titles for tutor self-reprompting
+  const subtopics = lesson.slides
+    .map((s) => (s.content_json?.title as string) || '')
+    .filter(Boolean);
+
 
   return (
     <>
@@ -293,11 +580,10 @@ export default function LiveSession() {
                                   navigate(`/course/${courseId}/lesson/${l.id}`);
                                   setDrawerOpen(false);
                                 }}
-                                className={`w-full flex items-center gap-2.5 px-5 py-2 text-left transition-colors ${
-                                  isCurrent
+                                className={`w-full flex items-center gap-2.5 px-5 py-2 text-left transition-colors ${isCurrent
                                     ? 'bg-secondary/15 border-l-2 border-secondary'
                                     : 'hover:bg-muted/40 border-l-2 border-transparent'
-                                }`}
+                                  }`}
                               >
                                 {isCompleted ? (
                                   <CheckCircle2 size={14} className="text-green-500 shrink-0" />
@@ -323,18 +609,31 @@ export default function LiveSession() {
         document.body!
       )}
 
-      <div className="flex-1 flex overflow-hidden gap-0">
-        {/* Slides Viewer (65%) */}
+      <div ref={contentRef} className="flex-1 flex overflow-hidden gap-0 relative bg-background">
+        {/* Slides Viewer */}
         <SlidesViewer
           slides={lesson.slides}
           currentIndex={currentSlide}
           lessonTitle={lesson.title}
           moduleLabel={moduleTitle}
           onSlideChange={setCurrentSlide}
+          isFullscreen={isFullscreen}
+          onFullscreenToggle={toggleFullscreen}
         />
 
-        {/* AI Tutor (35%) */}
-        <CompactTutor key={lessonId} lessonTitle={lesson.title} />
+        {/* AI Tutor */}
+        <CompactTutor
+          key={lessonId}
+          lessonTitle={lesson.title}
+          subtopics={subtopics}
+          fusedEmotion={fusedEmotion}
+          currentSlideIndex={currentSlide}
+          currentSlideTitle={currentSlideTitle as string}
+          onSessionStart={handleSessionStart}
+          onLatestSER={handleLatestSER}
+          studentProfileSummary={studentProfileSummary}
+          isFloating={isFullscreen}
+        />
       </div>
 
       {/* Bottom Controls */}
@@ -349,6 +648,23 @@ export default function LiveSession() {
         hasNextLesson={currentSlide === totalSlides - 1 && !!nextLesson}
         isLastLesson={isLastSlideOfLastLesson}
       />
+
+      {/* Camera toggle button — small pill in bottom-right */}
+      <button
+        onClick={handleCameraToggle}
+        className={`fixed bottom-20 right-4 z-50 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border shadow-md transition-all ${cameraEnabled
+          ? 'bg-green-100 border-green-400 text-green-600'
+          : 'bg-card border-border text-muted-foreground hover:border-secondary hover:text-foreground'
+          }`}
+        title={cameraEnabled ? 'Disable emotion tracking' : 'Enable emotion tracking (camera)'}
+      >
+        {cameraEnabled ? <Camera size={14} /> : <CameraOff size={14} />}
+        <span>{cameraEnabled ? 'Tracking On' : 'Tracking Off'}</span>
+      </button>
+
+      {/* Hidden video and canvas for FER capture */}
+      <video ref={videoRef} style={{ display: 'none' }} playsInline muted />
+      <canvas ref={canvasRef} style={{ display: 'none' }} />
     </>
   );
 }

@@ -32,18 +32,28 @@ export interface AskResponse {
   status: string;
 }
 
+export interface SERResult {
+  emotion: string;
+  confidence: number;
+}
+
 export async function startTutorSession(
   lessonTitle: string,
   subtopics: string[] = [],
   voice = 'en-US-JennyNeural',
+  student_profile_summary?: string,
 ): Promise<TutorSession> {
+  const body: Record<string, unknown> = {
+    topics: [{ name: lessonTitle, subtopics }],
+    voice,
+  };
+  if (student_profile_summary) {
+    body.student_profile_summary = student_profile_summary;
+  }
   const res = await fetch(`${AI_URL}/tutor/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      topics: [{ name: lessonTitle, subtopics }],
-      voice,
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error('Failed to start tutor session');
   return res.json();
@@ -52,11 +62,12 @@ export async function startTutorSession(
 export async function continueTutorSession(
   session_id: string,
   include_audio = true,
+  student_emotion?: string,
 ): Promise<LectureChunk> {
   const res = await fetch(`${AI_URL}/tutor/continue`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id, include_audio }),
+    body: JSON.stringify({ session_id, include_audio, student_emotion }),
   });
   if (!res.ok) throw new Error('Failed to continue tutor session');
   return res.json();
@@ -66,11 +77,12 @@ export async function askTutor(
   session_id: string,
   question: string,
   include_audio = true,
+  student_emotion?: string,
 ): Promise<AskResponse> {
   const res = await fetch(`${AI_URL}/tutor/ask`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id, question, include_audio }),
+    body: JSON.stringify({ session_id, question, include_audio, student_emotion }),
   });
   if (!res.ok) throw new Error('Failed to ask tutor');
   return res.json();
@@ -152,6 +164,22 @@ export async function classifyIntent(text: string, sessionContext = ''): Promise
   }
 }
 
+/**
+ * Analyze speech emotion from an audio blob via the SER service.
+ * Endpoint: POST /ser/predict  (field name: "audio")
+ */
+export async function analyzeSpeechEmotion(audioBlob: Blob): Promise<SERResult> {
+  const formData = new FormData();
+  formData.append('audio', audioBlob, 'recording.wav');
+  const res = await fetch(`${AI_URL}/ser/predict`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) throw new Error('SER analysis failed');
+  const data = await res.json();
+  return { emotion: data.emotion, confidence: data.confidence };
+}
+
 export function playAudioBase64(base64: string): HTMLAudioElement {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -162,3 +190,4 @@ export function playAudioBase64(base64: string): HTMLAudioElement {
   audio.onended = () => URL.revokeObjectURL(url);
   return audio;
 }
+

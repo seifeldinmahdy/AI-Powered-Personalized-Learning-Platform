@@ -21,7 +21,7 @@ VOICES = {
     "ava":     "en-US-AvaMultilingualNeural",
 }
 
-DEFAULT_VOICE = "en-US-JennyNeural"
+DEFAULT_VOICE = "en-US-AndrewMultilingualNeural"
 
 # Aria supports these emotional delivery styles
 SUPPORTED_STYLES = [

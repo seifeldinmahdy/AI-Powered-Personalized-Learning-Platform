@@ -38,17 +38,20 @@ class StartSessionRequest(BaseModel):
     topics: List[TopicInput] = Field(..., min_length=1, description="List of topics to cover")
     session_id: Optional[str] = Field(default=None, description="Optional custom session ID")
     voice: str = Field(default="en-US-JennyNeural", description="TTS voice name")
+    student_profile_summary: Optional[str] = Field(default=None, description="Student's learning profile summary for personalization")
 
 
 class ContinueRequest(BaseModel):
     session_id: str = Field(..., description="Session ID")
     include_audio: bool = Field(default=True, description="Include TTS audio in response")
+    student_emotion: Optional[str] = Field(default=None, description="Current student emotional state for tone adaptation")
 
 
 class AskQuestionRequest(BaseModel):
     session_id: str = Field(..., description="Session ID")
     question: str = Field(..., min_length=1, description="Student's question")
     include_audio: bool = Field(default=True, description="Include TTS audio in response")
+    student_emotion: Optional[str] = Field(default=None, description="Student's emotional state during the question")
 
 
 class StopRequest(BaseModel):
@@ -72,6 +75,7 @@ async def start_session(request: StartSessionRequest):
             topics=topics,
             voice=request.voice,
             session_id=request.session_id,
+            student_profile_summary=request.student_profile_summary,
         )
         return {
             "success": True,
@@ -104,12 +108,12 @@ async def continue_session(request: ContinueRequest):
         raise HTTPException(status_code=404, detail="Session not found")
 
     try:
-        result = await generate_lecture_chunk(request.session_id)
+        result = await generate_lecture_chunk(request.session_id, student_emotion=request.student_emotion)
 
         # Generate TTS audio if requested and there's text
         audio_base64 = None
         if request.include_audio and result["text"]:
-            audio_base64 = await _synthesize_audio(result["text"], session.voice)
+            audio_base64 = await _synthesize_audio(result["text"], session.voice, request.student_emotion)
 
         return {
             "success": True,
@@ -141,11 +145,11 @@ async def ask(request: AskQuestionRequest):
         raise HTTPException(status_code=404, detail="Session not found")
 
     try:
-        result = await answer_question(request.session_id, request.question)
+        result = await answer_question(request.session_id, request.question, student_emotion=request.student_emotion)
 
         audio_base64 = None
         if request.include_audio and result["answer"]:
-            audio_base64 = await _synthesize_audio(result["answer"], session.voice)
+            audio_base64 = await _synthesize_audio(result["answer"], session.voice, request.student_emotion)
 
         return {
             "success": True,
@@ -229,15 +233,69 @@ async def tutor_health():
             "error": str(e),
         }
 
+# ─── Emotion → TTS prosody mapping ──────────────────────────────
+
+# Maps an emotion string (lowercased) to (rate, pitch) overrides for edge-tts.
+# Covers every label from FER (Angry, Disgust, Fear, Happy, Neutral, Sad, Surprise)
+# and SER (Angry, Bored, Disgust, Fear, Happy, Neutral, Question, Sad, Surprise),
+# plus common aliases the fusion LLM might produce.
+# Unrecognised emotions fall back to neutral defaults (+0%, +0Hz).
+_EMOTION_TTS_MAP: dict[str, tuple[str, str]] = {
+    # User-specified mappings
+    "bored":      ("+15%", "+5Hz"),
+    "confused":   ("-15%", "-3Hz"),
+    "anxious":    ("-10%", "-5Hz"),
+    "happy":      ("+10%", "+3Hz"),
+    "excited":    ("+10%", "+3Hz"),
+    "frustrated": ("-10%", "-3Hz"),
+    # Model labels not already covered
+    "angry":      ("-10%", "-3Hz"),    # same as frustrated
+    "disgust":    ("-10%", "-3Hz"),    # same as frustrated
+    "fear":       ("-10%", "-5Hz"),    # same as anxious
+    "fearful":    ("-10%", "-5Hz"),    # alias
+    "sad":        ("-15%", "-3Hz"),    # same as confused — slower, softer
+    "surprise":   ("+10%", "+3Hz"),    # same as excited — energetic
+    "surprised":  ("+10%", "+3Hz"),    # alias
+    # Neutral / default
+    "neutral":    ("+0%",  "+0Hz"),
+    "uncertain":  ("+0%",  "+0Hz"),
+    "question":   ("+0%",  "+0Hz"),
+    "calm":       ("+0%",  "+0Hz"),
+}
+
+
+def _emotion_to_prosody(emotion: Optional[str]) -> tuple[str, str]:
+    """Return (rate, pitch) for the given student emotion, defaulting to neutral."""
+    if not emotion:
+        return "+0%", "+0Hz"
+    key = emotion.strip().lower()
+    rate, pitch = _EMOTION_TTS_MAP.get(key, ("+0%", "+0Hz"))
+    if key not in _EMOTION_TTS_MAP:
+        logger.info(f"[TTS Prosody] Unknown emotion '{emotion}' — using neutral defaults")
+    else:
+        logger.info(f"[TTS Prosody] Emotion '{emotion}' → rate={rate} pitch={pitch}")
+    return rate, pitch
+
 
 # ─── Helper ──────────────────────────────────────────────────────
 
-async def _synthesize_audio(text: str, voice: str) -> Optional[str]:
-    """Synthesize speech and return base64-encoded MP3."""
+async def _synthesize_audio(
+    text: str,
+    voice: str,
+    student_emotion: Optional[str] = None,
+) -> Optional[str]:
+    """Synthesize speech and return base64-encoded MP3.
+
+    If *student_emotion* is provided the TTS rate and pitch are adjusted
+    so Dr. Nova's delivery mirrors the adaptive tone the LLM text already
+    carries.
+    """
     try:
+        rate, pitch = _emotion_to_prosody(student_emotion)
         tts = get_tts_service()
-        result = await tts.synthesize(text=text, voice=voice)
+        result = await tts.synthesize(text=text, voice=voice, rate=rate, pitch=pitch)
         return base64.b64encode(result["audio_bytes"]).decode("utf-8")
     except Exception as e:
         logger.warning(f"TTS synthesis failed, returning text only: {e}")
         return None
+
