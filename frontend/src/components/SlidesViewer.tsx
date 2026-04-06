@@ -1,5 +1,4 @@
 import { Maximize2, Minimize2 } from 'lucide-react';
-import { useState } from 'react';
 import type { Slide } from '../services/lessons';
 
 interface SlidesViewerProps {
@@ -8,6 +7,8 @@ interface SlidesViewerProps {
   lessonTitle: string;
   moduleLabel?: string;
   onSlideChange?: (index: number) => void;
+  isFullscreen?: boolean;
+  onFullscreenToggle?: () => void;
 }
 
 export function SlidesViewer({
@@ -16,14 +17,14 @@ export function SlidesViewer({
   lessonTitle,
   moduleLabel,
   onSlideChange,
+  isFullscreen = false,
+  onFullscreenToggle,
 }: SlidesViewerProps) {
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
   const currentSlide = slides[currentIndex];
 
   return (
     <div className="flex-1 flex flex-col bg-background relative">
-      <div className="flex-1 flex items-center justify-center p-8 bg-gradient-to-br from-muted/20 to-background">
+      <div className="flex-1 flex items-center justify-center p-8 bg-gradient-to-br from-muted/20 to-background" style={isFullscreen ? { paddingLeft: 324 } : undefined}>
         <div className="w-full h-full max-w-5xl bg-card rounded-2xl shadow-2xl border-2 border-border overflow-hidden flex flex-col">
           {/* Slide Header */}
           <div className="px-8 py-4 border-b border-border bg-gradient-to-r from-primary/5 to-secondary/5 flex items-center justify-between">
@@ -36,7 +37,7 @@ export function SlidesViewer({
               <h3 className="mb-0">{lessonTitle}</h3>
             </div>
             <button
-              onClick={() => setIsFullscreen(!isFullscreen)}
+              onClick={onFullscreenToggle}
               className="p-2 rounded-lg border border-border hover:border-secondary transition-colors"
               title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
             >

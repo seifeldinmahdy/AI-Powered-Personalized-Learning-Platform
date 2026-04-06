@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routers import health, asr, coding
-from routers import intent, tts, fer, ser, tutor
+from routers import intent, tts, fer, ser, tutor, profiler
 
 # Configure logging
 logging.basicConfig(
@@ -60,6 +60,8 @@ async def root():
             "tutor_ask": "/tutor/ask",
             "tutor_status": "/tutor/status",
             "tutor_health": "/tutor/health",
+            "profiler_update": "/profiler/update",
+            "profiler_fuse_emotions": "/profiler/fuse-emotions",
         }
     }
 
@@ -72,3 +74,4 @@ app.include_router(tts.router)
 app.include_router(fer.router)
 app.include_router(ser.router)
 app.include_router(tutor.router)
+app.include_router(profiler.router)

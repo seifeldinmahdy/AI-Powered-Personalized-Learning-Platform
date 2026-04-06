@@ -92,3 +92,44 @@ class AIChatLog(models.Model):
 
     def __str__(self):
         return f"Chat — {self.user.username} in {self.lesson.title}"
+
+
+
+
+# ------------------------------------------------------------------
+# Student Learning Profile — rewrite-based persistent profile per student.
+# Overwritten (not appended) after each session by the profiler LLM.
+# Dr. Nova reads profile_summary at session start to personalize teaching.
+# ------------------------------------------------------------------
+class StudentLearningProfile(models.Model):
+    student = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="learning_profile",
+    )
+    last_updated = models.DateTimeField(auto_now=True)
+    sessions_count = models.IntegerField(default=0)
+    profile_summary = models.TextField(
+        blank=True,
+        default="",
+        help_text=(
+            "Concise plain-English paragraph (max 5 sentences) written by the profiler LLM. "
+            "This is what Dr. Nova reads at session start."
+        ),
+    )
+    profile_data = models.JSONField(
+        default=dict,
+        help_text=(
+            "Structured data used by the profiler LLM to rewrite intelligently. "
+            "Keys: learning_style_signals, engagement_patterns, emotional_tendencies, "
+            "recommended_approaches, topics_of_difficulty, topics_of_strength."
+        ),
+    )
+
+    class Meta:
+        db_table = "student_learning_profiles"
+        verbose_name = "Student Learning Profile"
+        verbose_name_plural = "Student Learning Profiles"
+
+    def __str__(self):
+        return f"Learning Profile — {self.student.username} ({self.sessions_count} sessions)"

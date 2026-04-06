@@ -77,8 +77,9 @@ class TutorSession:
     running_summary: str = ""
     transcript: List[dict] = field(default_factory=list)  # [{role, text, timestamp}]
     status: str = "idle"  # idle | lecturing | answering | finished
-    voice: str = "en-US-JennyNeural"
+    voice: str = "en-US-AndrewMultilingualNeural"
     is_first_chunk: bool = True
+    student_profile_summary: Optional[str] = None
     created_at: float = field(default_factory=time.time)
 
     @property
@@ -163,14 +164,30 @@ def create_session(
     topics: List[dict],
     voice: str = "en-US-JennyNeural",
     session_id: Optional[str] = None,
+    student_profile_summary: Optional[str] = None,
 ) -> TutorSession:
     """Create a new tutoring session."""
     sid = session_id or str(uuid.uuid4())
+
+    # Auto-generate subtopics for topics that have none, so the tutor
+    # self-reprompts across multiple chunks instead of one monologue.
+    for topic in topics:
+        subs = topic.get("subtopics", [])
+        if not subs:
+            name = topic.get("name", "Topic")
+            topic["subtopics"] = [
+                f"Introduction to {name}",
+                f"Core concepts of {name}",
+                f"Examples and practical usage of {name}",
+                f"Summary and key takeaways of {name}",
+            ]
+
     session = TutorSession(
         session_id=sid,
         topics=topics,
         voice=voice,
         status="idle",
+        student_profile_summary=student_profile_summary,
     )
     _sessions[sid] = session
     logger.info(f"Session {sid} created with {len(topics)} topics")
@@ -182,7 +199,7 @@ def get_session(session_id: str) -> Optional[TutorSession]:
     return _sessions.get(session_id)
 
 
-async def generate_lecture_chunk(session_id: str) -> dict:
+async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str] = None) -> dict:
     """
     Generate the next lecture chunk for the session.
 
@@ -225,6 +242,16 @@ async def generate_lecture_chunk(session_id: str) -> dict:
 
     if session.is_first_chunk:
         context_parts.append("This is the BEGINNING of the session. Start with a brief warm greeting.")
+
+        # Inject student profile for personalization from the first chunk
+        if session.student_profile_summary:
+            context_parts.append(
+                f"Before this session begins, here is what is known about this student as a learner:\n"
+                f"{session.student_profile_summary}\n\n"
+                f"Use this to personalize your teaching style from the very first explanation. "
+                f"This is background context — do not mention it explicitly to the student or refer to it directly."
+            )
+
         session.is_first_chunk = False
 
     # Look ahead to tell the model what's next
@@ -233,6 +260,16 @@ async def generate_lecture_chunk(session_id: str) -> dict:
         context_parts.append(f"NEXT UP AFTER THIS: {next_item}")
     else:
         context_parts.append("This is the LAST subtopic. Wrap up with a brief conclusion.")
+
+    # Inject student emotion for tone adaptation (Feature 5)
+    if student_emotion:
+        context_parts.append(
+            f"Current student emotional state: {student_emotion}. "
+            "Adjust your tone and delivery accordingly — if bored, be more energetic or add a relatable example; "
+            "if confused, slow down and simplify; if anxious, be more reassuring; if engaged/happy, maintain current energy. "
+            "Do NOT change the subtopic content or skip any planned material. "
+            "Only adapt tone, pacing, word choice, and whether to add a brief check-in question."
+        )
 
     user_prompt = "\n\n".join(context_parts)
 
@@ -273,10 +310,11 @@ async def generate_lecture_chunk(session_id: str) -> dict:
     }
 
 
-async def answer_question(session_id: str, question: str) -> dict:
+async def answer_question(session_id: str, question: str, student_emotion: Optional[str] = None) -> dict:
     """
     Handle a student question mid-lecture.
     Injects the question + full context, generates an answer.
+    Adapts tone based on student_emotion when available.
     """
     session = _sessions.get(session_id)
     if not session:
@@ -291,6 +329,23 @@ async def answer_question(session_id: str, question: str) -> dict:
     context_parts.append(f"CURRENT TOPIC: {session.current_topic or 'N/A'}")
     if session.current_subtopic:
         context_parts.append(f"CURRENT SUBTOPIC: {session.current_subtopic}")
+
+    # Inject emotion-aware tone adaptation
+    if student_emotion and student_emotion.lower() not in ("neutral", "unknown"):
+        emotion_guidance = {
+            "happy": "The student sounds engaged and positive. Match their energy with an enthusiastic, encouraging answer.",
+            "sad": "The student seems down. Be warm, supportive, and extra patient. Reassure them that struggling is normal.",
+            "angry": "The student sounds frustrated. Stay calm, validate their frustration, and provide a clear, structured answer.",
+            "fear": "The student seems anxious or worried. Be reassuring and break your answer into small, manageable steps.",
+            "surprise": "The student seems surprised or confused. Acknowledge what might be unexpected and explain clearly.",
+            "disgust": "The student seems displeased. Be empathetic and try a different angle in your explanation.",
+        }
+        guidance = emotion_guidance.get(
+            student_emotion.lower(),
+            f"The student's emotional state is '{student_emotion}'. Adapt your tone to be supportive and appropriate."
+        )
+        context_parts.append(f"EMOTIONAL CONTEXT: {guidance}")
+
     context_parts.append(f"STUDENT'S QUESTION: {question}")
 
     user_prompt = "\n\n".join(context_parts)

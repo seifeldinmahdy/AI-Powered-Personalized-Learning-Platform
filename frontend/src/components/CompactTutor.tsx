@@ -1,4 +1,5 @@
-import { Mic, MicOff, Volume2, VolumeX, MessageCircle, Pause, Play, Send, Loader2, Code2 } from 'lucide-react';
+import { Mic, Volume2, VolumeX, Pause, Play, Loader2, Code2 } from 'lucide-react';
+import { NovaAvatar } from './NovaAvatar';
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import {
@@ -7,7 +8,11 @@ import {
   askTutor,
   stopTutorSession,
   transcribeAudio,
+  analyzeSpeechEmotion,
 } from '../services/tutor';
+import { logEmotionEvent } from '../services/emotionLogger';
+import type { EmotionEvent } from '../services/emotionLogger';
+import type { SERResult } from '../services/tutor';
 
 interface TranscriptEntry {
   role: 'tutor' | 'student';
@@ -15,12 +20,31 @@ interface TranscriptEntry {
   topic?: string;
 }
 
-interface CompactTutorProps {
+export interface CompactTutorProps {
   lessonTitle?: string;
   subtopics?: string[];
+  fusedEmotion?: string;
+  currentSlideIndex?: number;
+  currentSlideTitle?: string;
+  onSessionStart?: () => void;
+  onLatestSER?: (ser: SERResult) => void;
+  studentProfileSummary?: string;
+  isFloating?: boolean;
 }
 
-export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps) {
+type MicState = 'idle' | 'recording' | 'processing';
+
+export function CompactTutor({
+  lessonTitle,
+  subtopics = [],
+  fusedEmotion,
+  currentSlideIndex = 0,
+  currentSlideTitle,
+  onSessionStart,
+  onLatestSER,
+  studentProfileSummary,
+  isFloating = false,
+}: CompactTutorProps) {
   const navigate = useNavigate();
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -29,14 +53,9 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
   const [isMuted, setIsMuted] = useState(false);
   const [isFinished, setIsFinished] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [showChat, setShowChat] = useState(false);
-  const [question, setQuestion] = useState('');
-  const [isAsking, setIsAsking] = useState(false);
   const [error, setError] = useState('');
   const [started, setStarted] = useState(false);
-
-  const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [micState, setMicState] = useState<MicState>('idle');
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioBlobUrlRef = useRef<string | null>(null);
@@ -46,7 +65,8 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
   const isFinishedRef = useRef(false);
   const isLoadingRef = useRef(false);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
-  const mediaRecorderRef = useRef<{ stop: () => void } | null>(null);
+  const stopRecordingRef = useRef<(() => void) | null>(null);
+  const currentSubtopicRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -75,7 +95,6 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
     audioBlobUrlRef.current = URL.createObjectURL(blob);
     audio.muted = isMutedRef.current;
     audio.src = audioBlobUrlRef.current;
-    // play() immediately after src assignment — browser allows since audio was unlocked
     audio.play().catch(() => setIsSpeaking(false));
   }
 
@@ -84,8 +103,9 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
     isLoadingRef.current = true;
     setIsLoading(true);
     try {
-      const chunk = await continueTutorSession(sid, true);
+      const chunk = await continueTutorSession(sid, true, fusedEmotion);
       setProgress(chunk.progress);
+      currentSubtopicRef.current = chunk.subtopic || chunk.topic;
 
       if (chunk.text) {
         setTranscript((prev) => [
@@ -126,9 +146,12 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
     try { await audio.play(); } catch { /* expected */ }
     audio.pause();
 
+    // Notify parent (LiveSession) that the session started
+    onSessionStart?.();
+
     // Step 2: fetch session + chunk (async, after unlock)
     try {
-      const session = await startTutorSession(lessonTitle, subtopics);
+      const session = await startTutorSession(lessonTitle, subtopics, undefined, studentProfileSummary);
       sessionIdRef.current = session.session_id;
       isLoadingRef.current = false;
       setIsLoading(false);
@@ -145,7 +168,7 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
     if (isPausedRef.current) {
       isPausedRef.current = false;
       setIsPaused(false);
-      audioRef.current.play().catch(() => {});
+      audioRef.current.play().catch(() => { });
       setIsSpeaking(true);
     } else {
       isPausedRef.current = true;
@@ -172,55 +195,19 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
     audioRef.current.muted = next;
   };
 
-  const handleAskQuestion = async (overrideQuestion?: string) => {
-    const q = (overrideQuestion ?? question).trim();
-    if (!sessionIdRef.current || !q || isAsking) return;
-    setQuestion('');
-
-    // If lecture audio is currently playing, queue the question and pause
-    if (isSpeaking && !isPausedRef.current) {
-      audioRef.current?.pause();
-      isPausedRef.current = true;
-      setIsPaused(true);
-      setIsSpeaking(false);
-    }
-
-    setIsAsking(true);
-    setTranscript((prev) => [...prev, { role: 'student', text: q }]);
-    try {
-      const res = await askTutor(sessionIdRef.current, q, !isMutedRef.current);
-      setTranscript((prev) => [
-        ...prev,
-        { role: 'tutor', text: res.answer, topic: 'Answer' },
-      ]);
-      if (res.audio_base64) {
-        setAudioSrc(res.audio_base64);
-        setIsSpeaking(true);
-        // After answer audio ends, resume lecture if it was paused for this question
-        isPausedRef.current = false;
-        setIsPaused(false);
-      }
-    } catch {
-      setTranscript((prev) => [
-        ...prev,
-        { role: 'tutor', text: 'Sorry, I could not process your question.' },
-      ]);
-    } finally {
-      setIsAsking(false);
-    }
-  };
-
-  const handleVoiceInput = async () => {
-    if (isRecording) {
-      mediaRecorderRef.current?.stop();
+  // ─── Mic button: record → ASR + SER in parallel → ask tutor ───
+  const handleMicClick = async () => {
+    // If currently recording, stop
+    if (micState === 'recording') {
+      stopRecordingRef.current?.();
       return;
     }
 
+    // Start recording
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      // Use Web Audio API to capture raw PCM, then encode as WAV
-      // (avoids webm format which requires ffmpeg on the server)
+      // Use Web Audio API to capture raw PCM → WAV (avoids webm/ffmpeg issues)
       const audioCtx = new AudioContext({ sampleRate: 16000 });
       const source = audioCtx.createMediaStreamSource(stream);
       const processor = audioCtx.createScriptProcessor(4096, 1, 1);
@@ -232,15 +219,12 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
       source.connect(processor);
       processor.connect(audioCtx.destination);
 
-      // Store stop function in ref so button click can trigger it
       const stopRecording = async () => {
         stream.getTracks().forEach((t) => t.stop());
         processor.disconnect();
         source.disconnect();
         await audioCtx.close();
-        setIsRecording(false);
-        setIsTranscribing(true);
-        setShowChat(true);
+        setMicState('processing');
 
         try {
           // Combine all PCM chunks
@@ -265,26 +249,104 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
             view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, pcm[i])) * 0x7fff, true);
           }
 
-          const blob = new Blob([buffer], { type: 'audio/wav' });
-          const text = await transcribeAudio(blob);
-          setQuestion(text);
+          const audioBlob = new Blob([buffer], { type: 'audio/wav' });
+
+          // Send to ASR + SER in parallel
+          const [transcriptText, serResult] = await Promise.allSettled([
+            transcribeAudio(audioBlob),
+            analyzeSpeechEmotion(audioBlob),
+          ]);
+
+          const question = transcriptText.status === 'fulfilled' ? transcriptText.value : '';
+          const ser: SERResult | null = serResult.status === 'fulfilled' ? serResult.value : null;
+
+          // Notify parent of latest SER result
+          if (ser) {
+            onLatestSER?.(ser);
+          }
+
+          if (!question.trim()) {
+            setError('Could not transcribe your voice. Please try again.');
+            setMicState('idle');
+            return;
+          }
+
+          if (!sessionIdRef.current) {
+            setMicState('idle');
+            return;
+          }
+
+          // Pause lecture audio if playing
+          if (isSpeaking && !isPausedRef.current) {
+            audioRef.current?.pause();
+            isPausedRef.current = true;
+            setIsPaused(true);
+            setIsSpeaking(false);
+          }
+
+          // Show student question in transcript
+          setTranscript((prev) => [...prev, { role: 'student', text: question }]);
+
+          // Ask the tutor — include the student's emotional state
+          const questionEmotion = ser?.emotion || fusedEmotion || undefined;
+          const res = await askTutor(sessionIdRef.current, question, !isMutedRef.current, questionEmotion);
+          setTranscript((prev) => [
+            ...prev,
+            { role: 'tutor', text: res.answer, topic: 'Answer' },
+          ]);
+
+          // Log emotion event for this question
+          const emotionEvent: EmotionEvent = {
+            timestamp: new Date().toISOString(),
+            slide_index: currentSlideIndex,
+            slide_title: currentSlideTitle,
+            subtopic: currentSubtopicRef.current,
+            ser_emotion: ser?.emotion,
+            ser_confidence: ser?.confidence,
+            fused_emotion: ser?.emotion || fusedEmotion || 'neutral',
+            event_type: 'question',
+            question_transcript: question,
+            dr_nova_response_summary: res.answer.slice(0, 200),
+          };
+          logEmotionEvent(emotionEvent);
+
+          // Play answer audio
+          if (res.audio_base64) {
+            setAudioSrc(res.audio_base64);
+            setIsSpeaking(true);
+            isPausedRef.current = false;
+            setIsPaused(false);
+          }
         } catch {
-          setError('Failed to transcribe voice input.');
+          setError('Failed to process your question.');
         } finally {
-          setIsTranscribing(false);
+          setMicState('idle');
         }
       };
 
-      // Override mediaRecorderRef to store the stop function
-      mediaRecorderRef.current = { stop: stopRecording } as unknown as MediaRecorder;
-      setIsRecording(true);
+      stopRecordingRef.current = stopRecording;
+      setMicState('recording');
     } catch {
       setError('Microphone access denied.');
     }
   };
 
   return (
-    <div className="w-[35%] border-l-2 border-border bg-card flex flex-col">
+    <div
+      className={
+        isFloating
+          ? 'z-40 rounded-2xl border border-border/50 shadow-2xl overflow-hidden backdrop-blur-sm bg-card flex flex-col'
+          : 'w-[30%] border-l-2 border-border bg-card flex flex-col'
+      }
+      style={isFloating ? {
+        position: 'absolute',
+        left: 12,
+        top: 12,
+        width: 300,
+        maxHeight: '50vh',
+        opacity: 0.97,
+      } : undefined}
+    >
       <audio
         ref={audioRef}
         onEnded={() => setIsSpeaking(false)}
@@ -296,50 +358,21 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
         <div className="flex items-center gap-2 mb-1">
           <div className={`w-2 h-2 rounded-full ${error ? 'bg-red-500' : isFinished ? 'bg-muted-foreground' : started ? 'bg-green-500 animate-pulse' : 'bg-yellow-400'}`} />
           <h4 className="mb-0 text-sm">Dr. Nova</h4>
-          {progress > 0 && (
-            <span className="ml-auto text-xs text-muted-foreground">{progress}%</span>
-          )}
+
         </div>
         <p className="text-xs text-muted-foreground">AI Teaching Assistant</p>
       </div>
 
       {/* Avatar */}
-      <div className="px-4 py-4 flex flex-col items-center border-b border-border bg-gradient-to-br from-primary/5 via-secondary/5 to-accent/5">
-        <div className="relative mb-3">
-          <div className="absolute inset-0 bg-gradient-to-br from-secondary to-accent rounded-full blur-xl opacity-20" />
-          <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-primary via-secondary to-accent p-1 shadow-xl">
-            <div className="w-full h-full rounded-full bg-background flex items-center justify-center overflow-hidden">
-              <svg viewBox="0 0 200 200" className="w-20 h-20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="100" cy="70" r="30" fill="url(#grad1)" />
-                <ellipse cx="100" cy="135" rx="38" ry="48" fill="url(#grad2)" />
-                <path d="M 68 108 Q 48 118 50 138" stroke="url(#grad2)" strokeWidth="14" strokeLinecap="round" fill="none" />
-                <path d="M 132 108 Q 152 118 150 138" stroke="url(#grad2)" strokeWidth="14" strokeLinecap="round" fill="none" />
-                <defs>
-                  <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#1E2A78" />
-                    <stop offset="50%" stopColor="#4C6FFF" />
-                    <stop offset="100%" stopColor="#A78BFA" />
-                  </linearGradient>
-                  <linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#4C6FFF" />
-                    <stop offset="100%" stopColor="#A78BFA" />
-                  </linearGradient>
-                </defs>
-              </svg>
-            </div>
-          </div>
-          {isSpeaking && !isPaused && (
-            <div className="absolute -bottom-1 -right-1 flex gap-0.5 bg-card rounded-full px-2 py-1 border border-border shadow-md">
-              <div className="w-1 h-3 bg-secondary rounded-full animate-pulse" style={{ animationDelay: '0ms' }} />
-              <div className="w-1 h-4 bg-secondary rounded-full animate-pulse" style={{ animationDelay: '150ms' }} />
-              <div className="w-1 h-3 bg-secondary rounded-full animate-pulse" style={{ animationDelay: '300ms' }} />
-            </div>
-          )}
-          {isLoading && (
-            <div className="absolute -bottom-1 -right-1 bg-card rounded-full p-1 border border-border shadow-md">
-              <Loader2 size={14} className="animate-spin text-secondary" />
-            </div>
-          )}
+      <div className={`flex flex-col items-center border-b border-border bg-gradient-to-br from-primary/5 via-secondary/5 to-accent/5 ${isFloating ? 'px-3 py-2' : 'px-4 py-4'}`}>
+        <div className={isFloating ? 'mb-2' : 'mb-3'}>
+          <NovaAvatar
+            audioRef={audioRef}
+            emotion={fusedEmotion}
+            isSpeaking={isSpeaking && !isPaused}
+            isLoading={isLoading}
+            size={isFloating ? 56 : 80}
+          />
         </div>
 
         {/* Controls */}
@@ -357,9 +390,8 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
             <button
               onClick={handlePlayPause}
               disabled={isFinished}
-              className={`p-2 rounded-lg border-2 transition-all disabled:opacity-40 ${
-                !isPaused ? 'border-secondary bg-secondary text-white shadow-md' : 'border-border bg-card hover:border-secondary'
-              }`}
+              className={`p-2 rounded-lg border-2 transition-all disabled:opacity-40 ${!isPaused ? 'border-secondary bg-secondary text-white shadow-md' : 'border-border bg-card hover:border-secondary'
+                }`}
               title={isPaused ? 'Resume' : 'Pause'}
             >
               {isPaused ? <Play size={16} /> : <Pause size={16} />}
@@ -406,7 +438,7 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
       </div>
 
       {/* Transcript */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 space-y-3 min-h-0" style={{ overflowWrap: 'break-word', wordBreak: 'break-word' }}>
         {error && (
           <div className="bg-destructive/10 rounded-lg p-3 border-l-2 border-destructive">
             <p className="text-xs text-destructive">{error}</p>
@@ -425,11 +457,10 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
         {transcript.map((entry, i) => (
           <div
             key={i}
-            className={`rounded-lg p-3 ${
-              entry.role === 'tutor'
-                ? 'bg-primary/5 border-l-2 border-primary'
-                : 'bg-secondary/10 border-l-2 border-secondary ml-4'
-            }`}
+            className={`rounded-lg p-3 ${entry.role === 'tutor'
+              ? 'bg-primary/5 border-l-2 border-primary'
+              : 'bg-secondary/10 border-l-2 border-secondary ml-4'
+              }`}
           >
             {entry.role === 'student' && (
               <span className="text-xs font-semibold text-secondary block mb-1">You</span>
@@ -443,52 +474,25 @@ export function CompactTutor({ lessonTitle, subtopics = [] }: CompactTutorProps)
         <div ref={transcriptEndRef} />
       </div>
 
-      {/* Ask Question */}
+      {/* Mic Button — replaces text input */}
       {started && (
-        <div className="p-4 border-t border-border space-y-2">
-          {showChat ? (
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleAskQuestion(question)}
-                placeholder="Ask Dr. Nova..."
-                className="flex-1 text-sm px-3 py-2 rounded-xl border border-border bg-background focus:outline-none focus:border-secondary"
-                disabled={isAsking}
-              />
-              <button
-                onClick={() => handleAskQuestion()}
-                disabled={!question.trim() || isAsking}
-                className="p-2 bg-gradient-to-r from-secondary to-accent text-white rounded-xl disabled:opacity-50"
-              >
-                {isAsking ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowChat(true)}
-              className="w-full py-3 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold hover:shadow-lg transition-all flex items-center justify-center gap-2 text-sm"
-            >
-              <MessageCircle size={16} />
-              <span>Ask Question</span>
-            </button>
-          )}
+        <div className="p-4 border-t border-border">
           <button
-            onClick={handleVoiceInput}
-            disabled={isTranscribing}
-            className={`w-full py-2 border-2 rounded-xl transition-colors flex items-center justify-center gap-2 text-sm font-medium disabled:opacity-50 ${
-              isRecording
-                ? 'border-red-500 bg-red-50 text-red-600 animate-pulse'
-                : 'border-border hover:border-secondary'
-            }`}
+            onClick={handleMicClick}
+            disabled={micState === 'processing'}
+            className={`w-full py-3 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-50 ${micState === 'recording'
+              ? 'bg-red-400 text-white animate-pulse shadow-lg'
+              : micState === 'processing'
+                ? 'bg-secondary/10 text-secondary border-2 border-secondary'
+                : 'bg-gradient-to-r from-secondary to-accent text-white hover:shadow-lg'
+              }`}
           >
-            {isTranscribing ? (
-              <><Loader2 size={16} className="animate-spin" /><span>Transcribing…</span></>
-            ) : isRecording ? (
-              <><MicOff size={16} /><span>Stop Recording</span></>
+            {micState === 'processing' ? (
+              <><Loader2 size={16} className="animate-spin" /><span>Processing…</span></>
+            ) : micState === 'recording' ? (
+              <><Mic size={16} /><span>Stop Recording</span></>
             ) : (
-              <><Mic size={16} /><span>Voice Input</span></>
+              <><Mic size={16} /><span>Ask with Voice</span></>
             )}
           </button>
         </div>
