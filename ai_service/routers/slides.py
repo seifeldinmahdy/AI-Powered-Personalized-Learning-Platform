@@ -326,6 +326,20 @@ def _generate_session_slides(request: SlideGenerateRequest) -> list[SlideOut]:
 @router.post("/generate", response_model=SlideGenerateResponse)
 async def generate_slides(request: SlideGenerateRequest):
     """Generate a full slide deck for a session from its chunks."""
+    # --- DEBUG / TESTING OVERRIDE: Return saved deck if it exists for this session ---
+    import os
+    import json
+    if os.path.exists("latest_deck.json"):
+        try:
+            with open("latest_deck.json", "r", encoding="utf-8") as f:
+                saved_deck = json.load(f)
+            if saved_deck.get("session_number") == request.session_number:
+                logger.info("TESTING OVERRIDE: Returning latest_deck.json instantly to save generation time.")
+                return SlideGenerateResponse(**saved_deck)
+        except Exception as e:
+            logger.warning(f"Could not load saved deck override: {e}")
+    # ---------------------------------------------------------------------------------
+
     t0 = time.time()
 
     logger.info(
@@ -346,13 +360,24 @@ async def generate_slides(request: SlideGenerateRequest):
         request.session_number, len(slides), elapsed,
     )
 
-    return SlideGenerateResponse(
+    response = SlideGenerateResponse(
         session_number=request.session_number,
         session_title=request.session_title,
         total_slides=len(slides),
         slides=slides,
         generation_time_seconds=elapsed,
     )
+
+    # Save a debug copy to the ai_service root
+    try:
+        import json
+        with open("latest_deck.json", "w", encoding="utf-8") as f:
+            f.write(response.model_dump_json(indent=2))
+        logger.info("Saved raw output to latest_deck.json")
+    except Exception as e:
+        logger.warning(f"Could not save latest_deck.json: {e}")
+
+    return response
 
 
 @router.get("/health")

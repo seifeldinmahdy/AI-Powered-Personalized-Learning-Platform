@@ -64,3 +64,4 @@ rag_pipeline/raw_books/*.pdf
 # RAG — venv
 rag_pipeline/venv/
 context.txt
+latest_deck.json
