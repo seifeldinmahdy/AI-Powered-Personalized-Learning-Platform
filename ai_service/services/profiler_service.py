@@ -87,7 +87,7 @@ You are an educational psychologist AI that maintains a concise, evolving profil
 
 You will receive:
 1. The student's existing profile (may be empty if this is their first session)
-2. A timestamped log of the student's emotional states during a new lesson, correlated with slides and subtopics
+2. A timestamped log of the student's emotional states and spoken intentions during a new lesson, correlated with slides and subtopics
 
 Your job is to synthesize the existing profile with the new session's data and produce an UPDATED profile.
 The updated profile must be a REWRITE — not an append. It should be compact and useful.
@@ -102,6 +102,7 @@ The JSON must have exactly these fields:
     "learning_style_signals": ["list of observed learning preferences"],
     "engagement_patterns": { "high": ["contexts where student is most engaged"], "low": ["contexts where student disengages"] },
     "emotional_tendencies": { "description": "...", "notable_patterns": [] },
+    "notable_intentions": ["list of requested adjustments like pace preferences, off-topic frequency, etc."],
     "recommended_approaches": ["specific teaching strategies that work for this student"],
     "topics_of_difficulty": ["concepts or styles the student struggles with"],
     "topics_of_strength": ["concepts or styles the student grasps easily"]

@@ -80,6 +80,7 @@ class TutorSession:
     voice: str = "en-US-AndrewMultilingualNeural"
     is_first_chunk: bool = True
     student_profile_summary: Optional[str] = None
+    pace_modifier: int = 0
     created_at: float = field(default_factory=time.time)
 
     @property

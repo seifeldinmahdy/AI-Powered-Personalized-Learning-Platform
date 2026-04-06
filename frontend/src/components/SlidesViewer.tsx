@@ -24,7 +24,7 @@ export function SlidesViewer({
 
   return (
     <div className="flex-1 flex flex-col bg-background relative">
-      <div className="flex-1 flex items-center justify-center p-8 bg-gradient-to-br from-muted/20 to-background" style={isFullscreen ? { paddingLeft: 324 } : undefined}>
+      <div className="flex-1 flex items-center justify-center p-8 bg-gradient-to-br from-muted/20 to-background" style={isFullscreen ? { paddingLeft: 360 } : undefined}>
         <div className="w-full h-full max-w-5xl bg-card rounded-2xl shadow-2xl border-2 border-border overflow-hidden flex flex-col">
           {/* Slide Header */}
           <div className="px-8 py-4 border-b border-border bg-gradient-to-r from-primary/5 to-secondary/5 flex items-center justify-between">

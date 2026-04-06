@@ -30,6 +30,7 @@ class EmotionEventInput(BaseModel):
     ser_confidence: Optional[float] = None
     fused_emotion: Optional[str] = None
     event_type: str = "passive"
+    intent_classification: Optional[str] = None
     question_transcript: Optional[str] = None
     dr_nova_response_summary: Optional[str] = None
 

@@ -16,6 +16,7 @@ export interface EmotionEvent {
   ser_confidence?: number;
   fused_emotion: string;            // always present — resolved from available signals
   event_type: 'passive' | 'question'; // passive = FER poll, question = student asked
+  intent_classification?: string;   // only if event_type === "question", from TinyBERT
   question_transcript?: string;     // only if event_type === "question"
   dr_nova_response_summary?: string; // optional, only for question events
 }

@@ -52,7 +52,7 @@ export default function LiveSession() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ferIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const latestSERRef = useRef<SERResult | null>(null);
+  const latestSERRef = useRef<{ data: SERResult; timestamp: number } | null>(null);
   const sessionStartedRef = useRef(false);
 
   // ─── Fullscreen state ─────────────────────────────────────────
@@ -230,9 +230,14 @@ export default function LiveSession() {
 
           // Fuse with latest SER result
           const ferData = { fer_emotion: data.emotion, fer_confidence: data.confidence };
-          const serData = latestSERRef.current
-            ? { ser_emotion: latestSERRef.current.emotion, ser_confidence: latestSERRef.current.confidence }
-            : {};
+          
+          let serData = {};
+          if (latestSERRef.current && Date.now() - latestSERRef.current.timestamp < 30000) {
+            serData = { 
+              ser_emotion: latestSERRef.current.data.emotion, 
+              ser_confidence: latestSERRef.current.data.confidence 
+            };
+          }
 
           const fusion = await fuseEmotions(
             { ...ferData, ...serData },
@@ -251,8 +256,8 @@ export default function LiveSession() {
             subtopic: lesson?.title,
             fer_emotion: data.emotion,
             fer_confidence: data.confidence,
-            ser_emotion: latestSERRef.current?.emotion,
-            ser_confidence: latestSERRef.current?.confidence,
+            ser_emotion: latestSERRef.current?.data.emotion,
+            ser_confidence: latestSERRef.current?.data.confidence,
             fused_emotion: fusion.fused_emotion,
             event_type: 'passive',
           });
@@ -470,7 +475,7 @@ export default function LiveSession() {
   }, []);
 
   const handleLatestSER = useCallback((ser: SERResult) => {
-    latestSERRef.current = ser;
+    latestSERRef.current = { data: ser, timestamp: Date.now() };
   }, []);
 
   // ─── Render ───────────────────────────────────────────────────
@@ -631,6 +636,7 @@ export default function LiveSession() {
           currentSlideTitle={currentSlideTitle as string}
           onSessionStart={handleSessionStart}
           onLatestSER={handleLatestSER}
+          onUpdateFusedEmotion={setFusedEmotion}
           studentProfileSummary={studentProfileSummary}
           isFloating={isFullscreen}
         />

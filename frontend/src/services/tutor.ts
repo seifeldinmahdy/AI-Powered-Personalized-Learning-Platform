@@ -96,6 +96,15 @@ export async function stopTutorSession(session_id: string): Promise<void> {
   });
 }
 
+export async function setTutorPace(session_id: string, pace: 'slow' | 'normal' | 'fast'): Promise<void> {
+  const res = await fetch(`${AI_URL}/tutor/set-pace`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id, pace }),
+  });
+  if (!res.ok) throw new Error('Failed to set tutor pace');
+}
+
 export async function transcribeAudio(audioBlob: Blob): Promise<string> {
   const formData = new FormData();
   formData.append('audio_file', audioBlob, 'recording.wav');
@@ -190,4 +199,41 @@ export function playAudioBase64(base64: string): HTMLAudioElement {
   audio.onended = () => URL.revokeObjectURL(url);
   return audio;
 }
+
+export async function synthesizeAudio(text: string, emotion?: string, session_id?: string | null): Promise<string> {
+  if (session_id) {
+    const res = await fetch(`${AI_URL}/tutor/synthesize-audio`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id, text, student_emotion: emotion }),
+    });
+    if (!res.ok) throw new Error('Failed to synthesize tutor audio');
+    const data = await res.json();
+    if (data.audio_base64) {
+      return data.audio_base64;
+    }
+  }
+
+  // Fallback if no session_id
+  const res = await fetch(`${AI_URL}/tts/synthesize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text,
+      voice: 'en-US-JennyNeural',
+      rate: emotion === 'calm' ? '-10%' : '+0%',
+      pitch: '+0Hz',
+    }),
+  });
+  if (!res.ok) throw new Error('Failed to synthesize audio');
+  const blob = await res.blob();
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 

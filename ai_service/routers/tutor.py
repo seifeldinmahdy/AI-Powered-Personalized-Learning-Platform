@@ -113,7 +113,12 @@ async def continue_session(request: ContinueRequest):
         # Generate TTS audio if requested and there's text
         audio_base64 = None
         if request.include_audio and result["text"]:
-            audio_base64 = await _synthesize_audio(result["text"], session.voice, request.student_emotion)
+            audio_base64 = await _synthesize_audio(
+                result["text"], 
+                session.voice, 
+                request.student_emotion,
+                request.session_id
+            )
 
         return {
             "success": True,
@@ -149,7 +154,12 @@ async def ask(request: AskQuestionRequest):
 
         audio_base64 = None
         if request.include_audio and result["answer"]:
-            audio_base64 = await _synthesize_audio(result["answer"], session.voice, request.student_emotion)
+            audio_base64 = await _synthesize_audio(
+                result["answer"], 
+                session.voice, 
+                request.student_emotion,
+                request.session_id
+            )
 
         return {
             "success": True,
@@ -200,6 +210,53 @@ async def stop(request: StopRequest):
     if not success:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"success": True, "session_id": request.session_id, "status": "finished"}
+
+
+class SetPaceRequest(BaseModel):
+    session_id: str = Field(..., description="Session ID")
+    pace: str = Field(..., description="Requested pace ('slow', 'normal', 'fast')")
+
+
+@router.post("/set-pace")
+async def set_pace(request: SetPaceRequest):
+    session = get_session(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    if request.pace == "slow":
+        session.pace_modifier -= 10
+    elif request.pace == "fast":
+        session.pace_modifier += 10
+    elif request.pace == "normal":
+        session.pace_modifier = 0
+        
+    return {"success": True, "pace": request.pace, "pace_modifier": session.pace_modifier}
+
+
+class TutorSynthesizeAudioRequest(BaseModel):
+    session_id: str = Field(..., description="Session ID")
+    text: str = Field(..., description="Text to synthesize")
+    student_emotion: Optional[str] = Field(default=None, description="Current student emotional state")
+
+
+@router.post("/synthesize-audio")
+async def tutor_synthesize_audio(request: TutorSynthesizeAudioRequest):
+    """Synthesize audio directly utilizing the session's current context and pace_modifier."""
+    session = get_session(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    try:
+        audio_base64 = await _synthesize_audio(
+            request.text, 
+            session.voice, 
+            request.student_emotion,
+            request.session_id
+        )
+        return {"success": True, "audio_base64": audio_base64}
+    except Exception as e:
+        logger.error(f"Tutor synthesize audio error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/health")
@@ -283,15 +340,29 @@ async def _synthesize_audio(
     text: str,
     voice: str,
     student_emotion: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> Optional[str]:
     """Synthesize speech and return base64-encoded MP3.
 
     If *student_emotion* is provided the TTS rate and pitch are adjusted
     so Dr. Nova's delivery mirrors the adaptive tone the LLM text already
-    carries.
+    carries. Overridden by permanent pace if set by student intent.
     """
     try:
         rate, pitch = _emotion_to_prosody(student_emotion)
+        
+        # Check if student explicitly requested a global pace change
+        if session_id:
+            from services.tutor_service import get_session
+            session = get_session(session_id)
+            if session and hasattr(session, 'pace_modifier') and session.pace_modifier != 0:
+                try:
+                    current_rate = int(rate.replace("%", "").replace("+", ""))
+                except ValueError:
+                    current_rate = 0
+                new_rate = current_rate + session.pace_modifier
+                rate = f"+{new_rate}%" if new_rate >= 0 else f"{new_rate}%"
+
         tts = get_tts_service()
         result = await tts.synthesize(text=text, voice=voice, rate=rate, pitch=pitch)
         return base64.b64encode(result["audio_bytes"]).decode("utf-8")

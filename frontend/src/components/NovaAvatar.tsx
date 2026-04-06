@@ -125,11 +125,16 @@ function hexToRgb(hex: string): [number, number, number] {
   return [parseInt(m[0], 16), parseInt(m[1], 16), parseInt(m[2], 16)];
 }
 
-function lerpColor(a: [number, number, number], b: [number, number, number], t: number): string {
-  const r = Math.round(a[0] + (b[0] - a[0]) * t);
-  const g = Math.round(a[1] + (b[1] - a[1]) * t);
-  const bl = Math.round(a[2] + (b[2] - a[2]) * t);
-  return `rgb(${r},${g},${bl})`;
+function lerpColorArray(a: [number, number, number], b: [number, number, number], t: number): [number, number, number] {
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * t),
+    Math.round(a[1] + (b[1] - a[1]) * t),
+    Math.round(a[2] + (b[2] - a[2]) * t)
+  ];
+}
+
+function toRgbString(a: [number, number, number]): string {
+  return `rgb(${a[0]},${a[1]},${a[2]})`;
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
@@ -195,8 +200,8 @@ export function NovaAvatar({
     if (emotion !== emotionRef.current) {
       emotionRef.current = emotion;
       // Trigger color transition
-      s.prevPrimary = hexToRgb(lerpColor(s.prevPrimary, s.nextPrimary, s.colorT));
-      s.prevAccent = hexToRgb(lerpColor(s.prevAccent, s.nextAccent, s.colorT));
+      s.prevPrimary = lerpColorArray(s.prevPrimary, s.nextPrimary, s.colorT);
+      s.prevAccent = lerpColorArray(s.prevAccent, s.nextAccent, s.colorT);
       s.nextPrimary = hexToRgb(emo.primary);
       s.nextAccent = hexToRgb(emo.accent);
       s.colorT = 0;
@@ -305,8 +310,10 @@ export function NovaAvatar({
 
       /* ── Color lerp ────────────────────────────────── */
       s.colorT = Math.min(s.colorT + dt * 2, 1);
-      const primaryRgb = lerpColor(s.prevPrimary, s.nextPrimary, s.colorT);
-      const accentRgb = lerpColor(s.prevAccent, s.nextAccent, s.colorT);
+      const primaryRgbArray = lerpColorArray(s.prevPrimary, s.nextPrimary, s.colorT);
+      const accentRgbArray = lerpColorArray(s.prevAccent, s.nextAccent, s.colorT);
+      const primaryRgb = toRgbString(primaryRgbArray);
+      const accentRgb = toRgbString(accentRgbArray);
 
       /* ── Step all springs ──────────────────────────── */
       s.leftBrowY.step(dt);
