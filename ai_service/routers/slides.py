@@ -4,6 +4,11 @@ Takes session chunks from the pathway generator and runs them through
 the compound AI pipeline: content specialist + visual classifier +
 code extractor + structural slides + summary slide.
 
+When a ``session_id`` is provided, tutor context (current topic,
+running summary, slide title) is auto-read from SharedSessionStore
+and injected into the content specialist prompt so regenerated slides
+reflect what the tutor has already covered.
+
 Endpoints
 ---------
 POST /slides/generate  — Generate slides for a single session
@@ -61,6 +66,14 @@ class SlideGenerateRequest(BaseModel):
     mastery_level: str = "Novice"
     composition_mode: str = "visual_heavy"
     language_proficiency: str = "Elementary"
+    session_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional session ID.  When provided, tutor context (topic, "
+            "summary, slide title) is auto-read from SharedSessionStore "
+            "and injected into the content specialist prompt."
+        ),
+    )
 
 
 class ContentItemOut(BaseModel):
@@ -144,8 +157,22 @@ def _clean_chunk_text(raw: str) -> str:
     return text
 
 
-def _generate_session_slides(request: SlideGenerateRequest) -> list[SlideOut]:
-    """Run the full orchestrator pipeline for one session."""
+def _generate_session_slides(
+    request: SlideGenerateRequest,
+    tutor_context: Optional[dict] = None,
+) -> list[SlideOut]:
+    """Run the full orchestrator pipeline for one session.
+
+    Parameters
+    ----------
+    request : SlideGenerateRequest
+        The incoming API request.
+    tutor_context : dict or None
+        If provided, a dict from SharedSessionStore with keys like
+        ``current_topic``, ``running_summary``, ``current_slide_title``.
+        Injected into the content specialist prompt so regenerated slides
+        reflect what the tutor has already covered.
+    """
     from slide_gen.agents.content_specialist import generate_content
     from slide_gen.agents.visual_classifier import classify_visual, should_render_visual
     from slide_gen.agents.code_extractor import extract_code
@@ -200,16 +227,36 @@ def _generate_session_slides(request: SlideGenerateRequest) -> list[SlideOut]:
     all_titles = []
     all_bullets = []
 
+    # ── Build tutor-context prefix for the content specialist ───
+    tutor_prefix = ""
+    if tutor_context:
+        parts = []
+        if tutor_context.get("current_topic"):
+            parts.append(f"Tutor is currently covering: {tutor_context['current_topic']}")
+        if tutor_context.get("current_slide_title"):
+            parts.append(f"Current slide: {tutor_context['current_slide_title']}")
+        if tutor_context.get("running_summary"):
+            parts.append(
+                f"Summary of what the tutor has explained so far:\n"
+                f"{tutor_context['running_summary']}"
+            )
+        if parts:
+            tutor_prefix = "\n".join(parts) + "\n\n"
+
     for chunk_in in request.chunks:
         cleaned = _clean_chunk_text(chunk_in.raw_text)
         if not cleaned or len(cleaned) < 20:
             continue
 
+        # Inject tutor context into the chunk text so the content
+        # specialist is aware of what has already been covered.
+        enriched_text = tutor_prefix + cleaned if tutor_prefix else cleaned
+
         logger.info("slides_processing_chunk: chunk_id=%s topic=%s", chunk_in.chunk_id, chunk_in.topic)
 
         # 1. Content Specialist (T5)
         try:
-            content = generate_content(cleaned, profile_dict, model_path=_T5_PATH)
+            content = generate_content(enriched_text, profile_dict, model_path=_T5_PATH)
         except Exception as e:
             logger.error("content_specialist_failed: %s", str(e))
             content = {"title": "Untitled", "items": [{"text": cleaned[:200], "highlight_type": "none"}]}
@@ -325,7 +372,11 @@ def _generate_session_slides(request: SlideGenerateRequest) -> list[SlideOut]:
 
 @router.post("/generate", response_model=SlideGenerateResponse)
 async def generate_slides(request: SlideGenerateRequest):
-    """Generate a full slide deck for a session from its chunks."""
+    """Generate a full slide deck for a session from its chunks.
+
+    When ``session_id`` is provided, tutor context is read from
+    SharedSessionStore and injected into the content specialist prompt.
+    """
     # --- DEBUG / TESTING OVERRIDE: Return saved deck if it exists for this session ---
     import os
     import json
@@ -347,8 +398,23 @@ async def generate_slides(request: SlideGenerateRequest):
         request.session_number, request.session_title, len(request.chunks),
     )
 
+    # ── Read tutor context from SharedSessionStore ──────────────
+    tutor_context = None
+    if request.session_id:
+        try:
+            from services.session_store import get_session_store
+            store = get_session_store()
+            tutor_context = store.get_session(request.session_id)
+            if tutor_context:
+                logger.info(
+                    "slides: loaded tutor context from SharedSessionStore for session %s",
+                    request.session_id,
+                )
+        except Exception as exc:
+            logger.warning("slides: failed to read SharedSessionStore: %s", exc)
+
     try:
-        slides = _generate_session_slides(request)
+        slides = _generate_session_slides(request, tutor_context=tutor_context)
     except Exception as e:
         logger.error("slides_generation_failed: %s", str(e))
         raise HTTPException(status_code=500, detail=f"Slide generation failed: {e}")

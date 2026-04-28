@@ -4,6 +4,7 @@ Features: discriminative fine-tuning, warmup+cosine LR, early stopping,
 comprehensive per-class/epoch metric tracking.
 """
 
+import os
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -23,6 +24,8 @@ warnings.filterwarnings('ignore')
 from TinyBert import IntentClassifier, IntentDataset
 
 INTENT_NAMES = ['On-Topic Question', 'Off-Topic Question', 'Emotional-State', 'Pace-Related', 'Repeat/clarification']
+DEFAULT_CONFIDENCE_THRESHOLD = 0.55
+REAL_UTTERANCE_PATH = 'data/real_utterances.csv'
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -263,6 +266,7 @@ def main():
     # ── Save results ───────────────────────────────────────────────
     results = {
         'model': 'TinyBert-CNN',
+        'confidence_threshold': DEFAULT_CONFIDENCE_THRESHOLD,
         'hyperparameters': hyperparams,
         'training_duration_seconds': training_duration,
         'epochs_trained': len(history['train_loss']),
@@ -279,6 +283,59 @@ def main():
         'classification_report': cls_report
     }
 
+    # ── Real-utterance evaluation split ─────────────────────────────
+    if os.path.exists(REAL_UTTERANCE_PATH):
+        print(f"\n{'='*60}")
+        print("REAL-UTTERANCE EVALUATION")
+        print(f"{'='*60}")
+        try:
+            real_df = pd.read_csv(REAL_UTTERANCE_PATH)
+            real_dataset = IntentDataset(
+                real_df.to_dict('records'), classifier.tokenizer, max_length=MAX_LENGTH
+            )
+            real_loader = DataLoader(real_dataset, batch_size=BATCH_SIZE, shuffle=False)
+            (
+                real_loss, real_acc, real_prec, real_rec, real_f1,
+                real_preds, real_labels,
+            ) = evaluate_model_full(classifier, real_loader)
+
+            real_per_class_p, real_per_class_r, real_per_class_f1, real_support = (
+                precision_recall_fscore_support(
+                    real_labels, real_preds, average=None, zero_division=0
+                )
+            )
+            real_per_class = {}
+            for i, name in enumerate(INTENT_NAMES):
+                if i < len(real_per_class_f1):
+                    real_per_class[name] = {
+                        'precision': round(float(real_per_class_p[i]), 4),
+                        'recall': round(float(real_per_class_r[i]), 4),
+                        'f1_score': round(float(real_per_class_f1[i]), 4),
+                        'support': int(real_support[i]),
+                    }
+
+            real_cls_report = classification_report(
+                real_labels, real_preds, target_names=INTENT_NAMES, zero_division=0
+            )
+
+            results['real_utterance_metrics'] = {
+                'accuracy': round(real_acc, 4),
+                'f1_score': round(real_f1, 4),
+                'precision': round(real_prec, 4),
+                'recall': round(real_rec, 4),
+                'test_loss': round(real_loss, 4),
+            }
+            results['real_utterance_per_class'] = real_per_class
+            results['real_utterance_report'] = real_cls_report
+
+            print(f"Real Acc: {real_acc:.4f} | Real F1: {real_f1:.4f}")
+            print(f"\nPer-class (real utterances):")
+            print(real_cls_report)
+        except Exception as e:
+            print(f"[!] Real-utterance eval failed: {e}")
+    else:
+        print(f"\n[!] No real utterance file at {REAL_UTTERANCE_PATH} — skipping.")
+
     with open('training_results.json', 'w') as f:
         json.dump(results, f, indent=4)
 
@@ -286,7 +343,8 @@ def main():
     print(f"TRAINING COMPLETE  ({training_duration:.1f}s)")
     print(f"{'='*60}")
     print(f"Test Acc: {test_acc:.4f} | Test F1: {test_f1:.4f} | Test Loss: {test_loss:.4f}")
-    print(f"\nPer-class results:")
+    print(f"Confidence threshold: {DEFAULT_CONFIDENCE_THRESHOLD}")
+    print(f"\nPer-class results (synthetic test):")
     print(cls_report)
     print(f"Confusion Matrix:")
     for row in cm:

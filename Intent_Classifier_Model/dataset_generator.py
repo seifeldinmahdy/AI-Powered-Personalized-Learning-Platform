@@ -1,12 +1,22 @@
 """
 Dataset Generation Pipeline for TinyBert-CNN Intent Classifier.
 Generates (student_input, session_context, label) triples for 5-class classification.
+
+New features:
+- LLM-based paraphrase augmentation (--augment-llm flag)
+- Fixed template-label mismatches
+- Colloquial / ultra-short emotional samples
 """
 
+import argparse
+import json
 import random
 import pandas as pd
 import os
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────
 # CONSTANTS & METADATA
@@ -86,7 +96,7 @@ def generate_session_context(current_topic_idx):
 ON_TOPIC_TEMPLATES = [
     # Direct questions
     "How do I use {topic} in my code?",
-    "Can you explain {topic} again?",
+    # MOVED to REPEAT: "Can you explain {topic} again?"
     "What are the best practices for {topic}?",
     "Can you show me an example of {topic}?",
     "Why is {topic} giving me a syntax error?",
@@ -129,7 +139,7 @@ ON_TOPIC_TEMPLATES = [
     "Help me with {topic}",
     "I need help understanding {topic}",
     "So how does {topic} actually work?",
-    "Wait, explain {topic} one more time",
+    # MOVED to REPEAT: "Wait, explain {topic} one more time"
 ]
 
 # Context-aware on-topic templates (reference ability scores, prev topics)
@@ -230,6 +240,38 @@ EMOTIONAL_TEMPLATES = [
     "I'm frustrated because this used to make sense.",
     "I feel overwhelmed by all this new stuff.",
     "I just feel really down today.",
+    # Colloquial / profanity / ultra-short expressions
+    "wtf",
+    "bruh",
+    "i give up",
+    "this is bs",
+    "lmaooo im lost",
+    "fml",
+    "im done",
+    "ugh",
+    "smh",
+    "nah bro",
+    "this sucks",
+    "kill me",
+    "yo what",
+    "no way",
+    "i cant even",
+    "bro what",
+    "im so done rn",
+    "bruhhh",
+    "pain",
+    "crying rn",
+    "this aint it",
+    "dawg im cooked",
+    "i hate this",
+    "yooo lets go",
+    "lessgoo i got it",
+    "ayy thats sick",
+    "ngl this is hard",
+    "lowkey confused",
+    "highkey stressed",
+    "im tweaking",
+    "bruh moment",
 ]
 
 PACE_TEMPLATES = [
@@ -306,6 +348,9 @@ REPEAT_TEMPLATES = [
     "I need a recap of what you just said.",
     "Can you summarize what you just explained?",
     "What were the key points of that last section?",
+    # MOVED from ON_TOPIC (these are clarification/repeat requests, not questions)
+    "Can you explain {topic} again?",
+    "Wait, explain {topic} one more time",
 ]
 
 
@@ -507,6 +552,161 @@ def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, 
     print(f"Total: {len(df)} | Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)}")
     print(f"Train distribution:\n{train_df['label'].value_counts().sort_index().to_string()}")
 
+    return train_df, val_df, test_df
+
+
+# ─────────────────────────────────────────────────────────────────────
+# LLM-BASED PARAPHRASE AUGMENTATION
+# ─────────────────────────────────────────────────────────────────────
+
+PARAPHRASE_CACHE_PATH = os.path.join('data', 'paraphrase_cache.json')
+
+
+def _load_paraphrase_cache() -> dict:
+    """Load cached paraphrases from disk."""
+    if os.path.exists(PARAPHRASE_CACHE_PATH):
+        with open(PARAPHRASE_CACHE_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+
+def _save_paraphrase_cache(cache: dict) -> None:
+    """Save paraphrase cache to disk."""
+    os.makedirs(os.path.dirname(PARAPHRASE_CACHE_PATH), exist_ok=True)
+    with open(PARAPHRASE_CACHE_PATH, 'w', encoding='utf-8') as f:
+        json.dump(cache, f, indent=2, ensure_ascii=False)
+
+
+def paraphrase_with_llm(
+    samples: list[str],
+    label_name: str,
+    n_paraphrases: int = 3,
+    batch_size: int = 10,
+) -> list[str]:
+    """Generate paraphrases for training samples using the Groq API.
+
+    Results are cached to ``data/paraphrase_cache.json`` so repeated
+    runs do not re-call the API.
+
+    Parameters
+    ----------
+    samples : list[str]
+        Student input strings to paraphrase.
+    label_name : str
+        The intent label (used in the prompt for context).
+    n_paraphrases : int
+        Number of paraphrases per sample.
+    batch_size : int
+        Number of samples per API call.
+
+    Returns
+    -------
+    list[str]
+        All generated paraphrases (flat list).
+    """
+    from dotenv import load_dotenv
+    load_dotenv()
+    api_key = os.getenv('GROQ_API_KEY', '')
+    if not api_key:
+        logger.warning('GROQ_API_KEY not set — skipping LLM paraphrase augmentation')
+        return []
+
+    from groq import Groq
+    client = Groq(api_key=api_key)
+
+    cache = _load_paraphrase_cache()
+    all_paraphrases: list[str] = []
+
+    for i in range(0, len(samples), batch_size):
+        batch = samples[i:i + batch_size]
+        uncached = [s for s in batch if s not in cache]
+
+        if uncached:
+            numbered = '\n'.join(f'{j+1}. {s}' for j, s in enumerate(uncached))
+            prompt = (
+                f'You are a data augmentation assistant. For each student utterance below '
+                f'(intent class: "{label_name}"), generate exactly {n_paraphrases} realistic '
+                f'paraphrases that a real student might say. Vary formality, slang, and length. '
+                f'Return ONLY a JSON object: {{"paraphrases": [[p1,p2,p3], ...]}}\n\n{numbered}'
+            )
+            try:
+                resp = client.chat.completions.create(
+                    model='llama-3.1-8b-instant',
+                    messages=[{'role': 'user', 'content': prompt}],
+                    temperature=0.8,
+                    max_tokens=2048,
+                    response_format={'type': 'json_object'},
+                )
+                text = resp.choices[0].message.content.strip()
+                data = json.loads(text)
+                groups = data.get('paraphrases', [])
+                for s, group in zip(uncached, groups):
+                    cache[s] = group if isinstance(group, list) else []
+            except Exception as e:
+                logger.error('LLM paraphrase batch failed: %s', e)
+                for s in uncached:
+                    cache[s] = []
+
+        for s in batch:
+            all_paraphrases.extend(cache.get(s, []))
+
+    _save_paraphrase_cache(cache)
+    print(f'[+] LLM paraphrase augmentation: {len(all_paraphrases)} new samples for "{label_name}"')
+    return all_paraphrases
+
+
+def augment_dataset_with_llm(df: pd.DataFrame, n_paraphrases: int = 3) -> pd.DataFrame:
+    """Augment every class in the dataset with LLM-generated paraphrases.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The original training DataFrame.
+    n_paraphrases : int
+        Paraphrases to generate per sample.
+
+    Returns
+    -------
+    pd.DataFrame
+        The augmented DataFrame (original + paraphrases).
+    """
+    intent_names = {v: k for k, v in LABEL_MAP.items()}
+    new_rows = []
+
+    for label_id in sorted(df['label'].unique()):
+        label_name = intent_names.get(label_id, f'label_{label_id}')
+        subset = df[df['label'] == label_id]
+        texts = subset['student_input'].tolist()
+        contexts = subset['session_context'].tolist()
+
+        paraphrases = paraphrase_with_llm(texts, label_name, n_paraphrases)
+
+        for j, para in enumerate(paraphrases):
+            ctx = contexts[j % len(contexts)] if contexts else ''
+            new_rows.append({
+                'student_input': para,
+                'session_context': ctx,
+                'label': label_id,
+                'intent_name': label_name,
+            })
+
+    aug_df = pd.DataFrame(new_rows)
+    combined = pd.concat([df, aug_df], ignore_index=True)
+    combined = combined.sample(frac=1, random_state=42).reset_index(drop=True)
+    print(f'[+] Dataset augmented: {len(df)} -> {len(combined)} rows')
+    return combined
+
 
 if __name__ == '__main__':
-    build_dataset(num_samples_per_class=2000)
+    parser = argparse.ArgumentParser(description='Generate intent classifier training data')
+    parser.add_argument('--samples', type=int, default=2000, help='Samples per class')
+    parser.add_argument('--augment-llm', action='store_true', help='Enable LLM paraphrase augmentation (requires GROQ_API_KEY)')
+    args = parser.parse_args()
+
+    train_df, val_df, test_df = build_dataset(num_samples_per_class=args.samples)
+
+    if args.augment_llm:
+        print('\n[*] Running LLM paraphrase augmentation on training set...')
+        train_df = augment_dataset_with_llm(train_df, n_paraphrases=3)
+        train_df.to_csv(os.path.join('data', 'train.csv'), index=False)
+        print(f'[+] Augmented training set saved ({len(train_df)} rows)')

@@ -3,6 +3,10 @@ Tutor Session Service — AI-powered private tutor using Ollama.
 
 Manages session state, recursive context summarization, topic progression,
 and question-answering with full context injection.
+
+After every state change the service writes to ``SharedSessionStore`` so
+that Intent, Slides, Profiler, and FER/SER subsystems can read the
+latest tutor context without the frontend manually shuttling state.
 """
 
 import os
@@ -30,6 +34,7 @@ else:
 logger = logging.getLogger(__name__)
 
 # ── Configure Ollama Cloud ──
+ 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "https://ollama.com")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
@@ -183,6 +188,36 @@ async def check_relevance(question: str, lesson_title: str) -> bool:
         return True  # Default to allowing the question if the check fails
 
 
+# ── Shared-store helper ──────────────────────────────────────────
+
+def _sync_to_shared_store(session: TutorSession) -> None:
+    """Write the current tutor session state to SharedSessionStore.
+
+    This is called after every state change so that other subsystems
+    (Intent, Slides, Profiler, FER/SER) can read up-to-date context
+    without the frontend manually passing it.
+
+    Parameters
+    ----------
+    session : TutorSession
+        The tutor session whose state should be synced.
+    """
+    try:
+        from services.session_store import get_session_store
+        store = get_session_store()
+        store.update_session(
+            session.session_id,
+            current_topic=session.current_topic or "",
+            current_subtopic=session.current_subtopic or "",
+            running_summary=session.running_summary,
+            tutor_transcript=session.transcript[-10:],
+            pace_modifier=session.pace_modifier,
+            student_profile_summary=session.student_profile_summary or "",
+        )
+    except Exception as exc:
+        logger.warning("Failed to sync tutor state to SharedSessionStore: %s", exc)
+
+
 # ── Public API ──
 
 def create_session(
@@ -216,6 +251,10 @@ def create_session(
     )
     _sessions[sid] = session
     logger.info(f"Session {sid} created with {len(topics)} topics")
+
+    # ── Seed SharedSessionStore ──
+    _sync_to_shared_store(session)
+
     return session
 
 
@@ -324,6 +363,9 @@ async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str]
     # Advance to next subtopic/topic
     is_finished = _advance(session)
 
+    # ── Sync state to SharedSessionStore ──
+    _sync_to_shared_store(session)
+
     return {
         "text": lecture_text,
         "topic": topic_name,
@@ -401,6 +443,9 @@ async def answer_question(session_id: str, question: str, student_emotion: Optio
     # Restore status (back to lecturing or finished)
     session.status = prev_status if prev_status != "answering" else "lecturing"
 
+    # ── Sync state to SharedSessionStore ──
+    _sync_to_shared_store(session)
+
     return {
         "answer": answer_text,
         "topic": session.current_topic,
@@ -417,6 +462,7 @@ def stop_session(session_id: str) -> bool:
     session = _sessions.get(session_id)
     if session:
         session.status = "finished"
+        _sync_to_shared_store(session)
         return True
     return False
 

@@ -65,3 +65,6 @@ rag_pipeline/raw_books/*.pdf
 rag_pipeline/venv/
 context.txt
 latest_deck.json
+
+# issues
+issues/*
