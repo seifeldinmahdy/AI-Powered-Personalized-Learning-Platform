@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (
     LessonCompletion, SystemActivityLog, AIChatLog,
-    StudentLearningProfile,
+    StudentLearningProfile, Bookmark,
 )
 
 
@@ -39,6 +39,16 @@ class AIChatLogSerializer(serializers.ModelSerializer):
 
 
 
+
+
+class BookmarkSerializer(serializers.ModelSerializer):
+    lesson_title = serializers.ReadOnlyField(source="lesson.title")
+    course_id = serializers.ReadOnlyField(source="lesson.module.course.id")
+
+    class Meta:
+        model = Bookmark
+        fields = ["id", "user", "lesson", "lesson_title", "course_id", "slide_index", "created_at"]
+        read_only_fields = ["id", "user", "created_at"]
 
 
 class StudentLearningProfileSerializer(serializers.ModelSerializer):

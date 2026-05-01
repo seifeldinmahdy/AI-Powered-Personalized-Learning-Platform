@@ -76,3 +76,33 @@ export async function getActivityLogs(): Promise<ActivityLog[]> {
     const response = await api.get<ActivityLog[]>('/progress/activity-logs/');
     return response.data;
 }
+
+// ---------- Bookmarks ----------
+
+export interface Bookmark {
+    id: number;
+    user: number;
+    lesson: number;
+    lesson_title: string;
+    course_id: number;
+    slide_index: number | null;
+    created_at: string;
+}
+
+export async function getBookmarks(): Promise<Bookmark[]> {
+    const response = await api.get<Bookmark[] | { results: Bookmark[] }>('/progress/bookmarks/');
+    const data = response.data;
+    return Array.isArray(data) ? data : data.results ?? [];
+}
+
+export async function createBookmark(lessonId: number, slideIndex?: number): Promise<Bookmark> {
+    const response = await api.post<Bookmark>('/progress/bookmarks/', {
+        lesson: lessonId,
+        slide_index: slideIndex ?? null,
+    });
+    return response.data;
+}
+
+export async function deleteBookmark(bookmarkId: number): Promise<void> {
+    await api.delete(`/progress/bookmarks/${bookmarkId}/`);
+}

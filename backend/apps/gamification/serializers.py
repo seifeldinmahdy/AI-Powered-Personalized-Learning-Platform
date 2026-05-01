@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Achievement, UserAchievement, DailyStudyStats
+from .models import Achievement, UserAchievement, DailyStudyStats, Notification
 
 
 class AchievementSerializer(serializers.ModelSerializer):
@@ -23,3 +23,10 @@ class DailyStudyStatsSerializer(serializers.ModelSerializer):
         model = DailyStudyStats
         fields = ["id", "user", "study_date", "hours_spent"]
         read_only_fields = ["id", "user"]
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ["id", "type", "title", "body", "is_read", "created_at"]
+        read_only_fields = ["id", "created_at"]

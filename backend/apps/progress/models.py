@@ -94,6 +94,34 @@ class AIChatLog(models.Model):
         return f"Chat — {self.user.username} in {self.lesson.title}"
 
 
+# ------------------------------------------------------------------
+# Bookmark — student-saved lessons or slides
+# ------------------------------------------------------------------
+class Bookmark(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="bookmarks",
+    )
+    lesson = models.ForeignKey(
+        "courses.Lesson",
+        on_delete=models.CASCADE,
+        related_name="bookmarks",
+    )
+    slide_index = models.PositiveIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "bookmarks"
+        unique_together = ("user", "lesson", "slide_index")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        if self.slide_index is not None:
+            return f"{self.user.username} bookmarked slide {self.slide_index} of {self.lesson.title}"
+        return f"{self.user.username} bookmarked {self.lesson.title}"
+
+
 
 
 # ------------------------------------------------------------------

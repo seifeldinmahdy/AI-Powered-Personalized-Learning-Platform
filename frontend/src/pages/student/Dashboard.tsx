@@ -1,11 +1,11 @@
 import { Header } from '../../components/Header';
 import { CircularProgress } from '../../components/CircularProgress';
-import { Play, Clock, Award, TrendingUp, BookOpen, Target, Loader2 } from 'lucide-react';
+import { Play, Clock, Award, TrendingUp, BookOpen, Target, Loader2, Bookmark } from 'lucide-react';
 import { Link } from 'react-router';
 import { useAuth } from '../../contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { getEnrollments } from '../../services/api';
-import { getLessonCompletions, type LessonCompletion } from '../../services/progress';
+import { getLessonCompletions, getBookmarks, type LessonCompletion, type Bookmark as BookmarkType } from '../../services/progress';
 import { getMyAchievements, getDailyStats, type UserAchievement, type DailyStudyStats } from '../../services/gamification';
 import { getStudentProfile, type StudentProfile } from '../../services/profile';
 
@@ -28,18 +28,20 @@ export default function Dashboard() {
   const [achievements, setAchievements] = useState<UserAchievement[]>([]);
   const [dailyStats, setDailyStats] = useState<DailyStudyStats[]>([]);
   const [profile, setProfile] = useState<StudentProfile | null>(null);
+  const [bookmarks, setBookmarks] = useState<BookmarkType[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const [enrollRes, completionsRes, achievementsRes, statsRes, profileRes] =
+        const [enrollRes, completionsRes, achievementsRes, statsRes, profileRes, bookmarksRes] =
           await Promise.allSettled([
             getEnrollments(),
             getLessonCompletions(),
             getMyAchievements(),
             getDailyStats(),
             getStudentProfile(),
+            getBookmarks(),
           ]);
 
         if (cancelled) return;
@@ -52,6 +54,7 @@ export default function Dashboard() {
         if (achievementsRes.status === 'fulfilled') setAchievements(achievementsRes.value);
         if (statsRes.status === 'fulfilled') setDailyStats(statsRes.value);
         if (profileRes.status === 'fulfilled') setProfile(profileRes.value);
+        if (bookmarksRes.status === 'fulfilled') setBookmarks(bookmarksRes.value);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -289,6 +292,30 @@ export default function Dashboard() {
                           </div>
                         </div>
                       </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Saved Items */}
+              <div>
+                <h3 className="mb-4">Saved Items</h3>
+                <div className="bg-card rounded-xl p-5 border border-border shadow-sm space-y-3">
+                  {bookmarks.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center">No bookmarks yet. Bookmark slides while studying!</p>
+                  ) : (
+                    bookmarks.slice(0, 5).map((bm) => (
+                      <Link
+                        key={bm.id}
+                        to={`/course/${bm.course_id}/lesson/${bm.lesson}`}
+                        className="flex items-center gap-3 text-sm hover:text-secondary transition-colors no-underline"
+                      >
+                        <Bookmark size={14} className="text-secondary shrink-0" />
+                        <span className="flex-1 truncate text-foreground">{bm.lesson_title}</span>
+                        {bm.slide_index !== null && (
+                          <span className="text-xs text-muted-foreground shrink-0">slide {bm.slide_index + 1}</span>
+                        )}
+                      </Link>
                     ))
                   )}
                 </div>

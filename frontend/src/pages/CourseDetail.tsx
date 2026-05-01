@@ -4,7 +4,8 @@ import {
     BookOpen, Star, Users, Clock, ChevronDown, ChevronRight,
     Lock, CheckCircle, GraduationCap, Loader2, ArrowLeft, Tag,
 } from 'lucide-react';
-import { getCourseById, type Course } from '../services/courses';
+import { toast } from 'sonner';
+import { getCourseById, submitCourseRating, type Course } from '../services/courses';
 import { getModules, getLessons, type Module, type Lesson } from '../services/lessons';
 import { getEnrollments } from '../services/api';
 import { getLessonCompletions } from '../services/progress';
@@ -270,6 +271,7 @@ export default function CourseDetail() {
                                 onGeneratePathway={handleGeneratePathway}
                                 enrollment={enrollment}
                                 courseId={id}
+                                onRatingSubmit={(avg) => setCourse((prev) => prev ? { ...prev, avg_rating: String(avg) } : prev)}
                             />
                         </div>
                     </div>
@@ -391,6 +393,7 @@ export default function CourseDetail() {
                         onGeneratePathway={handleGeneratePathway}
                         enrollment={enrollment}
                         courseId={id}
+                        onRatingSubmit={(avg) => setCourse((prev) => prev ? { ...prev, avg_rating: String(avg) } : prev)}
                     />
                 </div>
             </div>
@@ -408,6 +411,7 @@ function CtaCard({
     onGeneratePathway,
     enrollment,
     courseId,
+    onRatingSubmit,
 }: {
     course: Course;
     isEnrolled: boolean;
@@ -416,7 +420,27 @@ function CtaCard({
     onGeneratePathway: () => void;
     enrollment: EnrollmentInfo | null;
     courseId: number;
+    onRatingSubmit?: (newAvg: number) => void;
 }) {
+    const [hoveredStar, setHoveredStar] = useState(0);
+    const [submittedRating, setSubmittedRating] = useState(0);
+    const [ratingLoading, setRatingLoading] = useState(false);
+
+    const handleRate = async (rating: number) => {
+        if (ratingLoading) return;
+        setRatingLoading(true);
+        try {
+            const res = await submitCourseRating(courseId, rating);
+            setSubmittedRating(rating);
+            onRatingSubmit?.(res.avg_rating);
+            toast.success(`Rated ${rating} star${rating !== 1 ? 's' : ''}!`);
+        } catch {
+            toast.error('Failed to submit rating. Try again.');
+        } finally {
+            setRatingLoading(false);
+        }
+    };
+
     return (
         <div className="bg-card rounded-2xl border border-border shadow-lg p-6 space-y-4">
             {/* Price */}
@@ -469,6 +493,36 @@ function CtaCard({
                         <>Start Assessment & Enroll <ChevronRight size={16} /></>
                     )}
                 </button>
+            )}
+
+            {/* Star rating — enrolled students only */}
+            {isEnrolled && (
+                <div className="pt-1">
+                    <p className="text-xs text-muted-foreground text-center mb-2">
+                        {submittedRating > 0 ? 'Your rating' : 'Rate this course'}
+                    </p>
+                    <div className="flex justify-center gap-1">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                            <button
+                                key={star}
+                                disabled={ratingLoading}
+                                onClick={() => handleRate(star)}
+                                onMouseEnter={() => setHoveredStar(star)}
+                                onMouseLeave={() => setHoveredStar(0)}
+                                className="transition-transform hover:scale-110 disabled:opacity-50"
+                            >
+                                <Star
+                                    size={22}
+                                    className={
+                                        star <= (hoveredStar || submittedRating)
+                                            ? 'fill-amber-400 text-amber-400'
+                                            : 'text-muted-foreground'
+                                    }
+                                />
+                            </button>
+                        ))}
+                    </div>
+                </div>
             )}
 
             {/* Generate Pathway button */}

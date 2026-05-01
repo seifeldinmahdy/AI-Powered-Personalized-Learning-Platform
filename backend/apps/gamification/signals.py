@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 from apps.progress.models import LessonCompletion
 from apps.users.models import StudentProfile
-from .models import Achievement, UserAchievement, DailyStudyStats
+from .models import Achievement, UserAchievement, DailyStudyStats, Notification
 
 
 # XP rewards
@@ -24,6 +24,13 @@ def award_achievement(user, name):
     except Achievement.DoesNotExist:
         return False
     _, created = UserAchievement.objects.get_or_create(user=user, achievement=achievement)
+    if created:
+        Notification.objects.create(
+            user=user,
+            type="achievement",
+            title=f"Achievement Unlocked: {achievement.name}",
+            body=achievement.description,
+        )
     return created
 
 

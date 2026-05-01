@@ -1,12 +1,13 @@
 import requests
+from django.db.models import Avg
 from rest_framework import viewsets, permissions, filters, status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from .models import Course, Module, Lesson, Slide, CodeChallenge, Enrollment
+from .models import Course, Module, Lesson, Slide, CodeChallenge, Enrollment, CourseRating
 from .serializers import (
     CourseSerializer, ModuleSerializer, LessonSerializer, LessonDetailSerializer,
-    SlideSerializer, CodeChallengeStudentSerializer, EnrollmentSerializer,
+    SlideSerializer, CodeChallengeStudentSerializer, EnrollmentSerializer, CourseRatingSerializer,
 )
 
 
@@ -40,6 +41,24 @@ class CourseViewSet(viewsets.ModelViewSet):
             serializer.save(instructor=self.request.user)
         else:
             serializer.save()
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
+    def rate(self, request, pk=None):
+        course = self.get_object()
+        rating_value = request.data.get("rating")
+        if not rating_value or not (1 <= int(rating_value) <= 5):
+            return Response({"error": "rating must be an integer between 1 and 5"}, status=status.HTTP_400_BAD_REQUEST)
+
+        obj, _ = CourseRating.objects.update_or_create(
+            course=course,
+            student=request.user,
+            defaults={"rating": int(rating_value)},
+        )
+
+        avg = CourseRating.objects.filter(course=course).aggregate(Avg("rating"))["rating__avg"] or 0
+        Course.objects.filter(pk=course.pk).update(avg_rating=round(avg, 2))
+
+        return Response({"avg_rating": round(avg, 2), "your_rating": obj.rating})
 
 
 class ModuleViewSet(viewsets.ReadOnlyModelViewSet):

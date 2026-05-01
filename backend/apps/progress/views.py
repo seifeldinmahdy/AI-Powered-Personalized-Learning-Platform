@@ -5,13 +5,14 @@ from rest_framework.response import Response
 
 from .models import (
     LessonCompletion, SystemActivityLog, AIChatLog,
-    StudentLearningProfile,
+    StudentLearningProfile, Bookmark,
 )
 from .serializers import (
     LessonCompletionSerializer,
     SystemActivityLogSerializer,
     AIChatLogSerializer,
     StudentLearningProfileSerializer,
+    BookmarkSerializer,
 )
 
 
@@ -88,6 +89,19 @@ class AIChatLogViewSet(viewsets.ModelViewSet):
 
 
 
+
+
+class BookmarkViewSet(viewsets.ModelViewSet):
+    """Bookmark CRUD for the authenticated user."""
+    serializer_class = BookmarkSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ["get", "post", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return Bookmark.objects.filter(user=self.request.user).select_related("lesson__module__course")
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
 
 
 class StudentLearningProfileViewSet(viewsets.ModelViewSet):
