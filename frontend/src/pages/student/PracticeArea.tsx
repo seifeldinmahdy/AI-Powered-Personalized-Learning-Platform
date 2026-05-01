@@ -74,10 +74,21 @@ export default function PracticeArea() {
 
     const handleSubmit = async () => {
         if (!question) return;
-        if (!code.trim()) {
+
+        // Strict validation: reject empty or whitespace-only code
+        const trimmedCode = code.trim();
+        if (!trimmedCode) {
             setFeedback({ status: "Needs Work", feedback: "No code submitted. Write your solution in the editor and try again." });
             return;
         }
+
+        // Also reject if code is just the starter code unchanged (common edge case)
+        const trimmedStarter = (question.starter_code ?? "").trim();
+        if (trimmedCode === trimmedStarter) {
+            setFeedback({ status: "Needs Work", feedback: "You haven't modified the starter code. Add your implementation and try again." });
+            return;
+        }
+
         setSubmitting(true);
         setError(null);
         try {

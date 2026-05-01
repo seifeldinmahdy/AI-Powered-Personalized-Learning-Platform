@@ -13,6 +13,7 @@ import {
   synthesizeAudio,
   setTutorPace,
   persistChatLog,
+  getChatHistory,
   type SERResult,
 } from '../services/tutor';
 import { logEmotionEvent, getRecentFusedEmotion } from '../services/emotionLogger';
@@ -84,6 +85,21 @@ export function CompactTutor({
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcript]);
+
+  // Load chat history on mount
+  useEffect(() => {
+    if (!lessonId) return;
+    getChatHistory(lessonId).then((history) => {
+      if (history.length === 0) return;
+      const historical: TranscriptEntry[] = [];
+      historical.push({ role: 'tutor', text: '— Previous Questions —', topic: 'history' });
+      history.forEach((entry) => {
+        historical.push({ role: 'student', text: entry.transcript_text });
+        historical.push({ role: 'tutor', text: entry.ai_response_text, topic: 'Answer' });
+      });
+      setTranscript(historical);
+    });
+  }, [lessonId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cleanup on unmount
   useEffect(() => {
@@ -679,6 +695,13 @@ export function CompactTutor({
           </div>
         )}
         {transcript.map((entry, i) => (
+          entry.topic === 'history' ? (
+            <div key={i} className="flex items-center gap-2 py-1">
+              <div className="flex-1 h-px bg-border" />
+              <span className="text-xs text-muted-foreground font-medium px-1">{entry.text}</span>
+              <div className="flex-1 h-px bg-border" />
+            </div>
+          ) : (
           <div
             key={i}
             className={`rounded-lg p-4 ${entry.role === 'tutor'
@@ -703,6 +726,7 @@ export function CompactTutor({
               </div>
             )}
           </div>
+          )
         ))}
         <div ref={transcriptEndRef} />
       </div>
