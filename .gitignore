@@ -41,3 +41,27 @@ docker-compose.override.yml
 
 # Claude temp files
 tmpclaude-*
+
+# Model Weights & Large Files
+ai_service/models/clean_question_model/
+*.safetensors
+*.h5
+*.gguf
+*.onnx
+*.pt
+*.pth
+*.keras
+# HuggingFace / PyTorch cache
+.cache/
+*.lock
+
+# RAG — ChromaDB index (rebuilt by running the indexer)
+rag_pipeline/data/chroma/
+
+# RAG — PDF books (too large for git, add your own books)
+rag_pipeline/raw_books/*.pdf
+
+# RAG — venv
+rag_pipeline/venv/
+context.txt
+latest_deck.json

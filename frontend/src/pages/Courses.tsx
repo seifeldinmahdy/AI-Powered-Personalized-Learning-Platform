@@ -2,7 +2,14 @@ import { Header } from '../components/Header';
 import { Search, Filter, BookOpen, Clock, Star, ChevronRight, Loader2, GraduationCap } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { getCourses, Course } from '../services/courses';
+import { getEnrollments } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 import { Link, useSearchParams } from 'react-router';
+
+function estimateDuration(lessonCount: number) {
+    const hours = Math.round((lessonCount * 30) / 60);
+    return hours < 1 ? `${lessonCount * 30}m` : `~${hours}h`;
+}
 
 const DIFFICULTY_OPTIONS = ['All', 'Beginner', 'Intermediate', 'Advanced'];
 const SORT_OPTIONS = [
@@ -14,12 +21,15 @@ const SORT_OPTIONS = [
 
 export default function Courses() {
     const [searchParams] = useSearchParams();
+    const { isAuthenticated } = useAuth();
     const [courses, setCourses] = useState<Course[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState(searchParams.get('search') || '');
     const [difficulty, setDifficulty] = useState('All');
     const [ordering, setOrdering] = useState('-created_at');
     const [totalCount, setTotalCount] = useState(0);
+    const [enrollmentMap, setEnrollmentMap] = useState<Map<number, { lessonId: number | null }>>(new Map());
+    const enrolledCourseIds = new Set(enrollmentMap.keys());
 
     const fetchCourses = useCallback(async () => {
         setLoading(true);
@@ -42,6 +52,20 @@ export default function Courses() {
         const timeout = setTimeout(fetchCourses, 300);
         return () => clearTimeout(timeout);
     }, [fetchCourses]);
+
+    // Fetch enrollment map: courseId -> { lessonId }
+    useEffect(() => {
+        if (!isAuthenticated) return;
+        getEnrollments()
+            .then(({ data: raw }) => {
+                const list: Array<{ course: number; current_lesson: number | null }> =
+                    Array.isArray(raw) ? raw : raw.results ?? [];
+                const map = new Map(list.map((e) => [e.course, { lessonId: e.current_lesson }]));
+                setEnrollmentMap(map);
+            })
+            .catch(() => {});
+    }, [isAuthenticated]);
+
 
     const difficultyColor = (d: string) => {
         switch (d) {
@@ -74,16 +98,16 @@ export default function Courses() {
                             </div>
 
                             {/* Difficulty Filter */}
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-3">
                                 <Filter size={18} className="text-muted-foreground flex-shrink-0" />
-                                <div className="flex gap-1.5">
+                                <div className="flex gap-2">
                                     {DIFFICULTY_OPTIONS.map((opt) => (
                                         <button
                                             key={opt}
                                             onClick={() => setDifficulty(opt)}
-                                            className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${difficulty === opt
-                                                ? 'bg-gradient-to-r from-secondary to-accent text-white shadow-md'
-                                                : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+                                            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all border ${difficulty === opt
+                                                ? 'bg-gradient-to-r from-secondary to-accent text-white shadow-md border-transparent'
+                                                : 'bg-card text-muted-foreground hover:text-foreground border-border hover:border-secondary/50'
                                                 }`}
                                         >
                                             {opt}
@@ -131,7 +155,7 @@ export default function Courses() {
                             {courses.map((course) => (
                                 <div
                                     key={course.id}
-                                    className="bg-card rounded-2xl shadow-sm border border-border overflow-hidden hover:shadow-lg hover:border-secondary/40 transition-all group"
+                                    className="bg-card rounded-2xl shadow-sm border border-border overflow-hidden hover:shadow-lg hover:border-secondary/40 hover:-translate-y-1 transition-all group"
                                 >
                                     {/* Card Header Gradient */}
                                     <div className="h-36 bg-gradient-to-br from-primary via-secondary to-accent relative overflow-hidden">
@@ -169,15 +193,13 @@ export default function Courses() {
                                                 <span>{course.total_lessons_count} lessons</span>
                                             </div>
                                             <div className="flex items-center gap-1">
+                                                <Clock size={14} />
+                                                <span>{estimateDuration(course.total_lessons_count)}</span>
+                                            </div>
+                                            <div className="flex items-center gap-1">
                                                 <Star size={14} className="text-amber-400 fill-amber-400" />
                                                 <span>{parseFloat(course.avg_rating) > 0 ? course.avg_rating : '—'}</span>
                                             </div>
-                                            {course.instructor_name && (
-                                                <div className="flex items-center gap-1">
-                                                    <Clock size={14} />
-                                                    <span>{course.instructor_name}</span>
-                                                </div>
-                                            )}
                                         </div>
 
                                         {/* Tags */}
@@ -191,12 +213,16 @@ export default function Courses() {
                                             </div>
                                         )}
 
-                                        {/* CTA */}
+                                        {/* CTA — always go to CourseDetail */}
                                         <Link
-                                            to={`/course/${course.id}/lesson/1`}
-                                            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold text-sm hover:shadow-lg transition-all group-hover:shadow-md"
+                                            to={`/courses/${course.id}`}
+                                            className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm hover:shadow-lg transition-all no-underline ${
+                                                enrolledCourseIds.has(course.id)
+                                                    ? 'bg-gradient-to-r from-secondary to-accent text-white'
+                                                    : 'bg-gradient-to-r from-primary to-secondary text-white'
+                                            }`}
                                         >
-                                            <span>View Course</span>
+                                            <span>{enrolledCourseIds.has(course.id) ? 'Continue Learning' : 'View Course'}</span>
                                             <ChevronRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
                                         </Link>
                                     </div>

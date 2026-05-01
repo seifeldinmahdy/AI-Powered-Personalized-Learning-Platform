@@ -14,6 +14,7 @@ export interface Course {
     total_lessons_count: number;
     avg_rating: string;
     created_at: string;
+    syllabus?: string | object | null;
 }
 
 interface PaginatedResponse<T> {
@@ -35,5 +36,13 @@ export async function getCourses(params?: {
 
 export async function getCourse(id: number): Promise<Course> {
     const response = await api.get<Course>(`/courses/courses/${id}/`);
+    return response.data;
+}
+
+/** Alias for getCourse — used by CourseDetail page */
+export const getCourseById = getCourse;
+
+export async function submitCourseRating(courseId: number, rating: number): Promise<{ avg_rating: number; your_rating: number }> {
+    const response = await api.post(`/courses/courses/${courseId}/rate/`, { rating });
     return response.data;
 }

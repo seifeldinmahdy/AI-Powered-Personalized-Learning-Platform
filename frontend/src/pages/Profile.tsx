@@ -3,8 +3,11 @@ import { User, Mail, Calendar, Award, Bell, Lock, Palette, Globe, Shield, Zap, L
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router';
-import { getProfile, updateProfile, UserProfile } from '../services/profile';
+import { getProfile, updateProfile, getStudentProfile, getPreferences, updatePreferences, type UserProfile, type StudentProfile, type UserPreferences } from '../services/profile';
+import { getMyAchievements, getDailyStats, type UserAchievement, type DailyStudyStats } from '../services/gamification';
 import axios from 'axios';
+
+const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export default function Profile() {
   const { user, logout } = useAuth();
@@ -23,41 +26,51 @@ export default function Profile() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [error, setError] = useState('');
 
-  const [notifications, setNotifications] = useState({
-    email: true,
-    voice: true,
-    reminders: true,
-  });
+  // Real data
+  const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null);
+  const [achievements, setAchievements] = useState<UserAchievement[]>([]);
+  const [weeklyStats, setWeeklyStats] = useState<DailyStudyStats[]>([]);
+  const [preferences, setPreferences] = useState<UserPreferences | null>(null);
+  const [savingPref, setSavingPref] = useState(false);
 
-  // Fetch profile on mount
   useEffect(() => {
     if (!user) return;
     setLoading(true);
-    getProfile(user.id)
-      .then((profile) => {
-        setUsername(profile.username || '');
-        setEmail(profile.email || '');
-        setBio(profile.bio || '');
-        setRole(profile.role || 'student');
-        setCreatedAt(profile.created_at || '');
-      })
-      .catch(() => {
-        // Fall back to auth context data
+
+    Promise.allSettled([
+      getProfile(),
+      getStudentProfile(),
+      getMyAchievements(),
+      getDailyStats(),
+      getPreferences(),
+    ]).then(([profileRes, studentRes, achRes, statsRes, prefRes]) => {
+      if (profileRes.status === 'fulfilled') {
+        const p: UserProfile = profileRes.value;
+        setUsername(p.username || '');
+        setEmail(p.email || '');
+        setBio(p.bio || '');
+        setRole(p.role || 'student');
+        setCreatedAt(p.created_at || '');
+      } else {
         setUsername(user.username);
         setEmail(user.email);
         setRole(user.role);
-      })
-      .finally(() => setLoading(false));
+      }
+      if (studentRes.status === 'fulfilled') setStudentProfile(studentRes.value);
+      if (achRes.status === 'fulfilled') setAchievements(achRes.value);
+      if (statsRes.status === 'fulfilled') setWeeklyStats(statsRes.value.slice(-7));
+      if (prefRes.status === 'fulfilled') setPreferences(prefRes.value);
+    }).finally(() => setLoading(false));
   }, [user]);
 
-  const handleSave = async (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!user) return;
     setError('');
     setSaving(true);
     setSaveSuccess(false);
     try {
-      await updateProfile(user.id, { username, email, bio });
+      await updateProfile({ username, email, bio });
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err) {
@@ -73,6 +86,21 @@ export default function Profile() {
     }
   };
 
+  const handlePrefChange = async (key: keyof Omit<UserPreferences, 'id'>, value: boolean) => {
+    if (!preferences) return;
+    const updated = { ...preferences, [key]: value };
+    setPreferences(updated);
+    setSavingPref(true);
+    try {
+      await updatePreferences({ [key]: value });
+    } catch {
+      // revert on failure
+      setPreferences(preferences);
+    } finally {
+      setSavingPref(false);
+    }
+  };
+
   const handleLogout = () => {
     logout();
     navigate('/login');
@@ -82,19 +110,24 @@ export default function Profile() {
     ? new Date(createdAt).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
     : 'N/A';
 
-  const stats = [
-    { label: 'Days Active', value: '—', icon: Calendar, color: 'from-primary to-secondary' },
-    { label: 'Achievements', value: '—', icon: Award, color: 'from-secondary to-accent' },
-    { label: 'Messages', value: '—', icon: Mail, color: 'from-accent to-primary' },
-  ];
+  // Build 7-day bar chart data aligned to Mon–Sun
+  const today = new Date();
+  const weekData = DAY_LABELS.map((_, i) => {
+    const d = new Date(today);
+    const dayOfWeek = today.getDay(); // 0=Sun, 1=Mon…
+    const mondayOffset = (dayOfWeek + 6) % 7; // days since last Monday
+    d.setDate(today.getDate() - mondayOffset + i);
+    const iso = d.toISOString().slice(0, 10);
+    const stat = weeklyStats.find((s) => s.study_date === iso);
+    return { day: DAY_LABELS[i], hours: stat ? parseFloat(stat.hours_spent) : 0 };
+  });
+  const maxHours = Math.max(...weekData.map((d) => d.hours), 0.1);
+  const weekTotal = weekData.reduce((s, d) => s + d.hours, 0);
 
-  const achievements = [
-    { title: 'First Steps', description: 'Complete your first lesson', icon: '🎯', earned: false },
-    { title: 'Consistent Learner', description: '7-day learning streak', icon: '🔥', earned: false },
-    { title: 'Night Owl', description: 'Study past midnight', icon: '🦉', earned: false },
-    { title: 'Code Master', description: 'Complete 10 challenges', icon: '⚡', earned: false },
-    { title: 'Perfect Score', description: 'Score 100% on a quiz', icon: '💯', earned: false },
-    { title: 'Helper', description: 'Help another student', icon: '🤝', earned: false },
+  const stats = [
+    { label: 'Days Active', value: studentProfile?.days_active ?? '—', icon: Calendar, color: 'from-primary to-secondary' },
+    { label: 'Achievements', value: achievements.length || '—', icon: Award, color: 'from-secondary to-accent' },
+    { label: 'Messages', value: studentProfile?.messages_count ?? '—', icon: Mail, color: 'from-accent to-primary' },
   ];
 
   if (loading) {
@@ -180,7 +213,6 @@ export default function Profile() {
                   </h3>
                 </div>
                 <div className="p-6">
-                  {/* Error / Success Messages */}
                   {error && (
                     <div className="mb-5 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
                       {error}
@@ -255,71 +287,40 @@ export default function Profile() {
                   <h3 className="mb-0 flex items-center gap-2">
                     <Palette size={20} className="text-accent" />
                     Preferences
+                    {savingPref && <Loader2 size={14} className="animate-spin text-muted-foreground ml-auto" />}
                   </h3>
                 </div>
                 <div className="p-6 space-y-5">
-                  <div className="flex items-center justify-between p-4 bg-muted/30 rounded-xl hover:bg-muted/50 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-secondary/10 flex items-center justify-center">
-                        <Bell size={20} className="text-secondary" />
+                  {[
+                    { key: 'email_notifications' as const, label: 'Email Notifications', desc: 'Receive updates about your courses', icon: Bell, iconBg: 'bg-secondary/10', iconColor: 'text-secondary', checked: preferences?.email_notifications ?? true },
+                    { key: 'ai_tutor_voice_enabled' as const, label: 'AI Tutor Voice', desc: 'Enable voice feedback from AI tutor', icon: Zap, iconBg: 'bg-accent/10', iconColor: 'text-accent', checked: preferences?.ai_tutor_voice_enabled ?? true },
+                    { key: 'study_reminders' as const, label: 'Study Reminders', desc: 'Daily reminders to keep learning', icon: Calendar, iconBg: 'bg-primary/10', iconColor: 'text-primary', checked: preferences?.study_reminders ?? true },
+                  ].map((pref) => {
+                    const Icon = pref.icon;
+                    return (
+                      <div key={pref.key} className="flex items-center justify-between p-4 bg-muted/30 rounded-xl hover:bg-muted/50 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-lg ${pref.iconBg} flex items-center justify-center`}>
+                            <Icon size={20} className={pref.iconColor} />
+                          </div>
+                          <div>
+                            <h5 className="mb-1">{pref.label}</h5>
+                            <p className="text-xs text-muted-foreground">{pref.desc}</p>
+                          </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={pref.checked}
+                            onChange={(e) => handlePrefChange(pref.key, e.target.checked)}
+                            className="sr-only peer"
+                            disabled={savingPref}
+                          />
+                          <div className="w-11 h-6 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-secondary"></div>
+                        </label>
                       </div>
-                      <div>
-                        <h5 className="mb-1">Email Notifications</h5>
-                        <p className="text-xs text-muted-foreground">Receive updates about your courses</p>
-                      </div>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={notifications.email}
-                        onChange={(e) => setNotifications({ ...notifications, email: e.target.checked })}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-secondary"></div>
-                    </label>
-                  </div>
-
-                  <div className="flex items-center justify-between p-4 bg-muted/30 rounded-xl hover:bg-muted/50 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
-                        <Zap size={20} className="text-accent" />
-                      </div>
-                      <div>
-                        <h5 className="mb-1">AI Tutor Voice</h5>
-                        <p className="text-xs text-muted-foreground">Enable voice feedback from AI tutor</p>
-                      </div>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={notifications.voice}
-                        onChange={(e) => setNotifications({ ...notifications, voice: e.target.checked })}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-secondary"></div>
-                    </label>
-                  </div>
-
-                  <div className="flex items-center justify-between p-4 bg-muted/30 rounded-xl hover:bg-muted/50 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                        <Calendar size={20} className="text-primary" />
-                      </div>
-                      <div>
-                        <h5 className="mb-1">Study Reminders</h5>
-                        <p className="text-xs text-muted-foreground">Daily reminders to keep learning</p>
-                      </div>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={notifications.reminders}
-                        onChange={(e) => setNotifications({ ...notifications, reminders: e.target.checked })}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-secondary"></div>
-                    </label>
-                  </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -369,49 +370,60 @@ export default function Profile() {
                   <h3 className="mb-0 flex items-center gap-2">
                     <Award size={20} className="text-accent" />
                     Achievements
+                    <span className="ml-auto text-xs text-muted-foreground font-normal">{achievements.length} earned</span>
                   </h3>
                 </div>
-                <div className="p-4 space-y-3 max-h-[600px] overflow-y-auto">
-                  {achievements.map((achievement, index) => (
-                    <div
-                      key={index}
-                      className={`rounded-xl p-4 transition-all ${achievement.earned
-                        ? 'bg-gradient-to-br from-accent/10 to-secondary/10 border-2 border-accent/30 shadow-sm'
-                        : 'bg-muted/30 border-2 border-transparent opacity-60'
-                        }`}
-                    >
-                      <div className="flex items-start gap-3">
-                        <span className="text-3xl">{achievement.icon}</span>
-                        <div className="flex-1">
-                          <h5 className="mb-1 text-sm">{achievement.title}</h5>
-                          <p className="text-xs text-muted-foreground">{achievement.description}</p>
-                        </div>
-                        {achievement.earned && (
-                          <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-white text-xs flex-shrink-0">
-                            ✓
-                          </div>
-                        )}
+                <div className="p-4 space-y-3 max-h-[400px] overflow-y-auto">
+                  {achievements.length === 0 ? (
+                    <div className="py-6 text-center">
+                      <div className="w-12 h-12 rounded-2xl bg-muted/50 flex items-center justify-center mx-auto mb-3">
+                        <Lock size={20} className="text-muted-foreground" />
                       </div>
+                      <p className="text-xs text-muted-foreground">No achievements yet. Keep learning!</p>
                     </div>
-                  ))}
+                  ) : (
+                    achievements.map((ua) => (
+                      <div
+                        key={ua.id}
+                        className="rounded-xl p-4 bg-gradient-to-br from-accent/10 to-secondary/10 border border-accent/20 shadow-sm hover:shadow-md transition-all"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
+                            {ua.achievement.icon_url ? (
+                              <img src={ua.achievement.icon_url} alt="" className="w-6 h-6" />
+                            ) : (
+                              <Award size={20} className="text-accent" />
+                            )}
+                          </div>
+                          <div className="flex-1">
+                            <h5 className="mb-0.5 text-sm">{ua.achievement.name}</h5>
+                            <p className="text-xs text-muted-foreground">{ua.achievement.description}</p>
+                          </div>
+                          <div className="w-7 h-7 rounded-full bg-accent flex items-center justify-center text-white text-xs font-bold shrink-0">
+                            +{ua.achievement.xp_reward}
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
-              {/* Learning Stats */}
+              {/* Weekly Activity Chart */}
               <div className="bg-gradient-to-br from-primary to-secondary rounded-2xl p-6 text-white shadow-xl">
                 <h4 className="mb-4 text-white">Weekly Activity</h4>
                 <div className="space-y-3">
-                  {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, index) => (
+                  {weekData.map(({ day, hours }) => (
                     <div key={day} className="flex items-center gap-3">
-                      <span className="text-sm w-8">{day}</span>
+                      <span className="text-sm w-8 opacity-80">{day}</span>
                       <div className="flex-1 h-2 bg-white/20 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-white/80 rounded-full transition-all"
-                          style={{ width: `${[0, 0, 0, 0, 0, 0, 0][index]}%` }}
+                          className="h-full bg-white/80 rounded-full transition-all duration-500"
+                          style={{ width: `${(hours / maxHours) * 100}%` }}
                         />
                       </div>
-                      <span className="text-sm font-mono w-10 text-right">
-                        {[0, 0, 0, 0, 0, 0, 0][index]}h
+                      <span className="text-sm font-mono w-10 text-right opacity-80">
+                        {hours > 0 ? `${hours.toFixed(1)}h` : '—'}
                       </span>
                     </div>
                   ))}
@@ -419,7 +431,7 @@ export default function Profile() {
                 <div className="mt-4 pt-4 border-t border-white/20">
                   <div className="flex items-center justify-between">
                     <span className="text-sm opacity-90">Total This Week</span>
-                    <span className="text-xl font-bold">0h</span>
+                    <span className="text-xl font-bold">{weekTotal.toFixed(1)}h</span>
                   </div>
                 </div>
               </div>

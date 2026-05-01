@@ -218,7 +218,7 @@ export default function Login() {
                     htmlFor="email"
                     className="block text-sm font-semibold text-[#1F2937] mb-2"
                   >
-                    Email Address
+                    {isLogin ? "Email or Username" : "Email Address"}
                   </label>
                   <div className="relative">
                     <div className="absolute left-4 top-1/2 -translate-y-1/2 text-[#9CA3AF]">
@@ -226,10 +226,10 @@ export default function Login() {
                     </div>
                     <input
                       id="email"
-                      type="email"
+                      type={isLogin ? "text" : "email"}
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="you@example.com"
+                      placeholder={isLogin ? "you@example.com or username" : "you@example.com"}
                       className="w-full pl-12 pr-4 py-3.5 bg-[#F7F9FC] border-2 border-[#E5E7EB] rounded-xl text-[#1F2937] placeholder-[#9CA3AF] focus:outline-none focus:border-[#4C6FFF] focus:bg-white transition-all"
                       required
                     />

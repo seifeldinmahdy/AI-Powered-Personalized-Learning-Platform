@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
-import { loginUser, signupUser, type AuthResponse } from "../services/auth";
+import { loginUser, signupUser, logoutUser, type AuthResponse } from "../services/auth";
 
 // --------------- Types ---------------
 export type UserRole = "student" | "admin";
@@ -19,7 +19,7 @@ interface AuthContextType {
     isStudent: boolean;
     login: (email: string, password: string) => Promise<AuthResponse>;
     signup: (name: string, email: string, password: string) => Promise<AuthResponse>;
-    logout: () => void;
+    logout: () => Promise<void> | void;
 }
 
 // --------------- Context ---------------
@@ -85,7 +85,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
         return data;
     }, []);
 
-    const logout = useCallback(() => {
+    const logout = useCallback(async () => {
+        try {
+            await logoutUser();
+        } catch {
+            // Token may already be invalid — proceed with local cleanup
+        }
         localStorage.removeItem(STORAGE_KEY);
         localStorage.removeItem("token");
         setUser(null);

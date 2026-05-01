@@ -1,13 +1,38 @@
-import { ChevronLeft, ChevronRight, Bookmark, CheckCircle2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle2, Loader2 } from 'lucide-react';
 
-export function SessionControls() {
-  const slides = [
-    { id: 1, title: 'Introduction', completed: true },
-    { id: 2, title: 'What are Variables?', completed: true },
-    { id: 3, title: 'Data Types', completed: false, active: true },
-    { id: 4, title: 'Type Conversion', completed: false },
-    { id: 5, title: 'Practice', completed: false },
-  ];
+interface SessionControlsProps {
+  currentSlide: number;
+  totalSlides: number;
+  onPrev: () => void;
+  onNext: () => void;
+  onComplete: () => void;
+  isCompleting?: boolean;
+  hasPrevLesson?: boolean;
+  hasNextLesson?: boolean;
+  isLastLesson?: boolean;
+}
+
+export function SessionControls({
+  currentSlide,
+  totalSlides,
+  onPrev,
+  onNext,
+  onComplete,
+  isCompleting,
+  hasPrevLesson,
+  hasNextLesson,
+  isLastLesson,
+}: SessionControlsProps) {
+  const isFirstSlide = currentSlide === 0;
+  const isLastSlide = currentSlide >= totalSlides - 1;
+
+  // Prev is disabled only if it's the first slide AND there's no previous lesson
+  const prevDisabled = isFirstSlide && !hasPrevLesson;
+  // Next is disabled only if it's the last slide AND there's no next lesson
+  const nextDisabled = isLastSlide && !hasNextLesson;
+
+  const prevLabel = isFirstSlide && hasPrevLesson ? '← Prev Lesson' : 'Previous';
+  const nextLabel = isLastSlide && hasNextLesson ? 'Next Lesson →' : 'Next';
 
   return (
     <div className="border-t-2 border-border bg-card shadow-lg">
@@ -15,47 +40,59 @@ export function SessionControls() {
         <div className="flex items-center justify-between">
           {/* Navigation */}
           <div className="flex items-center gap-2">
-            <button className="px-4 py-2 border-2 border-border rounded-lg hover:border-secondary hover:text-secondary transition-colors flex items-center gap-2 font-medium text-sm">
+            <button
+              onClick={onPrev}
+              disabled={prevDisabled}
+              className="px-4 py-2 border-2 border-border rounded-lg hover:border-secondary hover:text-secondary transition-colors flex items-center gap-2 font-medium text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            >
               <ChevronLeft size={16} />
-              <span>Previous</span>
+              <span>{prevLabel}</span>
             </button>
-            <button className="px-4 py-2 bg-gradient-to-r from-secondary to-accent text-white rounded-lg font-semibold hover:shadow-lg transition-all flex items-center gap-2 text-sm">
-              <span>Next</span>
+            <button
+              onClick={onNext}
+              disabled={nextDisabled}
+              className="px-4 py-2 bg-gradient-to-r from-secondary to-accent text-white rounded-lg font-semibold hover:shadow-lg transition-all flex items-center gap-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <span>{nextLabel}</span>
               <ChevronRight size={16} />
             </button>
           </div>
 
-          {/* Progress Indicator */}
+          {/* Progress dots */}
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1">
-              {slides.map((slide) => (
+              {Array.from({ length: Math.min(totalSlides, 12) }, (_, i) => (
                 <div
-                  key={slide.id}
+                  key={i}
                   className={`h-2 rounded-full transition-all ${
-                    slide.completed
+                    i < currentSlide
                       ? 'bg-accent w-2'
-                      : slide.active
+                      : i === currentSlide
                       ? 'bg-secondary w-8'
                       : 'bg-muted w-2'
                   }`}
-                  title={slide.title}
                 />
               ))}
             </div>
-            <span className="text-sm font-mono text-foreground">3/5</span>
+            <span className="text-sm font-mono text-foreground">
+              {currentSlide + 1}/{totalSlides}
+            </span>
           </div>
 
-          {/* Actions */}
-          <div className="flex items-center gap-2">
-            <button className="px-4 py-2 border-2 border-border rounded-lg hover:border-accent transition-colors flex items-center gap-2 font-medium text-sm">
-              <Bookmark size={16} />
-              <span>Save</span>
-            </button>
-            <button className="px-4 py-2 bg-primary text-white rounded-lg font-semibold hover:bg-primary/90 transition-colors flex items-center gap-2 text-sm">
-              <CheckCircle2 size={16} />
-              <span>Complete</span>
-            </button>
-          </div>
+          {/* Complete */}
+          <button
+            onClick={onComplete}
+            disabled={isCompleting}
+            className="px-4 py-2 bg-gradient-to-r from-primary to-secondary text-white rounded-lg font-semibold hover:shadow-lg transition-all flex items-center gap-2 text-sm disabled:opacity-50"
+          >
+            {isCompleting ? (
+              <><Loader2 size={16} className="animate-spin" /> Completing…</>
+            ) : isLastLesson ? (
+              <><CheckCircle2 size={16} /> Finish Course</>
+            ) : (
+              <><CheckCircle2 size={16} /> Complete & Next</>
+            )}
+          </button>
         </div>
       </div>
     </div>
