@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Course, Module, Lesson, Slide, CodeChallenge, Enrollment
+from .models import Course, Module, Lesson, Slide, CodeChallenge, Enrollment, CourseRating
 
 
 class CourseSerializer(serializers.ModelSerializer):
@@ -66,6 +66,13 @@ class LessonDetailSerializer(serializers.ModelSerializer):
         model = Lesson
         fields = ["id", "module", "title", "lesson_order", "slides", "code_challenges"]
         read_only_fields = ["id"]
+
+
+class CourseRatingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CourseRating
+        fields = ["id", "course", "student", "rating", "created_at"]
+        read_only_fields = ["id", "student", "created_at"]
 
 
 class EnrollmentSerializer(serializers.ModelSerializer):

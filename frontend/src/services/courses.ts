@@ -41,3 +41,8 @@ export async function getCourse(id: number): Promise<Course> {
 
 /** Alias for getCourse — used by CourseDetail page */
 export const getCourseById = getCourse;
+
+export async function submitCourseRating(courseId: number, rating: number): Promise<{ avg_rating: number; your_rating: number }> {
+    const response = await api.post(`/courses/courses/${courseId}/rate/`, { rating });
+    return response.data;
+}

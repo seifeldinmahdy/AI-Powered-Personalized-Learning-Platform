@@ -621,6 +621,7 @@ export default function LiveSession() {
           currentIndex={currentSlide}
           lessonTitle={lesson.title}
           moduleLabel={moduleTitle}
+          lessonId={lessonId ? Number(lessonId) : undefined}
           onSlideChange={setCurrentSlide}
           isFullscreen={isFullscreen}
           onFullscreenToggle={toggleFullscreen}

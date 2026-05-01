@@ -66,3 +66,31 @@ class DailyStudyStats(models.Model):
 
     def __str__(self):
         return f"{self.user.username} — {self.study_date} ({self.hours_spent}h)"
+
+
+# ------------------------------------------------------------------
+# Notification — in-app notifications for achievements, streaks, etc.
+# ------------------------------------------------------------------
+class Notification(models.Model):
+    TYPES = [
+        ("achievement", "Achievement"),
+        ("streak", "Streak"),
+        ("course", "Course Update"),
+    ]
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    type = models.CharField(max_length=20, choices=TYPES)
+    title = models.CharField(max_length=120)
+    body = models.CharField(max_length=300)
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "notifications"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user.username} — {self.title}"

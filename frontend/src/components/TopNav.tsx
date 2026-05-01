@@ -1,4 +1,5 @@
-import { Home, BookOpen, Brain, Code2, User, LogOut, Bell, Shield, Users } from 'lucide-react';
+import { Home, BookOpen, Brain, Code2, User, LogOut, Shield, Users } from 'lucide-react';
+import { NotificationBell } from './NotificationBell';
 
 import { Link, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '../contexts/AuthContext';
@@ -91,10 +92,7 @@ export function TopNav({ variant = 'student' }: TopNavProps) {
 
       {/* Right — User area */}
       <div className="flex items-center gap-2 ml-4">
-        {/* Notification bell (placeholder) */}
-        <button className="w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors">
-          <Bell size={18} />
-        </button>
+        <NotificationBell />
 
         {/* Avatar dropdown */}
         <DropdownMenu>

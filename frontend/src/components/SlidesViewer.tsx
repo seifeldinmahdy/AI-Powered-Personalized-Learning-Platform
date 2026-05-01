@@ -1,4 +1,7 @@
-import { Maximize2, Minimize2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Maximize2, Minimize2, ChevronLeft, ChevronRight, Bookmark, BookmarkCheck } from 'lucide-react';
+import { useState } from 'react';
+import { toast } from 'sonner';
+import { createBookmark, deleteBookmark, type Bookmark as BookmarkType } from '../services/progress';
 import type { Slide } from '../services/lessons';
 
 interface SlidesViewerProps {
@@ -6,6 +9,8 @@ interface SlidesViewerProps {
   currentIndex: number;
   lessonTitle: string;
   moduleLabel?: string;
+  lessonId?: number;
+  existingBookmarks?: BookmarkType[];
   onSlideChange?: (index: number) => void;
   isFullscreen?: boolean;
   onFullscreenToggle?: () => void;
@@ -16,12 +21,40 @@ export function SlidesViewer({
   currentIndex,
   lessonTitle,
   moduleLabel,
+  lessonId,
+  existingBookmarks = [],
   onSlideChange,
   isFullscreen = false,
   onFullscreenToggle,
 }: SlidesViewerProps) {
+  const [bookmarks, setBookmarks] = useState<BookmarkType[]>(existingBookmarks);
+  const [bookmarkLoading, setBookmarkLoading] = useState(false);
   const currentSlide = slides[currentIndex];
   const totalSlides = slides.length;
+
+  const currentSlideBookmark = bookmarks.find(
+    (b) => b.lesson === lessonId && b.slide_index === currentIndex
+  );
+
+  const handleBookmarkToggle = async () => {
+    if (!lessonId || bookmarkLoading) return;
+    setBookmarkLoading(true);
+    try {
+      if (currentSlideBookmark) {
+        await deleteBookmark(currentSlideBookmark.id);
+        setBookmarks((prev) => prev.filter((b) => b.id !== currentSlideBookmark.id));
+        toast.success('Bookmark removed');
+      } else {
+        const bm = await createBookmark(lessonId, currentIndex);
+        setBookmarks((prev) => [...prev, bm]);
+        toast.success('Slide bookmarked!');
+      }
+    } catch {
+      toast.error('Failed to update bookmark');
+    } finally {
+      setBookmarkLoading(false);
+    }
+  };
 
   const handlePrev = () => {
     // Wrap: pressing left on first goes to last
@@ -72,13 +105,27 @@ export function SlidesViewer({
               )}
               <h3 className="mb-0">{lessonTitle}</h3>
             </div>
-            <button
-              onClick={onFullscreenToggle}
-              className="p-2 rounded-lg border border-border hover:border-secondary transition-colors"
-              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-            >
-              {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
-            </button>
+            <div className="flex items-center gap-2">
+              {lessonId && (
+                <button
+                  onClick={handleBookmarkToggle}
+                  disabled={bookmarkLoading}
+                  className="p-2 rounded-lg border border-border hover:border-secondary transition-colors disabled:opacity-50"
+                  title={currentSlideBookmark ? 'Remove bookmark' : 'Bookmark this slide'}
+                >
+                  {currentSlideBookmark
+                    ? <BookmarkCheck size={18} className="text-secondary" />
+                    : <Bookmark size={18} />}
+                </button>
+              )}
+              <button
+                onClick={onFullscreenToggle}
+                className="p-2 rounded-lg border border-border hover:border-secondary transition-colors"
+                title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+              >
+                {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+              </button>
+            </div>
           </div>
 
           {/* Slide Content */}
