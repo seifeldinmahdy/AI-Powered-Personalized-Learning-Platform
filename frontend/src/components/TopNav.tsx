@@ -1,8 +1,9 @@
-import { Home, BookOpen, Brain, Code2, User, LogOut, Shield, Users } from 'lucide-react';
+import { Home, BookOpen, Brain, Code2, User, LogOut, Shield, Users, Trophy, Sun, Moon } from 'lucide-react';
 import { NotificationBell } from './NotificationBell';
 
 import { Link, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,6 +26,7 @@ const studentNavItems: NavItem[] = [
   { path: '/dashboard', label: 'Home', icon: Home },
   { path: '/courses', label: 'Courses', icon: BookOpen },
   { path: '/practice', label: 'Practice', icon: Code2 },
+  { path: '/leaderboard', label: 'Leaderboard', icon: Trophy },
 ];
 
 const adminNavItems: NavItem[] = [
@@ -36,6 +38,7 @@ export function TopNav({ variant = 'student' }: TopNavProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
 
   const navItems = variant === 'admin' ? adminNavItems : studentNavItems;
 
@@ -92,6 +95,13 @@ export function TopNav({ variant = 'student' }: TopNavProps) {
 
       {/* Right — User area */}
       <div className="flex items-center gap-2 ml-4">
+        <button
+          onClick={toggleTheme}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          className="p-2 rounded-xl hover:bg-muted/60 transition-colors text-muted-foreground"
+        >
+          {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+        </button>
         <NotificationBell />
 
         {/* Avatar dropdown */}
