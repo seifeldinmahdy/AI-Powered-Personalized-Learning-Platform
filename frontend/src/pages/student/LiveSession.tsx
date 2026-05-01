@@ -630,6 +630,7 @@ export default function LiveSession() {
         <CompactTutor
           key={lessonId}
           lessonTitle={lesson.title}
+          lessonId={lessonId ? Number(lessonId) : undefined}
           subtopics={subtopics}
           fusedEmotion={fusedEmotion}
           currentSlideIndex={currentSlide}

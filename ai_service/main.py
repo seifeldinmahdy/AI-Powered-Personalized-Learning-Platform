@@ -13,7 +13,7 @@ _intent_model_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "in
 if _intent_model_dir not in sys.path:
     sys.path.insert(0, _intent_model_dir)
 from fastapi.middleware.cors import CORSMiddleware
-from routers import health, asr, coding
+from routers import health, asr, coding, assessments
 from routers import intent, tts, fer, ser, tutor, rag, profiler, slides
 
 # Add course_pathway to sys.path for the pathway router
@@ -79,6 +79,8 @@ async def root():
             "pathway_health": "/pathway/health",
             "slides_generate": "/slides/generate",
             "slides_health": "/slides/health",
+            "assessments_generate": "/assessments/generate",
+            "assessments_health": "/assessments/health",
         }
     }
 
@@ -94,4 +96,5 @@ app.include_router(tutor.router)
 app.include_router(rag.router)
 app.include_router(profiler.router)
 app.include_router(slides.router)
+app.include_router(assessments.router)
 app.include_router(pathway_router)

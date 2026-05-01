@@ -12,6 +12,7 @@ import {
   analyzeSpeechEmotion,
   synthesizeAudio,
   setTutorPace,
+  persistChatLog,
   type SERResult,
 } from '../services/tutor';
 import { logEmotionEvent, getRecentFusedEmotion } from '../services/emotionLogger';
@@ -27,6 +28,7 @@ interface TranscriptEntry {
 
 interface CompactTutorProps {
   lessonTitle?: string;
+  lessonId?: number;
   subtopics?: string[];
   fusedEmotion?: string;
   currentSlideIndex?: number;
@@ -40,6 +42,7 @@ interface CompactTutorProps {
 
 export function CompactTutor({
   lessonTitle,
+  lessonId,
   subtopics = [],
   fusedEmotion,
   currentSlideIndex = 0,
@@ -414,6 +417,7 @@ export function CompactTutor({
         sources: ragSources.length > 0 ? ragSources : undefined,
       }]);
 
+      if (lessonId) persistChatLog(lessonId, q, res.answer);
       logInteraction(res.answer);
       setTutorEmotion('happy');
       setTutorEmotion('happy');
