@@ -138,11 +138,9 @@ ON_TOPIC_TEMPLATES = [
     "{topic} is confusing",
     "Help me with {topic}",
     "I need help understanding {topic}",
-    "So how does {topic} actually work?",
-    # MOVED to REPEAT: "Wait, explain {topic} one more time"
+    "So how does {topic} actually work?"
 ]
 
-# Context-aware on-topic templates (reference ability scores, prev topics)
 ON_TOPIC_CONTEXT_TEMPLATES = [
     "You said I scored low on {prev_topic}, does that affect how I should approach {topic}?",
     "Since I did well on {prev_topic}, is {topic} going to be similar?",
@@ -197,7 +195,7 @@ EMOTIONAL_TEMPLATES = [
     # Frustration
     "I am so frustrated right now.",
     "This is making me really angry.",
-    "I can't take this anymore.",
+    # REMOVED: "I can't take this anymore." (Ambiguous with Pace/Break requests)
     "I feel like giving up.",
     "Nothing makes sense to me.",
     "I'm losing my patience.",
@@ -220,7 +218,7 @@ EMOTIONAL_TEMPLATES = [
     "I don't understand anything.",
     "This is so confusing it hurts.",
     # Boredom / tiredness
-    "This is getting boring.",
+    # REMOVED: "This is getting boring." (Ambiguous with Pace/Speed up requests)
     "I'm feeling super tired today.",
     "My head hurts from all this information.",
     "I feel like I'm not making any progress.",
@@ -294,7 +292,7 @@ PACE_TEMPLATES = [
     "Can we skip this?",
     "I think I got this, let's speed up.",
     "Can we go through the next part faster?",
-    "Let's speed up the pace, I'm bored.",
+    # REMOVED: "Let's speed up the pace, I'm bored." (Ambiguous with Emotional/Boredom)
     "I already know this, can we move on?",
     "This part is easy, let's go faster.",
     "Skip ahead please.",
@@ -302,11 +300,11 @@ PACE_TEMPLATES = [
     "We're spending too long on this.",
     "Can we pick up the pace?",
     # Break / timing
-    "Can we take a break?",
+    # REMOVED: "Can we take a break?" (Ambiguous: is it Pace or Emotional exhaustion?)
     "How much time do we have left?",
     "When does this session end?",
-    "I need a 5 minute break.",
-    "Let's take a quick breather.",
+    # REMOVED: "I need a 5 minute break." (Ambiguous)
+    # REMOVED: "Let's take a quick breather." (Ambiguous)
     # General pacing
     "The pace feels about right.",
     "Can you adjust the speed a bit?",
@@ -348,11 +346,93 @@ REPEAT_TEMPLATES = [
     "I need a recap of what you just said.",
     "Can you summarize what you just explained?",
     "What were the key points of that last section?",
-    # MOVED from ON_TOPIC (these are clarification/repeat requests, not questions)
     "Can you explain {topic} again?",
     "Wait, explain {topic} one more time",
 ]
 
+# ─────────────────────────────────────────────────────────────────────
+# REAL-WORLD EXAMPLES & HELD-OUT TEMPLATES
+# ─────────────────────────────────────────────────────────────────────
+
+PACE_REAL = [
+    "slow", "SLOW DOWN", "wait wait wait", "too fast bro",
+    "pause", "hold on", "omg slow", "faster", "speed up pls",
+    "one sec", "wait up", "can we stop for a sec", "slow tf down",
+    "hol up", "chill for a sec", "can you slow down", "ur going too fast",
+    "speed it up", "go faster", "i already know this go faster",
+    "too slow", "skip this", "can we skip", # REMOVED "im bored speed up"
+    "next slide", "next", "hurry up", "wait go back", "slow down im typing",
+    "pause pls", "give me a sec", "wait a minute", "hang on",
+    "stop going so fast", "i need a minute", "can we pause",
+    "move on", "lets keep going", "skip to the next part", "faster please"
+]
+
+REPEAT_REAL = [
+    "huh?", "what?", "again?", "come again", "??",
+    "sorry what", "didn't get that", "repeat", "say again",
+    "what did you just say", "lost u there", "i missed that",
+    "say that one more time", "can u repeat", "what was that",
+    "i wasn't listening", "go over that again", "what did u say",
+    "rewind", "say it again", "what u mean", "huh",
+    "pardon?", "could u repeat", "i didnt catch that",
+    "can we go over that again", "run that back", "one more time",
+    "what?", "say what", "i'm confused repeat please",
+    "what happened?", "can you say that again", "i missed the last part",
+    "wait what?", "what was the last thing u said", "repeat pls",
+    "explain that again", "did not hear you", "what did i miss"
+]
+
+OFF_TOPIC_REAL = [
+    "what's 2+2", "who made you", "are you chatgpt",
+    "what time is it", "tell me a joke", "what's the weather",
+    "help me with my homework", "what should i eat",
+    "do you have feelings", "who won yesterday",
+    "whats your favorite color", "do u play games", "whats good",
+    "how are you", "are you a robot", "can u do my math",
+    "whats the meaning of life", "who is the president", "im hungry",
+    "where are u from", "whats ur name", "can we talk about something else",
+    "sing me a song", "do u like pizza", "tell me a story",
+    "who won the superbowl", "what day is it", "whats up",
+    "how old are you", "what's your iq", "do you sleep",
+    "can you write an essay for me", "give me the answers", "hello",
+    "hi", "yo", "sup", "howdy", "good morning", "whats the capital of france"
+]
+
+ON_TOPIC_REAL = [
+    "i dont get it", "what does this do", "why does it break",
+    "show me", "example pls", "what's the difference",
+    "how does that work", "im confused about this part",
+    "can you show me with code", "what does {topic} even mean",
+    "how do i use {topic}", "give me an example of {topic}",
+    "why use {topic}", "im stuck on {topic}", "my {topic} code is broken",
+    "what am i doing wrong", "how is this useful", "can u show another example",
+    "is this important", "do we need to know this", "whats the syntax",
+    "how do i write this", "i keep getting an error", "why am i getting an error",
+    "what does that mean", "explain the code", "what does this line do",
+    "i don't understand the example", "can u break this down", "more examples pls",
+    "im not getting {topic}", "help me fix this", "is there another way to do this",
+    "can you explain this simply", "how does {topic} work", "why do we do this",
+    "whats a good use case for {topic}", "when would i use this", "what is {topic}"
+]
+
+EMOTIONAL_REAL = [
+    "i hate this so much", "this is impossible", "im crying",
+    "my brain hurts", "i feel so dumb", "this is too hard",
+    "i quit", "make it stop", "i am so mad right now",
+    "yay i did it", "this is fun", "i love coding",
+    "omg it works", "i feel smart", "let's goooo",
+    "im so tired", "im exhausted", # REMOVED "can we stop" (Ambiguous with Pace)
+    "my eyes hurt", "i need to sleep" # REMOVED "this is boring" (Ambiguous with Pace check)
+]
+
+HELD_OUT_PACE = ["wait up", "STOP", "too fast omg", "one moment"]
+HELD_OUT_REPEAT = ["huh?", "what??", "come again?", "i missed that"]
+HELD_OUT_EMOTION = ["wtf", "i give up", "bruh", "this is pointless"]
+HELD_OUT_ON_TOPIC = ["show me an example", "why does it break", "i don't get it"]
+HELD_OUT_OFF_TOPIC = ["are you an AI", "what time is it", "tell me a joke"]
+
+# REMOVED extend() calls that injected *_REAL directly into main lists.
+# They will be injected later specifically into the _TRAIN partitions.
 
 # ─────────────────────────────────────────────────────────────────────
 # AUGMENTATION STRATEGIES
@@ -458,34 +538,113 @@ def augment_text(text):
 
 
 # ─────────────────────────────────────────────────────────────────────
+# INTENT TEMPLATE PARTITIONING (TRAIN/VAL/TEST)
+# ─────────────────────────────────────────────────────────────────────
+
+def partition_bank(bank: list, seed: int = 42) -> tuple:
+    """Strictly partition a template bank into non-overlapping thirds: Train, Val, Test."""
+    # Deterministic split
+    rng = random.Random(seed)
+    shuffled = bank.copy()
+    rng.shuffle(shuffled)
+    n = len(shuffled)
+    return shuffled[:n//3], shuffled[n//3:2*n//3], shuffled[2*n//3:]
+
+# Split main template banks into non-overlapping thirds
+ON_TOPIC_TRAIN, ON_TOPIC_VAL, ON_TOPIC_TEST = partition_bank(ON_TOPIC_TEMPLATES)
+ON_TOPIC_CTX_TRAIN, ON_TOPIC_CTX_VAL, ON_TOPIC_CTX_TEST = partition_bank(ON_TOPIC_CONTEXT_TEMPLATES)
+OFF_TOPIC_GEN_TRAIN, OFF_TOPIC_GEN_VAL, OFF_TOPIC_GEN_TEST = partition_bank(OFF_TOPIC_GENERAL)
+OFF_TOPIC_FUT_TRAIN, OFF_TOPIC_FUT_VAL, OFF_TOPIC_FUT_TEST = partition_bank(OFF_TOPIC_FUTURE_TOPIC_TEMPLATES)
+EMOTIONAL_TRAIN, EMOTIONAL_VAL, EMOTIONAL_TEST = partition_bank(EMOTIONAL_TEMPLATES)
+PACE_TRAIN, PACE_VAL, PACE_TEST = partition_bank(PACE_TEMPLATES)
+REPEAT_TRAIN, REPEAT_VAL, REPEAT_TEST = partition_bank(REPEAT_TEMPLATES)
+
+# Inject *_REAL lists ONLY into the training splits to avoid cross-contamination
+_held_out_all = set(HELD_OUT_PACE + HELD_OUT_REPEAT + HELD_OUT_EMOTION +
+                    HELD_OUT_ON_TOPIC + HELD_OUT_OFF_TOPIC)
+
+PACE_TRAIN.extend([x for x in PACE_REAL if x not in _held_out_all])
+REPEAT_TRAIN.extend([x for x in REPEAT_REAL if x not in _held_out_all])
+EMOTIONAL_TRAIN.extend([x for x in EMOTIONAL_REAL if x not in _held_out_all])
+ON_TOPIC_TRAIN.extend([x for x in ON_TOPIC_REAL if x not in _held_out_all])
+OFF_TOPIC_GEN_TRAIN.extend([x for x in OFF_TOPIC_REAL if x not in _held_out_all])
+
+# ─────────────────────────────────────────────────────────────────────
 # INTENT GENERATORS
 # ─────────────────────────────────────────────────────────────────────
 
-def get_on_topic_question(current_topic, prev_topics):
-    # 20% chance of context-aware template if prev_topics exist
-    if prev_topics and random.random() < 0.2:
+def get_on_topic_question(current_topic, prev_topics, split_name='train'):
+    if split_name == 'test' and random.random() < 0.5:
+        template = random.choice(HELD_OUT_ON_TOPIC)
+        return template.replace("{topic}", current_topic)
+
+    # Dispatch to appropriate split bank
+    if split_name == 'val':
+        bank = ON_TOPIC_VAL
+        ctx_bank = ON_TOPIC_CTX_VAL
+    elif split_name == 'test':
+        bank = ON_TOPIC_TEST
+        ctx_bank = ON_TOPIC_CTX_TEST
+    else: # train
+        bank = ON_TOPIC_TRAIN
+        ctx_bank = ON_TOPIC_CTX_TRAIN
+
+    if prev_topics and random.random() < 0.2 and len(ctx_bank) > 0:
         prev_topic = random.choice(prev_topics)
-        template = random.choice(ON_TOPIC_CONTEXT_TEMPLATES)
+        template = random.choice(ctx_bank)
         return template.replace("{topic}", current_topic).replace("{prev_topic}", prev_topic)
-    template = random.choice(ON_TOPIC_TEMPLATES)
+    template = random.choice(bank)
     return template.replace("{topic}", current_topic)
 
-def get_off_topic_question(current_topic_idx):
-    if current_topic_idx < len(PYTHON_TOPICS) - 1 and random.random() < 0.5:
+def get_off_topic_question(current_topic_idx, split_name='train'):
+    if split_name == 'test' and random.random() < 0.5:
+        return random.choice(HELD_OUT_OFF_TOPIC)
+
+    if split_name == 'val':
+        fut_bank = OFF_TOPIC_FUT_VAL
+        gen_bank = OFF_TOPIC_GEN_VAL
+    elif split_name == 'test':
+        fut_bank = OFF_TOPIC_FUT_TEST
+        gen_bank = OFF_TOPIC_GEN_TEST
+    else:
+        fut_bank = OFF_TOPIC_FUT_TRAIN
+        gen_bank = OFF_TOPIC_GEN_TRAIN
+
+    if current_topic_idx < len(PYTHON_TOPICS) - 1 and random.random() < 0.5 and len(fut_bank) > 0:
         future_topic = random.choice(PYTHON_TOPICS[current_topic_idx + 1:])
-        template = random.choice(OFF_TOPIC_FUTURE_TOPIC_TEMPLATES)
+        template = random.choice(fut_bank)
         return template.replace("{topic}", future_topic)
-    return random.choice(OFF_TOPIC_GENERAL)
+    return random.choice(gen_bank)
 
-def get_emotional_state():
-    return random.choice(EMOTIONAL_TEMPLATES)
+def get_emotional_state(split_name='train'):
+    if split_name == 'test' and random.random() < 0.5:
+        return random.choice(HELD_OUT_EMOTION)
+    
+    if split_name == 'val':
+        return random.choice(EMOTIONAL_VAL)
+    elif split_name == 'test':
+        return random.choice(EMOTIONAL_TEST)
+    return random.choice(EMOTIONAL_TRAIN)
 
-def get_pace_related():
-    return random.choice(PACE_TEMPLATES)
+def get_pace_related(split_name='train'):
+    if split_name == 'test' and random.random() < 0.5:
+        return random.choice(HELD_OUT_PACE)
+    
+    if split_name == 'val':
+        return random.choice(PACE_VAL)
+    elif split_name == 'test':
+        return random.choice(PACE_TEST)
+    return random.choice(PACE_TRAIN)
 
-def get_repeat_clarification():
-    return random.choice(REPEAT_TEMPLATES)
-
+def get_repeat_clarification(split_name='train'):
+    if split_name == 'test' and random.random() < 0.5:
+        return random.choice(HELD_OUT_REPEAT)
+    
+    if split_name == 'val':
+        return random.choice(REPEAT_VAL)
+    elif split_name == 'test':
+        return random.choice(REPEAT_TEST)
+    return random.choice(REPEAT_TRAIN)
 
 # ─────────────────────────────────────────────────────────────────────
 # PIPELINE GENERATION (3-way split: train/val/test)
@@ -494,52 +653,46 @@ def get_repeat_clarification():
 def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, test_ratio=0.15):
     print(f"Starting Dataset Generation ({num_samples_per_class} per class)...")
 
-    dataset = []
+    train_samples = int(num_samples_per_class * train_ratio)
+    val_samples = int(num_samples_per_class * val_ratio)
+    test_samples = num_samples_per_class - train_samples - val_samples
 
-    for intent, label_id in LABEL_MAP.items():
-        for _ in range(num_samples_per_class):
-            topic_idx = random.randint(0, len(PYTHON_TOPICS) - 1)
-            context_str, current_topic, prev_topics = generate_session_context(topic_idx)
+    def generate_split(samples_per_class, split_name, is_test):
+        dataset = []
+        apply_augmentation = split_name == 'train'
+        for intent, label_id in LABEL_MAP.items():
+            for _ in range(samples_per_class):
+                topic_idx = random.randint(0, len(PYTHON_TOPICS) - 1)
+                context_str, current_topic, prev_topics = generate_session_context(topic_idx)
 
-            if intent == 'On-Topic Question':
-                student_input = get_on_topic_question(current_topic, prev_topics)
-            elif intent == 'Off-Topic Question':
-                student_input = get_off_topic_question(topic_idx)
-            elif intent == 'Emotional-State':
-                student_input = get_emotional_state()
-            elif intent == 'Pace-Related':
-                student_input = get_pace_related()
-            elif intent == 'Repeat/clarification':
-                student_input = get_repeat_clarification()
-            else:
-                student_input = get_off_topic_question(topic_idx)
+                if intent == 'On-Topic Question':
+                    student_input = get_on_topic_question(current_topic, prev_topics, split_name=split_name)
+                elif intent == 'Off-Topic Question':
+                    student_input = get_off_topic_question(topic_idx, split_name=split_name)
+                elif intent == 'Emotional-State':
+                    student_input = get_emotional_state(split_name=split_name)
+                elif intent == 'Pace-Related':
+                    student_input = get_pace_related(split_name=split_name)
+                elif intent == 'Repeat/clarification':
+                    student_input = get_repeat_clarification(split_name=split_name)
+                else:
+                    student_input = get_off_topic_question(topic_idx, split_name=split_name)
 
-            student_input = augment_text(student_input)
+                if apply_augmentation:
+                    student_input = augment_text(student_input)
 
-            dataset.append({
-                'student_input': student_input,
-                'session_context': context_str,
-                'label': label_id,
-                'intent_name': intent
-            })
+                dataset.append({
+                    'student_input': student_input,
+                    'session_context': context_str,
+                    'label': label_id,
+                    'intent_name': intent
+                })
+        df = pd.DataFrame(dataset)
+        return df.sample(frac=1, random_state=42).reset_index(drop=True)
 
-    df = pd.DataFrame(dataset)
-    df = df.sample(frac=1, random_state=42).reset_index(drop=True)
-
-    # Stratified 3-way split
-    train_dfs, val_dfs, test_dfs = [], [], []
-    for label_id in sorted(df['label'].unique()):
-        label_df = df[df['label'] == label_id].reset_index(drop=True)
-        n = len(label_df)
-        t1 = int(n * train_ratio)
-        t2 = int(n * (train_ratio + val_ratio))
-        train_dfs.append(label_df.iloc[:t1])
-        val_dfs.append(label_df.iloc[t1:t2])
-        test_dfs.append(label_df.iloc[t2:])
-
-    train_df = pd.concat(train_dfs).sample(frac=1, random_state=42).reset_index(drop=True)
-    val_df = pd.concat(val_dfs).sample(frac=1, random_state=42).reset_index(drop=True)
-    test_df = pd.concat(test_dfs).sample(frac=1, random_state=42).reset_index(drop=True)
+    train_df = generate_split(train_samples, split_name='train', is_test=False)
+    val_df = generate_split(val_samples, split_name='val', is_test=False)
+    test_df = generate_split(test_samples, split_name='test', is_test=True)
 
     output_dir = 'data'
     os.makedirs(output_dir, exist_ok=True)
@@ -548,6 +701,7 @@ def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, 
     val_df.to_csv(os.path.join(output_dir, 'val.csv'), index=False)
     test_df.to_csv(os.path.join(output_dir, 'test.csv'), index=False)
 
+    df = pd.concat([train_df, val_df, test_df])
     print("[+] Data Generation Complete!")
     print(f"Total: {len(df)} | Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)}")
     print(f"Train distribution:\n{train_df['label'].value_counts().sort_index().to_string()}")
@@ -561,7 +715,6 @@ def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, 
 
 PARAPHRASE_CACHE_PATH = os.path.join('data', 'paraphrase_cache.json')
 
-
 def _load_paraphrase_cache() -> dict:
     """Load cached paraphrases from disk."""
     if os.path.exists(PARAPHRASE_CACHE_PATH):
@@ -569,13 +722,11 @@ def _load_paraphrase_cache() -> dict:
             return json.load(f)
     return {}
 
-
 def _save_paraphrase_cache(cache: dict) -> None:
     """Save paraphrase cache to disk."""
     os.makedirs(os.path.dirname(PARAPHRASE_CACHE_PATH), exist_ok=True)
     with open(PARAPHRASE_CACHE_PATH, 'w', encoding='utf-8') as f:
         json.dump(cache, f, indent=2, ensure_ascii=False)
-
 
 def paraphrase_with_llm(
     samples: list[str],
@@ -583,27 +734,7 @@ def paraphrase_with_llm(
     n_paraphrases: int = 3,
     batch_size: int = 10,
 ) -> list[str]:
-    """Generate paraphrases for training samples using the Groq API.
-
-    Results are cached to ``data/paraphrase_cache.json`` so repeated
-    runs do not re-call the API.
-
-    Parameters
-    ----------
-    samples : list[str]
-        Student input strings to paraphrase.
-    label_name : str
-        The intent label (used in the prompt for context).
-    n_paraphrases : int
-        Number of paraphrases per sample.
-    batch_size : int
-        Number of samples per API call.
-
-    Returns
-    -------
-    list[str]
-        All generated paraphrases (flat list).
-    """
+    """Generate paraphrases for training samples using the Groq API."""
     from dotenv import load_dotenv
     load_dotenv()
     api_key = os.getenv('GROQ_API_KEY', '')
@@ -654,22 +785,8 @@ def paraphrase_with_llm(
     print(f'[+] LLM paraphrase augmentation: {len(all_paraphrases)} new samples for "{label_name}"')
     return all_paraphrases
 
-
 def augment_dataset_with_llm(df: pd.DataFrame, n_paraphrases: int = 3) -> pd.DataFrame:
-    """Augment every class in the dataset with LLM-generated paraphrases.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        The original training DataFrame.
-    n_paraphrases : int
-        Paraphrases to generate per sample.
-
-    Returns
-    -------
-    pd.DataFrame
-        The augmented DataFrame (original + paraphrases).
-    """
+    """Augment every class in the dataset with LLM-generated paraphrases."""
     intent_names = {v: k for k, v in LABEL_MAP.items()}
     new_rows = []
 
@@ -695,7 +812,6 @@ def augment_dataset_with_llm(df: pd.DataFrame, n_paraphrases: int = 3) -> pd.Dat
     combined = combined.sample(frac=1, random_state=42).reset_index(drop=True)
     print(f'[+] Dataset augmented: {len(df)} -> {len(combined)} rows')
     return combined
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate intent classifier training data')

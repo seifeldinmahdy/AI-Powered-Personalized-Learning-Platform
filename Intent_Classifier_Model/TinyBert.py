@@ -259,7 +259,7 @@ class TinyBertCNN(nn.Module):
     def __init__(
         self,
         num_classes,
-        bert_model_name='huawei-noah/TinyBERT_General_4L_312D',
+        bert_model_name='distilbert-base-uncased',
         num_filters=256,
         filter_sizes=[2, 3, 4],
         dropout=0.5,
@@ -280,6 +280,10 @@ class TinyBertCNN(nn.Module):
         
         # Load TinyBERT model
         self.bert = AutoModel.from_pretrained(bert_model_name)
+        self._supports_token_type_ids = (
+            hasattr(self.bert.config, 'type_vocab_size') and
+            self.bert.config.type_vocab_size > 1
+        )
         self.bert_hidden_size = self.bert.config.hidden_size
         
         # Freeze BERT parameters if specified
@@ -330,7 +334,7 @@ class TinyBertCNN(nn.Module):
             'input_ids': input_ids,
             'attention_mask': attention_mask
         }
-        if token_type_ids is not None:
+        if token_type_ids is not None and self._supports_token_type_ids:
             bert_kwargs['token_type_ids'] = token_type_ids
             
         bert_output = self.bert(**bert_kwargs)
@@ -380,7 +384,7 @@ class IntentClassifier:
     def __init__(
         self,
         num_classes,
-        bert_model_name='huawei-noah/TinyBERT_General_4L_312D',
+        bert_model_name='distilbert-base-uncased',
         num_filters=256,
         filter_sizes=[2, 3, 4],
         dropout=0.5,

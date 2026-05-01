@@ -1,10 +1,11 @@
 """
-Training pipeline for TinyBert-CNN Intent Classifier.
+Training pipeline for DistilBert-CNN Intent Classifier.
 Features: discriminative fine-tuning, warmup+cosine LR, early stopping,
 comprehensive per-class/epoch metric tracking.
 """
 
 import os
+import shutil
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -20,17 +21,41 @@ from sklearn.metrics import (
 )
 import warnings
 warnings.filterwarnings('ignore')
+from pathlib import Path
+
+try:
+    import mlflow
+except ImportError:  # pragma: no cover - optional local dependency
+    mlflow = None
 
 from TinyBert import IntentClassifier, IntentDataset
 
 INTENT_NAMES = ['On-Topic Question', 'Off-Topic Question', 'Emotional-State', 'Pace-Related', 'Repeat/clarification']
 DEFAULT_CONFIDENCE_THRESHOLD = 0.55
 REAL_UTTERANCE_PATH = 'data/real_utterances.csv'
+MLFLOW_EXPERIMENT_NAME = os.getenv('MLFLOW_EXPERIMENT_NAME', 'intent-classifier-distilbert')
 
 
 # ─────────────────────────────────────────────────────────────────────
 # UTILITIES
 # ─────────────────────────────────────────────────────────────────────
+
+DEFAULT_MLFLOW_TRACKING_URI = (Path(__file__).resolve().parent / 'mlruns').resolve().as_uri()
+
+
+def cleanup_local_mlflow_store(store_root: Path):
+    """Remove malformed top-level experiment folders from a local MLflow store."""
+    if not store_root.exists():
+        return
+
+    for experiment_dir in store_root.iterdir():
+        if not experiment_dir.is_dir():
+            continue
+        if not experiment_dir.name.isdigit():
+            continue
+        if not (experiment_dir / 'meta.yaml').exists():
+            shutil.rmtree(experiment_dir, ignore_errors=True)
+
 
 class EarlyStopping:
     def __init__(self, patience=3, min_delta=0.001, verbose=True):
@@ -86,6 +111,17 @@ def load_data(train_path, val_path, test_path):
     return train_df, val_df, test_df
 
 
+def build_dataset_summary(train_df, val_df, test_df):
+    return {
+        'train_rows': int(len(train_df)),
+        'val_rows': int(len(val_df)),
+        'test_rows': int(len(test_df)),
+        'train_class_counts': train_df['label'].value_counts().sort_index().to_dict(),
+        'val_class_counts': val_df['label'].value_counts().sort_index().to_dict(),
+        'test_class_counts': test_df['label'].value_counts().sort_index().to_dict(),
+    }
+
+
 def compute_class_weights(labels, num_classes, device):
     counts = np.bincount(labels, minlength=num_classes).astype(float)
     counts[counts == 0] = 1.0
@@ -138,12 +174,12 @@ def main():
     VAL_PATH    = 'data/val.csv'
     TEST_PATH   = 'data/test.csv'
     BATCH_SIZE  = 16
-    EPOCHS      = 20
+    EPOCHS      = 15
     BERT_LR     = 2e-5       # Lower LR for BERT backbone
-    HEAD_LR     = 1e-3       # Higher LR for CNN + FC head
+    HEAD_LR     = 5e-4       # Higher LR for CNN + FC head
     WEIGHT_DECAY = 0.01
     MAX_LENGTH  = 128
-    PATIENCE    = 5
+    PATIENCE    = 7
 
     hyperparams = {
         'batch_size': BATCH_SIZE,
@@ -157,7 +193,7 @@ def main():
     }
 
     print("=" * 60)
-    print("TinyBert-CNN Multi-Input Model Training")
+    print("DistilBert-CNN Multi-Input Model Training")
     print("=" * 60)
 
     start_time = time.time()
@@ -166,8 +202,16 @@ def main():
     train_df, val_df, test_df = load_data(TRAIN_PATH, VAL_PATH, TEST_PATH)
     num_classes = train_df['label'].nunique()
     print(f"Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)} | Classes: {num_classes}")
+    dataset_summary = build_dataset_summary(train_df, val_df, test_df)
 
-    classifier = IntentClassifier(num_classes=num_classes)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    classifier = IntentClassifier(
+        num_classes=num_classes,
+        bert_model_name='distilbert-base-uncased',
+        dropout=0.5,
+        device=device
+    )
+    print(f"Training on device: {device}")
 
     train_dataset = IntentDataset(train_df.to_dict('records'), classifier.tokenizer, max_length=MAX_LENGTH)
     val_dataset   = IntentDataset(val_df.to_dict('records'),   classifier.tokenizer, max_length=MAX_LENGTH)
@@ -195,7 +239,7 @@ def main():
     early_stopping = EarlyStopping(patience=PATIENCE)
 
     best_val_f1 = 0.0
-    best_model_path = "best_tinybert.pt"
+    best_model_path = "best_model.pt"
 
     # ── Training history ────────────────────────────────────────────
     history = {
@@ -204,6 +248,31 @@ def main():
         'val_acc': [],
         'val_f1': []
     }
+
+    mlflow_enabled = mlflow is not None
+    if mlflow_enabled:
+        tracking_uri = os.getenv('MLFLOW_TRACKING_URI')
+        effective_tracking_uri = tracking_uri or DEFAULT_MLFLOW_TRACKING_URI
+        if effective_tracking_uri == DEFAULT_MLFLOW_TRACKING_URI:
+            cleanup_local_mlflow_store(Path(__file__).resolve().parent / 'mlruns')
+        mlflow.set_tracking_uri(effective_tracking_uri)
+        mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+        mlflow.start_run(run_name=f"distilbert-intent-{int(time.time())}")
+        mlflow.log_params(hyperparams)
+        mlflow.log_params({
+            'model_name': 'DistilBert-CNN',
+            'num_classes': num_classes,
+            'train_rows': len(train_df),
+            'val_rows': len(val_df),
+            'test_rows': len(test_df),
+            'total_steps': total_steps,
+            'warmup_steps': warmup_steps,
+            'confidence_threshold': DEFAULT_CONFIDENCE_THRESHOLD,
+        })
+        mlflow.log_dict(dataset_summary, 'dataset_summary.json')
+        for path in [TRAIN_PATH, VAL_PATH, TEST_PATH, REAL_UTTERANCE_PATH]:
+            if os.path.exists(path):
+                mlflow.log_artifact(path, artifact_path='dataset')
 
     # ── Training loop ──────────────────────────────────────────────
     for epoch in range(EPOCHS):
@@ -219,7 +288,7 @@ def main():
             train_pbar.set_postfix({'loss': f'{loss:.4f}'})
 
         avg_train_loss = train_loss / len(train_loader)
-        val_loss, val_acc, val_prec, val_rec, val_f1, _, _ = evaluate_model_full(classifier, val_loader)
+        val_loss, val_acc, val_prec, val_rec, val_f1, all_preds, all_labels = evaluate_model_full(classifier, val_loader)
 
         history['train_loss'].append(round(avg_train_loss, 4))
         history['val_loss'].append(round(val_loss, 4))
@@ -227,6 +296,28 @@ def main():
         history['val_f1'].append(round(val_f1, 4))
 
         print(f"Epoch {epoch+1}: Train Loss: {avg_train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f} | Val F1: {val_f1:.4f}")
+
+        if mlflow_enabled:
+            metrics_to_log = {
+                'train_loss': float(avg_train_loss),
+                'val_loss': float(val_loss),
+                'val_accuracy': float(val_acc),
+                'val_precision': float(val_prec),
+                'val_recall': float(val_rec),
+                'val_f1': float(val_f1),
+            }
+            
+            # Compute per-class F1
+            _, _, per_class_f1, _ = precision_recall_fscore_support(
+                all_labels, all_preds, average=None, zero_division=0
+            )
+            for i, name in enumerate(INTENT_NAMES):
+                if i < len(per_class_f1):
+                    # safely replacing spaces/slashes for mlflow metric names
+                    safe_name = name.replace(" ", "_").replace("/", "_")
+                    metrics_to_log[f'val_f1_{safe_name}'] = float(per_class_f1[i])
+
+            mlflow.log_metrics(metrics_to_log, step=epoch + 1)
 
         if val_f1 > best_val_f1:
             best_val_f1 = val_f1
@@ -265,8 +356,9 @@ def main():
 
     # ── Save results ───────────────────────────────────────────────
     results = {
-        'model': 'TinyBert-CNN',
+        'model': 'DistilBert-CNN',
         'confidence_threshold': DEFAULT_CONFIDENCE_THRESHOLD,
+        'dataset_summary': dataset_summary,
         'hyperparameters': hyperparams,
         'training_duration_seconds': training_duration,
         'epochs_trained': len(history['train_loss']),
@@ -338,6 +430,23 @@ def main():
 
     with open('training_results.json', 'w') as f:
         json.dump(results, f, indent=4)
+
+    if mlflow_enabled:
+        mlflow.log_metrics(
+            {
+                'test_loss': float(test_loss),
+                'test_accuracy': float(test_acc),
+                'test_precision': float(test_prec),
+                'test_recall': float(test_rec),
+                'test_f1': float(test_f1),
+                'training_duration_seconds': float(training_duration),
+                'epochs_trained': float(len(history['train_loss'])),
+            }
+        )
+        mlflow.log_dict(results, 'training_results.json')
+        if os.path.exists(best_model_path):
+            mlflow.log_artifact(best_model_path, artifact_path='model')
+        mlflow.end_run()
 
     print(f"\n{'='*60}")
     print(f"TRAINING COMPLETE  ({training_duration:.1f}s)")

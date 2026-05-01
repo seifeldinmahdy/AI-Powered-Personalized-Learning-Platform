@@ -1,8 +1,9 @@
 {
     "model": "TinyBert-CNN",
+    "confidence_threshold": 0.55,
     "hyperparameters": {
         "batch_size": 16,
-        "epochs": 20,
+        "epochs": 10,
         "bert_lr": 2e-05,
         "head_lr": 0.001,
         "weight_decay": 0.01,
@@ -10,121 +11,173 @@
         "patience": 5,
         "label_smoothing": 0.1
     },
-    "training_duration_seconds": 212.44,
-    "epochs_trained": 7,
+    "training_duration_seconds": 3605.73,
+    "epochs_trained": 10,
     "metrics": {
-        "accuracy": 0.996,
-        "f1_score": 0.996,
-        "precision": 0.996,
-        "recall": 0.996,
-        "test_loss": 0.0691
+        "accuracy": 0.966,
+        "f1_score": 0.9659,
+        "precision": 0.9689,
+        "recall": 0.966,
+        "test_loss": 0.1396
     },
     "per_class_metrics": {
         "On-Topic Question": {
-            "precision": 0.9934,
-            "recall": 0.9967,
-            "f1_score": 0.995,
+            "precision": 0.99,
+            "recall": 0.99,
+            "f1_score": 0.99,
             "support": 300
         },
         "Off-Topic Question": {
-            "precision": 0.9967,
-            "recall": 0.9933,
-            "f1_score": 0.995,
-            "support": 300
-        },
-        "Emotional-State": {
             "precision": 0.9934,
             "recall": 1.0,
             "f1_score": 0.9967,
             "support": 300
         },
+        "Emotional-State": {
+            "precision": 0.8783,
+            "recall": 0.9867,
+            "f1_score": 0.9294,
+            "support": 300
+        },
         "Pace-Related": {
-            "precision": 0.9967,
-            "recall": 0.9933,
-            "f1_score": 0.995,
+            "precision": 0.9962,
+            "recall": 0.8667,
+            "f1_score": 0.9269,
             "support": 300
         },
         "Repeat/clarification": {
-            "precision": 1.0,
-            "recall": 0.9967,
-            "f1_score": 0.9983,
+            "precision": 0.9867,
+            "recall": 0.9867,
+            "f1_score": 0.9867,
             "support": 300
         }
     },
     "confusion_matrix": [
         [
-            299,
-            1,
+            297,
             0,
+            3,
             0,
             0
         ],
         [
-            1,
-            298,
-            0,
-            1,
-            0
-        ],
-        [
-            0,
             0,
             300,
             0,
+            0,
+            0
+        ],
+        [
+            2,
+            1,
+            296,
+            1,
             0
         ],
         [
             0,
-            0,
-            2,
-            298,
-            0
+            1,
+            35,
+            260,
+            4
         ],
         [
             1,
             0,
+            3,
             0,
-            0,
-            299
+            296
         ]
     ],
     "training_history": {
         "train_loss": [
-            1.0757,
-            0.5031,
-            0.4618,
-            0.4458,
+            1.1201,
+            0.5397,
+            0.4784,
+            0.4604,
+            0.4472,
             0.4364,
-            0.4299,
-            0.4253
+            0.4339,
+            0.4298,
+            0.427,
+            0.4281
         ],
         "val_loss": [
-            0.1182,
-            0.055,
-            0.0643,
-            0.0578,
-            0.0628,
-            0.0615,
-            0.0599
+            0.1637,
+            0.0794,
+            0.0822,
+            0.0813,
+            0.0674,
+            0.0715,
+            0.0664,
+            0.0683,
+            0.0699,
+            0.0696
         ],
         "val_acc": [
-            0.9853,
-            0.996,
+            0.964,
+            0.9873,
+            0.9893,
+            0.9873,
+            0.992,
             0.9947,
-            0.9967,
-            0.9953,
-            0.9993,
-            0.998
+            0.994,
+            0.994,
+            0.9933,
+            0.994
         ],
         "val_f1": [
-            0.9853,
-            0.996,
+            0.9641,
+            0.9873,
+            0.9893,
+            0.9873,
+            0.992,
             0.9947,
-            0.9967,
-            0.9953,
-            0.9993,
-            0.998
+            0.994,
+            0.994,
+            0.9933,
+            0.994
         ]
     },
-    "classification_report": "                      precision    recall  f1-score   support\n\n   On-Topic Question       0.99      1.00      1.00       300\n  Off-Topic Question       1.00      0.99      0.99       300\n     Emotional-State       0.99      1.00      1.00       300\n        Pace-Related       1.00      0.99      0.99       300\nRepeat/clarification       1.00      1.00      1.00       300\n\n            accuracy                           1.00      1500\n           macro avg       1.00      1.00      1.00      1500\n        weighted avg       1.00      1.00      1.00      1500\n"
+    "classification_report": "                      precision    recall  f1-score   support\n\n   On-Topic Question       0.99      0.99      0.99       300\n  Off-Topic Question       0.99      1.00      1.00       300\n     Emotional-State       0.88      0.99      0.93       300\n        Pace-Related       1.00      0.87      0.93       300\nRepeat/clarification       0.99      0.99      0.99       300\n\n            accuracy                           0.97      1500\n           macro avg       0.97      0.97      0.97      1500\n        weighted avg       0.97      0.97      0.97      1500\n",
+    "real_utterance_metrics": {
+        "accuracy": 0.26,
+        "f1_score": 0.1723,
+        "precision": 0.17,
+        "recall": 0.26,
+        "test_loss": 1.6464
+    },
+    "real_utterance_per_class": {
+        "On-Topic Question": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1_score": 0.0,
+            "support": 10
+        },
+        "Off-Topic Question": {
+            "precision": 0.2667,
+            "recall": 0.8,
+            "f1_score": 0.4,
+            "support": 10
+        },
+        "Emotional-State": {
+            "precision": 0.3333,
+            "recall": 0.1,
+            "f1_score": 0.1538,
+            "support": 10
+        },
+        "Pace-Related": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1_score": 0.0,
+            "support": 10
+        },
+        "Repeat/clarification": {
+            "precision": 0.25,
+            "recall": 0.4,
+            "f1_score": 0.3077,
+            "support": 10
+        }
+    },
+    "real_utterance_report": "                      precision    recall  f1-score   support\n\n   On-Topic Question       0.00      0.00      0.00        10\n  Off-Topic Question       0.27      0.80      0.40        10\n     Emotional-State       0.33      0.10      0.15        10\n        Pace-Related       0.00      0.00      0.00        10\nRepeat/clarification       0.25      0.40      0.31        10\n\n            accuracy                           0.26        50\n           macro avg       0.17      0.26      0.17        50\n        weighted avg       0.17      0.26      0.17        50\n"
 }

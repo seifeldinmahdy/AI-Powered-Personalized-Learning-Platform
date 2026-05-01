@@ -43,14 +43,15 @@ def run_training_pipeline():
     if os.path.exists('training_results.json'):
         with open('training_results.json', 'r') as f:
             results = json.load(f)
-            metrics = results.get("metrics", {})
+            metrics = results.get("real_utterance_metrics") or results.get("metrics", {})
+            metric_source = 'real_utterance_metrics' if 'real_utterance_metrics' in results else 'metrics'
             acc = metrics.get("accuracy", 0.0)
             f1 = metrics.get("f1_score", 0.0)
             
-            print(f"New model validation: Accuracy={acc*100:.2f}%, F1={f1*100:.2f}%")
+            print(f"New model validation ({metric_source}): Accuracy={acc*100:.2f}%, F1={f1*100:.2f}%")
             
             # Validation logic:
-            # 1. Must meet minimum quality bar (80% acc, 80% F1)
+            # 1. Prefer real-utterance metrics when available.
             # 2. Perfect 100% on test set = pure memorization (reject)
             if acc >= 1.0:
                 print(f"[!] Perfect 100% test accuracy. Likely memorization. Rejecting model.")
