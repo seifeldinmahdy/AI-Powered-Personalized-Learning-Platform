@@ -48,6 +48,14 @@ class LessonCompletionViewSet(viewsets.ModelViewSet):
         completion.completed_at = timezone.now()
         if "score" in request.data:
             completion.score = request.data["score"]
+        time_spent = request.data.get("time_spent_minutes")
+        if time_spent is not None:
+            try:
+                completion.time_spent_minutes = max(0, int(time_spent))
+            except (TypeError, ValueError):
+                pass
+        else:
+            completion.time_spent_minutes = 30  # backward-compat default
         completion.save()  # triggers gamification signal
 
         # Detect newly awarded achievements

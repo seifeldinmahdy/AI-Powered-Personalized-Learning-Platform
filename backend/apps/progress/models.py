@@ -25,6 +25,7 @@ class LessonCompletion(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="Started")
     score = models.IntegerField(default=0)
     completed_at = models.DateTimeField(null=True, blank=True)
+    time_spent_minutes = models.IntegerField(default=0)
 
     class Meta:
         db_table = "lesson_completions"

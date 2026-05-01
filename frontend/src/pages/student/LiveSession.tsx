@@ -48,6 +48,8 @@ export default function LiveSession() {
   // ─── Student profile for Dr. Nova personalization ─────────────
   const [studentProfileSummary, setStudentProfileSummary] = useState<string | undefined>();
 
+  const lessonStartTimeRef = useRef<number>(Date.now());
+
   const webcamStreamRef = useRef<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -91,6 +93,7 @@ export default function LiveSession() {
         if (cancelled) return;
         setLesson(lessonData);
         setCurrentSlide(0);
+        lessonStartTimeRef.current = Date.now();
 
         if (courseId) {
           try {
@@ -432,16 +435,18 @@ export default function LiveSession() {
         (c) => String(c.lesson) === String(lesson.id),
       );
 
+      const timeSpentMinutes = Math.max(1, Math.round((Date.now() - lessonStartTimeRef.current) / 60000));
+
       let result;
       if (existing) {
-        result = await markLessonComplete(existing.id);
+        result = await markLessonComplete(existing.id, undefined, timeSpentMinutes);
       } else {
         const created = await createLessonCompletion({
           enrollment: enrollment.id,
           lesson: lesson.id,
           status: 'Completed',
         });
-        result = await markLessonComplete(created.id);
+        result = await markLessonComplete(created.id, undefined, timeSpentMinutes);
       }
 
       // Mark completed locally so drawer updates immediately

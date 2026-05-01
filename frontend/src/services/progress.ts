@@ -51,10 +51,14 @@ export async function createLessonCompletion(data: {
 export async function markLessonComplete(
     completionId: number,
     score?: number,
+    timeSpentMinutes?: number,
 ): Promise<LessonCompletion> {
+    const payload: Record<string, unknown> = {};
+    if (score !== undefined) payload.score = score;
+    if (timeSpentMinutes !== undefined) payload.time_spent_minutes = timeSpentMinutes;
     const response = await api.post<LessonCompletion>(
         `/progress/lesson-completions/${completionId}/complete/`,
-        score !== undefined ? { score } : {},
+        payload,
     );
     return response.data;
 }

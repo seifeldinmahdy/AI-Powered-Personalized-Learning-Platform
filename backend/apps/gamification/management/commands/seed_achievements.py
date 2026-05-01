@@ -20,6 +20,10 @@ ACHIEVEMENTS = [
     # Level milestones
     {"name": "Halfway There",       "description": "Reach level 5.",                          "xp_reward": 200, "icon_url": "🌟"},
     {"name": "Max Level",           "description": "Reach the maximum level 10.",             "xp_reward": 1000, "icon_url": "💫"},
+    # Course completion milestones
+    {"name": "Course Graduate",     "description": "Complete your first full course.",        "xp_reward": 500,  "icon_url": "🎓"},
+    {"name": "Double Major",        "description": "Complete 2 full courses.",                "xp_reward": 750,  "icon_url": "📜"},
+    {"name": "Overachiever",        "description": "Complete 5 full courses.",                "xp_reward": 1500, "icon_url": "🏅"},
 ]
 
 
