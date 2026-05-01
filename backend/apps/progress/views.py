@@ -70,17 +70,21 @@ class SystemActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
         return SystemActivityLog.objects.filter(user=self.request.user)
 
 
-class AIChatLogViewSet(viewsets.ReadOnlyModelViewSet):
-    """Read-only AI chat logs for the authenticated user. Filter by ?lesson_id=<id>."""
+class AIChatLogViewSet(viewsets.ModelViewSet):
+    """AI chat logs for the authenticated user. Filter by ?lesson_id=<id>. Supports GET + POST."""
     serializer_class = AIChatLogSerializer
     permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ["get", "post", "head", "options"]
 
     def get_queryset(self):
-        qs = AIChatLog.objects.filter(user=self.request.user)
+        qs = AIChatLog.objects.filter(user=self.request.user).order_by("created_at")
         lesson_id = self.request.query_params.get("lesson_id")
         if lesson_id:
             qs = qs.filter(lesson_id=lesson_id)
         return qs
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
 
 
 
