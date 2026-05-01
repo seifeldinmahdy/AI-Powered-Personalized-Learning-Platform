@@ -23,16 +23,14 @@ import warnings
 warnings.filterwarnings('ignore')
 from pathlib import Path
 
-try:
-    import mlflow
-except ImportError:  # pragma: no cover - optional local dependency
-    mlflow = None
+import mlflow
 
 from TinyBert import IntentClassifier, IntentDataset
 
 INTENT_NAMES = ['On-Topic Question', 'Off-Topic Question', 'Emotional-State', 'Pace-Related', 'Repeat/clarification']
 DEFAULT_CONFIDENCE_THRESHOLD = 0.55
-REAL_UTTERANCE_PATH = 'data/real_utterances.csv'
+BASE_DIR = Path(__file__).resolve().parent
+REAL_UTTERANCE_PATH = str(BASE_DIR / 'data' / 'real_utterances.csv')
 MLFLOW_EXPERIMENT_NAME = os.getenv('MLFLOW_EXPERIMENT_NAME', 'intent-classifier-distilbert')
 
 
@@ -170,16 +168,18 @@ def evaluate_model_full(classifier, loader):
 
 def main():
     # ── Hyperparameters ─────────────────────────────────────────────
-    TRAIN_PATH  = 'data/train.csv'
-    VAL_PATH    = 'data/val.csv'
-    TEST_PATH   = 'data/test.csv'
+    TRAIN_PATH  = str(BASE_DIR / 'data' / 'train.csv')
+    VAL_PATH    = str(BASE_DIR / 'data' / 'val.csv')
+    TEST_PATH   = str(BASE_DIR / 'data' / 'test.csv')
     BATCH_SIZE  = 16
     EPOCHS      = 15
     BERT_LR     = 2e-5       # Lower LR for BERT backbone
-    HEAD_LR     = 5e-4       # Higher LR for CNN + FC head
+    HEAD_LR     = 1e-4       # Higher LR for CNN + FC head
     WEIGHT_DECAY = 0.01
     MAX_LENGTH  = 128
     PATIENCE    = 7
+    DROPOUT     = 0.5
+    FREEZE_BERT = False
 
     hyperparams = {
         'batch_size': BATCH_SIZE,
@@ -189,7 +189,9 @@ def main():
         'weight_decay': WEIGHT_DECAY,
         'max_length': MAX_LENGTH,
         'patience': PATIENCE,
-        'label_smoothing': 0.1
+        'label_smoothing': 0.1,
+        'dropout': DROPOUT,
+        'freeze_bert': FREEZE_BERT
     }
 
     print("=" * 60)
@@ -208,7 +210,8 @@ def main():
     classifier = IntentClassifier(
         num_classes=num_classes,
         bert_model_name='distilbert-base-uncased',
-        dropout=0.5,
+        dropout=DROPOUT,
+        freeze_bert=FREEZE_BERT,
         device=device
     )
     print(f"Training on device: {device}")
@@ -249,7 +252,7 @@ def main():
         'val_f1': []
     }
 
-    mlflow_enabled = mlflow is not None
+    mlflow_enabled = True
     if mlflow_enabled:
         tracking_uri = os.getenv('MLFLOW_TRACKING_URI')
         effective_tracking_uri = tracking_uri or DEFAULT_MLFLOW_TRACKING_URI

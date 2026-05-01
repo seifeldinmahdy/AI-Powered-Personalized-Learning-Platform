@@ -559,15 +559,34 @@ EMOTIONAL_TRAIN, EMOTIONAL_VAL, EMOTIONAL_TEST = partition_bank(EMOTIONAL_TEMPLA
 PACE_TRAIN, PACE_VAL, PACE_TEST = partition_bank(PACE_TEMPLATES)
 REPEAT_TRAIN, REPEAT_VAL, REPEAT_TEST = partition_bank(REPEAT_TEMPLATES)
 
-# Inject *_REAL lists ONLY into the training splits to avoid cross-contamination
+# 80/20 split for REAL lists
 _held_out_all = set(HELD_OUT_PACE + HELD_OUT_REPEAT + HELD_OUT_EMOTION +
                     HELD_OUT_ON_TOPIC + HELD_OUT_OFF_TOPIC)
 
-PACE_TRAIN.extend([x for x in PACE_REAL if x not in _held_out_all])
-REPEAT_TRAIN.extend([x for x in REPEAT_REAL if x not in _held_out_all])
-EMOTIONAL_TRAIN.extend([x for x in EMOTIONAL_REAL if x not in _held_out_all])
-ON_TOPIC_TRAIN.extend([x for x in ON_TOPIC_REAL if x not in _held_out_all])
-OFF_TOPIC_GEN_TRAIN.extend([x for x in OFF_TOPIC_REAL if x not in _held_out_all])
+def split_real(real_list):
+    valid = [x for x in real_list if x not in _held_out_all]
+    n_train = int(len(valid) * 0.8)
+    return valid[:n_train], valid[n_train:]
+
+p_train, p_test = split_real(PACE_REAL)
+PACE_TRAIN.extend(p_train)
+PACE_TEST.extend(p_test)
+
+r_train, r_test = split_real(REPEAT_REAL)
+REPEAT_TRAIN.extend(r_train)
+REPEAT_TEST.extend(r_test)
+
+e_train, e_test = split_real(EMOTIONAL_REAL)
+EMOTIONAL_TRAIN.extend(e_train)
+EMOTIONAL_TEST.extend(e_test)
+
+o_train, o_test = split_real(ON_TOPIC_REAL)
+ON_TOPIC_TRAIN.extend(o_train)
+ON_TOPIC_TEST.extend(o_test)
+
+og_train, og_test = split_real(OFF_TOPIC_REAL)
+OFF_TOPIC_GEN_TRAIN.extend(og_train)
+OFF_TOPIC_GEN_TEST.extend(og_test)
 
 # ─────────────────────────────────────────────────────────────────────
 # INTENT GENERATORS
