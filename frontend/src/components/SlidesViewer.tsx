@@ -1,4 +1,4 @@
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { Maximize2, Minimize2, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { Slide } from '../services/lessons';
 
 interface SlidesViewerProps {
@@ -21,10 +21,46 @@ export function SlidesViewer({
   onFullscreenToggle,
 }: SlidesViewerProps) {
   const currentSlide = slides[currentIndex];
+  const totalSlides = slides.length;
+
+  const handlePrev = () => {
+    // Wrap: pressing left on first goes to last
+    const newIndex = currentIndex > 0 ? currentIndex - 1 : totalSlides - 1;
+    onSlideChange?.(newIndex);
+  };
+
+  const handleNext = () => {
+    // Wrap: pressing right on last goes to first
+    const newIndex = currentIndex < totalSlides - 1 ? currentIndex + 1 : 0;
+    onSlideChange?.(newIndex);
+  };
 
   return (
     <div className="flex-1 flex flex-col bg-background relative">
       <div className="flex-1 flex items-center justify-center p-8 bg-gradient-to-br from-muted/20 to-background" style={isFullscreen ? { paddingLeft: 360 } : undefined}>
+        {/* Left navigation arrow */}
+        {totalSlides > 1 && (
+          <button
+            onClick={handlePrev}
+            className="absolute left-4 z-10 p-2 rounded-full bg-card/80 border border-border shadow-md hover:bg-card hover:border-secondary transition-all"
+            title="Previous slide"
+          >
+            <ChevronLeft size={20} />
+          </button>
+        )}
+
+        {/* Right navigation arrow */}
+        {totalSlides > 1 && (
+          <button
+            onClick={handleNext}
+            className="absolute z-10 p-2 rounded-full bg-card/80 border border-border shadow-md hover:bg-card hover:border-secondary transition-all"
+            style={isFullscreen ? { right: '16px' } : { right: '340px' }}
+            title="Next slide"
+          >
+            <ChevronRight size={20} />
+          </button>
+        )}
+
         <div className="w-full h-full max-w-5xl bg-card rounded-2xl shadow-2xl border-2 border-border overflow-hidden flex flex-col">
           {/* Slide Header */}
           <div className="px-8 py-4 border-b border-border bg-gradient-to-r from-primary/5 to-secondary/5 flex items-center justify-between">
@@ -61,14 +97,14 @@ export function SlidesViewer({
           {/* Slide Footer */}
           <div className="px-8 py-3 border-t border-border bg-muted/20 flex items-center justify-between">
             <span className="text-sm text-muted-foreground font-mono">
-              Slide {currentIndex + 1} of {slides.length}
+              Slide {currentIndex + 1} of {totalSlides}
             </span>
             <div className="flex gap-2">
               {slides.map((_, i) => (
                 <button
                   key={i}
                   onClick={() => onSlideChange?.(i)}
-                  className={`h-1.5 rounded-full transition-all ${
+                  className={`h-1.5 rounded-full transition-all cursor-pointer ${
                     i === currentIndex
                       ? 'bg-secondary w-6'
                       : i < currentIndex

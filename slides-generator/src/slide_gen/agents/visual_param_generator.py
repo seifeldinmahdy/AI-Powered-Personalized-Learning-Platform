@@ -270,18 +270,25 @@ def _call_ollama(
     api_key: str | None,
     prompt: str,
 ) -> dict | None:
-    """Call Ollama API and parse JSON response."""
-    url = f"{host.rstrip('/')}/api/generate"
+    """Call Ollama API and parse JSON response.
 
-    headers = {}
+    Uses /api/chat (not /api/generate) for compatibility with
+    both local Ollama and cloud Ollama hosts.
+    """
+    url = f"{host.rstrip('/')}/api/chat"
+
+    headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
     payload = {
         "model": model,
-        "prompt": prompt,
-        "system": SYSTEM_PROMPT,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
         "stream": False,
+        "format": "json",
         "options": {
             "temperature": 0.3,  # Low temp for structured output
             "top_p": 0.9,
@@ -292,7 +299,7 @@ def _call_ollama(
         response = requests.post(url, json=payload, headers=headers, timeout=60)
         response.raise_for_status()
         result = response.json()
-        text = result.get("response", "")
+        text = result.get("message", {}).get("content", "")
         return extract_json_from_response(text)
     except Exception as e:
         print(f"    Visual param generation failed: {e}")

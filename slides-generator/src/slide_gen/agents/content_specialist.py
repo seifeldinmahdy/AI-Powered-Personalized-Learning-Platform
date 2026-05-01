@@ -99,6 +99,11 @@ def parse_output(text: str) -> dict:
     """
     title = "Untitled"
     items = []
+    found_any_tag = False  # Track if we've seen at least one structured tag
+
+    # T5 might generate tags inline (separated by spaces instead of newlines)
+    # Insert newlines before any known tags to ensure proper splitting
+    text = re.sub(r"(?<!^)(\bTITLE:|\bDEFINE \[|\bBULLET \[|\bDEFINE:|\bBULLET:)", r"\n\1", text, flags=re.IGNORECASE)
 
     for line in text.strip().split("\n"):
         line = line.strip()
@@ -109,6 +114,7 @@ def parse_output(text: str) -> dict:
         m = _TITLE_RE.match(line)
         if m:
             title = m.group(1).strip()
+            found_any_tag = True
             continue
 
         # Try DEFINE [term]: description
@@ -121,6 +127,7 @@ def parse_output(text: str) -> dict:
                 "highlight_type": "definition",
                 "term": term,
             })
+            found_any_tag = True
             continue
 
         # Try BULLET [tag]: text
@@ -134,6 +141,7 @@ def parse_output(text: str) -> dict:
                 "highlight_type": highlight,
                 "term": None,
             })
+            found_any_tag = True
             continue
 
         # Fallback: plain BULLET: or TITLE: (old format compat)
@@ -145,10 +153,16 @@ def parse_output(text: str) -> dict:
                     "highlight_type": "none",
                     "term": None,
                 })
+                found_any_tag = True
             continue
 
-    # Ultimate fallback: if no structured output, treat whole text as a bullet
-    if not items and text.strip():
+        # If we've already seen structured tags, discard any unmatched
+        # lines — they are raw source text that leaked from the model.
+        # Only keep untagged lines if NO tags have been found yet.
+
+    # Ultimate fallback: if no structured output was found at all,
+    # treat the whole text as a single bullet.
+    if not found_any_tag and not items and text.strip():
         items.append({
             "text": text.strip(),
             "highlight_type": "none",
@@ -186,14 +200,18 @@ def generate_content(
         max_length=512,
         truncation=True,
     )
-
-    outputs = model.generate(
-        **inputs,
-        max_length=max_length,
-        num_beams=4,
-        early_stopping=True,
-        no_repeat_ngram_size=3,
-    )
-
-    decoded = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return parse_output(decoded)
+    try:
+        outputs = _model.generate(
+            **inputs,
+            max_length=150,
+            num_beams=4,
+            early_stopping=True,
+            no_repeat_ngram_size=3,
+        )
+        text = _tokenizer.decode(outputs[0], skip_special_tokens=True)
+        print("====== RAW T5 GENERATED TEXT ======")
+        print(repr(text))
+        print("===================================")
+        return parse_output(text)
+    except Exception as e:
+        raise e

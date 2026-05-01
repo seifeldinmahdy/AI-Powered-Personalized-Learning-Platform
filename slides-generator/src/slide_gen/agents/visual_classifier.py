@@ -257,18 +257,23 @@ def should_render_visual(
 
     # Decision thresholds based on composition mode
     if composition_mode == "Visual_Heavy":
-        if confidence < 0.5:
+        # Render the predicted template. Only fall back to generic if confidence is abysmal.
+        if confidence < 0.05:
             return {"template_id": "concept_box", "confidence": confidence}
         return {"template_id": template_id, "confidence": confidence}
 
     elif composition_mode == "Balanced":
-        if confidence >= 0.6:
+        # Because confidence = L1 × L2 probabilities, values >= 0.2 are strong signals.
+        # (Random chance would be ~0.16 × 0.20 = ~0.03)
+        if confidence >= 0.15:
             return {"template_id": template_id, "confidence": confidence}
-        if confidence >= 0.35:
+        # Only use concept_box as a mild fallback for borderline cases
+        if confidence >= 0.05:
             return {"template_id": "concept_box", "confidence": confidence}
         return None
 
     else:  # Text_Heavy
-        if confidence >= 0.85:
+        # Stricter threshold for text-heavy mode
+        if confidence >= 0.35:
             return {"template_id": template_id, "confidence": confidence}
         return None

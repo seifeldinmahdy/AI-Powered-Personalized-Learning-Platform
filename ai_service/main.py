@@ -14,7 +14,14 @@ if _intent_model_dir not in sys.path:
     sys.path.insert(0, _intent_model_dir)
 from fastapi.middleware.cors import CORSMiddleware
 from routers import health, asr, coding
-from routers import intent, tts, fer, ser, tutor, rag, profiler
+from routers import intent, tts, fer, ser, tutor, rag, profiler, slides
+
+# Add course_pathway to sys.path for the pathway router
+from pathlib import Path as _Path
+_pathway_dir = str(_Path(__file__).resolve().parent.parent / "course_pathway")
+if _pathway_dir not in sys.path:
+    sys.path.insert(0, _pathway_dir)
+from router import router as pathway_router
 
 # Configure logging
 logging.basicConfig(
@@ -68,6 +75,10 @@ async def root():
             "tutor_health": "/tutor/health",
             "profiler_update": "/profiler/update",
             "profiler_fuse_emotions": "/profiler/fuse-emotions",
+            "pathway_generate": "/pathway/generate",
+            "pathway_health": "/pathway/health",
+            "slides_generate": "/slides/generate",
+            "slides_health": "/slides/health",
         }
     }
 
@@ -82,3 +93,5 @@ app.include_router(ser.router)
 app.include_router(tutor.router)
 app.include_router(rag.router)
 app.include_router(profiler.router)
+app.include_router(slides.router)
+app.include_router(pathway_router)

@@ -14,6 +14,7 @@ Run:
 
 from __future__ import annotations
 
+import html as html_mod
 import json
 import re
 import sys
@@ -71,6 +72,7 @@ from slide_gen.agents.accessibility import generate_alt_text
 from slide_gen.agents.visual_param_generator import generate_visual_params
 from slide_gen.pipeline.summary_generator import generate_summary_slide
 from slide_gen.pipeline.validation import validate_deck
+
 
 logger = structlog.get_logger(__name__)
 
@@ -289,7 +291,7 @@ def _process_chunk_full_pipeline(
     )
     with torch.no_grad():
         outputs = model.generate(
-            **inputs, max_length=150, num_beams=4,
+            **inputs, max_length=300, num_beams=4,
             early_stopping=True, no_repeat_ngram_size=3,
         )
     raw_output = tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -304,8 +306,17 @@ def _process_chunk_full_pipeline(
     body_content = []
     for item in items:
         hl = _HL_MAP.get(item.get("highlight_type", "none"), HighlightType.NONE)
+        text = item["text"]
+        # Cap very long items — training data averages ~150 chars per item;
+        # anything >300 is almost certainly raw source text parroted by T5.
+        if len(text) > 300:
+            cut = text.rfind(".", 0, 300)
+            if cut > 150:
+                text = text[: cut + 1]
+            else:
+                text = text[:300].rsplit(" ", 1)[0] + "..."
         body_content.append(ContentItem(
-            text=item["text"], highlight_type=hl, term=item.get("term"),
+            text=text, highlight_type=hl, term=item.get("term"),
         ))
 
     # Agent 2: Visual Classifier
@@ -384,8 +395,241 @@ SLIDE_WIDTH = 720
 SLIDE_HEIGHT = 405   # 16:9
 
 
+def _visual_to_html(visual: VisualTemplate) -> str:
+    """Convert visual params to inline HTML/CSS for rendering inside the slide card.
+
+    Each template type gets a clean HTML representation that looks like
+    a real presentation visual — no external Graphviz/Mermaid required.
+    """
+    _esc = html_mod.escape
+    tid = visual.template
+    p = visual.params if visual.params else {}
+
+    box_base = (
+        'margin:8px 0 0 0; border-radius:6px; font-size:11px; '
+        'box-sizing:border-box; '
+    )
+
+    # ── concept_box: a simple summary box ────────────────────────
+    if tid == "concept_box":
+        title = _esc(str(p.get("title", "")))
+        points = p.get("points", [])
+        pts_html = "".join(
+            f'<li style="margin:2px 0;">{_esc(str(pt))}</li>' for pt in points
+        )
+        return (
+            f'<div style="{box_base} background:#f0fdf4; border:1px solid #86efac; padding:10px 14px;">'
+            f'<div style="font-weight:700; color:#166534; font-size:12px; margin-bottom:4px;">{title}</div>'
+            f'<ul style="margin:0; padding-left:18px; color:#374151;">{pts_html}</ul>'
+            f'</div>'
+        )
+
+    # ── comparison: two-column layout ────────────────────────────
+    if tid == "comparison":
+        lt = _esc(str(p.get("left_title", "A")))
+        rt = _esc(str(p.get("right_title", "B")))
+        li = p.get("left_items", [])
+        ri = p.get("right_items", [])
+        l_html = "".join(f'<li style="margin:2px 0;">{_esc(str(x))}</li>' for x in li)
+        r_html = "".join(f'<li style="margin:2px 0;">{_esc(str(x))}</li>' for x in ri)
+        return (
+            f'<div style="{box_base} display:flex; gap:8px;">'
+            f'<div style="flex:1; background:#eff6ff; border:1px solid #93c5fd; border-radius:6px; padding:8px;">'
+            f'<div style="font-weight:700; color:#1d4ed8; text-align:center; margin-bottom:4px;">{lt}</div>'
+            f'<ul style="margin:0; padding-left:16px; color:#374151;">{l_html}</ul></div>'
+            f'<div style="flex:1; background:#fef3c7; border:1px solid #fcd34d; border-radius:6px; padding:8px;">'
+            f'<div style="font-weight:700; color:#92400e; text-align:center; margin-bottom:4px;">{rt}</div>'
+            f'<ul style="margin:0; padding-left:16px; color:#374151;">{r_html}</ul></div>'
+            f'</div>'
+        )
+
+    # ── flowchart / process_flow: vertical steps with arrows ─────
+    if tid in ("flowchart", "process_flow"):
+        steps = p.get("steps", [])
+        nodes = p.get("nodes", [])
+        # Prefer steps list; fall back to nodes
+        labels = steps if steps else [n.get("label", n.get("id", "")) if isinstance(n, dict) else str(n) for n in nodes]
+        if not labels:
+            labels = ["Step 1", "Step 2", "Step 3"]
+        items_html = ""
+        for i, lbl in enumerate(labels[:6]):  # cap at 6 steps
+            bg = "#dbeafe" if i % 2 == 0 else "#e0e7ff"
+            items_html += (
+                f'<div style="background:{bg}; border:1px solid #93c5fd; border-radius:4px; '
+                f'padding:4px 10px; text-align:center; color:#1e3a8a; font-size:11px;">{_esc(str(lbl))}</div>'
+            )
+            if i < len(labels) - 1 and i < 5:
+                items_html += '<div style="text-align:center; color:#6b7280; font-size:14px; line-height:1;">&#8595;</div>'
+        return f'<div style="{box_base} padding:6px 0;">{items_html}</div>'
+
+    # ── linear_chain: horizontal boxes with arrows ───────────────
+    if tid == "linear_chain":
+        nodes = p.get("nodes", ["A", "B", "C"])
+        items_html = ""
+        for i, nd in enumerate(nodes[:6]):
+            items_html += (
+                f'<div style="background:#e0f2fe; border:1px solid #7dd3fc; border-radius:4px; '
+                f'padding:4px 8px; font-size:11px; color:#0c4a6e; white-space:nowrap;">{_esc(str(nd))}</div>'
+            )
+            if i < len(nodes) - 1 and i < 5:
+                items_html += '<div style="color:#6b7280; font-size:14px;">&#8594;</div>'
+        return (
+            f'<div style="{box_base} display:flex; align-items:center; gap:4px; '
+            f'flex-wrap:wrap; padding:6px 0;">{items_html}</div>'
+        )
+
+    # ── stack: vertical boxes (top on top) ───────────────────────
+    if tid == "stack":
+        items = p.get("items", ["Item 1", "Item 2", "Item 3"])
+        top_label = _esc(str(p.get("top_label", "TOP")))
+        stack_html = ""
+        for i, item in enumerate(items[:5]):
+            bg = "#bfdbfe" if i == 0 else "#e0f2fe"
+            lbl = f"{top_label} \u2192 {_esc(str(item))}" if i == 0 else _esc(str(item))
+            stack_html += (
+                f'<div style="background:{bg}; border:1px solid #7dd3fc; padding:4px 10px; '
+                f'text-align:center; font-size:11px; color:#0c4a6e;">{lbl}</div>'
+            )
+        return (
+            f'<div style="{box_base} border:2px solid #93c5fd; border-radius:6px; '
+            f'overflow:hidden; width:55%; margin:8px auto 0 auto;">{stack_html}</div>'
+        )
+
+    # ── queue: horizontal boxes with front/back labels ───────────
+    if tid == "queue":
+        items = p.get("items", ["Item 1", "Item 2", "Item 3"])
+        front = _esc(str(p.get("front_label", "FRONT")))
+        back = _esc(str(p.get("back_label", "BACK")))
+        q_html = f'<span style="color:#6b7280; font-size:10px; margin-right:4px;">{front}&#8594;</span>'
+        for item in items[:5]:
+            q_html += (
+                f'<span style="background:#e0f2fe; border:1px solid #7dd3fc; border-radius:3px; '
+                f'padding:3px 8px; font-size:11px; color:#0c4a6e; margin:0 2px;">{_esc(str(item))}</span>'
+            )
+        q_html += f'<span style="color:#6b7280; font-size:10px; margin-left:4px;">&#8594;{back}</span>'
+        return f'<div style="{box_base} display:flex; align-items:center; flex-wrap:wrap; padding:6px 0;">{q_html}</div>'
+
+    # ── binary_tree: simple three-level tree layout ──────────────
+    if tid == "binary_tree":
+        root = _esc(str(p.get("root", "Root")))
+        left = _esc(str(p.get("left", "Left")))
+        right = _esc(str(p.get("right", "Right")))
+        node_style = (
+            'display:inline-block; background:#dcfce7; border:1px solid #86efac; '
+            'border-radius:50%; width:52px; height:52px; line-height:52px; '
+            'text-align:center; font-size:10px; color:#166534; font-weight:600;'
+        )
+        return (
+            f'<div style="{box_base} text-align:center; padding:6px 0;">'
+            f'<div><span style="{node_style}">{root}</span></div>'
+            f'<div style="color:#6b7280; font-size:12px;">&#8601; &nbsp; &#8600;</div>'
+            f'<div style="display:flex; justify-content:center; gap:28px;">'
+            f'<span style="{node_style}">{left}</span>'
+            f'<span style="{node_style}">{right}</span>'
+            f'</div></div>'
+        )
+
+    # ── layers: stacked coloured boxes ───────────────────────────
+    if tid == "layers":
+        layers = p.get("layers", ["Layer 1", "Layer 2", "Layer 3"])
+        colors = ["#fecdd3", "#fbcfe8", "#e9d5ff", "#c7d2fe", "#bfdbfe", "#a5f3fc"]
+        l_html = ""
+        for i, layer in enumerate(layers[:6]):
+            c = colors[i % len(colors)]
+            l_html += (
+                f'<div style="background:{c}; padding:4px 10px; text-align:center; '
+                f'font-size:11px; color:#1e293b; border-bottom:1px solid #e2e8f0;">{_esc(str(layer))}</div>'
+            )
+        return (
+            f'<div style="{box_base} border:2px solid #cbd5e1; border-radius:6px; '
+            f'overflow:hidden; width:65%; margin:8px auto 0 auto;">{l_html}</div>'
+        )
+
+    # ── cycle: circular arrows ───────────────────────────────────
+    if tid == "cycle":
+        nodes = p.get("nodes", ["A", "B", "C"])
+        items_html = ""
+        for i, nd in enumerate(nodes[:5]):
+            items_html += (
+                f'<span style="background:#fef3c7; border:1px solid #fcd34d; border-radius:4px; '
+                f'padding:3px 8px; font-size:11px; color:#92400e;">{_esc(str(nd))}</span>'
+            )
+            items_html += '<span style="color:#6b7280; font-size:14px;"> &#8594; </span>'
+        # Close the cycle arrow
+        items_html += '<span style="color:#6b7280; font-size:10px;">&#8634;</span>'
+        return f'<div style="{box_base} display:flex; align-items:center; flex-wrap:wrap; gap:2px; padding:6px 0;">{items_html}</div>'
+
+    # ── definition_box ───────────────────────────────────────────
+    if tid == "definition_box":
+        term = _esc(str(p.get("term", "Term")))
+        defn = _esc(str(p.get("definition", "")))
+        examples = p.get("examples", [])
+        ex_html = ""
+        if examples:
+            ex_items = "".join(f'<li>{_esc(str(e))}</li>' for e in examples[:3])
+            ex_html = f'<div style="margin-top:4px; font-size:10px; color:#4b5563;"><em>Examples:</em><ul style="margin:2px 0 0 16px; padding:0;">{ex_items}</ul></div>'
+        return (
+            f'<div style="{box_base} background:#eff6ff; border:1px solid #93c5fd; padding:10px 14px;">'
+            f'<div style="font-weight:700; color:#1d4ed8; font-size:13px;">{term}</div>'
+            f'<div style="color:#374151; margin-top:4px;">{defn}</div>'
+            f'{ex_html}</div>'
+        )
+
+    # ── info_card: key/value pairs ───────────────────────────────
+    if tid == "info_card":
+        title = _esc(str(p.get("title", "Information")))
+        items = p.get("items", [])
+        rows = ""
+        for item in items[:5]:
+            k = _esc(str(item.get("key", "")))
+            v = _esc(str(item.get("value", "")))
+            rows += (
+                f'<tr><td style="padding:3px 8px; background:#dbeafe; font-weight:600; '
+                f'border:1px solid #bfdbfe; font-size:11px;">{k}</td>'
+                f'<td style="padding:3px 8px; background:#eff6ff; border:1px solid #bfdbfe; '
+                f'font-size:11px;">{v}</td></tr>'
+            )
+        return (
+            f'<div style="{box_base}">'
+            f'<table style="border-collapse:collapse; width:100%; margin-top:4px;">'
+            f'<tr><td colspan="2" style="background:#1d4ed8; color:white; padding:4px 8px; '
+            f'font-weight:700; font-size:12px; text-align:center;">{title}</td></tr>'
+            f'{rows}</table></div>'
+        )
+
+    # ── bar_chart / pie_chart: simple HTML bar representation ────
+    if tid in ("bar_chart", "pie_chart", "line_chart"):
+        labels = p.get("labels", [])
+        values = p.get("values", [])
+        title = _esc(str(p.get("title", "Chart")))
+        if not labels or not values:
+            return ""
+        max_val = max(values) if values else 1
+        bars_html = ""
+        colors = ["#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#ef4444"]
+        for i, (lbl, val) in enumerate(zip(labels[:6], values[:6])):
+            pct = int(val / max_val * 100) if max_val else 0
+            c = colors[i % len(colors)]
+            bars_html += (
+                f'<div style="display:flex; align-items:center; gap:6px; margin:2px 0;">'
+                f'<span style="width:60px; font-size:10px; text-align:right; color:#374151;">{_esc(str(lbl))}</span>'
+                f'<div style="flex:1; background:#f3f4f6; border-radius:3px; height:14px;">'
+                f'<div style="width:{pct}%; background:{c}; height:100%; border-radius:3px;"></div></div>'
+                f'<span style="font-size:10px; color:#6b7280; width:30px;">{val}</span></div>'
+            )
+        return (
+            f'<div style="{box_base} padding:6px 0;">'
+            f'<div style="font-size:11px; font-weight:600; color:#374151; margin-bottom:4px;">{title}</div>'
+            f'{bars_html}</div>'
+        )
+
+    # ── Fallback: just show the template name as a subtle label ──
+    return ""
+
+
 def _render_slide_html(slide: SlideInstruction, slide_num: int, total: int) -> str:
     """Render one slide as a fixed-size white card that looks like a real slide."""
+    _esc = html_mod.escape
 
     # Determine background based on slide type
     if slide.slide_type == SlideType.TITLE:
@@ -393,12 +637,12 @@ def _render_slide_html(slide: SlideInstruction, slide_num: int, total: int) -> s
         title_style = "color:#ffffff; font-size:28px; font-weight:700; text-align:center; margin-top:80px;"
         subtitle_html = ""
         if slide.body_content:
-            subtitle_html = f'<p style="color:#94a3b8; font-size:14px; text-align:center;">{slide.body_content[0].text}</p>'
+            subtitle_html = f'<p style="color:#94a3b8; font-size:14px; text-align:center;">{_esc(slide.body_content[0].text)}</p>'
         return (
             f'<div style="width:{SLIDE_WIDTH}px; height:{SLIDE_HEIGHT}px; {bg} '
             f'border-radius:8px; padding:40px; box-sizing:border-box; position:relative; '
             f'border:1px solid #e5e7eb; overflow:hidden;">'
-            f'<p style="{title_style}">{slide.title}</p>'
+            f'<p style="{title_style}">{_esc(slide.title)}</p>'
             f'{subtitle_html}'
             f'<p style="position:absolute; bottom:12px; right:16px; color:#64748b; font-size:11px;">'
             f'{slide_num}/{total}</p></div>'
@@ -406,14 +650,15 @@ def _render_slide_html(slide: SlideInstruction, slide_num: int, total: int) -> s
 
     if slide.slide_type == SlideType.SECTION_OPENER:
         bg = "background: linear-gradient(135deg, #312e81 0%, #1e1b4b 100%);"
+        opener_text = _esc(slide.body_content[0].text) if slide.body_content else ""
         return (
             f'<div style="width:{SLIDE_WIDTH}px; height:{SLIDE_HEIGHT}px; {bg} '
             f'border-radius:8px; padding:40px; box-sizing:border-box; position:relative; '
             f'border:1px solid #e5e7eb; overflow:hidden; display:flex; flex-direction:column; '
             f'justify-content:center; align-items:center;">'
             f'<p style="color:#c7d2fe; font-size:13px; text-transform:uppercase; letter-spacing:2px; margin-bottom:8px;">'
-            f'{slide.body_content[0].text if slide.body_content else ""}</p>'
-            f'<p style="color:#ffffff; font-size:26px; font-weight:700; text-align:center;">{slide.title}</p>'
+            f'{opener_text}</p>'
+            f'<p style="color:#ffffff; font-size:26px; font-weight:700; text-align:center;">{_esc(slide.title)}</p>'
             f'<p style="position:absolute; bottom:12px; right:16px; color:#818cf8; font-size:11px;">'
             f'{slide_num}/{total}</p></div>'
         )
@@ -426,60 +671,64 @@ def _render_slide_html(slide: SlideInstruction, slide_num: int, total: int) -> s
     elif slide.slide_type == SlideType.AGENDA:
         title_color = "#374151"
 
-    # Title bar
-    html = (
+    # Check if visual present — use two-column layout
+    has_visual = slide.visual and slide.visual.template
+    visual_html = _visual_to_html(slide.visual) if has_visual else ""
+    use_two_col = bool(visual_html)
+
+    # Outer slide card
+    slide_html = (
         f'<div style="width:{SLIDE_WIDTH}px; height:{SLIDE_HEIGHT}px; {bg} '
-        f'border-radius:8px; padding:28px 32px 16px 32px; box-sizing:border-box; '
-        f'position:relative; border:1px solid #d1d5db; overflow-y:auto;">'
-        f'<p style="color:{title_color}; font-size:20px; font-weight:700; '
-        f'margin:0 0 12px 0; padding-bottom:8px; border-bottom:2px solid #e5e7eb;">'
-        f'{slide.title}</p>'
+        f'border-radius:8px; padding:24px 28px 14px 28px; box-sizing:border-box; '
+        f'position:relative; border:1px solid #d1d5db; overflow:hidden;">'
+        f'<p style="color:{title_color}; font-size:18px; font-weight:700; '
+        f'margin:0 0 8px 0; padding-bottom:6px; border-bottom:2px solid #e5e7eb;">'
+        f'{_esc(slide.title)}</p>'
     )
 
+    # Two-column wrapper if visual present
+    if use_two_col:
+        slide_html += '<div style="display:flex; gap:14px; height:calc(100% - 50px);">'
+        slide_html += '<div style="flex:3; overflow:hidden;">'
+
     # Body content
-    html += '<div style="margin:0; padding:0;">'
     for item in slide.body_content:
         style_str, is_def = _HL_STYLE.get(item.highlight_type, ("color:#374151;", False))
         if item.term and item.highlight_type == HighlightType.DEFINITION:
-            # Definition: bold term header + description
-            html += (
-                f'<div style="margin:8px 0 4px 0;">'
-                f'<span style="font-weight:700; color:#1e40af; font-size:14px;">{item.term}</span>'
+            slide_html += (
+                f'<div style="margin:6px 0 2px 0;">'
+                f'<span style="font-weight:700; color:#1e40af; font-size:12px;">{_esc(item.term)}</span>'
                 f'</div>'
-                f'<p style="margin:0 0 8px 16px; font-size:13px; {style_str}">{item.text}</p>'
+                f'<p style="margin:0 0 6px 12px; font-size:11px; {style_str}">{_esc(item.text)}</p>'
             )
         else:
-            # Bullet point
-            html += (
-                f'<p style="margin:4px 0 4px 16px; font-size:13px; {style_str}">'
-                f'&bull;&nbsp; {item.text}</p>'
+            slide_html += (
+                f'<p style="margin:3px 0 3px 12px; font-size:11px; {style_str}">'
+                f'&bull;&nbsp; {_esc(item.text)}</p>'
             )
-    html += '</div>'
+
+    # Close text column, add visual column
+    if use_two_col:
+        slide_html += '</div>'  # close text column
+        slide_html += f'<div style="flex:2; display:flex; align-items:center;">{visual_html}</div>'
+        slide_html += '</div>'  # close flex wrapper
 
     # Code block
     if slide.code_block:
-        html += (
-            f'<div style="background:#1e293b; border-radius:6px; padding:12px; margin-top:8px;">'
-            f'<pre style="color:#e2e8f0; font-family:monospace; font-size:11px; '
-            f'margin:0; white-space:pre-wrap; overflow-x:auto;">{slide.code_block.code}</pre></div>'
+        slide_html += (
+            f'<div style="background:#1e293b; border-radius:6px; padding:8px 10px; margin-top:6px;">'
+            f'<pre style="color:#e2e8f0; font-family:monospace; font-size:10px; '
+            f'margin:0; white-space:pre-wrap; overflow-x:auto;">{_esc(slide.code_block.code)}</pre></div>'
         )
 
-    # Visual badge
-    if slide.visual:
-        html += (
-            f'<div style="position:absolute; top:8px; right:12px; background:#e0e7ff; '
-            f'color:#3730a3; font-size:10px; padding:2px 8px; border-radius:10px;">'
-            f'Visual: {slide.visual.template}</div>'
-        )
-
-    # Slide number
-    html += (
-        f'<p style="position:absolute; bottom:8px; right:12px; color:#9ca3af; font-size:11px; margin:0;">'
+    # Slide number (bottom-left to avoid overlap with visual badge)
+    slide_html += (
+        f'<p style="position:absolute; bottom:6px; left:14px; color:#9ca3af; font-size:10px; margin:0;">'
         f'{slide_num}/{total}</p>'
     )
 
-    html += '</div>'
-    return html
+    slide_html += '</div>'
+    return slide_html
 
 
 # ── Main UI ──────────────────────────────────────────────────────
@@ -728,10 +977,9 @@ def main():
                 label += f" [{trimmed} tokens trimmed]"
 
             with st.expander(label, expanded=(i == 0)):
-                # Render the slide as a card
+                # Render the slide as a card (visuals are inside the card)
                 slide_html = _render_slide_html(slide, i + 3, len(content_slides) + 3)
                 st.markdown(slide_html, unsafe_allow_html=True)
-                st.write("")
 
                 # Raw model output
                 with st.expander("Raw model output"):
@@ -801,7 +1049,7 @@ def main():
                 st.session_state["deck_index"] = idx + 1
                 st.rerun()
 
-        # Render current slide
+        # Render current slide (visuals are inside the card)
         slide_html = _render_slide_html(deck[idx], idx + 1, len(deck))
         st.markdown(
             f'<div style="display:flex; justify-content:center; margin:16px 0;">{slide_html}</div>',

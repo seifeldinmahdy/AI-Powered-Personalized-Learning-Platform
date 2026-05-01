@@ -37,6 +37,14 @@ export const router = createBrowserRouter([
                 path: "courses/:courseId/assessment",
                 lazy: () => import("./pages/Assessment").then(m => ({ Component: m.default })),
             },
+            {
+                path: "course/:courseId/pathway",
+                lazy: () => import("./pages/student/CoursePathway").then(m => ({ Component: m.default })),
+            },
+            {
+                path: "course/:courseId/pathway/session/:sessionNumber",
+                lazy: () => import("./pages/student/PathwaySession").then(m => ({ Component: m.default })),
+            },
             { path: "practice", Component: PracticeArea },
             { path: "practice/:topic", Component: PracticeArea },
             { path: "profile", Component: Profile },

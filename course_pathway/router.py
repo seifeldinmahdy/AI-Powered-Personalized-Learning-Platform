@@ -216,6 +216,74 @@ async def available_courses():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class SessionChunksRequest(BaseModel):
+    student_id: str
+    course_id: str
+    session_number: int
+
+
+class SessionChunkOut(BaseModel):
+    chunk_id: str
+    raw_text: str
+    topic: str
+    page_start: int
+    page_end: int
+
+
+@router.post("/session-chunks", response_model=list[SessionChunkOut])
+async def get_session_chunks(request: SessionChunksRequest):
+    """Return the raw text chunks for a specific session from a cached plan.
+
+    Loads the plan from the store, finds the session by number, and
+    returns the chunk texts by looking them up in ChromaDB.
+    """
+    try:
+        gen = _get_generator()
+
+        # Load cached plan
+        cached_plan = gen._store.load(request.student_id, request.course_id)
+        if cached_plan is None:
+            raise HTTPException(status_code=404, detail="No cached plan found")
+
+        # Find the session
+        session = None
+        for s in cached_plan.sessions:
+            if s.session_number == request.session_number:
+                session = s
+                break
+
+        if session is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Session {request.session_number} not found",
+            )
+
+        # The session already has SessionChunk objects with chunk_id and raw_text
+        # But we also need topic, page_start, page_end from ChromaDB metadata
+        # Fetch all course chunks from ChromaDB for metadata lookup
+        all_chunks = gen._reader.get_all_course_chunks(request.course_id)
+        chunk_map = {c.chunk_id: c for c in all_chunks}
+
+        result = []
+        for sc in session.chunks:
+            meta = chunk_map.get(sc.chunk_id)
+            result.append(SessionChunkOut(
+                chunk_id=sc.chunk_id,
+                raw_text=sc.raw_text,
+                topic=meta.topic if meta else "",
+                page_start=meta.page_start if meta else 0,
+                page_end=meta.page_end if meta else 0,
+            ))
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Session chunks error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/health")
 async def pathway_health():
     """Health check for the pathway generator."""
