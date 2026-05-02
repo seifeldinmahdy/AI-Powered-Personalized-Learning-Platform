@@ -57,12 +57,21 @@ export default function Assessment() {
                     setCourseTitle(topic);
                 }
             }
+            
+            // Mark assessment as started
+            if (enrollmentId) {
+                try {
+                    const { default: api } = await import('../services/api');
+                    await api.patch(`/courses/enrollments/${enrollmentId}/`, { is_assessment_started: true });
+                } catch { /* ignore */ }
+            }
+
             const qs = await generateAssessmentQuestions(topic, 6);
             setQuestions(qs);
             setPhase('quiz');
         }
         load();
-    }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [id, enrollmentId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── derived ───────────────────────────────────────────────────────────────
 
@@ -70,6 +79,35 @@ export default function Assessment() {
     const progressPct = totalQuestions > 0 ? Math.round(((current + 1) / totalQuestions) * 100) : 0;
     const currentQ = questions[current];
     const selectedOption = currentQ !== undefined ? (answers[currentQ.id] ?? -1) : -1;
+
+    // ── polling state ────────────────────────────────────────────────────────
+    const [pathwayReady, setPathwayReady] = useState(false);
+    const [firstLessonId, setFirstLessonId] = useState<number | null>(null);
+
+    useEffect(() => {
+        if (phase !== 'results' || pathwayReady || !enrollmentId) return;
+
+        let interval = setInterval(async () => {
+            try {
+                const { getEnrollments } = await import('../services/api');
+                const res = await getEnrollments();
+                const list = Array.isArray(res.data) ? res.data : res.data?.results || [];
+                const enroll = list.find((e: any) => e.id === enrollmentId);
+                
+                if (enroll && enroll.is_pathway_ready) {
+                    setPathwayReady(true);
+                    if (enroll.current_lesson) {
+                        setFirstLessonId(enroll.current_lesson);
+                    }
+                    clearInterval(interval);
+                }
+            } catch {
+                // ignore
+            }
+        }, 3000); // pool every 3s
+
+        return () => clearInterval(interval);
+    }, [phase, pathwayReady, enrollmentId]);
 
     // ── handlers ──────────────────────────────────────────────────────────────
 
@@ -116,7 +154,11 @@ export default function Assessment() {
     };
 
     const handleBeginLearning = () => {
-        navigate('/dashboard');
+        if (firstLessonId) {
+            navigate(`/course/${id}/lesson/${firstLessonId}`);
+        } else {
+            navigate(`/course/${id}/pathway`); // or dashboard if not ready
+        }
     };
 
     // ── score calculation for results ─────────────────────────────────────────
@@ -175,12 +217,21 @@ export default function Assessment() {
                         </div>
 
                         {/* CTA */}
-                        <button
-                            onClick={handleBeginLearning}
-                            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold text-sm hover:shadow-lg transition-all"
-                        >
-                            Begin Learning <ChevronRight size={16} />
-                        </button>
+                        {pathwayReady ? (
+                            <button
+                                onClick={handleBeginLearning}
+                                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold text-sm hover:shadow-lg transition-all"
+                            >
+                                Begin Learning <ChevronRight size={16} />
+                            </button>
+                        ) : (
+                            <button
+                                disabled
+                                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold text-sm opacity-60"
+                            >
+                                <Loader2 size={16} className="animate-spin" /> Preparing your pathway...
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>

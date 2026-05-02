@@ -52,6 +52,8 @@ interface EnrollmentInfo {
     course: number;
     current_lesson: number | null;
     placement_score: number | null;
+    is_pathway_ready: boolean;
+    is_assessment_started: boolean;
 }
 
 export default function CourseDetail() {
@@ -143,28 +145,42 @@ export default function CourseDetail() {
         if (!course) return;
         setEnrolling(true);
         try {
-            // If already enrolled, go straight to the current lesson (or first lesson)
+            // If already enrolled, navigate based on pathway/assessment progress
             if (enrollment) {
-                if (enrollment.current_lesson) {
-                    navigate(`/course/${id}/lesson/${enrollment.current_lesson}`);
-                } else {
-                    // Find the first lesson of the first module
-                    const firstLesson = Object.values(lessonMap).flat()[0];
-                    if (firstLesson) {
-                        navigate(`/course/${id}/lesson/${firstLesson.id}`);
-                    } else if (modules.length > 0) {
-                        // Lessons not loaded yet — fetch first module's lessons
-                        try {
-                            const lessons = await getLessons(modules[0].id);
-                            if (lessons.length > 0) {
-                                navigate(`/course/${id}/lesson/${lessons[0].id}`);
-                                return;
-                            }
-                        } catch { /* ignore */ }
+                if (enrollment.is_pathway_ready) {
+                    if (enrollment.current_lesson) {
+                        navigate(`/course/${id}/lesson/${enrollment.current_lesson}`);
+                    } else {
+                        // Find the first lesson of the first module
+                        const firstLesson = Object.values(lessonMap).flat()[0];
+                        if (firstLesson) {
+                            navigate(`/course/${id}/lesson/${firstLesson.id}`);
+                        } else if (modules.length > 0) {
+                            // Lessons not loaded yet — fetch first module's lessons
+                            try {
+                                const lessons = await getLessons(modules[0].id);
+                                if (lessons.length > 0) {
+                                    navigate(`/course/${id}/lesson/${lessons[0].id}`);
+                                    return;
+                                }
+                            } catch { /* ignore */ }
+                        }
+                        navigate('/dashboard');
                     }
-                    navigate('/dashboard');
+                    return;
+                } else if (enrollment.is_assessment_started) {
+                    // Resume assessment
+                    navigate(`/courses/${id}/assessment`, {
+                        state: { enrollmentId: enrollment.id, courseTitle: course.title },
+                    });
+                    return;
+                } else {
+                    // Start assessment flow
+                    navigate(`/courses/${id}/assessment`, {
+                        state: { enrollmentId: enrollment.id, courseTitle: course.title },
+                    });
+                    return;
                 }
-                return;
             }
             // Otherwise enroll first, then send to assessment
             const { enroll } = await import('../services/api');
@@ -478,7 +494,14 @@ function CtaCard({
                     {enrolling ? (
                         <><Loader2 size={16} className="animate-spin" /> Loading…</>
                     ) : (
-                        <>Continue Learning <ChevronRight size={16} /></>
+                        <>
+                            {enrollment?.is_pathway_ready 
+                                ? 'Continue Learning' 
+                                : enrollment?.is_assessment_started 
+                                    ? 'Resume Assessment' 
+                                    : 'Start Assessment'} 
+                            <ChevronRight size={16} />
+                        </>
                     )}
                 </button>
             ) : (

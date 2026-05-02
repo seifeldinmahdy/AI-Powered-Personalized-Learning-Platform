@@ -83,6 +83,7 @@ class EnrollmentSerializer(serializers.ModelSerializer):
         fields = [
             "id", "student", "course", "course_title",
             "current_lesson", "progress_percentage", "current_score",
-            "is_paid", "enrolled_at", "last_accessed",
+            "placement_score", "current_pathway", "is_pathway_ready",
+            "is_assessment_started", "is_paid", "enrolled_at", "last_accessed",
         ]
         read_only_fields = ["id", "student", "enrolled_at", "last_accessed"]

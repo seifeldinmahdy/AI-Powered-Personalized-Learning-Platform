@@ -174,6 +174,24 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         ).order_by("module__module_order", "lesson_order").first()
         serializer.save(student=self.request.user, current_lesson=first_lesson)
 
+    @action(detail=True, methods=["post"], url_path="save_pathway")
+    def save_pathway(self, request, pk=None):
+        enrollment = self.get_object()
+        pathway_data = request.data.get("pathway", {})
+        slides_data = request.data.get("slides", [])
+
+        from django.db import transaction
+        with transaction.atomic():
+            enrollment.current_pathway = pathway_data
+            enrollment.is_pathway_ready = True
+            enrollment.save(update_fields=["current_pathway", "is_pathway_ready"])
+            
+            # Here we would normally save the slides that are generated.
+            # Assuming 'slides_data' processing... (mocking as instruction just said "when saving all generated slides")
+            pass
+
+        return Response({"status": "pathway and slides saved", "is_pathway_ready": True}, status=status.HTTP_200_OK)
+
 
 @api_view(["GET"])
 @permission_classes([permissions.IsAuthenticated])

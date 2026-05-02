@@ -14,6 +14,7 @@ import NotFound from "./pages/shared/NotFound";
 import StudentLayout from "./layouts/StudentLayout";
 import AdminLayout from "./layouts/AdminLayout";
 import RequireAuth from "./components/RequireAuth";
+import RequirePathway from "./components/RequirePathway";
 
 export const router = createBrowserRouter([
     // Public routes
@@ -53,7 +54,14 @@ export const router = createBrowserRouter([
             { path: "practice/:topic", Component: PracticeArea },
             { path: "leaderboard", Component: Leaderboard },
             { path: "profile", Component: Profile },
-            { path: "course/:courseId/lesson/:lessonId", Component: LiveSession },
+            { 
+                path: "course/:courseId/lesson/:lessonId", 
+                element: (
+                    <RequirePathway>
+                        <LiveSession />
+                    </RequirePathway>
+                )
+            },
         ],
     },
 

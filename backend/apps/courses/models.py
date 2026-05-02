@@ -205,6 +205,8 @@ class Enrollment(models.Model):
     )
     current_score = models.IntegerField(default=0)
     is_paid = models.BooleanField(default=False)
+    is_pathway_ready = models.BooleanField(default=False)
+    is_assessment_started = models.BooleanField(default=False)
     last_accessed = models.DateTimeField(auto_now=True)
 
     class Meta:
