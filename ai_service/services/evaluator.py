@@ -17,22 +17,25 @@ def evaluate_submission(question, user_code):
     client = Groq(api_key=api_key)
     
     prompt = f"""
-        You are a supportive and expert Computer Science Tutor.
-        
+        You are a strict Computer Science Tutor grading student code.
+
         TASK: "{question}"
         STUDENT CODE:
         {user_code}
-        
-        GRADING & GUIDANCE RULES:
-        1. **Empty Implementation:** If the code only contains a function signature, `pass`, placeholder comments, or no real logic, the status MUST be "Needs Work". This is unimplemented starter code.
-        2. **Technique Check:** If the task requires a specific method (e.g., a "loop") and the student used a shortcut (e.g., "len()"), the status is "Needs Work".
-        3. **Status:** Return "Pass" only if the code contains a real, working implementation that solves the task correctly.
-        4. **The Hint:** If the status is "Needs Work", the "feedback" must include a small, helpful hint. Do NOT give the full answer. Instead, ask a guiding question or point out the missing logic (e.g., "Try using a 'for' loop to visit each item one by one.").
+
+        STRICT GRADING RULES — follow ALL of them:
+        1. **Placeholder code:** If the body contains ONLY `pass`, `...`, a single undefined variable, or any code that does NOT solve the task, status MUST be "Needs Work". No exceptions.
+        2. **Single variable or expression:** A line like `x`, `True`, or `matrix` with no logic is NOT a solution. Status MUST be "Needs Work".
+        3. **Correctness:** Return "Pass" ONLY if the code actually implements the correct logic to solve the task completely.
+        4. **Partial attempts:** If the student started but the logic is incomplete or wrong, status is "Needs Work".
+        5. **Hint:** If "Needs Work", give a short helpful hint pointing to what is missing. Do NOT reveal the full solution.
+
+        You MUST be strict. When in doubt, return "Needs Work".
 
         Output JSON ONLY:
         {{
         "status": "Pass" or "Needs Work",
-        "feedback": "Your supportive hint or congratulatory message here."
+        "feedback": "Your hint or congratulatory message here."
         }}
         """
 

@@ -89,6 +89,38 @@ export default function PracticeArea() {
             return;
         }
 
+        // Reject if function body has no real logic
+        const bodyLines = trimmedCode.split('\n')
+            .map(l => l.trim())
+            .filter(l =>
+                l &&
+                !l.startsWith('#') &&
+                !l.startsWith('def ') &&
+                !l.startsWith('class ') &&
+                !l.startsWith('"""') &&
+                !l.startsWith("'''") &&
+                !l.match(/^""".*"""$/) &&
+                !l.match(/^'''.*'''$/) &&
+                l !== 'pass' &&
+                l !== '...'
+            );
+        // Must have at least one line with a real statement (contains operator, call, keyword, or return)
+        const hasLogic = bodyLines.some(l =>
+            l.includes('return') ||
+            l.includes('for ') ||
+            l.includes('while ') ||
+            l.includes('if ') ||
+            l.includes('=') ||
+            l.includes('(') ||
+            l.includes('print') ||
+            l.includes('append') ||
+            l.includes('yield')
+        );
+        if (!hasLogic) {
+            setFeedback({ status: "Needs Work", feedback: "Your function has no real implementation. Add logic like loops, conditions, or return statements." });
+            return;
+        }
+
         setSubmitting(true);
         setError(null);
         try {
