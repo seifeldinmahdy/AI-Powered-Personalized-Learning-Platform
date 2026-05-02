@@ -69,4 +69,4 @@ async def get_session_state(session_id: str):
             detail=f"Session {session_id} not found in shared store",
         )
 
-    return {"success": True, **data}
+    return {"success": True, **data.model_dump()}

@@ -25,6 +25,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+from schemas.student_context import UnifiedStudentContext
 
 import logging
 
@@ -63,9 +64,11 @@ class SlideGenerateRequest(BaseModel):
     topics_covered: list[str] = Field(default_factory=list)
     book: str = ""
     chunks: list[SessionChunkIn]
-    mastery_level: str = "Novice"
-    composition_mode: str = "visual_heavy"
-    language_proficiency: str = "Elementary"
+    # Deprecated: use student_context instead. Kept for backward compatibility.
+    mastery_level: str | None = "Novice"
+    composition_mode: str | None = "visual_heavy"
+    language_proficiency: str | None = "Elementary"
+    student_context: Optional[UnifiedStudentContext] = None
     session_id: Optional[str] = Field(
         default=None,
         description=(
@@ -180,17 +183,23 @@ def _generate_session_slides(
 
     _ensure_models()
 
-    profile_dict = {
-        "mastery_level": request.mastery_level,
-        "composition_mode": {
-            "visual_heavy": "Visual_Heavy",
-            "text_heavy": "Text_Heavy",
-            "balanced": "Balanced",
-        }.get(request.composition_mode, "Balanced"),
-        "language_proficiency": request.language_proficiency,
-    }
+    if request.student_context:
+        if not request.student_context.profile.is_fully_hydrated():
+            logger.warning("slides: Received UnifiedStudentContext but profile is NOT fully hydrated. Using defaults.")
+        profile_dict = request.student_context.to_slides_prompt_dict()
+    else:
+        # Legacy path — keep working for internal callers
+        profile_dict = {
+            "mastery_level": request.mastery_level or "Novice",
+            "composition_mode": {
+                "visual_heavy": "Visual_Heavy",
+                "text_heavy": "Text_Heavy",
+                "balanced": "Balanced",
+            }.get(request.composition_mode or "visual_heavy", "Balanced"),
+            "language_proficiency": request.language_proficiency or "Elementary",
+        }
 
-    composition_mode_display = profile_dict["composition_mode"]
+    composition_mode_display = profile_dict.get("composition_mode", "Balanced")
 
     slides: list[SlideOut] = []
     slide_num = 1
@@ -231,14 +240,14 @@ def _generate_session_slides(
     tutor_prefix = ""
     if tutor_context:
         parts = []
-        if tutor_context.get("current_topic"):
-            parts.append(f"Tutor is currently covering: {tutor_context['current_topic']}")
-        if tutor_context.get("current_slide_title"):
-            parts.append(f"Current slide: {tutor_context['current_slide_title']}")
-        if tutor_context.get("running_summary"):
+        if tutor_context.live.current_topic:
+            parts.append(f"Tutor is currently covering: {tutor_context.live.current_topic}")
+        if tutor_context.live.current_slide_title:
+            parts.append(f"Current slide: {tutor_context.live.current_slide_title}")
+        if tutor_context.live.running_summary:
             parts.append(
                 f"Summary of what the tutor has explained so far:\n"
-                f"{tutor_context['running_summary']}"
+                f"{tutor_context.live.running_summary}"
             )
         if parts:
             tutor_prefix = "\n".join(parts) + "\n\n"

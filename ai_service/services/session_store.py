@@ -16,33 +16,20 @@ Design decisions
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import os
 import threading
+import time
 from typing import Any, Dict, List, Optional
+
+from schemas.student_context import UnifiedStudentContext, StudentProfileState, LiveSessionState
 
 logger = logging.getLogger(__name__)
 
-# ── Default session schema ──────────────────────────────────────────
-
-_DEFAULT_SESSION: Dict[str, Any] = {
-    "session_id": "",
-    "student_id": "",
-    "current_slide_index": 0,
-    "current_slide_title": "",
-    "current_topic": "",
-    "current_subtopic": "",
-    "running_summary": "",
-    "tutor_transcript": [],   # last 10 entries
-    "fused_emotion": "",
-    "confidence": 0.0,
-    "pace_modifier": 0,
-    "student_profile_summary": "",
-}
-
 
 class SharedSessionStore:
-    """Thread-safe in-memory session store shared across AI subsystems.
+    """Thread-safe session store shared across AI subsystems.
 
     All writes are guarded by a ``threading.Lock`` so concurrent requests
     targeting the same ``session_id`` never produce torn reads/writes.
@@ -51,8 +38,7 @@ class SharedSessionStore:
     ----------
     use_redis : bool
         If *True* **and** ``REDIS_URL`` is set, back the store with Redis
-        instead of a plain dict.  Currently a stub — falls back to in-memory
-        if Redis is unavailable.
+        instead of a plain dict.
     """
 
     _instance: Optional["SharedSessionStore"] = None
@@ -67,7 +53,7 @@ class SharedSessionStore:
     def __init__(self, use_redis: bool = False) -> None:
         if self._initialised:  # type: ignore[has-type]
             return
-        self._store: Dict[str, Dict[str, Any]] = {}
+        self._store: Dict[str, UnifiedStudentContext] = {}
         self._lock = threading.Lock()
         self._use_redis = use_redis and bool(os.getenv("REDIS_URL"))
 
@@ -95,8 +81,47 @@ class SharedSessionStore:
 
     # ── Public API ──────────────────────────────────────────────────
 
-    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Return a *deep copy* of the session dict, or ``None`` if missing.
+    def create_session(
+        self,
+        session_id: str,
+        profile: StudentProfileState,
+        live: Optional[LiveSessionState] = None,
+        ttl_seconds: int = 86400,
+    ) -> UnifiedStudentContext:
+        """Create a new session in the store.
+
+        Parameters
+        ----------
+        session_id : str
+            The unique session identifier.
+        profile : StudentProfileState
+            The student's global profile state.
+        live : LiveSessionState, optional
+            The initial live session state. Defaults to empty.
+        ttl_seconds : int
+            Time-to-live for the session in seconds (if using Redis).
+        """
+        if live is None:
+            live = LiveSessionState(session_id=session_id)
+        else:
+            live.session_id = session_id
+            
+        context = UnifiedStudentContext(profile=profile, live=live)
+
+        with self._lock:
+            if self._use_redis:
+                prof_key = f"session:{session_id}:profile"
+                live_key = f"session:{session_id}:live"
+                self._redis.set(prof_key, context.profile.model_dump_json(), ex=ttl_seconds)
+                self._redis.set(live_key, context.live.model_dump_json(), ex=ttl_seconds)
+            else:
+                self._store[session_id] = copy.deepcopy(context)
+                
+            logger.info("SharedSessionStore: created session %s", session_id)
+            return context
+
+    def get_session(self, session_id: str) -> Optional[UnifiedStudentContext]:
+        """Return the session context, or ``None`` if missing.
 
         Parameters
         ----------
@@ -105,54 +130,97 @@ class SharedSessionStore:
 
         Returns
         -------
-        dict or None
-            A deep copy of the stored session state, or ``None`` if no
-            session with the given ID exists.
+        UnifiedStudentContext or None
+            A copy of the stored session state.
         """
         with self._lock:
-            data = self._store.get(session_id)
-            if data is None:
-                return None
-            return copy.deepcopy(data)
+            if self._use_redis:
+                prof_key = f"session:{session_id}:profile"
+                live_key = f"session:{session_id}:live"
+                
+                prof_data = self._redis.get(prof_key)
+                live_data = self._redis.get(live_key)
+                
+                if prof_data is None or live_data is None:
+                    return None
+                    
+                profile = StudentProfileState.model_validate_json(prof_data)
+                live = LiveSessionState.model_validate_json(live_data)
+                return UnifiedStudentContext(profile=profile, live=live)
+            else:
+                data = self._store.get(session_id)
+                if data is None:
+                    return None
+                return copy.deepcopy(data)
 
-    def update_session(self, session_id: str, **kwargs: Any) -> Dict[str, Any]:
-        """Create or update a session.  Only the supplied keyword arguments
-        are written; all other fields retain their previous (or default)
-        values.
+    def update_session(
+        self,
+        session_id: str,
+        live_kwargs: Optional[Dict[str, Any]] = None,
+        profile_kwargs: Optional[Dict[str, Any]] = None,
+        ttl_seconds: int = 86400,
+    ) -> UnifiedStudentContext:
+        """Update a session's profile or live state.
 
         Parameters
         ----------
         session_id : str
             The unique session identifier.
-        **kwargs
-            Arbitrary key-value pairs matching the session schema fields.
+        live_kwargs : dict, optional
+            Fields to update in LiveSessionState.
+        profile_kwargs : dict, optional
+            Fields to update in StudentProfileState.
+        ttl_seconds : int
+            Time-to-live for the session in seconds (if using Redis).
 
         Returns
         -------
-        dict
-            A deep copy of the session state *after* the update.
+        UnifiedStudentContext
+            The updated session context.
+            
+        Raises
+        ------
+        KeyError
+            If the session does not exist.
+        ValidationError
+            If the provided kwargs violate Pydantic schema validation.
         """
         with self._lock:
-            if session_id not in self._store:
-                self._store[session_id] = {
-                    **copy.deepcopy(_DEFAULT_SESSION),
-                    "session_id": session_id,
-                }
-                logger.info("SharedSessionStore: created session %s", session_id)
+            context = None
+            if self._use_redis:
+                prof_key = f"session:{session_id}:profile"
+                live_key = f"session:{session_id}:live"
+                prof_data = self._redis.get(prof_key)
+                live_data = self._redis.get(live_key)
+                if prof_data is None or live_data is None:
+                    raise KeyError(f"Session {session_id} not found.")
+                context = UnifiedStudentContext(
+                    profile=StudentProfileState.model_validate_json(prof_data),
+                    live=LiveSessionState.model_validate_json(live_data),
+                )
+            else:
+                if session_id not in self._store:
+                    raise KeyError(f"Session {session_id} not found.")
+                context = copy.deepcopy(self._store[session_id])
 
-            session = self._store[session_id]
-            for key, value in kwargs.items():
-                if key in _DEFAULT_SESSION:
-                    session[key] = value
-                else:
-                    logger.warning(
-                        "SharedSessionStore: ignoring unknown key '%s' for "
-                        "session %s",
-                        key,
-                        session_id,
-                    )
+            if live_kwargs:
+                live_kwargs["last_updated_at"] = time.time()
+                updated_live = context.live.model_copy(update=live_kwargs)
+                context.live = LiveSessionState.model_validate(updated_live.model_dump())
 
-            return copy.deepcopy(session)
+            if profile_kwargs:
+                updated_profile = context.profile.model_copy(update=profile_kwargs)
+                context.profile = StudentProfileState.model_validate(updated_profile.model_dump())
+
+            if self._use_redis:
+                prof_key = f"session:{session_id}:profile"
+                live_key = f"session:{session_id}:live"
+                self._redis.set(prof_key, context.profile.model_dump_json(), ex=ttl_seconds)
+                self._redis.set(live_key, context.live.model_dump_json(), ex=ttl_seconds)
+            else:
+                self._store[session_id] = copy.deepcopy(context)
+
+            return copy.deepcopy(context)
 
     def delete_session(self, session_id: str) -> bool:
         """Remove a session from the store.
@@ -165,15 +233,20 @@ class SharedSessionStore:
         Returns
         -------
         bool
-            ``True`` if the session existed and was deleted, ``False``
-            otherwise.
+            ``True`` if the session existed and was deleted.
         """
         with self._lock:
-            if session_id in self._store:
-                del self._store[session_id]
-                logger.info("SharedSessionStore: deleted session %s", session_id)
-                return True
-            return False
+            if self._use_redis:
+                prof_key = f"session:{session_id}:profile"
+                live_key = f"session:{session_id}:live"
+                count = self._redis.delete(prof_key, live_key)
+                return count > 0
+            else:
+                if session_id in self._store:
+                    del self._store[session_id]
+                    logger.info("SharedSessionStore: deleted session %s", session_id)
+                    return True
+                return False
 
     def build_context_string(self, session_id: str) -> str:
         """Build a compact context string from the stored session fields.
@@ -198,12 +271,12 @@ class SharedSessionStore:
         if data is None:
             return ""
 
-        topic = data.get("current_topic", "") or "N/A"
-        subtopic = data.get("current_subtopic", "") or ""
-        emotion = data.get("fused_emotion", "") or "neutral"
-        pace_mod = data.get("pace_modifier", 0)
-        slide_idx = data.get("current_slide_index", 0)
-        summary = data.get("student_profile_summary", "") or "N/A"
+        topic = data.live.current_topic or "N/A"
+        subtopic = data.live.current_subtopic or ""
+        emotion = data.live.fused_emotion or "neutral"
+        pace_mod = data.live.pace_modifier
+        slide_idx = data.live.current_slide_index
+        summary = data.profile.student_profile_summary or "N/A"
 
         pace_label = "normal"
         if pace_mod > 0:

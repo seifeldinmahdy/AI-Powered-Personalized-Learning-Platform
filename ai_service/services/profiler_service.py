@@ -12,6 +12,7 @@ import json
 import logging
 from typing import Optional
 from pathlib import Path
+from schemas.student_context import UnifiedStudentContext
 from dotenv import load_dotenv
 from groq import Groq
 
@@ -117,6 +118,7 @@ async def update_profile(
     session_log: list[dict],
     existing_profile_summary: str = "",
     existing_profile_data: dict | None = None,
+    student_context: Optional[UnifiedStudentContext] = None,
 ) -> dict:
     """
     Rewrite the student's persistent learning profile by synthesizing
@@ -132,8 +134,21 @@ async def update_profile(
         }
 
     existing_data_str = json.dumps(existing_profile_data or {}, indent=2)
+    
+    context_str = ""
+    if student_context:
+        context_str = (
+            f"STUDENT CONTEXT (Global):\n"
+            f"Mastery Level: {student_context.profile.mastery_level}\n"
+            f"Language Proficiency: {student_context.profile.language_proficiency}\n"
+            f"Strengths: {', '.join(student_context.profile.strengths) if student_context.profile.strengths else 'None recorded'}\n"
+            f"Weaknesses: {', '.join(student_context.profile.weaknesses) if student_context.profile.weaknesses else 'None recorded'}\n"
+            f"Incorrectly Answered: {', '.join(student_context.profile.incorrectly_answered) if student_context.profile.incorrectly_answered else 'None recorded'}\n\n"
+        )
+
     user_prompt = (
         f"Student ID: {student_id}\n"
+        f"{context_str}"
         f"Lesson just completed: {lesson_title}\n\n"
         f"EXISTING PROFILE SUMMARY:\n"
         f"{existing_profile_summary or '(first session — no existing profile)'}\n\n"

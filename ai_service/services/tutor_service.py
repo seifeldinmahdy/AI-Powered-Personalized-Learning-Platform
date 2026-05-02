@@ -207,12 +207,16 @@ def _sync_to_shared_store(session: TutorSession) -> None:
         store = get_session_store()
         store.update_session(
             session.session_id,
-            current_topic=session.current_topic or "",
-            current_subtopic=session.current_subtopic or "",
-            running_summary=session.running_summary,
-            tutor_transcript=session.transcript[-10:],
-            pace_modifier=session.pace_modifier,
-            student_profile_summary=session.student_profile_summary or "",
+            live_kwargs={
+                "current_topic": session.current_topic or "",
+                "current_subtopic": session.current_subtopic or "",
+                "running_summary": session.running_summary,
+                "tutor_transcript": session.transcript[-10:],
+                "pace_modifier": session.pace_modifier,
+            },
+            profile_kwargs={
+                "student_profile_summary": session.student_profile_summary or "",
+            }
         )
     except Exception as exc:
         logger.warning("Failed to sync tutor state to SharedSessionStore: %s", exc)
@@ -253,6 +257,17 @@ def create_session(
     logger.info(f"Session {sid} created with {len(topics)} topics")
 
     # ── Seed SharedSessionStore ──
+    from services.session_store import get_session_store
+    from schemas.student_context import StudentProfileState
+    store = get_session_store()
+    
+    # We construct a profile with whatever partial data we have, relying on defaults
+    # for the missing database fields until a real DB lookup is implemented.
+    profile = StudentProfileState(
+        student_profile_summary=student_profile_summary or ""
+    )
+    store.create_session(sid, profile=profile)
+
     _sync_to_shared_store(session)
 
     return session

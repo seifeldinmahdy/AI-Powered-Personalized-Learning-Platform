@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from typing import Dict, List, Optional
 from services.profiler_service import update_profile, fuse_emotions
 from services.session_store import get_session_store
+from schemas.student_context import UnifiedStudentContext
 import logging
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ class UpdateProfileRequest(BaseModel):
     existing_profile_data: Dict = Field(
         default_factory=dict, description="Current profile_data from DB (empty if first session)"
     )
+    student_context: Optional[UnifiedStudentContext] = None
 
 
 class FuseEmotionsRequest(BaseModel):
@@ -96,6 +98,7 @@ async def update(request: UpdateProfileRequest):
             session_log=log_dicts,
             existing_profile_summary=request.existing_profile_summary,
             existing_profile_data=request.existing_profile_data,
+            student_context=request.student_context,
         )
         return {"success": True, **result}
     except Exception as e:
@@ -127,11 +130,11 @@ async def fuse(request: FuseEmotionsRequest):
             session_data = store.get_session(request.session_id)
             if session_data:
                 if not slide_title:
-                    slide_title = session_data.get("current_slide_title", "")
+                    slide_title = session_data.live.current_slide_title
                 if not subtopic:
-                    subtopic = session_data.get("current_subtopic", "")
+                    subtopic = session_data.live.current_subtopic
                 if slide_index == 0:
-                    slide_index = session_data.get("current_slide_index", 0)
+                    slide_index = session_data.live.current_slide_index
                 logger.info(
                     "Profiler /fuse-emotions: auto-populated slide_title=%r, "
                     "subtopic=%r from SharedSessionStore for session %s",
@@ -158,8 +161,10 @@ async def fuse(request: FuseEmotionsRequest):
                 conf = max(request.fer_confidence, request.ser_confidence)
                 store.update_session(
                     request.session_id,
-                    fused_emotion=fused,
-                    confidence=conf,
+                    live_kwargs={
+                        "fused_emotion": fused,
+                        "fused_emotion_confidence": conf,
+                    }
                 )
                 logger.info(
                     "Profiler /fuse-emotions: wrote fused_emotion=%r, "
