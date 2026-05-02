@@ -23,10 +23,10 @@ class IntentService:
     ----------
     model_path : str
         Filename of the PyTorch checkpoint inside the ``intent_model/``
-        directory.  Defaults to ``"prod_tinybert.pt"``.
+        directory.  Defaults to ``"best_model.pt"``.
     """
 
-    def __init__(self, model_path: str = "prod_tinybert.pt") -> None:
+    def __init__(self, model_path: str = "best_model.pt") -> None:
         # Resolve intent_model dir relative to this file, falling back to cwd
         base = os.path.dirname(os.path.abspath(__file__)) if os.path.isabs(__file__) else os.getcwd()
         intent_model_dir = os.path.abspath(os.path.join(base, "intent_model")) \
