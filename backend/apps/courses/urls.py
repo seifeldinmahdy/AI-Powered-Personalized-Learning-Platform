@@ -14,4 +14,6 @@ urlpatterns = [
     path("", include(router.urls)),
     path("coding/evaluate/", views.evaluate_student_code, name="evaluate_code"),
     path("admin/stats/", views.admin_stats, name="admin_stats"),
+    path("my-courses/", views.my_courses, name="my_courses"),
+    path("my-courses/<int:course_id>/students/", views.my_course_students, name="my_course_students"),
 ]

@@ -189,10 +189,11 @@ class UserViewSet(viewsets.ModelViewSet):
     # ---------------------------------------------------------
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def leaderboard(self, request):
+        from django.db.models import F
         students = (
             User.objects.filter(role='student')
             .select_related('student_profile')
-            .order_by('-student_profile__current_xp')[:20]
+            .order_by(F('student_profile__current_xp').desc(nulls_last=True))[:20]
         )
         current_user_id = request.user.id
         top20 = []

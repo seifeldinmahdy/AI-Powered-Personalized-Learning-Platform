@@ -1,7 +1,7 @@
 import { Header } from '../../components/Header';
 import {
     Plus, Edit, Trash2, Users, BookOpen, BarChart, TrendingUp,
-    Clock, Search, Filter, Eye, Loader2, X, Check,
+    Clock, Search, Filter, Eye, Loader2, X, Check, FolderOpen,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
@@ -213,6 +213,9 @@ export default function AdminDashboard() {
                                                             </button>
                                                             <button onClick={() => openEdit(course)} className="p-2 rounded-lg border-2 border-border hover:border-accent hover:bg-accent/5 transition-all" title="Edit">
                                                                 <Edit size={16} />
+                                                            </button>
+                                                            <button onClick={() => navigate(`/admin/courses/${course.id}/editor`)} className="p-2 rounded-lg border-2 border-border hover:border-primary hover:bg-primary/5 transition-all" title="Manage Content">
+                                                                <FolderOpen size={16} />
                                                             </button>
                                                             <button
                                                                 onClick={() => handleDelete(course.id)}
