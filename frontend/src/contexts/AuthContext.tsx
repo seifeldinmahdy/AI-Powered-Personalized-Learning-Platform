@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useCallback, useEffect, type React
 import { loginUser, signupUser, logoutUser, type AuthResponse } from "../services/auth";
 
 // --------------- Types ---------------
-export type UserRole = "student" | "admin";
+export type UserRole = "student" | "admin" | "instructor";
 
 export interface User {
     id: number;

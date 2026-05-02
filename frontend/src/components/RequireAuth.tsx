@@ -23,7 +23,7 @@ export default function RequireAuth({ children, allowedRoles }: RequireAuthProps
 
     if (allowedRoles && user && !allowedRoles.includes(user.role)) {
         // User is logged in but doesn't have the right role
-        const redirectTo = user.role === "admin" ? "/admin" : "/dashboard";
+        const redirectTo = user.role === "admin" ? "/admin" : user.role === "instructor" ? "/instructor" : "/dashboard";
         return <Navigate to={redirectTo} replace />;
     }
 

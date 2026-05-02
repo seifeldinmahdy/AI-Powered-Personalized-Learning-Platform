@@ -5,12 +5,13 @@ from datetime import date, timedelta
 
 from apps.progress.models import LessonCompletion
 from apps.users.models import StudentProfile
-from .models import Achievement, UserAchievement, DailyStudyStats
+from .models import Achievement, UserAchievement, DailyStudyStats, Notification
 
 
 # XP rewards
 XP_LESSON_COMPLETE = 50
 XP_FIRST_LESSON = 100
+XP_COURSE_COMPLETE = 200
 
 # Level thresholds: level = floor(xp / 200) + 1, capped at 10
 def xp_to_level(xp):
@@ -24,6 +25,13 @@ def award_achievement(user, name):
     except Achievement.DoesNotExist:
         return False
     _, created = UserAchievement.objects.get_or_create(user=user, achievement=achievement)
+    if created:
+        Notification.objects.create(
+            user=user,
+            type="achievement",
+            title=f"Achievement Unlocked: {achievement.name}",
+            body=achievement.description,
+        )
     return created
 
 
@@ -68,7 +76,8 @@ def on_lesson_completion(sender, instance, **kwargs):
 
     profile.current_xp += xp_gained
     profile.level = xp_to_level(profile.current_xp)
-    profile.total_minutes_learned += 30  # estimate 30 min per lesson
+    raw_minutes = getattr(instance, "time_spent_minutes", 30) or 30
+    profile.total_minutes_learned += min(raw_minutes, 240)  # cap at 4h
 
     # --- Study time log ---
     today = date.today()
@@ -76,7 +85,9 @@ def on_lesson_completion(sender, instance, **kwargs):
         user=user, study_date=today,
         defaults={"hours_spent": 0}
     )
-    stats.hours_spent = float(stats.hours_spent) + 0.5  # 30 min = 0.5 hours
+    raw_minutes = getattr(instance, "time_spent_minutes", 30) or 30
+    hours_this_lesson = min(raw_minutes / 60.0, 4.0)  # cap at 4h
+    stats.hours_spent = float(stats.hours_spent) + hours_this_lesson
     stats.save()
 
     # --- Streak ---
@@ -122,3 +133,28 @@ def on_lesson_completion(sender, instance, **kwargs):
         if profile.level == threshold:
             if award_achievement(user, name):
                 newly_earned.append(name)
+
+    # Course completion bonus
+    from apps.courses.models import Enrollment
+    enrollment = instance.enrollment
+    total_lessons = enrollment.course.total_lessons_count
+    if total_lessons > 0:
+        completed_in_course = LessonCompletion.objects.filter(
+            enrollment=enrollment, status="Completed"
+        ).count()
+        if completed_in_course >= total_lessons:
+            # Award +200 XP bonus (once per course via a one-time enrollment flag check)
+            Enrollment.objects.filter(pk=enrollment.pk).update(progress_percentage=100.0)
+            profile.current_xp += XP_COURSE_COMPLETE
+            profile.level = xp_to_level(profile.current_xp)
+            profile.save()
+
+            # Count completed courses for this student
+            completed_courses = Enrollment.objects.filter(
+                student=user, progress_percentage=100.0
+            ).count()
+            course_milestones = {1: "Course Graduate", 2: "Double Major", 5: "Overachiever"}
+            for threshold, name in course_milestones.items():
+                if completed_courses == threshold:
+                    if award_achievement(user, name):
+                        newly_earned.append(name)

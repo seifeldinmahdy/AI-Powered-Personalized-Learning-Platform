@@ -9,8 +9,13 @@ from typing import Optional
 import logging
 import sys
 import os
+from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
+
+# Simple in-process LRU cache for RAG answers (max 500 entries)
+_rag_cache: OrderedDict = OrderedDict()
+_RAG_CACHE_MAX = 500
 
 router = APIRouter(prefix="/rag", tags=["RAG"])
 
@@ -85,6 +90,11 @@ async def ask_rag(request: RAGRequest):
     Answer a student question grounded in indexed course textbooks.
     Returns the answer with source citations.
     """
+    cache_key = (request.question.lower().strip(), request.topic or "")
+    if cache_key in _rag_cache:
+        _rag_cache.move_to_end(cache_key)
+        return _rag_cache[cache_key]
+
     try:
         engine = get_rag_engine()
         response = engine.ask(
@@ -94,7 +104,7 @@ async def ask_rag(request: RAGRequest):
             difficulty=request.difficulty,
             top_k=request.top_k,
         )
-        return RAGResponse(
+        result = RAGResponse(
             answer=response.answer,
             sources=[
                 SourceOut(
@@ -108,6 +118,11 @@ async def ask_rag(request: RAGRequest):
             ],
             question=response.question,
         )
+        _rag_cache[cache_key] = result
+        _rag_cache.move_to_end(cache_key)
+        if len(_rag_cache) > _RAG_CACHE_MAX:
+            _rag_cache.popitem(last=False)
+        return result
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:

@@ -182,3 +182,48 @@ class UserViewSet(viewsets.ModelViewSet):
             })
 
         return Response(result)
+
+    # ---------------------------------------------------------
+    # 8. Leaderboard
+    # Endpoint: GET /api/users/leaderboard/
+    # ---------------------------------------------------------
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def leaderboard(self, request):
+        from django.db.models import F
+        students = (
+            User.objects.filter(role='student')
+            .select_related('student_profile')
+            .order_by(F('student_profile__current_xp').desc(nulls_last=True))[:20]
+        )
+        current_user_id = request.user.id
+        top20 = []
+        current_user_in_top = None
+        for rank, student in enumerate(students, start=1):
+            profile = getattr(student, 'student_profile', None)
+            entry = {
+                'rank': rank,
+                'username': student.username,
+                'level': profile.level if profile else 1,
+                'current_xp': profile.current_xp if profile else 0,
+                'current_streak': profile.current_streak if profile else 0,
+            }
+            top20.append(entry)
+            if student.id == current_user_id:
+                current_user_in_top = entry
+
+        # Build current_user entry (rank outside top 20 if not already there)
+        if current_user_in_top:
+            current_user_entry = current_user_in_top
+        else:
+            own_profile = getattr(request.user, 'student_profile', None)
+            own_xp = own_profile.current_xp if own_profile else 0
+            higher_count = StudentProfile.objects.filter(current_xp__gt=own_xp).count()
+            current_user_entry = {
+                'rank': higher_count + 1,
+                'username': request.user.username,
+                'level': own_profile.level if own_profile else 1,
+                'current_xp': own_xp,
+                'current_streak': own_profile.current_streak if own_profile else 0,
+            }
+
+        return Response({'top20': top20, 'current_user': current_user_entry})

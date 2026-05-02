@@ -1,4 +1,5 @@
 const AI_URL = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
 export interface TutorSession {
   session_id: string;
@@ -86,6 +87,38 @@ export async function askTutor(
   });
   if (!res.ok) throw new Error('Failed to ask tutor');
   return res.json();
+}
+
+export interface ChatLogEntry {
+  id: number;
+  transcript_text: string;
+  ai_response_text: string;
+  created_at: string;
+}
+
+export async function getChatHistory(lessonId: number): Promise<ChatLogEntry[]> {
+  const token = localStorage.getItem('token');
+  if (!token) return [];
+  try {
+    const res = await fetch(`${API_URL}/progress/chat-logs/?lesson_id=${lessonId}`, {
+      headers: { Authorization: `Token ${token}` },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : data.results ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export function persistChatLog(lessonId: number, transcriptText: string, aiResponseText: string): void {
+  const token = localStorage.getItem('token');
+  if (!token || !lessonId) return;
+  fetch(`${API_URL}/progress/chat-logs/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Token ${token}` },
+    body: JSON.stringify({ lesson: lessonId, transcript_text: transcriptText, ai_response_text: aiResponseText }),
+  }).catch(() => {/* fire-and-forget */});
 }
 
 export async function stopTutorSession(session_id: string): Promise<void> {

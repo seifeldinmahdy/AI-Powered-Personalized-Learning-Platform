@@ -39,7 +39,7 @@ export default function Login() {
       if (state?.from) {
         navigate(state.from.pathname);
       } else {
-        navigate(data.role === "admin" ? "/admin" : "/dashboard");
+        navigate(data.role === "admin" ? "/admin" : data.role === "instructor" ? "/instructor" : "/dashboard");
       }
     } catch (err: unknown) {
       if (err && typeof err === "object" && "response" in err) {

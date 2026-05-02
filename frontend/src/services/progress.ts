@@ -51,10 +51,14 @@ export async function createLessonCompletion(data: {
 export async function markLessonComplete(
     completionId: number,
     score?: number,
+    timeSpentMinutes?: number,
 ): Promise<LessonCompletion> {
+    const payload: Record<string, unknown> = {};
+    if (score !== undefined) payload.score = score;
+    if (timeSpentMinutes !== undefined) payload.time_spent_minutes = timeSpentMinutes;
     const response = await api.post<LessonCompletion>(
         `/progress/lesson-completions/${completionId}/complete/`,
-        score !== undefined ? { score } : {},
+        payload,
     );
     return response.data;
 }
@@ -75,4 +79,34 @@ export async function updateLessonProgress(
 export async function getActivityLogs(): Promise<ActivityLog[]> {
     const response = await api.get<ActivityLog[]>('/progress/activity-logs/');
     return response.data;
+}
+
+// ---------- Bookmarks ----------
+
+export interface Bookmark {
+    id: number;
+    user: number;
+    lesson: number;
+    lesson_title: string;
+    course_id: number;
+    slide_index: number | null;
+    created_at: string;
+}
+
+export async function getBookmarks(): Promise<Bookmark[]> {
+    const response = await api.get<Bookmark[] | { results: Bookmark[] }>('/progress/bookmarks/');
+    const data = response.data;
+    return Array.isArray(data) ? data : data.results ?? [];
+}
+
+export async function createBookmark(lessonId: number, slideIndex?: number): Promise<Bookmark> {
+    const response = await api.post<Bookmark>('/progress/bookmarks/', {
+        lesson: lessonId,
+        slide_index: slideIndex ?? null,
+    });
+    return response.data;
+}
+
+export async function deleteBookmark(bookmarkId: number): Promise<void> {
+    await api.delete(`/progress/bookmarks/${bookmarkId}/`);
 }

@@ -85,6 +85,14 @@ DATABASES = {
 if os.getenv("DB_SSLMODE"):
     DATABASES["default"]["OPTIONS"] = {"sslmode": os.getenv("DB_SSLMODE")}
 
+# ---------- Cache (Redis) ----------
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": os.getenv("REDIS_URL", "redis://127.0.0.1:6379/1"),
+    }
+}
+
 # ---------- Auth ----------
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
