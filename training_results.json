@@ -1,0 +1,227 @@
+{
+    "model": "DistilBert-CNN",
+    "confidence_threshold": 0.55,
+    "dataset_summary": {
+        "train_rows": 28521,
+        "val_rows": 1500,
+        "test_rows": 1500,
+        "train_class_counts": {
+            "0": 5728,
+            "1": 5708,
+            "2": 5683,
+            "3": 5726,
+            "4": 5676
+        },
+        "val_class_counts": {
+            "0": 300,
+            "1": 300,
+            "2": 300,
+            "3": 300,
+            "4": 300
+        },
+        "test_class_counts": {
+            "0": 300,
+            "1": 300,
+            "2": 300,
+            "3": 300,
+            "4": 300
+        }
+    },
+    "hyperparameters": {
+        "batch_size": 16,
+        "epochs": 15,
+        "bert_lr": 2e-05,
+        "head_lr": 0.0002,
+        "weight_decay": 0.01,
+        "max_length": 128,
+        "patience": 7,
+        "label_smoothing": 0.1,
+        "dropout": 0.3,
+        "freeze_bert": false
+    },
+    "training_duration_seconds": 7236.52,
+    "epochs_trained": 14,
+    "metrics": {
+        "accuracy": 0.85,
+        "f1_score": 0.8524,
+        "precision": 0.8673,
+        "recall": 0.85,
+        "test_loss": 0.475
+    },
+    "per_class_metrics": {
+        "On-Topic Question": {
+            "precision": 0.9355,
+            "recall": 0.7733,
+            "f1_score": 0.8467,
+            "support": 300
+        },
+        "Off-Topic Question": {
+            "precision": 0.8116,
+            "recall": 0.89,
+            "f1_score": 0.849,
+            "support": 300
+        },
+        "Emotional-State": {
+            "precision": 0.6913,
+            "recall": 0.9033,
+            "f1_score": 0.7832,
+            "support": 300
+        },
+        "Pace-Related": {
+            "precision": 0.9051,
+            "recall": 0.7633,
+            "f1_score": 0.8282,
+            "support": 300
+        },
+        "Repeat/clarification": {
+            "precision": 0.9928,
+            "recall": 0.92,
+            "f1_score": 0.955,
+            "support": 300
+        }
+    },
+    "confusion_matrix": [
+        [
+            232,
+            11,
+            49,
+            6,
+            2
+        ],
+        [
+            7,
+            267,
+            21,
+            5,
+            0
+        ],
+        [
+            2,
+            26,
+            271,
+            1,
+            0
+        ],
+        [
+            0,
+            20,
+            51,
+            229,
+            0
+        ],
+        [
+            7,
+            5,
+            0,
+            12,
+            276
+        ]
+    ],
+    "training_history": {
+        "train_loss": [
+            0.8747,
+            0.4904,
+            0.4593,
+            0.4469,
+            0.4419,
+            0.4362,
+            0.432,
+            0.4308,
+            0.4263,
+            0.4264,
+            0.4244,
+            0.4233,
+            0.4228,
+            0.4222
+        ],
+        "val_loss": [
+            0.5009,
+            0.476,
+            0.7466,
+            0.5619,
+            0.6531,
+            0.6165,
+            0.5227,
+            0.6448,
+            0.6017,
+            0.5773,
+            0.6425,
+            0.6028,
+            0.5989,
+            0.6032
+        ],
+        "val_acc": [
+            0.8227,
+            0.8493,
+            0.7553,
+            0.8513,
+            0.7993,
+            0.816,
+            0.8633,
+            0.818,
+            0.8247,
+            0.8347,
+            0.8073,
+            0.8207,
+            0.8273,
+            0.832
+        ],
+        "val_f1": [
+            0.8213,
+            0.8457,
+            0.7575,
+            0.8516,
+            0.8004,
+            0.8155,
+            0.8628,
+            0.817,
+            0.8259,
+            0.8339,
+            0.8074,
+            0.818,
+            0.8259,
+            0.8305
+        ]
+    },
+    "classification_report": "                      precision    recall  f1-score   support\n\n   On-Topic Question       0.94      0.77      0.85       300\n  Off-Topic Question       0.81      0.89      0.85       300\n     Emotional-State       0.69      0.90      0.78       300\n        Pace-Related       0.91      0.76      0.83       300\nRepeat/clarification       0.99      0.92      0.96       300\n\n            accuracy                           0.85      1500\n           macro avg       0.87      0.85      0.85      1500\n        weighted avg       0.87      0.85      0.85      1500\n",
+    "real_utterance_metrics": {
+        "accuracy": 0.1333,
+        "f1_score": 0.1037,
+        "precision": 0.0867,
+        "recall": 0.1333,
+        "test_loss": 3.2084
+    },
+    "real_utterance_per_class": {
+        "On-Topic Question": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1_score": 0.0,
+            "support": 2
+        },
+        "Off-Topic Question": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1_score": 0.0,
+            "support": 3
+        },
+        "Emotional-State": {
+            "precision": 0.2,
+            "recall": 0.25,
+            "f1_score": 0.2222,
+            "support": 4
+        },
+        "Pace-Related": {
+            "precision": 0.25,
+            "recall": 0.5,
+            "f1_score": 0.3333,
+            "support": 2
+        },
+        "Repeat/clarification": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1_score": 0.0,
+            "support": 4
+        }
+    },
+    "real_utterance_report": "                      precision    recall  f1-score   support\n\n   On-Topic Question       0.00      0.00      0.00         2\n  Off-Topic Question       0.00      0.00      0.00         3\n     Emotional-State       0.20      0.25      0.22         4\n        Pace-Related       0.25      0.50      0.33         2\nRepeat/clarification       0.00      0.00      0.00         4\n\n            accuracy                           0.13        15\n           macro avg       0.09      0.15      0.11        15\n        weighted avg       0.09      0.13      0.10        15\n"
+}

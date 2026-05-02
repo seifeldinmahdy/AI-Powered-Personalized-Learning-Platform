@@ -15,6 +15,7 @@ from tqdm import tqdm
 import time
 import json
 import math
+import re
 from sklearn.metrics import (
     classification_report, confusion_matrix,
     accuracy_score, precision_recall_fscore_support
@@ -41,6 +42,16 @@ MLFLOW_EXPERIMENT_NAME = os.getenv('MLFLOW_EXPERIMENT_NAME', 'intent-classifier-
 DEFAULT_MLFLOW_TRACKING_URI = (Path(__file__).resolve().parent / 'mlruns').resolve().as_uri()
 
 
+def normalize_context(ctx: str) -> str:
+    """Remove ability field from session context to prevent topic-index leakage."""
+    if not isinstance(ctx, str):
+        return ''
+    # Strip 'ability:...' segment between pipes
+    ctx = re.sub(r'\|\s*ability:[^|]+', '', ctx)
+    ctx = re.sub(r'\s*\|\s*', ' | ', ctx).strip(' |')
+    return ctx
+
+
 def cleanup_local_mlflow_store(store_root: Path):
     """Remove malformed top-level experiment folders from a local MLflow store."""
     if not store_root.exists():
@@ -56,20 +67,27 @@ def cleanup_local_mlflow_store(store_root: Path):
 
 
 class EarlyStopping:
-    def __init__(self, patience=3, min_delta=0.001, verbose=True):
+    def __init__(self, patience=3, min_delta=0.001, verbose=True, mode='min'):
         self.patience = patience
         self.min_delta = min_delta
         self.verbose = verbose
+        self.mode = mode  # 'min' for loss, 'max' for F1/accuracy
         self.counter = 0
-        self.best_loss = None
+        self.best_score = None
         self.early_stop = False
         self.best_epoch = 0
 
-    def __call__(self, val_loss, epoch):
-        if self.best_loss is None:
-            self.best_loss = val_loss
+    def __call__(self, score, epoch):
+        improved = (
+            self.best_score is None or
+            (self.mode == 'min' and score < self.best_score - self.min_delta) or
+            (self.mode == 'max' and score > self.best_score + self.min_delta)
+        )
+        if improved:
+            self.best_score = score
             self.best_epoch = epoch
-        elif val_loss > self.best_loss - self.min_delta:
+            self.counter = 0
+        else:
             self.counter += 1
             if self.verbose:
                 print(f"  Early stopping counter: {self.counter}/{self.patience}")
@@ -77,10 +95,6 @@ class EarlyStopping:
                 self.early_stop = True
                 if self.verbose:
                     print(f"  [!] Early stopping triggered! Best epoch was {self.best_epoch}")
-        else:
-            self.best_loss = val_loss
-            self.best_epoch = epoch
-            self.counter = 0
 
 
 class WarmupCosineScheduler:
@@ -174,11 +188,11 @@ def main():
     BATCH_SIZE  = 16
     EPOCHS      = 15
     BERT_LR     = 2e-5       # Lower LR for BERT backbone
-    HEAD_LR     = 1e-4       # Higher LR for CNN + FC head
+    HEAD_LR     = 2e-4   # was 5e-5 — head needs to learn faster than backbone
     WEIGHT_DECAY = 0.01
     MAX_LENGTH  = 128
     PATIENCE    = 7
-    DROPOUT     = 0.5
+    DROPOUT     = 0.3
     FREEZE_BERT = False
 
     hyperparams = {
@@ -202,6 +216,27 @@ def main():
 
     # ── Data ────────────────────────────────────────────────────────
     train_df, val_df, test_df = load_data(TRAIN_PATH, VAL_PATH, TEST_PATH)
+
+    # ── Mix real utterances into training ───────────────────────────
+    if os.path.exists(REAL_UTTERANCE_PATH):
+        real_df = pd.read_csv(REAL_UTTERANCE_PATH)
+        real_df = real_df.sample(frac=1, random_state=42).reset_index(drop=True)
+        split_idx = int(len(real_df) * 0.70)
+        real_train_df = real_df.iloc[:split_idx]
+        real_eval_df  = real_df.iloc[split_idx:]
+        # Oversample real training data 15x so model learns from it
+        real_train_oversampled = pd.concat([real_train_df] * 15, ignore_index=True)
+        train_df = pd.concat([train_df, real_train_oversampled], ignore_index=True)
+        train_df = train_df.sample(frac=1, random_state=42).reset_index(drop=True)
+        print(f"[+] Mixed {len(real_train_oversampled)} real utterance rows into training. Train total: {len(train_df)}")
+    else:
+        real_eval_df = None
+
+    for df in [train_df, val_df, test_df]:
+        df['session_context'] = df['session_context'].apply(normalize_context)
+    if real_eval_df is not None:
+        real_eval_df['session_context'] = real_eval_df['session_context'].apply(normalize_context)
+
     num_classes = train_df['label'].nunique()
     print(f"Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)} | Classes: {num_classes}")
     dataset_summary = build_dataset_summary(train_df, val_df, test_df)
@@ -239,7 +274,7 @@ def main():
     total_steps = len(train_loader) * EPOCHS
     warmup_steps = int(total_steps * 0.1)
     scheduler = WarmupCosineScheduler(optimizer, warmup_steps, total_steps)
-    early_stopping = EarlyStopping(patience=PATIENCE)
+    early_stopping = EarlyStopping(patience=PATIENCE, mode='max')
 
     best_val_f1 = 0.0
     best_model_path = "best_model.pt"
@@ -285,7 +320,6 @@ def main():
 
         for batch in train_pbar:
             loss = classifier.train_step(batch, optimizer, criterion)
-            torch.nn.utils.clip_grad_norm_(classifier.model.parameters(), max_norm=1.0)
             scheduler.step()
             train_loss += loss
             train_pbar.set_postfix({'loss': f'{loss:.4f}'})
@@ -327,7 +361,7 @@ def main():
             classifier.save_model(best_model_path)
             print(f"  [+] Best model saved with F1: {val_f1:.4f}")
 
-        early_stopping(val_loss, epoch + 1)
+        early_stopping(val_f1, epoch + 1)
         if early_stopping.early_stop:
             print("Stopping early.")
             break
@@ -384,7 +418,10 @@ def main():
         print("REAL-UTTERANCE EVALUATION")
         print(f"{'='*60}")
         try:
-            real_df = pd.read_csv(REAL_UTTERANCE_PATH)
+            if real_eval_df is None or len(real_eval_df) == 0:
+                print("[!] No real eval split available — skipping.")
+                raise ValueError("Skip")
+            real_df = real_eval_df
             real_dataset = IntentDataset(
                 real_df.to_dict('records'), classifier.tokenizer, max_length=MAX_LENGTH
             )

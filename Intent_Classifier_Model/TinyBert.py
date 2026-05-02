@@ -260,9 +260,9 @@ class TinyBertCNN(nn.Module):
         self,
         num_classes,
         bert_model_name='distilbert-base-uncased',
-        num_filters=256,
+        num_filters=128,
         filter_sizes=[2, 3, 4],
-        dropout=0.5,
+        dropout=0.3,
         hidden_dim=128,
         freeze_bert=False
     ):
@@ -385,9 +385,9 @@ class IntentClassifier:
         self,
         num_classes,
         bert_model_name='distilbert-base-uncased',
-        num_filters=256,
+        num_filters=128,
         filter_sizes=[2, 3, 4],
-        dropout=0.5,
+        dropout=0.3,
         freeze_bert=False,
         device=None
     ):
@@ -562,6 +562,7 @@ class IntentClassifier:
         # Backward pass
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         optimizer.step()
         
         return loss.item()

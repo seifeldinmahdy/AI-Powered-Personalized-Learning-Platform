@@ -1,5 +1,5 @@
 """
-Dataset Generation Pipeline for TinyBert-CNN Intent Classifier.
+Dataset Generation Pipeline for DistilBert-CNN Intent Classifier.
 Generates (student_input, session_context, label) triples for 5-class classification.
 
 New features:
@@ -563,29 +563,38 @@ REPEAT_TRAIN, REPEAT_VAL, REPEAT_TEST = partition_bank(REPEAT_TEMPLATES)
 _held_out_all = set(HELD_OUT_PACE + HELD_OUT_REPEAT + HELD_OUT_EMOTION +
                     HELD_OUT_ON_TOPIC + HELD_OUT_OFF_TOPIC)
 
-def split_real(real_list):
+def split_real(real_list, seed: int = 42):
+    rng = random.Random(seed)
     valid = [x for x in real_list if x not in _held_out_all]
-    n_train = int(len(valid) * 0.8)
-    return valid[:n_train], valid[n_train:]
+    shuffled = valid.copy()
+    rng.shuffle(shuffled)
+    n_train = int(len(shuffled) * 0.7)
+    n_val   = int(len(shuffled) * 0.15)
+    return shuffled[:n_train], shuffled[n_train:n_train + n_val], shuffled[n_train + n_val:]
 
-p_train, p_test = split_real(PACE_REAL)
+p_train, p_val, p_test = split_real(PACE_REAL)
 PACE_TRAIN.extend(p_train)
+PACE_VAL.extend(p_val)
 PACE_TEST.extend(p_test)
 
-r_train, r_test = split_real(REPEAT_REAL)
+r_train, r_val, r_test = split_real(REPEAT_REAL)
 REPEAT_TRAIN.extend(r_train)
+REPEAT_VAL.extend(r_val)
 REPEAT_TEST.extend(r_test)
 
-e_train, e_test = split_real(EMOTIONAL_REAL)
+e_train, e_val, e_test = split_real(EMOTIONAL_REAL)
 EMOTIONAL_TRAIN.extend(e_train)
+EMOTIONAL_VAL.extend(e_val)
 EMOTIONAL_TEST.extend(e_test)
 
-o_train, o_test = split_real(ON_TOPIC_REAL)
+o_train, o_val, o_test = split_real(ON_TOPIC_REAL)
 ON_TOPIC_TRAIN.extend(o_train)
+ON_TOPIC_VAL.extend(o_val)
 ON_TOPIC_TEST.extend(o_test)
 
-og_train, og_test = split_real(OFF_TOPIC_REAL)
+og_train, og_val, og_test = split_real(OFF_TOPIC_REAL)
 OFF_TOPIC_GEN_TRAIN.extend(og_train)
+OFF_TOPIC_GEN_VAL.extend(og_val)
 OFF_TOPIC_GEN_TEST.extend(og_test)
 
 # ─────────────────────────────────────────────────────────────────────
@@ -683,6 +692,10 @@ def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, 
             for _ in range(samples_per_class):
                 topic_idx = random.randint(0, len(PYTHON_TOPICS) - 1)
                 context_str, current_topic, prev_topics = generate_session_context(topic_idx)
+                
+                # Apply 30% Context Dropout to force the model to rely on student_input
+                if random.random() < 0.50:   # was 0.30
+                    context_str = ""
 
                 if intent == 'On-Topic Question':
                     student_input = get_on_topic_question(current_topic, prev_topics, split_name=split_name)

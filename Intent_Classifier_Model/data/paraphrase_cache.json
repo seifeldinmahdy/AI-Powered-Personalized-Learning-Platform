@@ -11983,5 +11983,3645 @@
     "Make it stop, please",
     "Stop it, that's so annoying",
     "Can you just stop, though"
+  ],
+  "hurry up": [
+    "come on, let's speed up",
+    "we gotta move faster",
+    "let's hurry up, we're running late"
+  ],
+  "can we stop for a sec": [
+    "can we take a quick break",
+    "hold off for just a sec",
+    "wait a minute, let's pause"
+  ],
+  "can we sskip": [
+    "can we skip this part",
+    "let's leap over this section",
+    "we can skip ahead if you want"
+  ],
+  "chill for a sec": [
+    "just chill out for a sec",
+    "relax for a minute, okay?",
+    "calm down, let's not rush"
+  ],
+  "umm chill for a sec": [
+    "um, can we take a breather",
+    "wait a minute, let's pause",
+    "hold on, I need a sec"
+  ],
+  "Hold on, I'm still writing notes.": [
+    "hold on, I'm still jotting down notes",
+    "just a minute, I'm writing this down",
+    "hold up, I need to finish taking notes"
+  ],
+  "skip this": [
+    "can we bypass this",
+    "let's jump over this",
+    "we can skip this part if you want"
+  ],
+  "Give me a sec, I'm still processing.": [
+    "give me a minute to process",
+    "just a sec, I'm still thinking",
+    "hold on, let me wrap my head around this"
+  ],
+  "SKIP AHEAD PLEASE.": [
+    "skip to the important part",
+    "let's skip the boring stuff",
+    "can we fast forward to the good part?"
+  ],
+  "spee pu pls?": [
+    "speed it up a bit",
+    "let's move faster, please",
+    "can we go quicker, please?"
+  ],
+  "like go faster": [
+    "can we speed it up?",
+    "make it go quicker",
+    "let's go quicker"
+  ],
+  "wait wait wait": [
+    "come on, let's go",
+    "wait up",
+    "slow down, I'm right behind you"
+  ],
+  "Don't rush through this please.": [
+    "I'd appreciate it if you could slow down",
+    "don't go so fast",
+    "easy does it, please"
+  ],
+  "hurry up!!": [
+    "speed it up!",
+    "let's go, hurry!",
+    "come on, move faster!"
+  ],
+  "omg slow": [
+    "oh my god, you're going so slow",
+    "wow, you're moving really slow",
+    "that's painfully slow"
+  ],
+  "hol up!!": [
+    "hold up, hold on",
+    "wait a minute",
+    "just a sec, let me catch up"
+  ],
+  "pawork with ls": [
+    "work with me, please",
+    "can we work together on this?",
+    "help me out, I'm stuck"
+  ],
+  "Give me sec, I'm processing. still": [
+    "give me a sec, I'm thinking",
+    "just a minute, please",
+    "can you wait a second?"
+  ],
+  "hol up": [
+    "hold up, let me get this",
+    "just a minute, I'm processing",
+    "give me a sec, I'm not ready yet"
+  ],
+  "pause?": [
+    "hold up?",
+    "can you pause for a sec?",
+    "what's the holdup?"
+  ],
+  "Skip ahead please.": [
+    "can we jump ahead?",
+    "skip the next part?",
+    "let's fast forward"
+  ],
+  "wait go back": [
+    "go back a bit, please",
+    "wait, can you go back?",
+    "rewind a second"
+  ],
+  "Please slow down, I can't keep up.": [
+    "slow down, this is hard",
+    "I'm having trouble keeping up",
+    "can you go a bit slower?"
+  ],
+  "omg slw": [
+    "lol slow down",
+    "slw pls",
+    "chill dude, slow down"
+  ],
+  "Can you adjust the speed a bit?": [
+    "can we adjust the speed?",
+    "it's a bit fast, can you slow down?",
+    "can you make it a bit slower?"
+  ],
+  "slow down im typing?": [
+    "hold up, slow down!",
+    "can you go slower?",
+    "gotta slow down, im typing"
+  ],
+  "speed it up": [
+    "can you speed it up a bit?",
+    "make it go faster",
+    "lets go quicker"
+  ],
+  "chill a sec?": [
+    "just a sec, slow down",
+    "can you chill for a sec?",
+    "slow down, dont wanna miss a thing"
+  ],
+  "next": [
+    "what's next?",
+    "next topic?",
+    "can we move on to the next thing?"
+  ],
+  "slow?": [
+    "hold up",
+    "not so fast",
+    "slow down a bit"
+  ],
+  "next slide": [
+    "can we move on to the next slide",
+    "let's go to the next slide",
+    "next one please"
+  ],
+  "give me a sec": [
+    "can we take a brief pause",
+    "hold on for a second",
+    "give me one second"
+  ],
+  "faster": [
+    "speed it up",
+    "hurry it along",
+    "move it faster"
+  ],
+  "Can we skip this?": [
+    "do we have to finish this",
+    "can we skip to the good stuff",
+    "can we move on already"
+  ],
+  "pause": [
+    "pause the presentation",
+    "put the slides on hold",
+    "stop the lecture for a sec"
+  ],
+  "can we skip this?": [
+    "can we move on",
+    "let's skip this part",
+    "move on to something else"
+  ],
+  "ur going too fast": [
+    "you're moving too quickly",
+    "slow down, I'm struggling",
+    "you're going way too fast"
+  ],
+  "so slow down typing im": [
+    "Dude, can you type faster?",
+    "Come on, hurry up with that typing!",
+    "I'm waiting, please speed up!"
+  ],
+  "SLOW": [
+    "Slower pace, dude!",
+    "SLOW DOWN ALREADY!",
+    "Whoa, chill with the typing speed!"
+  ],
+  "umm wait go back": [
+    "Hold up, let's go back a bit",
+    "Wait, wait, wait, let me see that again",
+    "Can we rewind a bit?"
+  ],
+  "Can we pick up the pace?": [
+    "I think we can move a bit faster now",
+    "Can we pick up our speed a bit?",
+    "Let's try to hurry up with this!"
+  ],
+  "so CAN YOU ADJUST THE SPEED A BIT?": [
+    "Could you adjust the speed a bit, please?",
+    "Can we slow it down?",
+    "Can we take it slower?"
+  ],
+  "Slow down, I'm still on the last example.": [
+    "I'm having trouble, can you slow down?",
+    "Hold on, I'm still on the last example.",
+    "You're going too fast, slow down!"
+  ],
+  "Can we skip this!!": [
+    "Can we take a break or something?",
+    "I don't get it, can we skip this?",
+    "Can we move on to something else?"
+  ],
+  "slow tf down": [
+    "Dude, slow tf down",
+    "What's the rush, slow down?",
+    "Whoa, slow down, I'm lost!"
+  ],
+  "can we skip": [
+    "Can we jump over this part?",
+    "I'm good, can we skip this?",
+    "Can we just move on?"
+  ],
+  "i already know this go faster": [
+    "I've got it, let's go faster!",
+    "I already get it, can we speed up?",
+    "Can we move on, I'm ready!"
+  ],
+  "too fast bro": [
+    "Bro, slow down, I'm still trying to understand!",
+    "Too fast, slow down, please!",
+    "You're going too fast, slow down, man!"
+  ],
+  "Please ease up, I can't keep up.": [
+    "Can we speed up?",
+    "I'm falling behind, can we move faster?",
+    "I'm having trouble keeping up, can you go a bit quicker?"
+  ],
+  "wait a minute": [
+    "Hold on a sec",
+    "Wait a sec, let me catch up",
+    "Just a minute, I lost track"
+  ],
+  "can you slow down": [
+    "Can you move a bit slower?",
+    "I'd love it if you could slow down",
+    "Can we take it down a notch?"
+  ],
+  "too slow": [
+    "It's too slow",
+    "This is moving way too slowly",
+    "We're going way too slow"
+  ],
+  "Can we pick up pace? the": [
+    "Can we pick up the pace?",
+    "I think we can do better, speed it up!",
+    "Let's try to move a bit faster, yeah?"
+  ],
+  "chil la sec": [
+    "can you speed it up for me",
+    "slow down a bit",
+    "make it go faster if you can"
+  ],
+  "slow": [
+    "slow",
+    "take it slow",
+    "not too fast"
+  ],
+  "so i already know this go faster": [
+    "i already know this material, can we move on",
+    "so i'm done with this already, can we speed up",
+    "can we speed up, i'm already familiar with this"
+  ],
+  "give m a secc": [
+    "give me a sec",
+    "just a minute",
+    "hold on for a sec"
+  ],
+  "speed up pls": [
+    "can we speed things up please",
+    "can you hurry it up a bit",
+    "speed this up a bit would be great"
+  ],
+  "don't rush through this please.": [
+    "please don't rush through the material",
+    "could you go over this at a slower pace",
+    "don't go too quickly, that's hard to follow"
+  ],
+  "SKIP THIS": [
+    "skip this section",
+    "can we skip this part",
+    "do we have to go over this, can we move on?"
+  ],
+  "pause pls": [
+    "Give me a sec, thanks!",
+    "Can we take a breather here?",
+    "Hold up for a minute, okay?"
+  ],
+  "Slow down, still the on last example.": [
+    "I'm having trouble keeping up, can we slow down?",
+    "Take it easy, I need a moment.",
+    "Please slow down, I'm falling behind!"
+  ],
+  "Please slow down, I an't keep up.": [
+    "Could you explain that one again?",
+    "I'm lost, can we review?",
+    "Can we go back to the last example?"
+  ],
+  "Can skip we this?": [
+    "Can we skip this part?",
+    "Do we have to do this?",
+    "Can we move on to something else?"
+  ],
+  "like too fast bro": [
+    "Hold up, I'm going too fast",
+    "Can you slow down, I'm not keeping up",
+    "I'm getting a bit overwhelmed, can you pace yourselves"
+  ],
+  "ive e a sec": [
+    "Give me a minute",
+    "Just a sec, I'm still trying to catch up",
+    "I need a sec, can you give me some extra time"
+  ],
+  "ease up im typing": [
+    "Whoa, ease up, I'm typing away over here",
+    "Hey, slow down, I'm trying to focus",
+    "Can you chill out, I'm getting left behind"
+  ],
+  "hey give me a sec": [
+    "Hold on for a sec",
+    "Just a moment, I'm still here",
+    "Give me a second, I'm trying to keep up"
+  ],
+  "I think I got this, let's speed up.": [
+    "I think I've got this, let's hurry along",
+    "I feel really comfortable with this, can we speed up?",
+    "I'm ready for the next step, can we move faster?"
+  ],
+  "chill a for sec": [
+    "dude, can we take a breather?",
+    "yo, wanna slow down a bit?",
+    "you know what would be awesome, a lil' break?"
+  ],
+  "can you take it easy": [
+    "can we ease up just a bit?",
+    "I feel like we can do this a bit quicker",
+    "let's keep it at a slower pace"
+  ],
+  "Can we pick up the pace": [
+    "Can we speed it up",
+    "Pick it up a bit",
+    "Let's move at a quicker pace"
+  ],
+  "go faster": [
+    "Gag me with a spoon, can we go faster?",
+    "Step on it!",
+    "Bump up the tempo"
+  ],
+  "slow donw im typin": [
+    "I'm slowing down because I'm typing",
+    "I'm taking a breather since my fingers are moving slowly",
+    "I'm having some technical difficulties, so it's taking me longer"
+  ],
+  "hold on": [
+    "Hold the line",
+    "Give me a sec",
+    "Just a moment"
+  ],
+  "Please go slower, I can't keep up.": [
+    "Can you ease up a bit? I'm having trouble keeping up",
+    "Let's dial it back, I'm getting a little behind",
+    "Can you slow down a notch?"
+  ],
+  "speed pls upp": [
+    "Speed it up, quick!",
+    "Make it go faster, dude!",
+    "Up the speed, pronto!"
+  ],
+  "like Hold on, I'm still writing notes.": [
+    "Hold on for just a second, I'm still jotting down some notes",
+    "I'm not quite done writing yet, so bear with me",
+    "Just a minute, I'm not finished writing"
+  ],
+  "like slow?": [
+    "Can we chill out on the pace?",
+    "Can you go slower, please?",
+    "Let's take it easy, I'm not keeping up"
+  ],
+  "take it easy, I'm still on the last example.": [
+    "Hold on a minute, I'm not caught up yet.",
+    "Take it chill, I'm still working on the previous one.",
+    "Can you please slow down? I'm still trying to understand."
+  ],
+  "SLOW DOWN": [
+    "BACK UP!",
+    "Slow down, dude! I'm not ready!",
+    "Come on, slow down, I'm not following."
+  ],
+  "can you slow down?": [
+    "Can you go a bit slower? I'm trying to keep up.",
+    "How about we slow down a bit? I'm getting lost.",
+    "Can you take it a bit slower? I need more time."
+  ],
+  "well Giive me a sec, I'm still proessing.": [
+    "Give me a sec, I'm still trying to wrap my head around it.",
+    "Hold up, let me process this for a second.",
+    "Okay, just give me a moment, I'm still thinking."
+  ],
+  "hold on?": [
+    "Wait a sec!",
+    "Can you hold up?",
+    "Hold tight!"
+  ],
+  "slow down, i'm still on the last example.": [
+    "I'm still trying to get this one right, can you slow down?",
+    "You're going too fast, I need a minute!",
+    "Can we take a moment? I'm not finished yet."
+  ],
+  "too slow?": [
+    "That's too slow!",
+    "Come on, can you speed up?",
+    "You're moving too slowly, let's go!"
+  ],
+  "nex": [
+    "Next up?",
+    "What's the next example?",
+    "I'm ready for the next one, can we move on?"
+  ],
+  "hurry up pls": [
+    "Come on, let's go!",
+    "Pick up the pace, please!",
+    "Move faster, okay?"
+  ],
+  "can we stop for a sec?": [
+    "Hold on for a second, please",
+    "Can we take a quick pause?",
+    "Mind if we stop for just a second?"
+  ],
+  "one sec": [
+    "Pause for a sec, okay?",
+    "Chill for a sec, I need a moment",
+    "Just need a sec, can we stop?"
+  ],
+  "Don't rush this please.": [
+    "Let's not speed through this, okay?",
+    "Can we slow down a bit? It's okay if it takes a bit longer.",
+    "Take your time, we're not in a hurry here."
+  ],
+  "GIVE ME A SEC": [
+    "Can you slow down a bit?",
+    "Take it easy, okay?",
+    "Just chill for a sec"
+  ],
+  "Can we this? skip": [
+    "Can we do this one quickly",
+    "Can we just skip this already",
+    "Can we speed this up"
+  ],
+  "i know already this go faster": [
+    "I'm good, let's move faster",
+    "I know, let's go faster already",
+    "I've got it, can we speed up"
+  ],
+  "actually I think I got this, let's speed up.": [
+    "Actually, I think I understand, so let's speed up",
+    "To be honest, I think I got it, so let's move faster",
+    "Honestly, I'm good, can we speed through this?"
+  ],
+  "I I think got this, let's speed up.": [
+    "I think I've got this, let's step it up.",
+    "Can we hurry up now, I feel I get this.",
+    "I'm good, let's move on faster."
+  ],
+  "Slow I'm down, still on the last example.": [
+    "I'm moving too slowly, still stuck on this.",
+    "We need to pick up the pace, I'm stuck.",
+    "Still stuck on the last one, need to speed up."
+  ],
+  "cann wee pick up the pace?": [
+    "Can we speed it up, please?",
+    "Let's pick up the pace, I'm getting frustrated.",
+    "Can we go a bit faster now?"
+  ],
+  "ur going fast too": [
+    "You're moving so fast, too.",
+    "You're going way faster than me.",
+    "You're going way too fast for me."
+  ],
+  "Can we skip this": [
+    "Can we jump ahead",
+    "How about we speed up",
+    "Let's move at a quicker pace"
+  ],
+  "honestly faster": [
+    "For real, can we go faster",
+    "Honestly, can we move quicker",
+    "Faster, please"
+  ],
+  "so slow tf down": [
+    "Dude, slow down, this is taking forever",
+    "Come on, let's speed it up",
+    "Can we please just hurry up"
+  ],
+  "can w skip": [
+    "Can we skip to the next part",
+    "How about we cut to the good stuff",
+    "Can we jump to the end already"
+  ],
+  "slow tf down?": [
+    "Can you speed it up a bit?",
+    "Hold up, let's take it easy!",
+    "Could you please hurry up a little?"
+  ],
+  "chill for a sec?": [
+    "Take a load off, we're movin' slow!",
+    "You gotta chill, not a rush!",
+    "Dial it back a notch, okay?"
+  ],
+  "Give me a sec, I'm still processing?": [
+    "I'm not a genius yet, give me a minute, okay?",
+    "Hold up, I'm still on this one!",
+    "Give me a sec, I'm not done yet"
+  ],
+  "skiip this": [
+    "Skip it lol",
+    "Can we skip over this please?",
+    "Bypass what's next?"
+  ],
+  "honestly slow down im typing": [
+    "Honestly, you're killing me, slow down already",
+    "Slow down, speed demon!",
+    "Come on, move at a normal pace, dude"
+  ],
+  "next?": [
+    "Next thing?",
+    "What's up next, please?",
+    "Can I move on now?"
+  ],
+  "I ALREADY KNOW THIS FASTER GO": [
+    "I've got this on a faster pace already",
+    "Can we speed this up, I know it already",
+    "Let's move quicker, I'm familiar with it"
+  ],
+  "I think I got this, let's up. speed": [
+    "I'm good, can we go faster now",
+    "I think I understand it, can we quicken the pace?",
+    "I've got it down, let's pick up the speed"
+  ],
+  "slow tf ddown?": [
+    "Wut's the hold up?",
+    "Why's it movin so slow?",
+    "What's the delay, can we speed it up?"
+  ],
+  "Caan we pick up the pace?": [
+    "Can we speed up?",
+    "Can we pick up the tempo?",
+    "Can we hurry it up?"
+  ],
+  "pawork with pls": [
+    "pwor with me",
+    "get back to work pls",
+    "focus pls"
+  ],
+  "umm Give me a sec, I'm still processing.": [
+    "Just a moment, I need a little time to think.",
+    "Give me one second, I'm still processing this.",
+    "Can you give me a minute to catch up?"
+  ],
+  "actually Slow down, I'm still on the last sample.": [
+    "Actually, let's go slower.",
+    "Can we review the last sample again?",
+    "Let's slow down, I'm not finished yet."
+  ],
+  "slow down im typing": [
+    "slow down mate",
+    "giving me time to think",
+    "hold up a sec i'm typing"
+  ],
+  "give me a sec?": [
+    "Just a moment, please.",
+    "Can you give me a second to process this?",
+    "Give me a sec to think about this."
+  ],
+  "Hold on, I'm still writing notes?": [
+    "Hey, can I just finish taking notes?",
+    "Just a sec, I'm still jotting down some stuff.",
+    "One more minute, I'm in the middle of something."
+  ],
+  "faster?": [
+    "Can we go faster?",
+    "Can we speed up?",
+    "How about we move a bit quicker?"
+  ],
+  "i think i got this, let's speed up.": [
+    "I'm good to go, let's move faster.",
+    "Can we speed this up?",
+    "I've got this, let's get moving."
+  ],
+  "Give me a sec, still processing.": [
+    "Just need a sec, still thinking this through.",
+    "Hold on, just processing this.",
+    "A second, please, still considering this."
+  ],
+  "hurry up?": [
+    "Come on, let's hurry up, time's a-wastin'!",
+    "What's the holdup?",
+    "Hurry it up, please!"
+  ],
+  "skip tis": [
+    "Forget this, I'm outta here.",
+    "Skip this nonsense, already.",
+    "Can we just move on from this?"
+  ],
+  "CAN WE SKIP THIS?": [
+    "Can we take a shortcut?",
+    "Can we skip this section",
+    "Can we dodge this material?"
+  ],
+  "slow tff down": [
+    "Can you speed up your talking?",
+    "Slow down, I'm having trouble keeping up!",
+    "Pace yourself, I'd love to understand better"
+  ],
+  "pause pls?": [
+    "slow down a bit, please",
+    "can you speed this up?",
+    "hold up, I'm having trouble keeping up"
+  ],
+  "basically slow down im typing": [
+    "yo, can you chill for a second?",
+    "like, slow down, man. I'm trying to type",
+    "pause for a sec, I'm falling behind"
+  ],
+  "slow!!": [
+    "I'm going so slow",
+    "I'm moving really slowly",
+    "I'm moving at a snail's pace"
+  ],
+  "umm go faster": [
+    "Can you speed up a bit?",
+    "Go quicker, please!",
+    "Hey, can we hurry up a bit?"
+  ],
+  "ease up": [
+    "Can you slow down a bit?",
+    "Let's take it easy, okay?",
+    "Ease up, I'm not keeping up"
+  ],
+  "Hol don, I'm stli lwriting otes.": [
+    "Hold up, I'm still taking notes.",
+    "Can you just hold on a sec?",
+    "I'm not done with these notes yet, hold on!"
+  ],
+  "too fast ro": [
+    "You're going too quick",
+    "Could you not go so fast?",
+    "Slow down, I'm trying to keep up"
+  ],
+  "wait a minute!!": [
+    "Hold on just a second!",
+    "Whoa, slow down, wait a minute!",
+    "Can you just pause for a sec?"
+  ],
+  "I think I got this, let's pick up the pace.": [
+    "I'm feeling good, can we step it up?",
+    "Let's move faster, I think I can handle it.",
+    "I'm good to go, can we pick up the pace?"
+  ],
+  "gviie me a sec, i'm sil lpprocessing?": [
+    "Give me a minute, I'm processing this real quick.",
+    "Hold up, I'm still thinking about this.",
+    "Just give me a sec, I'm kinda stuck."
+  ],
+  "next!!": [
+    "Next up!",
+    "Let's move on to the next one!",
+    "Can we do the next one already?"
+  ],
+  "Can we pick up th pace?": [
+    "Can we step it up a bit?",
+    "How about we pick up the pace?",
+    "Can we move a little faster, please?"
+  ],
+  "give me a sec, i'm still processing.": [
+    "Just a sec, I'm still on it.",
+    "Give me a minute to process that.",
+    "I need a sec to wrap my head around this."
+  ],
+  "Plese down, I can't keep pu.": [
+    "Slow down, I'm having trouble keeping up.",
+    "Can we take it a bit slower, please?",
+    "Pace yourself, I'm not catching up."
+  ],
+  "Skip aehad pelase.": [
+    "Let's skip ahead, please.",
+    "Can we go farther in the notes?",
+    "Do we have to cover everything in this chapter?"
+  ],
+  "umm Hold on, I'm still writing notes?": [
+    "Can I hold on for a sec, still taking notes?",
+    "I'm not done writing; can we pause?",
+    "I'm still writing - can we slow down?"
+  ],
+  "skip this?": [
+    "Can we skip this bit?",
+    "I'd rather skip this part",
+    "Let's just skip it, okay?"
+  ],
+  "honestly I think I got this, let's speed up.": [
+    "I've got this, let's move faster",
+    "Honestly, I think I'm caught up; can we speed up?",
+    "I'm good; let's speed it up a bit"
+  ],
+  "Please slow down, I can't keep up?": [
+    "Hey, could you slow down a bit?",
+    "I'm getting left behind, mind slowing down?",
+    "I'm struggling to keep up with you here, can you speed back up?"
+  ],
+  "HOLD ON": [
+    "Give me a minute",
+    "Hold up, please",
+    "Just a sec, can I get some time?"
+  ],
+  "right can we stop for a sec": [
+    "Hold up for a sec",
+    "Can we take a quick break?",
+    "Pause for a sec, okay?"
+  ],
+  "skip please. ahead": [
+    "Move on already!",
+    "Skip this one, please",
+    "Let's get ahead of schedule"
+  ],
+  "wait a minte": [
+    "Just give me a minute",
+    "Wait a tad longer",
+    "Hold on for just a sec"
+  ],
+  "so hurry up": [
+    "Come on, let's go!",
+    "Don't waste any more time",
+    "Let's hurry it up a bit"
+  ],
+  "i already know go faster": [
+    "I'm good, can you speed up?",
+    "Make it go a bit faster, please",
+    "Can you go any quicker?"
+  ],
+  "slow down im typiing": [
+    "Dude, slow it down, I'm trying to write",
+    "Can you please not be so slow?",
+    "Hold up, you're taking forever"
+  ],
+  "take it easy, I'm still on the last example?": [
+    "can we chill for a bit, still on the last one?",
+    "I'm not ready yet, we're moving too fast",
+    "slow down, I'm lost already"
+  ],
+  "honestly omg slow": [
+    "like, this is taking forever",
+    "seriously, slow it down",
+    "omg, this is so slow"
+  ],
+  "ok so Please slow down, I can't keep up.": [
+    "okay, please, I'm having trouble keeping up, can we slow down a bit?",
+    "I'm really struggling to keep up, can we pace ourselves?",
+    "okay if we could slow down just a bit, I'd really appreciate it"
+  ],
+  "Can adjust you the speed a bit?": [
+    "Can slow down a bit, please?",
+    "Slow it down a notch?",
+    "Can we go a bit slower?"
+  ],
+  "one sec?": [
+    "Yo, can we chill for a sec?",
+    "One second, okay?",
+    "Hold up, just a minute?"
+  ],
+  "chill foor a sec": [
+    "Hold up, okay?",
+    "Slow down, I'm not done yet.",
+    "Can we pace ourselves for a sec?"
+  ],
+  "go slower im typing": [
+    "Could you slow down, please?",
+    "Go slower, I'm having trouble keeping up.",
+    "I'm having trouble typing, can you go slower?"
+  ],
+  "iGve me a sec, I'm still processsing.": [
+    "I need a moment, I'm processing.",
+    "Give me a minute to catch up.",
+    "I'm still on the previous idea, can we take a break?"
+  ],
+  "next slide?": [
+    "Next slide, please.",
+    "Can you move on to the next slide already?",
+    "Can we go to the next slide, please?"
+  ],
+  "Can we pick the up pace?": [
+    "Can we move a bit faster, please?",
+    "I'm still on the last one, can you speed things up?",
+    "Pick it up a notch, okay?"
+  ],
+  "go slower, I'm still on the last example.": [
+    "Can we slow down, I'm not finished yet.",
+    "How about taking it a bit easier?",
+    "I'm still on this one, can we go a bit slower?"
+  ],
+  "can slow you down": [
+    "Can you slow down a bit?",
+    "I need some extra time, can you go slower?",
+    "Take it easy, I'll catch up"
+  ],
+  "Slow down, I'm still on the last demo?": [
+    "Dude, I'm not even done with the last part, can you slow down?",
+    "Hey, I'm still on the last demo, can you please slow down?",
+    "I'm not following, you're moving way too fast, slow down."
+  ],
+  "so can you slow down": [
+    "Yo, can you chill for a sec, I'm still on the last part?",
+    "I'm trying to keep up, can you like, slow down a bit?",
+    "You're going too fast, can you slow down, I need to catch up."
+  ],
+  "ur going too fast!!": [
+    "whoa, slow down!",
+    "dude, you're moving way too fast",
+    "please, can you slow down a bit?"
+  ],
+  "omg slow?": [
+    "wait up",
+    "slow down, man!",
+    "hold up, I'm trying to keep up"
+  ],
+  "skip ahead please.": [
+    "could you please go to the next slide?",
+    "can you skip ahead to the next part?",
+    "next slide, please"
+  ],
+  "hold onn": [
+    "wait a minute",
+    "slow down, I'm not done yet",
+    "hold on for a sec"
+  ],
+  "slow down, i'm still on last example": [
+    "can you give me a sec",
+    "slow down, I'm still trying to catch up",
+    "hold up, I'm not ready yet"
+  ],
+  "wait wait wait?": [
+    "Slow down",
+    "Hold up a minute",
+    "Let's not rush through this"
+  ],
+  "i alreday know this o faster": [
+    "I already know this in a flash",
+    "Can we go a bit quicker now?",
+    "Speed it up, I'm ready"
+  ],
+  "slow down": [
+    "Take it easy",
+    "Slow down the pace, please",
+    "Let's not rush, okay?"
+  ],
+  "down slow im typing": [
+    "Can you go a bit slower?",
+    "I'm typing slowly, so downshift",
+    "Ease off the gas, I'm still typing"
+  ],
+  "Hold on, I'm stli writing notees.": [
+    "Hold on for a minute, I'm still taking notes",
+    "Give me a sec to jot this down",
+    "Just a minute, I'm still writing"
+  ],
+  "actually chill for a sec": [
+    "Let's chill for a sec, okay?",
+    "Take a deep breath, relax",
+    "Give me a sec to catch my breath"
+  ],
+  "Please slo wdown, I can't keeep up.": [
+    "Can you slow down a bit, I'm struggling to keep up",
+    "Slow down, I don't want to miss anything",
+    "Hold up, I'm falling behind"
+  ],
+  "can you sloww oddwn": [
+    "Can you go slower, I'm finding it hard to keep pace",
+    "Slow down a little, please",
+    "Let's take it one step at a time"
+  ],
+  "nnext slide": [
+    "Move on to the next slide, we're done with this one",
+    "We can move on to the next one now",
+    "What's the next topic you want to cover?"
+  ],
+  "slow down tf": [
+    "can you please go a bit slower?",
+    "slow it down, thanks",
+    "ease up a bit, please"
+  ],
+  "speed up pls!!": [
+    "speed it up already!",
+    "move a bit faster, okay?",
+    "hurry it up, pls!"
+  ],
+  "Give me a sec, I'm still processsing.": [
+    "Hold up, I'm still figuring this out",
+    "Take a sec, I'm still in the middle of something",
+    "Just a minute, I'm still processing"
+  ],
+  "SLOW DONW?": [
+    "Wut r u talkin bout??",
+    "U slowin down??",
+    "Wha r u doin??"
+  ],
+  "can we pick up the pace?": [
+    "Can we speed it up a bit?",
+    "Hey, can we get moving, please?",
+    "Hurry it up a bit, can we?"
+  ],
+  "like give me a sec?": [
+    "Gimme a sec, I'm trying to keep up",
+    "Give me a break, I'm falling behind",
+    "I'll catch up in a sec, let's go"
+  ],
+  "fast too bro": [
+    "Can you speed it up a bit, dude?",
+    "I'm going a bit slow, can we pick it up?",
+    "This is way too slow, can we move faster?"
+  ],
+  "wait a minute?": [
+    "Hold up, let's pause for a sec?",
+    "Could you slow down for a minute?",
+    "Do we have to keep this pace? It's really slow."
+  ],
+  "honestly can you adjust the speed a bit?": [
+    "To be honest, it would be really helpful if we could speed up",
+    "Could we maybe adjust the tempo a bit? It's a bit too slow for me.",
+    "I think we could move a bit faster if we wanted to."
+  ],
+  "g ofastr": [
+    "Gotta hurry",
+    "Come on, let's go",
+    "Pick up the pace"
+  ],
+  "Slow down, I'm still on the last example?": [
+    "Can we go a bit slower?",
+    "I'm still trying to catch up, maybe slow down?",
+    "I'm not quite done with this example, can we slow down?"
+  ],
+  "slow down im typing!!": [
+    "Come on, let's hurry up!",
+    "Slow it down a bit, I'm still typing.",
+    "I'm not going to be able to keep up, can we speed up?"
+  ],
+  "hey pause pls": [
+    "Hold up for a sec, I'm behind",
+    "Can we take a breather?",
+    "Just need a little break, okay?"
+  ],
+  "basically chill for a sec": [
+    "Yo, slow down for a hot sec",
+    "Let's not rush it, fam",
+    "Chill out for a sec, aight?"
+  ],
+  "take it easy": [
+    "Excuse me, I'm not ready yet",
+    "Can we go a bit slower?",
+    "I'm not caught up yet, please wait"
+  ],
+  "Hold on, I'm sstll writing otes.": [
+    "Give me a sec, I'm still taking notes.",
+    "Hold up, I'm still writing down notes.",
+    "Can I just finish this real quick?"
+  ],
+  "wai ta minute": [
+    "Yo, can I pause for a minute?",
+    "Wait a minute, bruh.",
+    "Let me just catch up for a sec."
+  ],
+  "Skip ahead pleae.": [
+    "Can I please skip to the next part?",
+    "Pace yourself, guys.",
+    "Can we move on to the next topic now?"
+  ],
+  "fasterr": [
+    "Speed it up, please.",
+    "Can we move at a faster pace?",
+    "Let's step it up a notch."
+  ],
+  "I think I got this, let's hurry up.": [
+    "Let's get moving, I feel good about this.",
+    "Can we speed it up a bit?",
+    "Hold up, I need a bit more time."
+  ],
+  "SPEED IT UP": [
+    "DUDE, LET'S GO!",
+    "Speed it up, I'm getting anxious!",
+    "I'm ready when you are, let's move!"
+  ],
+  "ok so Give me a sec, I'm still processing.": [
+    "I'm almost good to go, just need a brief moment.",
+    "Just give me a moment, I'm still figuring it out.",
+    "Okay, so I'm still on this one, just need a sec."
+  ],
+  "you can slow down": [
+    "Hey, can you slow down a bit?",
+    "Take it easy, I'm still trying to keep up!",
+    "Can you please pace yourself?"
+  ],
+  "UR GOING TOO FAST": [
+    "BRUH, CHILL OUT!",
+    "Dude, you're moving way too fast!",
+    "Slow down, bro, I'm not keeping up!"
+  ],
+  "HOLD ON, I'M STILL WRITING NOTES.": [
+    "Hold up, I need a sec to write this down",
+    "Can I catch up with you in a minute?",
+    "Wait, I'm not done taking notes yet."
+  ],
+  "like omg slow": [
+    "Can we please speed up?",
+    "Slow down a bit, I'm getting confused.",
+    "I feel like we're moving too fast"
+  ],
+  "Don't rush through this please?": [
+    "May I ask you to take it a bit easier?",
+    "I'd love it if we could move at a slower pace",
+    "Please don't rush through this with us."
+  ],
+  "can we skip?": [
+    "Can we take a break?",
+    "Skip ahead a bit?",
+    "Is it possible to move on to the next problem?"
+  ],
+  "go wait back": [
+    "Let's wait for a sec",
+    "Can we hold up for a minute?",
+    "Hold on, let me catch up."
+  ],
+  "well wait go back": [
+    "Can we start over?",
+    "Let's go back and review what we've covered so far.",
+    "I think we need to start again from the beginning."
+  ],
+  "can you ease up": [
+    "Can you slow down a bit?",
+    "Ease up, okay?",
+    "Slow down, I'm getting left behind!"
+  ],
+  "ok so too fast bro": [
+    "Dude, you're moving too quick!",
+    "Hold up, that's way too fast for me",
+    "Chill out, no need to rush"
+  ],
+  "please slow down, i can't keep up.": [
+    "Can you please go at a slower pace?",
+    "I'm having trouble keeping up with your speed",
+    "Could you take it down a notch, please?"
+  ],
+  "can you adjust the speed a bit?": [
+    "Can you speed up a bit?",
+    "Dude, slow down!",
+    "How about we move a bit faster?"
+  ],
+  "hey slow tf down": [
+    "Yo, speed it up!",
+    "Take it down a notch, speed-wise",
+    "Can we go a bit quicker?"
+  ],
+  "basically next slide": [
+    "Slow it down, man",
+    "Let's keep the pace steady",
+    "We can keep going, but at this pace?"
+  ],
+  "Please take it easy, I can't keep up.": [
+    "I'm having trouble keeping up, can we slow down?",
+    "Can we ease off a bit, I'm getting overwhelmed.",
+    "I need a break, can we go at a slower pace?"
+  ],
+  "Can we skip thiis?": [
+    "Can we just skip this part?",
+    "Can we move on to something else?",
+    "I don't get it, can we skip this?"
+  ],
+  "Give me a sec, I'm still prcessing.": [
+    "Hold up, I'm not done yet.",
+    "Just a minute, I'm still trying to process this.",
+    "Can I get a little more time, I'm still working on this?"
+  ],
+  "Don't rush through please. this": [
+    "Can you please take your time?",
+    "No need to rush, take a deep breath",
+    "Slow down, I'm not in a hurry"
+  ],
+  "actually one sec": [
+    "Actually, let me catch up",
+    "Hold up for a sec",
+    "One minute, I'm lost"
+  ],
+  "for a sec": [
+    "Just a little while",
+    "For a super quick second",
+    "Hold up for one sec"
+  ],
+  "PAUSE": [
+    "Hold up for a second",
+    "Pause for a bit",
+    "Just a sec, hang on"
+  ],
+  "right pawork with": [
+    "Can we do the pacing a bit slower?",
+    "Let's get back on track here",
+    "Slow down, I'm not finished with this yet"
+  ],
+  "basically can we skip": [
+    "Can we chill on the pace a bit?",
+    "We're moving kinda fast, can we slow down?",
+    "Hold up, I'm still on the previous thing"
+  ],
+  "Slow down, I'm still on the last instance!!": [
+    "I need a break, can we slow the pace?",
+    "We've got a lot to cover, can we speed up?",
+    "Can we adjust the pace a bit to make it more manageable?"
+  ],
+  "Skip ahead please?": [
+    "Can we speed things up?",
+    "Come on, let's move faster!",
+    "How about we go a bit quicker?"
+  ],
+  "SLOW DOWN?": [
+    "Dude, slow down!",
+    "Yo, can you go any slower?",
+    "Can you take it down a notch?"
+  ],
+  "I think I this, let's speed up?": [
+    "We should pick up the pace, I think.",
+    "Can we speed it up?",
+    "Let's boost our speed, yeah?"
+  ],
+  "honestly can we skip": [
+    "can we just skip this?",
+    "can we move on?",
+    "let's skip ahead, can we?"
+  ],
+  "basically omg slow": [
+    "I'm dying over here, can you speed up?",
+    "We're going super slow, can you pick it up?",
+    "Come on, we're running so behind"
+  ],
+  "umm hurry up": [
+    "What's the hold up?",
+    "Can we go a bit faster, please?",
+    "Let's pick up the pace, okay?"
+  ],
+  "DON'T RUSH THHROUGH THIS PLEASE.": [
+    "Can we take it one step at a time?",
+    "Don't speed through this, take your time!",
+    "Hey, no rush, let's get it right!"
+  ],
+  "can we skip!!": [
+    "Can we skip ahead?",
+    "Can we move on already?",
+    "I'm ready to move on, can we skip this?"
+  ],
+  "hey hurry up": [
+    "Hey, let's pick up the pace!",
+    "Come on, hurry it up!",
+    "We're running a bit behind, can you hurry up?"
+  ],
+  "basically give me a sec": [
+    "can you just give me a minute",
+    "hold on for a sec",
+    "just take a second, okay"
+  ],
+  "LIKE HOL UP": [
+    "Give me a sec",
+    "Hold the pace, please",
+    "Can we slow down a bit?"
+  ],
+  "hold on, i'm still writing notes.": [
+    "Can I finish writing these notes?",
+    "I'm not done taking notes yet, can we pause?",
+    "Just a minute, I'm still writing down some stuff"
+  ],
+  "HURRY UP": [
+    "Come on, let's speed up",
+    "Hurry it up already",
+    "Time's ticking, let's move"
+  ],
+  "well slow down, i'm still on the last example.": [
+    "Easy does it, still working on this",
+    "I'm not quite caught up yet, can we slow it down?",
+    "Let's take it one step at a time, I'm still on this example"
+  ],
+  "Don't through rush this please?": [
+    "Please don't rush through this, I need a minute",
+    "Can we take a pause here, I'm not ready for the next thing",
+    "I'm not ready for the next part, can we slow down?"
+  ],
+  "basically pause": [
+    "Freeze for a sec",
+    "Hit pause for a minute, okay?",
+    "Let's pause for a second, I need to catch up"
+  ],
+  "chill for a sec!!": [
+    "hold up, let's slow down for a second",
+    "relax, we don't have to rush",
+    "calm down, take a deep breath"
+  ],
+  "OMG SLOW": [
+    "seriously, slow down a bit, okay?",
+    "can we please slow it down?",
+    "you're going too fast, slow down!"
+  ],
+  "Hold on, I'm stll rwiting notes.": [
+    "Whoa, hang on a sec, I'm still taking notes!",
+    "Can we take it a bit slower, I'm still writing notes.",
+    "I'm on it, just need a sec to finish this!"
+  ],
+  "like can you ease up": [
+    "Can you chill out a bit?",
+    "Ease up, I need a minute!",
+    "Slow down, I'm still trying to keep up."
+  ],
+  "right omg slow": [
+    "Wait, slow down!",
+    "Hold up, I'm way behind!",
+    "Omg, slow down, I haven't caught up yet!"
+  ],
+  "Pleaes slow down,  can't keep up.": [
+    "Hey, can you please go a bit slower?",
+    "I'm having trouble keeping up, can you speed down a notch?",
+    "You're going a bit too quickly, can you ease up?"
+  ],
+  "o fast bro": [
+    "Whoa, you're moving way too fast!",
+    "Gotta slow down, bro!",
+    "I'm getting left behind, can you dial it back?"
+  ],
+  "ur going too fast?": [
+    "Are you going too quickly?",
+    "Hold up, you're moving too fast!",
+    "You're moving a bit too quickly for me."
+  ],
+  "basically too fast bro": [
+    "Come on, slow down, dude.",
+    "You're going way too fast, bro.",
+    "Slow down a bit, I'm still trying to catch up."
+  ],
+  "pausee": [
+    "Pz, plz.",
+    "Can we pause for a sec?",
+    "Pause, pause, please!"
+  ],
+  "Holdd on, 'm stillll writnig notes.": [
+    "Hold on just a minute, I'm still writing notes.",
+    "Give me a minute to catch up, I'm still writing.",
+    "Hold up, I'm not done taking notes yet."
+  ],
+  "so too fats bro": [
+    "I'm going too fast, dude",
+    "I'm moving way too quickly",
+    "Can I slow down, bro?"
+  ],
+  "can ou slow ow": [
+    "can you go slower?",
+    "yo, take it easy, aight?",
+    "slow down a bit, please"
+  ],
+  "like hol up": [
+    "hold up, slow down!",
+    "can you ease up?",
+    "let's chill, okay?"
+  ],
+  "can you take it easy?": [
+    "can you take it easy, please?",
+    "no rush, slow down!",
+    "can we go a bit slower?"
+  ],
+  "go fastr": [
+    "speed up",
+    "increase the pace",
+    "get moving faster"
+  ],
+  "i already know go this faster": [
+    "I'm aware I can speed this up",
+    "I know I can go faster with this",
+    "I can make this faster already"
+  ],
+  "speed pls up": [
+    "Can you speed it up?",
+    "Speed it up, please",
+    "Pick up the pace, thanks"
+  ],
+  "go faster?": [
+    "Can ya step on it?",
+    "Go quicker, please?",
+    "Make it go faster"
+  ],
+  "oomgg slow": [
+    "Dude, slow down",
+    "Whoa, chill for a sec",
+    "Can you slow it down? I'm not done yet"
+  ],
+  "lSow down, I'mm still thhe on ast examle.": [
+    "Please, slow down, I'm still on the last exam",
+    "Can you, like, slow down a bit? I gotta finish this one",
+    "Hold on, slow down, I'm not finished with this one yet"
+  ],
+  "too sllow": [
+    "way too slow",
+    "like, super slow",
+    "slower than molasses"
+  ],
+  "actually wait go back": [
+    "Hold up, let's go back",
+    "Slow it down, I need to catch up",
+    "Can you rewind a bit?"
+  ],
+  "speed it up!!": [
+    "Whoa, go back a sec",
+    "Speed it up, I'm getting bored",
+    "Come on, let's move faster already"
+  ],
+  "speed u ppls": [
+    "Can we speed up, please?",
+    "Hold up, can we speed up?",
+    "Let's pick up the pace, okay?"
+  ],
+  "well hold on": [
+    "Hold on a sec, let's move",
+    "Hang on, we can speed up now",
+    "Wait, we can go a bit faster"
+  ],
+  "so hol up": [
+    "Hold up, I need you to slow down for a second",
+    "Can you slow down for just a second?",
+    "Hold up, I'm having trouble keeping up"
+  ],
+  "pautilize pls": [
+    "Can you slow down, please?",
+    "Hold up a minute, I'm not done taking notes",
+    "Can we take it a bit slower?"
+  ],
+  "Hold on, I'm still writing notes": [
+    "Give me just a sec, I'm trying to write",
+    "I'm still getting my thoughts down, can you pause?",
+    "I'm not quite caught up yet, can we keep it slow?"
+  ],
+  "basically wait go back": [
+    "hold up, let's go back",
+    "slow down, we gotta go back to that",
+    "wait a sec, let's rewind"
+  ],
+  "waait wait wait": [
+    "waait, wait, w8",
+    "hold on, slow down, let's go back",
+    "hmm, wait a few seconds, let's revisit"
+  ],
+  "can you slow down!!": [
+    "Can you speed up? I'm getting a bit behind.",
+    "Dude, slow it down a notch!",
+    "Can you go a bit slower, please?"
+  ],
+  "to ofast bro?": [
+    "What's the pace? I'm getting impatient!",
+    "Come on, let's pick up the pace, bro!",
+    "How long till we're done? The pace is way too slow."
+  ],
+  "puse": [
+    "hold up",
+    "just a moment",
+    "gimme a sec"
+  ],
+  "Give me a sec, I'm still processing": [
+    "I'm still on a roll",
+    "can you give me a second?",
+    "slow down for a bit"
+  ],
+  "Don't rush through this please": [
+    "Could we take it slow, please?",
+    "Let's not rush, okay?",
+    "Can we take our time?"
+  ],
+  "well Can we skip this?": [
+    "Can we skip the rush?",
+    "Do we gotta do this fast?",
+    "Can we chill on this one?"
+  ],
+  "faster!!": [
+    "speed it up!",
+    "let's go faster!",
+    "hurry it up!"
+  ],
+  "I think I got this, let's speed up?": [
+    "I've got it, let's move quicker",
+    "we can do this, let's speed it up",
+    "I'm ready, let's step it up"
+  ],
+  "rush Don't through this please.": [
+    "Please don't rush through this",
+    "I need you to slow down a bit",
+    "Can you take a bit more time on this?"
+  ],
+  "huurry up!!": [
+    "come on, hurry up!!",
+    "move along now!",
+    "let's get this done quickly!"
+  ],
+  "ur too fast": [
+    "you're going too fast",
+    "chill out, you're moving too quick",
+    "can you slow down a bit?"
+  ],
+  "sow": [
+    "slow down",
+    "you're rushing",
+    "you're moving too quickly"
+  ],
+  "pawork with": [
+    "Could you work at a slower pace?",
+    "Can you take it easy for a sec?",
+    "I'm having trouble keeping up, can we slow down?"
+  ],
+  "umm can you slow down": [
+    "Can you please slow down your pace?",
+    "Do you think you can slow down a bit?",
+    "I'd appreciate it if you could work at a slower tempo."
+  ],
+  "solw down im typing": [
+    "Slow down, I'm still typing!",
+    "Geez, can you slow down?",
+    "Come on, let's speed it up a bit"
+  ],
+  "SLOW DOWN TF": [
+    "SLOW DOWN, THAT'S SO ANNOYING!!",
+    "Dude, seriously, slow down already!",
+    "Please, for the love of all things good, slow down!"
+  ],
+  "I thin kI go this, let's speed up.": [
+    "I think I got that, can we pick up the pace?",
+    "Let's hurry it along, let's go!",
+    "I'm ready to move on, can we speed up?"
+  ],
+  "chiil lfro a sec": [
+    "give me a chill for a sec",
+    "can you slow down for a second",
+    "hold up for a minute, I've got this"
+  ],
+  "well Skip ahead please.": [
+    "can we speed up?",
+    "please skip ahead, I'm getting bored",
+    "can we move on to the next part already"
+  ],
+  "ok so can we skip": [
+    "can we speed up now?",
+    "skip ahead, can we?",
+    "can we move faster?"
+  ],
+  "slow tf w": [
+    "you're goin way to slow",
+    "slow down bruh",
+    "speed it up dude"
+  ],
+  "paapply pls": [
+    "pplly speed pls",
+    "can you make it faster",
+    "can you hurry up the pace"
+  ],
+  "Ca ynou adjust the speed a bit?": [
+    "can you change the pace a bit?",
+    "would you mind adjusting the speed?",
+    "can you speed it up a notch?"
+  ],
+  "speed up it!!": [
+    "Can you please speed up?",
+    "Speed it up a notch!",
+    "Come on, let's move faster!"
+  ],
+  "can you adjust the speed a bit!!": [
+    "Can you make it a bit faster, please?",
+    "Adjust the speed to a slightly higher pace.",
+    "Speed up the pace, thanks!"
+  ],
+  "on, Hold I'm still writing notes.": [
+    "Hold up, I'm not done writing my notes.",
+    "Can you chill out? I'm still taking notes.",
+    "I'm still on step one, can you keep it slow?"
+  ],
+  "pautilize": [
+    "What, pause? I'm in the middle of something!",
+    "Bruh, I'm not done yet, can we slow down?",
+    "Pace yourselves, I'm not even at the part you're on."
+  ],
+  "Slow down, I'm still on last the example.": [
+    "Slow down, I'm still on the example from last lecture.",
+    "Can we take it easy? I'm still on the previous example.",
+    "I'm not caught up yet, can we continue at a slower pace?"
+  ],
+  "speed it up?": [
+    "Can you hurry up?",
+    "Pick up the pace, please",
+    "Speed it up a bit, okay?"
+  ],
+  "SSkip head pleaes.": [
+    "bruh, skip the intro",
+    "can we just skip the intro?",
+    "skip the intro, can we move on?"
+  ],
+  "SLOW DOWN!!": [
+    "Hold up, I'm falling behind!",
+    "Slow down, dude!",
+    "Can you please slow down?"
+  ],
+  "lsow down mi typin": [
+    "lsow down plz",
+    "slow down fam",
+    "ease up on the typing"
+  ],
+  "chil fo ra ecc": [
+    "chill out for a sec",
+    "relax, take your time",
+    "take it easy, I'm not in a rush"
+  ],
+  "right hol up": [
+    "Okay, hold on just a second!",
+    "Right, slow down - let me catch up!",
+    "Whoa, slow down there partner!"
+  ],
+  "i alreadyy know this goo fatser": [
+    "I know this already, let's hurry up",
+    "I'm on it, we can speed this up",
+    "Can we just get to the next part faster?"
+  ],
+  "hooldd on": [
+    "Dude, I already get this, let's move on",
+    "Come on, we need to speed up",
+    "I got this, let's pick up the pace"
+  ],
+  "pick up the pace pls": [
+    "Can you hurry up a bit?",
+    "Pick it up, we're running short on time",
+    "Can we speed it up, please?"
+  ],
+  "Can we skip tthis?": [
+    "Can we take a break here?",
+    "Hold up for a minute, I'm falling behind.",
+    "Can we move a bit slower?"
+  ],
+  "Please slow down, can't I keep up.": [
+    "Can you please go at a slower pace? I don't want to fall behind.",
+    "I'm getting lost, can you slow down a bit?",
+    "I'm struggling to keep up, can you please go slower?"
+  ],
+  "hurry upp": [
+    "Slow down, dude!",
+    "Take it easy, we can catch up!",
+    "Chill out, let's keep a steady pace."
+  ],
+  "FASTER": [
+    "Could you move faster?",
+    "I want to try to keep up, can we go a bit quicker?",
+    "Let's pick up the pace, I don't want to be left behind."
+  ],
+  "ok so slow": [
+    "yeah, it's going really slow",
+    "the pace is kinda slow, huh?",
+    "we're moving super slow, man"
+  ],
+  "ur going too afst": [
+    "You're going way too fast",
+    "Dude, you're movin' way too quick",
+    "Can you slow down? You're going way too fast"
+  ],
+  "pause!!": [
+    "Hold up!!",
+    "Just wait a sec!!",
+    "Pause the lesson, please!!"
+  ],
+  "ok so chill for a sec": [
+    "Hey, can we take it easy for a minute?",
+    "Can we slow down a bit?",
+    "Hold up for a sec, okay?"
+  ],
+  "actually can you slow down": [
+    "I'd appreciate it if you could go a bit slower.",
+    "Can you take it down a notch?",
+    "Let's not rush, okay?"
+  ],
+  "Can w peick u tteh pace?": [
+    "Can you speed up the pace?",
+    "Hey, can you pick up the pace a bit?",
+    "How about we pick up the pace?"
+  ],
+  "Slow down, I'm still on the last example": [
+    "Hey, let's take it easy, I'm still on the last example",
+    "Come on, pace yourself, I'm not even on the next one yet",
+    "Can we speed this up? I'm stuck on the last problem"
+  ],
+  "Slow own, 'Im still on thee last exampple.": [
+    "Can you slow down, I'm still on the last example.",
+    "Dude, can we chill, I'm on the last one.",
+    "Can we pace a bit slower, please?"
+  ],
+  "CAN YOU ADJUST THE SPEED A BIT?": [
+    "Can you maybe speed it up a notch?",
+    "I wish the pace could be a bit faster, thanks!",
+    "Can you guys please speed up a bit?"
+  ],
+  "take it easy im typing": [
+    "Take it easy, I'm still typing, no rush.",
+    "Can we take it slow, I'm still working on this.",
+    "Don't rush, I'm typing, take your time."
+  ],
+  "Don't rush through this peeas.": [
+    "Don't go so fast, I'm not done yet",
+    "Take it easy, I'm still on the last one",
+    "Can we go slower, I'm still on this example"
+  ],
+  "Slow down, I'm still on the alst example": [
+    "Could we slow down a bit, please?",
+    "I'm not finished yet, can we go slower?",
+    "I'm still on this example, can we speed back up later?"
+  ],
+  "hey SLOW DOWN, I'M STILL ON THE LAST EXAMPLE.": [
+    "SLOW DOWN ALREADY, I'M STILL ON THE LAST ONE!",
+    "COME ON, SLOW DOWN, I'M NOT DONE!",
+    "SLOW DOWN, MAN, I'M STILL WORKING ON IT!"
+  ],
+  "i think i got this, let's speed up?": [
+    "I'm feeling good, can we move faster now?",
+    "Yeah, I'm ready to pick up the pace!",
+    "How about we speed up, I think I'm ready"
+  ],
+  "I think I got this, let's speed up": [
+    "I'm good, let's move more quickly.",
+    "I think I'm ready, can we go a bit faster?",
+    "I'm feeling confident, can we speed up now?"
+  ],
+  "honestly Can we pick up the pace?": [
+    "Can we speed it up?",
+    "Let's get moving already.",
+    "I'm getting a bit behind, can we pick it up a notch?"
+  ],
+  "hey hol up": [
+    "yo, slow down",
+    "hold up, fam",
+    "c'mon, let's hustle"
+  ],
+  "Hold on, I'm still writing noets.": [
+    "Wait, I'm still taking notes. Can we slow down?",
+    "I'm not done, hold on a sec.",
+    "Let me catch up, I'm still writing stuff down."
+  ],
+  "low": [
+    "I'm going slow",
+    "I'm moving at a slower speed",
+    "I'm not doing well"
+  ],
+  "fastr": [
+    "I'm cruisin'",
+    "I'm chillin' at the moment",
+    "I'm on a relaxed pace"
+  ],
+  "ur going fast": [
+    "you're going too quickly",
+    "speed up!",
+    "you're cruising"
+  ],
+  "fastre": [
+    "move it along",
+    "let's get a move on",
+    "you're going like a bullet"
+  ],
+  "well omg slow": [
+    "Come on, can you slow down?",
+    "Slow down already, it's way too fast",
+    "Gosh, you're moving like a cheetah, slow down already"
+  ],
+  "too fast bro!!": [
+    "Yo, slow it down",
+    "Dude, slow down, you're moving too fast",
+    "Whoa, pace yourself, bro"
+  ],
+  "too bro fast": [
+    "slow down a bit",
+    "you're going way too quick",
+    "ease up, okay?"
+  ],
+  "chill for sec a": [
+    "hang on a sec",
+    "gimme a minute please",
+    "stop for a second, alright?"
+  ],
+  "umm speed up pls": [
+    "Can you speed up a bit, please?",
+    "Speed it up, thanks",
+    "Can we go a bit faster?"
+  ],
+  "so next": [
+    "So, what's next in the lesson?",
+    "Next, please",
+    "So, let's move on to the next topic"
+  ],
+  "omg sloww": [
+    "Dude, you're moving too slow",
+    "Hold up, we're going too slow",
+    "Can we speed up a bit?"
+  ],
+  "Please slow down, I can't keep u.": [
+    "Excuse me, can you please speed up?",
+    "I'm falling behind, can you slow down a bit?",
+    "I'm having trouble keeping up, can we hurry along?"
+  ],
+  "ccan you slow down!!": [
+    "Yooo slow down, let me catch up",
+    "Dang, you're going slow as molasses",
+    "Hold the pace, we gotta move faster"
+  ],
+  "hol up?": [
+    "Uh, can we pick up the pace a bit?",
+    "I'm getting a bit behind, can we speed up?",
+    "Let's speed things up, shall we?"
+  ],
+  "umm Can we pick up the pace?": [
+    "Dude, can we go faster, please?",
+    "We're losing time, let's move it along",
+    "Can we pick up the pace and get out of here?"
+  ],
+  "CAN YOU SLOW DOWN": [
+    "Can you ease up a bit?",
+    "Slow down buddy",
+    "Hold on a second",
+    "Hey, let's take it slow",
+    "Take it easy, okay?"
+  ],
+  "slow tf down!!": [
+    "Slow it down, dude!",
+    "Dial it back!",
+    "Whoa, slow down!",
+    "Hold up, let's pace",
+    "Speed it up isn't working"
+  ],
+  "hey hold on": [
+    "Can you slow down a bit?",
+    "Take it easy on us, it's overwhelming",
+    "Let's slow this down",
+    "Hey, can you go at a slower pace",
+    "We need to adjust the pace"
+  ],
+  "can you down": [
+    "can you slow down",
+    "can you go slower",
+    "slow it down a bit"
+  ],
+  "Can we skip tis?": [
+    "Can we take a break for a sec?",
+    "We can speed up in a minute?",
+    "Can we pause for a bit?"
+  ],
+  "give m a sec!!": [
+    "Hold up for a sec, okay?",
+    "Give me a sec, gotta catch up!",
+    "I need a minute, can we slow down?"
+  ],
+  "basically pause pls": [
+    "Pause for a hot second, please?",
+    "Just give me a sec, thanks!",
+    "Can we freeze for a sec?"
+  ],
+  "we Can skip this?": [
+    "Can we skip this chapter?",
+    "Can we just skip this?",
+    "Can we move on from this?"
+  ],
+  "like slow tf down": [
+    "Dude, can you speed it up?",
+    "I'm still on it, can you take it slower?",
+    "Give me a few seconds, I'm still processing this"
+  ],
+  "soww down, i'mm still on the last example.": [
+    "SLOW DOWN, I'M NOT DONE YET!",
+    "C'mon, let me get to the end of this first",
+    "Slow down a bit, I'm still in the middle"
+  ],
+  "Give me a sec, I'm stilll prcoessing.": [
+    "Excuse me, I'm still in the middle of this, can you pause for a sec?",
+    "I'm almost there, can you hold off for a sec?",
+    "Hold on a minute, I'm still on this"
+  ],
+  "hey pause?": [
+    "what's the pace?",
+    "do we need to slow down?",
+    "hold up for a sec"
+  ],
+  "next lside": [
+    "wait up for the next one?",
+    "pause, let's move on when you're ready",
+    "hold it, let's catch up first"
+  ],
+  "too sslow": [
+    "I'm going super slow",
+    "I'm moving at a snail's pace",
+    "I'm crawling along"
+  ],
+  "can you go slower": [
+    "Hey, can you slow down a bit?",
+    "Can you go at a slower pace, please?",
+    "Could you move at a more leisurely tempo?"
+  ],
+  "right ease up, I'm still on the last example.": [
+    "Can we speed up a bit? I'm still on the last example.",
+    "Come on, let's move faster, I'm still stuck on this one.",
+    "I'm struggling, can you adjust the pace?"
+  ],
+  "GO FASTER": [
+    "Increase the speed, I'm wasting time here!",
+    "Faster, please! I'm not moving quickly enough.",
+    "Speed it up, I'm lagging behind!"
+  ],
+  "well Can yuo adjust the speed a bti?": [
+    "Yeah, can you just go a bit faster, I'm still on the last problem.",
+    "I'm really falling behind, can we step it up?",
+    "Can we adjust the tempo? I'm having trouble keeping up."
+  ],
+  "so Can you adjust the speed a bit?": [
+    "Can you slow down a bit?",
+    "Mind speeding it up a notch?",
+    "Can you take it down a gear, please?"
+  ],
+  "ok so give me a sec": [
+    "Give me a second, okay?",
+    "Hold up, just a sec, okay?",
+    "Can I get a sec, please, to catch up?"
+  ],
+  "can u repeat": [
+    "could you say that again?",
+    "can you repeat that for me?",
+    "could you repeat the question?"
+  ],
+  "say what": [
+    "what did you say?",
+    "say it again, please?",
+    "could you say it one more time?"
+  ],
+  "lost u there": [
+    "i didn't quite catch that",
+    "lost you there, can you repeat?",
+    "could you go back to that last bit?"
+  ],
+  "Wait, what was that?": [
+    "sorry, what was that you said?",
+    "could you repeat, i didn't hear?",
+    "wait, what was that again?"
+  ],
+  "huh?": [
+    "huh?",
+    "say it again, please?",
+    "could you repeat that?"
+  ],
+  "I lost you there, can you start over on that point?": [
+    "i got lost, can you start over?",
+    "could you repeat that point for me?",
+    "can you start again from there?"
+  ],
+  "I didn't comprehend, please say it again.": [
+    "i didn't quite get it",
+    "could you say it again, please?",
+    "sorry, i didn't understand, could you repeat?"
+  ],
+  "run that back": [
+    "play it back for me",
+    "can you repeat, please?",
+    "go back to that last part, please?"
+  ],
+  "again?": [
+    "can you repeat, please?",
+    "say it one more time?",
+    "could you repeat that for me?"
+  ],
+  "say that one more time": [
+    "Can you say that again, please?",
+    "Slow down, I didn't quite catch that",
+    "Can you repeat the last thing you said?"
+  ],
+  "rewind": [
+    "Rewind the video, please",
+    "Play that back again",
+    "Go back a second, I didn't understand"
+  ],
+  "u what mean": [
+    "You're not making any sense",
+    "What did you just say? I'm totally lost",
+    "What's going on? I'm not following"
+  ],
+  "Can you show that example one more time?": [
+    "Can you show me that example once more?",
+    "Let me see that again, please",
+    "Could you demonstrate that one more time?"
+  ],
+  "what": [
+    "Uh, what was the question again?",
+    "What's going on?",
+    "What's happening?"
+  ],
+  "Can you re-explain how that works?": [
+    "Can you explain that part again?",
+    "How does that work, exactly?",
+    "So, just to clarify..."
+  ],
+  "one more timee": [
+    "Can you say that one more timee?",
+    "Say that again, I didn't quite get it",
+    "Can you repeat that, please?"
+  ],
+  "pardon?": [
+    "Sorry, I missed that",
+    "What did you say just now?",
+    "Pardon me, I didn't catch that"
+  ],
+  "lost u there?": [
+    "Can you start over? I lost you",
+    "What just happened?",
+    "I'm not sure what you're talking about"
+  ],
+  "what happened?": [
+    "What just happened?",
+    "What's going on?",
+    "I'm lost, can you start over?"
+  ],
+  "say again?": [
+    "Say that again?",
+    "Could you repeat that for me?",
+    "What did you just say?"
+  ],
+  "Can yo ure-un that exampl?": [
+    "Can you rephrase that exam example?",
+    "Can you clarify that example you gave?",
+    "Can you say that example again so I can understand?"
+  ],
+  "didn't get that?": [
+    "I didn't catch that",
+    "I didn't quite get it",
+    "Can you repeat that last part?"
+  ],
+  "Can you go back to the previous slide for a second": [
+    "Let me just go back and review the previous slide",
+    "Can we go back to that slide one more time?",
+    "Can you show us that slide from earlier?"
+  ],
+  "say what!!": [
+    "What did you just say?!!",
+    "Say that again, I didn't quite hear you",
+    "Huh? What was that?"
+  ],
+  "Can you show that instance one more time?": [
+    "Can you show us that example one more time on the board?",
+    "Let me see that example again",
+    "Can you demonstrate that example once more?"
+  ],
+  "what?": [
+    "What was that?",
+    "I didn't quite understand",
+    "Can you repeat that question?"
+  ],
+  "what u mean": [
+    "What do you mean by that?",
+    "Can you explain that in more detail?",
+    "Can you break that down for me?"
+  ],
+  "could u repeat": [
+    "Could you repeat that for me, please?",
+    "Say that again, I didn't catch it",
+    "Can you repeat what you just said?"
+  ],
+  "can you go back to the previous slide for a second?": [
+    "Sorry, can you review the previous slide briefly?",
+    "Yo, can we go back to the previous slide real quick?",
+    "Can you recap the previous slide?"
+  ],
+  "??": [
+    "",
+    "",
+    ""
+  ],
+  "say it again": [
+    "Can you summarize it for me again?",
+    "Could you say that again in simpler terms?",
+    "Could you repeat that slowly?"
+  ],
+  "repeat": [
+    "Repeat",
+    "Can you repeat?",
+    "Say it again, please"
+  ],
+  "Can you show that sample one more time?": [
+    "Can you show me that example again, if you don't mind?",
+    "Can you demonstrate that sample one more time, please?",
+    "Can you go over that example again?"
+  ],
+  "Can you go back to the previous slide for a second?": [
+    "Can you go back to the previous slide for a second?",
+    "Sorry, can you review the previous slide for a moment?",
+    "Can you recap the previous slide briefly?"
+  ],
+  "go over that again": [
+    "Can you explain it again?",
+    "Could you go over that again in more detail?",
+    "Could you say that again?"
+  ],
+  "say what?": [
+    "huh?",
+    "what was that?",
+    "what did you say?"
+  ],
+  "i didnt that catch": [
+    "i didn't catch that can you repeat?",
+    "what was the question?",
+    "can you speak up?"
+  ],
+  "say again": [
+    "say that again please",
+    "can you repeat what you said?",
+    "say it again"
+  ],
+  "ok so can u repeat": [
+    "Can you repeat that for me?",
+    "Repeat that again, please",
+    "Can you say it again?"
+  ],
+  "Can you re-run that example?": [
+    "Mind running the example again?",
+    "Can you show me the example one more time?",
+    "Let's take another look at that example"
+  ],
+  "well huh": [
+    "Uh, can you clarify?",
+    "Hmm, can you help me out?",
+    "Sorry, I didn't quite get it"
+  ],
+  "huh": [
+    "Huh?",
+    "What was that?",
+    "Can you repeat?"
+  ],
+  "ok so Go back to that last point please.": [
+    "Can we go back to the previous point?",
+    "Let's revisit that last point, okay?",
+    "What was the previous example again?"
+  ],
+  "i'm confused repeat please": [
+    "Sorry, I'm a bit lost, can you repeat?",
+    "Can you break it down for me?",
+    "I'm confused, can you explain it again?"
+  ],
+  "sorry what": [
+    "Sorry, what was that?",
+    "Can you say that again?",
+    "Could you repeat the question?"
+  ],
+  "can repeat u": [
+    "Can you repeat that for me?",
+    "What'd you just say?",
+    "Can you repeat what you said?"
+  ],
+  "what did u say": [
+    "Yo, can you say that again?",
+    "Huh? What was that?",
+    "Can you say it again, plz?"
+  ],
+  "I didn't understand, please say it again?": [
+    "Could you please repeat that?",
+    "I'm afraid I didn't quite catch that, could you repeat it?",
+    "I didn't quite follow, could you repeat what you said?"
+  ],
+  "well I lost you there, can you start over on that point?": [
+    "You kinda lost me, can you start from the beginning?",
+    "Sorry, I didn't catch that part, can you start over?",
+    "I think I dozed off there for a sec, can you repeat that point?"
+  ],
+  "basically Can you re-explain how that works?": [
+    "So can you break it down a bit more?",
+    "Okay, can you explain that in simpler terms?",
+    "Can you elaborate on how that works, maybe I'm just being dense"
+  ],
+  "I didn't grasp, please say it again.": [
+    "Sorry, I'm a bit confused, can you say that again?",
+    "I didn't quite get it, could you repeat what you said?",
+    "Can you repeat that for me, I'm still not sure I understand"
+  ],
+  "i didnt ctch that": [
+    "I didn't quite catch that",
+    "What was the point you were making?",
+    "Can you repeat what you just said?"
+  ],
+  "what was that": [
+    "huh?",
+    "whaddya mean?",
+    "say that again, plz"
+  ],
+  "I didn't understand, please say it again.": [
+    "I'm not sure I fully understood, could you explain it again?",
+    "Could you please clarify that for me?",
+    "I'm a bit lost, could you repeat the question?"
+  ],
+  "can we go over that again": [
+    "can we revisit that topic",
+    "let's go over that again, if you don't mind",
+    "can we review that again, please"
+  ],
+  "what u mean?": [
+    "you lost me, can u explain?",
+    "idk what u r talkin about",
+    "huh, can you break it down for me?"
+  ],
+  "I didn't understand, please say it again": [
+    "Can you repeat that for me?",
+    "Say it again, I didn't catch it",
+    "Could you explain that a bit clearer?"
+  ],
+  "come again": [
+    "Huh, can you repeat?",
+    "Come on, say it again",
+    "What did you say, say that again?"
+  ],
+  "aggain?": [
+    "Say it again, I'm not sure what you said",
+    "Can you say that again, please?",
+    "What was that, say it again?"
+  ],
+  "Can you go back to the slide for a second?": [
+    "Can you go back to the last point, please?",
+    "Let me just go back to that slide for a second",
+    "Do you mind if I take a look at the previous slide?"
+  ],
+  "pradon": [
+    "what was that?",
+    "can you repeat back?",
+    "dude, can you repeat that?"
+  ],
+  "HUH? CAN YOU REPEAT!!": [
+    "CAN YOU SAY THAT AGAIN?!!!",
+    "HUH?! CAN U REPEAT THAT?",
+    "repeat that one more time, please!!"
+  ],
+  "Huh? Can you repeat?": [
+    "Could you repeat that, please?",
+    "Do you mind repeating that?",
+    "I didn't quite catch that"
+  ],
+  "didn't get that": [
+    "what did you just say?",
+    "can you clarify?",
+    "didn't quite get it"
+  ],
+  "come again?": [
+    "can you repeat that for me?",
+    "say that again?",
+    "what was the point you made?"
+  ],
+  "Go back to that last point please?": [
+    "can you go back and repeat that last part?",
+    "can you rephrase that?",
+    "can you repeat what you just said?"
+  ],
+  "what did you just say": [
+    "Can you repeat that for me?",
+    "What was that again?",
+    "Can you say that one more time?"
+  ],
+  "Go back to that last point please.": [
+    "Can we go back to that last thing you said?",
+    "Let's go over that last point again.",
+    "Can you repeat the last thing you said?"
+  ],
+  "Huh? Can you go over again?": [
+    "Sorry, I didn't quite catch that. Can you go over it again?",
+    "Huh? Can you explain that bit again?",
+    "I'm lost. Can you repeat that for me?"
+  ],
+  "i' confseud epeta lpease": [
+    "I'm so sorry, can you repeat the last thing you said?",
+    "Sorry, I didn't hear that one. Can you say it again?",
+    "I wasn't sure I got that. Can you repeat it for me?"
+  ],
+  "i wasn't listening": [
+    "I tuned out for a sec, can you say it again?",
+    "Sorry, I was spaced out. Can you repeat that?",
+    "I wasn't paying attention. Can you go over it again?"
+  ],
+  "can u go over again": [
+    "Can you repeat it for me?",
+    "Can we go over it again?",
+    "Can you say that one more time?"
+  ],
+  "basically what?": [
+    "what's that again?",
+    "can you repeat that for me?",
+    "can you say that again"
+  ],
+  "it say again": [
+    "say it again?",
+    "what did you say?",
+    "say that again"
+  ],
+  "LET ME SEE THAT SLIDE AGAIN.": [
+    "SHOW IT AGAIN PLEASE!",
+    "can you put that up again?",
+    "put that slide back up"
+  ],
+  "hey can u go over again": [
+    "can you go over that again?",
+    "can you explain that again?",
+    "can you go back to that point"
+  ],
+  "basically again?": [
+    "say it again?",
+    "can you repeat that for me?",
+    "what was that again?"
+  ],
+  "honestly didn't get that": [
+    "Can you repeat that?",
+    "I missed the explanation. Can you go over it again?",
+    "Sorry, I didn't catch that. Can you explain it?"
+  ],
+  "so Can you re-explain how that works?": [
+    "Could you please reword that for me?",
+    "I don't get it. Can you explain it again?",
+    "Can you break that down for me?"
+  ],
+  "WHAT HAPPENED?": [
+    "WUT JUST HAPPENED?!",
+    "What in the world just happened?",
+    "Are you kidding me just now?"
+  ],
+  "i didn't understand, please say it again?": [
+    "Could you please repeat that?",
+    "Say it again, I didn't catch it.",
+    "Sorry, could you repeat the question?"
+  ],
+  "umm I didn't understand, please say it again?": [
+    "Umm sorry, can you repeat that for me?",
+    "Yo, can you repeat it? I ain't sure I got it.",
+    "Sorry, can you say it again? I didn't quite get it."
+  ],
+  "i'm confused repeat please?": [
+    "Can you repeat the question for me?",
+    "Dude, can you repeat that? It was kinda unclear.",
+    "Sorry, I'm a bit lost - can you repeat it?"
+  ],
+  "uh? Can you erpeat?": [
+    "Sorry, can you repeat that?",
+    "Huh? Can you repeat?",
+    "Can you say that again?"
+  ],
+  "Can you go back o the previos slide for a sceond?": [
+    "What was that again, can you re-read the previous slide?",
+    "Hold up, can you repeat that?",
+    "Can you go back to the previous slide real quick?"
+  ],
+  "hey Wait, what was that?": [
+    "Wait, what did you just say?",
+    "Huh? Can you repeat yourself?",
+    "Can you say it again, I didn't quite catch that"
+  ],
+  "Huh? Can you repeat!!": [
+    "Sorry, can you say that again?",
+    "Can you repeat that for me?",
+    "Can you say it one more time, please?"
+  ],
+  "say that oone more tmie": [
+    "Bruh, can u say dat again?",
+    "Say dat again, pls?",
+    "C'mon, repeat it!"
+  ],
+  "can you re-run that example?": [
+    "Can you repeat that example?",
+    "Can you run that example again?",
+    "What did you do in that example again?"
+  ],
+  "right what u did say": [
+    "What did you just say?",
+    "Right, what you did say?",
+    "What was that example you just showed us?"
+  ],
+  "Wait, what was that!!": [
+    "Hold up, can you repeat that?",
+    "Sorry, could you repeat what you just said?",
+    "Wait, can you say that again?"
+  ],
+  "actually what?": [
+    "What do you mean by that exactly?",
+    "So, just to clarify, what was your point?",
+    "Can you break that down for me?"
+  ],
+  "Can you display that example one moer tiime?": [
+    "Can you show me that example again, por favor?",
+    "Can you repeat that example one more time, pretty please?",
+    "Can you display that example one more time for me?"
+  ],
+  "say it again?": [
+    "Could you repeat what you said again?",
+    "Sorry, I didn't quite catch that, can you repeat it?",
+    "Can you say that again, please?"
+  ],
+  "didn't geet that": [
+    "didn't quite catch that",
+    "can you say that again real quick?",
+    "say that one more time, please"
+  ],
+  "can you show that example one more time?": [
+    "can you repeat that for me?",
+    "i didn't hear that, can you repeat it?",
+    "can you show me that example one more time, please?"
+  ],
+  "I DIDN'T UNDERSTAND, PLEASE SAY IT AGAIN.": [
+    "PLEASE REPEAT IT. I DIDN'T HEAR YOU.",
+    "can you say it again, i didn't understand.",
+    "could you please repeat that example?"
+  ],
+  "Let me see that slide again.": [
+    "Can you show me that slide once more?",
+    "Can you repeat the slide for me?",
+    "Mind showing me the slide again?"
+  ],
+  "I need to hear that explanation again.": [
+    "I'd like to hear that explanation one more time.",
+    "Can you explain that part again?",
+    "Could you summarize what you just said?"
+  ],
+  "repeat?": [
+    "Say that again?",
+    "What was that?",
+    "You said something, right?"
+  ],
+  "?": [
+    "can you repeat that for me?",
+    "can you go over that again?",
+    "can you explain that bit again?"
+  ],
+  "ok so GO OVER THAT AGAIN": [
+    "so let's go through that again huh",
+    "okay, so can you go over it again?",
+    "so yeah, let's try that again, okay?"
+  ],
+  "one more time": [
+    "can you repeat that for me?",
+    "sorry, can you say that again?",
+    "i didn't quite catch what you said, can you repeat?"
+  ],
+  "i didnt cattch thaat": [
+    "can u repeat dat",
+    "idk wut u said, cld u say it again?",
+    "cld u pls repeat wht u jsd?"
+  ],
+  "i neeed to haer that explanation agai.": [
+    "Can you repeat that explanation for me?",
+    "I didn't get that, could you explain it again?",
+    "Can you say that again, I didn't quite catch it."
+  ],
+  "i didnt catch that": [
+    "I'm not sure I heard you right, can you repeat?",
+    "I didn't catch what you were saying, can you repeat that?",
+    "Can you explain that bit again?"
+  ],
+  "asy agani?": [
+    "what was that again?",
+    "can you repeat that?",
+    "uh, what'd you say?"
+  ],
+  "I WASN'T LISTENING": [
+    "seriously, i didn't catch what you said",
+    "i was distracted, can you repeat it?",
+    "i'm sorry, i wasn't paying attention, can you say it again?"
+  ],
+  "coe again": [
+    "Could you repeat that?",
+    "What's the last thing you said?",
+    "Can you repeat what you just said?"
+  ],
+  "what did say u": [
+    "You said something and I didn't catch it",
+    "Can you say that again?",
+    "I think you just said something..."
+  ],
+  "say that more one time": [
+    "Can you repeat that a bit louder?",
+    "Say that one more time",
+    "I didn't quite get it, can you repeat?"
+  ],
+  "Ca you go bcak tto the pervious slide fr a secoond?": [
+    "Can you go back to the previous slide for just a second?",
+    "Can you show me the slide we just looked at again?",
+    "Do you mind going back to that slide we were on before?"
+  ],
+  "I'M CONFUSED REPEAT PLEASE": [
+    "I don't get it, can you repeat that?",
+    "Can you say that again? I'm lost.",
+    "Sorry, can you repeat the question?"
+  ],
+  "sorry what?": [
+    "What was that?",
+    "Sorry, can you repeat?",
+    "Huh? Can you say it again?"
+  ],
+  "i wasn't listening?": [
+    "Sorry, I zoned out. Can you repeat?",
+    "Didn't catch that. Can you repeat?",
+    "Sorry, can you repeat the question?"
+  ],
+  "Huh? Can you redo?": [
+    "Can you redo that for me?",
+    "Sorry, I didn't quite catch it. Can you repeat?",
+    "Can you say that again a bit louder?"
+  ],
+  "I need to hear that explanation again?": [
+    "Can you repeat that for me?",
+    "Can you say that again?",
+    "I didn't quite catch that, can you repeat it?"
+  ],
+  "lost u thee": [
+    "lmao wut?",
+    "what did u say?",
+    "idk what u just said lol"
+  ],
+  "huh? can you repeat?": [
+    "Sorry, could you repeat that please?",
+    "I didn't understand, can you repeat the explanation?",
+    "Would you mind repeating that for me?"
+  ],
+  "well what did you just say?": [
+    "Sorry, can you repeat that?",
+    "I didn't catch what you said, would you mind repeating?",
+    "Huh, what was that again?"
+  ],
+  "i didn't understand, please say it again.": [
+    "Please clarify, I'm not sure I get it.",
+    "Can you say that again, I'm lost.",
+    "I'm a bit confused, can you repeat the question?"
+  ],
+  "right what?": [
+    "What's the deal with that?",
+    "Right, what are we talkin' about here?",
+    "So what's the point I missed?"
+  ],
+  "say that more time": [
+    "Can I have more time?",
+    "Can you give me more time?",
+    "How much more time do I have?"
+  ],
+  "run that baack": [
+    "Run that again, bruh",
+    "Can you run that one more time?",
+    "Yooo, can you repeat that?"
+  ],
+  "Cann youu re-explai how that works?": [
+    "Can you please explain that part again?",
+    "Yo, can you break that down for me one more time?",
+    "Sorry, can you clarify how that works?"
+  ],
+  "SORRY WHAT?": [
+    "What did you just say?",
+    "Huh?",
+    "Can you repeat that, please?"
+  ],
+  "i need to hear that explanation again.": [
+    "I didn't catch that, can you go over it again?",
+    "Can you repeat the explanation, I need another listen?",
+    "I need you to repeat that, can you do that again?"
+  ],
+  "AGAIN?": [
+    "What was that again?",
+    "Repeat that, please!",
+    "Can you say that one more time?"
+  ],
+  "coud u repeat": [
+    "Can you repeat that, I didn't quite catch it?",
+    "Yo, can you say that again?",
+    "I'm sorry, could you repeat that for me?"
+  ],
+  "right rewind": [
+    "Can you rewind that for me?",
+    "Hold up a sec, can you repeat that?",
+    "Rewind, rewind"
+  ],
+  "umm say what": [
+    "I'm sorry, I didn't quite catch that. Can you say it again?",
+    "Repeat that, I didn't get it",
+    "What was that? Can you say it louder?"
+  ],
+  "I diidn' tundesand, please say t again.": [
+    "Sorry, I didn't quite catch that, could you repeat it?",
+    "Repeat, I'm not following",
+    "Can you say that again? I didn't get it"
+  ],
+  "I NEED TO HEAR THAT EXPLANATION AGAIN.": [
+    "Could you please explain that again? I didn't understand the first time",
+    "Hear me out, I need a bit more clarification",
+    "Explain that to me again slowly"
+  ],
+  "i'm baffled repeat please": [
+    "wut did u just say? can u repeat that?",
+    "idk what u just said, repeat it for me",
+    "can u pls repeat that, i got lost"
+  ],
+  "uh": [
+    "Uh, sorry to ask, but can you repeat what you just said?",
+    "Sorry, I missed that, can you repeat it for me?",
+    "Could you repeat what you said, I didn't quite catch it"
+  ],
+  "Can you show that one more time?": [
+    "Can you demonstrate that one more time?",
+    "Yo, can you show me that one more time?",
+    "Can you repeat that one more time?"
+  ],
+  "wha?t": [
+    "What did you just say?",
+    "Huh?",
+    "Can you repeat that, I didn't quite catch it."
+  ],
+  "I lost you there, can you start on that point?": [
+    "Could you start over from there, please?",
+    "I got lost, can you rewind a bit?",
+    "Let's start again, where were we?"
+  ],
+  "umm huh": [
+    "Sorry, I didn't quite catch that.",
+    "Umm, can you say that again?",
+    "Huh, can you repeat that?"
+  ],
+  "one more time?": [
+    "Can you repeat that again?",
+    "Sorry, can you say that one more time?",
+    "Could you repeat what you just said?"
+  ],
+  "Can you go back to the previous slide for second?": [
+    "Let me get this straight, can you go back to the slide we were just looking at?",
+    "I didn't catch that, can you go back to the previous slide for me?",
+    "Can you review the last slide again?"
+  ],
+  "ok so Can you show that example one more time?": [
+    "Can you repeat the first example again?",
+    "Yo, can you show me the first example one more time?",
+    "Can you go over that first example again?"
+  ],
+  "basically say that one more time": [
+    "Can you say that again slowly?",
+    "Say that one more time, I wanna get it right!",
+    "Can you just repeat that example, thanks?"
+  ],
+  "well Can you show that example one more time?": [
+    "Can you demonstrate that example one more time?",
+    "I need to hear that explanation again, can you repeat it?",
+    "Can you show me that example once more?"
+  ],
+  "I need too hear that expllanatino again.": [
+    "I gotta hear that again, can you do it again?",
+    "Can you say that part again?",
+    "I didn't quite get that, can you explain it again?"
+  ],
+  "repeat!!": [
+    "REPEAT THAT!",
+    "can you do that example again?",
+    "hey, can you repeat that?"
+  ],
+  "CAN YOU RE-RUN THAT EXAMPLE?": [
+    "I'd like to see that example again, can you re-run it?",
+    "Can you show me that example in detail again?",
+    "Can you re-demonstrate that example for me?"
+  ],
+  "hey again?": [
+    "hey, can you repeat that?",
+    "can you show me that again?",
+    "what was that again?"
+  ],
+  "wht happened?": [
+    "What just happened?",
+    "Huh? What went down?",
+    "Can you repeat that?"
+  ],
+  "I didn't grasp, please say it again!!": [
+    "Can you explain it again? I didn't get it.",
+    "I'm lost, what did you say?",
+    "Say it again, I missed it!",
+    "Can you repeat that, I'm not following."
+  ],
+  "Wait, what that!!": [
+    "What's going on?! I didn't catch that!",
+    "Huh?! What did you just say?",
+    "Can you repeat the last thing you said?"
+  ],
+  "I LOST YOU THERE, CAN YOU START OVER ONN THAT PONIT?": [
+    "Sorry, can you start again?",
+    "Can you repeat what you said?",
+    "Let's start over, okay?"
+  ],
+  "REPEAT": [
+    "Repeat back, please",
+    "Say that again",
+    "What was that? Can you repeat it?"
+  ],
+  "could repeat u": [
+    "Could you rephrase that?",
+    "Repeat for me",
+    "Say it again, I didn't catch it"
+  ],
+  "well could u repeat": [
+    "can you repeat that?",
+    "could you repeat the question?",
+    "can I get that repeated?"
+  ],
+  "could u repeat?": [
+    "can you please repeat?",
+    "could you repeat back to me?",
+    "say that again?"
+  ],
+  "hey one more time?": [
+    "can you do it again?",
+    "one more time, please?",
+    "can you repeat that for me?"
+  ],
+  "can you go back to previous the slide for a second?": [
+    "Can you show us the previous slide again?",
+    "Hold up, can you go back to the last slide?",
+    "Can you rewind a bit to that slide we just saw?"
+  ],
+  "I DIDNT CATCH THAT": [
+    "Can you show the last slide? I missed something.",
+    "What was on the slide before this one?",
+    "Can you show us the slide again, I didn't get it."
+  ],
+  "confused i'm repeat please": [
+    "i'm a bit lost, can you repeat that?",
+    "sorry, i didn't quite catch that, can you say it again?",
+    "can you repeat what you just said, i didn't quite understand"
+  ],
+  "Can you go to the previous slide for a second?": [
+    "Can you show me the previous slide one more time?",
+    "Can you go back to the previous slide for a sec?",
+    "Can you go back to the previous slide, please?"
+  ],
+  "again": [
+    "can you remind me",
+    "could you repeat that",
+    "can you say it again"
+  ],
+  "lost  uthere": [
+    "can you repeat that for me?",
+    "what did you say?",
+    "huh?"
+  ],
+  "pardon!!": [
+    "excuse me!!",
+    "sorry i didn't catch that",
+    "pardon?"
+  ],
+  "honestly what was that": [
+    "can you please clarify what you just said?",
+    "honestly what did you just say?",
+    "can you say that again?"
+  ],
+  "i'm repeat please": [
+    "i'm sorry, can you repeat yourself?",
+    "can you repeat that again?",
+    "i didn't get that, can you repeat?"
+  ],
+  "say that one more time?": [
+    "Can you repeat that one more time?",
+    "Say that again, please.",
+    "Can you give it another go?"
+  ],
+  "Can you give me that example one more time?": [
+    "Can you give me a quick refresher on that example?",
+    "Can you repeat the example for me one more time?",
+    "Can you show me that example again, please?"
+  ],
+  "i'm confused redo please": [
+    "Can you redo that example for me?",
+    "Can you repeat the example please",
+    "Hey, can you redo that example?"
+  ],
+  "can we go over that again!!": [
+    "Can we go over that example again, please?",
+    "Can you walk me through that example again?",
+    "Let's go over that example one more time."
+  ],
+  "go that again": [
+    "Can you go over that example again?",
+    "Can we do that example again?",
+    "That example again, please?"
+  ],
+  "right say again": [
+    "say that again please",
+    "can you repeat that",
+    "what was that again"
+  ],
+  "what did u say?": [
+    "lowkey didn't catch that",
+    "um can u repeat?",
+    "can u say it again?"
+  ],
+  "umm what did you just say": [
+    "can you repeat that",
+    "umm can you say that again",
+    "could you say it one more time?"
+  ],
+  "Can you show that example one more time": [
+    "can we see that example one more time please",
+    "can you show us that example again",
+    "how about we review that example one more time?"
+  ],
+  "I did'nt understand, please say it again.": [
+    "i didn't catch that can you say it again",
+    "sorry i didn't understand can you repeat it",
+    "can you please say that part again i didn't get it"
+  ],
+  "CAN WE GO OVER THAT AGAIN": [
+    "Can you repeat that for me?",
+    "What's the deal with that again?",
+    "Can you say that one more time?"
+  ],
+  "what!!": [
+    "Whaaat?!?",
+    "Umm... what was that again?",
+    "Huh? Can you say it louder?"
+  ],
+  "Huh? Can you recap?": [
+    "Can you summarize what you just said?",
+    "I'm not sure I got that - can you clarify?",
+    "Can you do a quick recap for me?"
+  ],
+  "go over that again?": [
+    "can you repeat that?",
+    "could you say it again, please?",
+    "what did you just say?"
+  ],
+  "i'm confused say again please?": [
+    "i'm lost can you explain that again?",
+    "could you maybe repeat it for me?",
+    "say that part again, please?"
+  ],
+  "wah tid you just asy": [
+    "wha u jus say?",
+    "u say sumfin",
+    "u speakin 2 me?"
+  ],
+  "ok so come again": [
+    "can you repeat that for me",
+    "come on, repeat it again",
+    "so can you say that again?"
+  ],
+  "ok so Can you re-explain how that works?": [
+    "Can you break it down for me again?",
+    "How does that work, exactly?",
+    "Can you do a quick refresh on that?"
+  ],
+  "Let me see that slide again!!": [
+    "Yo, can you explain that again?",
+    "What's going on with that, can you tell me again?",
+    "I'm lost, can you go over it one more time?"
+  ],
+  "I didn't understand, please say again.": [
+    "Can you repeat that for me?",
+    "I didn't get it, can you say it again?",
+    "Could you say that a bit slower?"
+  ],
+  "lost u there!!": [
+    "wut just happened??",
+    "lost you lol, repeat",
+    "say it again pls i didnt get it"
+  ],
+  "Can you re-run that instance?": [
+    "Can we run that demonstration again?",
+    "I think I missed something, can you re-run it?",
+    "Could you go back to that point and explain it?"
+  ],
+  "oslt u there": [
+    "hey, hello?",
+    "how's it going?",
+    "hello, can you repeat that?"
+  ],
+  "I need to hear that explanation again!!": [
+    "can you repeat that please?",
+    "say that again!",
+    "i didn't quite catch that"
+  ],
+  "so Can you go back to the previous slide for a second?": [
+    "can we go back to the previous slide for a sec?",
+    "so can we go back to that slide again?",
+    "i think you skipped a slide, can you go back?"
+  ],
+  "Can you go back to the previous slide for a second!!": [
+    "can we go back to the previous slide please!!",
+    "can you review the last slide for us?",
+    "so can you go back to that slide for a second!!"
+  ],
+  "say one that more time": [
+    "can you repeat that one more time?",
+    "can you say that again, please?",
+    "can you repeat what you just said?"
+  ],
+  "sorry what!!": [
+    "what was that again?",
+    "you lost me, can you repeat?",
+    "can you say one more time?"
+  ],
+  "what happened": [
+    "what went down",
+    "what happened exactly",
+    "so what happened then"
+  ],
+  "HUH? CAN YOU REPEAT?": [
+    "Excuse me, could you repeat?",
+    "Sorry, I didn't quite catch that.",
+    "Can you speak up or repeat that?"
+  ],
+  "run back that": [
+    "Can you do that again?",
+    "Repeat that for me.",
+    "Say it again, I didn't get it."
+  ],
+  "so say it again": [
+    "Can you repeat that for me?",
+    "Huh? Can you say it again?",
+    "Can you say that a bit louder?"
+  ],
+  "!!": [
+    "!!",
+    "I didn't catch that!",
+    "Say it again please!"
+  ],
+  "hey come gin": [
+    "Can you come again?",
+    "Come on, say it one more time!",
+    "Say it again, okay?"
+  ],
+  "loots there u": [
+    "what did you say?",
+    "can you say that again, dude?",
+    "can you repeat that for me?"
+  ],
+  "can u repeat?": [
+    "can you repeat that?",
+    "say it again for me?",
+    "can you repeat what you just said?"
+  ],
+  "let me see that again. slide": [
+    "can you show me that again?",
+    "let me see that slide again, please",
+    "can you go over that example one more time?"
+  ],
+  "Can you show that example one mmorre time?": [
+    "can you show that example again?",
+    "can you go over that one more time?",
+    "how about you show that example once more?"
+  ],
+  "like Let me see that slide again.": [
+    "Can you show me that slide one more time?",
+    "Can you repeat the last slide?",
+    "Can I see that slide again, please?"
+  ],
+  "GO BACK TO THAT LAST POINT PLEASE.": [
+    "Can you go back to that last point for me?",
+    "Yo, can you repeat what you just said?",
+    "Hold up, can you go back a sec?"
+  ],
+  "hey didn't get that": [
+    "I didn't catch that",
+    "Hey, can you say that again?",
+    "Can you repeat it in simpler terms?"
+  ],
+  "Wait, what was that": [
+    "What was that again?",
+    "Wait, what did you just say?",
+    "Can you clarify that for me?"
+  ],
+  "hey lost u there": [
+    "can you repeat that?",
+    "lost you, can you go over that again?",
+    "what was that?"
+  ],
+  "we can go over that again": [
+    "we could discuss that again if you'd like",
+    "could we go over that topic some more?",
+    "let's go over that again, okay?"
+  ],
+  "honestly I didn't understand, please say it again.": [
+    "to be honest, I wasn't really clear on that, could you rephrase?",
+    "to be clear, I didn't get that, can you explain it again?",
+    "to be honest, I'm a bit lost on that, could you repeat?"
+  ],
+  "Wait, was that?": [
+    "what was that you said?",
+    "did you say something",
+    "what's going on?"
+  ],
+  "what did you say just": [
+    "Can you repeat that, please?",
+    "What did you just say?",
+    "Can you say that again?"
+  ],
+  "could u redo": [
+    "Can you redo that for me?",
+    "Could you repeat it again?",
+    "Can you repeat the last thing you said?"
+  ],
+  "go back to that last point please!!": [
+    "Go back to that last point, please!",
+    "Can you go back to your last point?",
+    "Let's go back to how you explained it last!"
+  ],
+  "Can you re-run that example": [
+    "Can you re-run that example for me?",
+    "How about we go back to that example you showed?",
+    "Can you show me that example again, please?"
+  ],
+  "WWait, what was that?": [
+    "Wait, what was that you just said?",
+    "Can you repeat that for me?",
+    "What was that, can you say it again?"
+  ],
+  "can honestly u repeat": [
+    "Honestly, can you repeat that?",
+    "Can you repeat it again for me?",
+    "Can you just say it again, please?"
+  ],
+  "DIDN'T GETT THATT": [
+    "I didn't get that, can you repeat it?",
+    "Dude, can you repeat that?",
+    "Can you say that again, I didn't catch it!"
+  ],
+  "didn't I understand, please say it again.": [
+    "Could you please repeat what you just said?",
+    "What did you just say? Can you repeat it for me?",
+    "Could you say it again, please?"
+  ],
+  "can you sohw taht example one more time?": [
+    "Can you show me that example once more?",
+    "Can you demonstrate that example again?",
+    "Show me that example one more time, please."
+  ],
+  "like say it again": [
+    "Can you say it again?",
+    "Say it once more, please?",
+    "Can you repeat what you just said?"
+  ],
+  "can we go oover tht again": [
+    "What was that again?",
+    "Can you go over that example one more time?",
+    "Can you explain that again?"
+  ],
+  "can go over that again": [
+    "Can you go over that again?",
+    "Let's go over that example one more time.",
+    "Can we review that again?"
+  ],
+  "can we over that again": [
+    "can you repeat that again",
+    "can we go over it one more time",
+    "can you say that one more time"
+  ],
+  "umm come again": [
+    "Could you repeat that please?",
+    "Sorry, can you say that again?",
+    "What's that again?"
+  ],
+  "i lost you there, can you start over on that point?": [
+    "I got lost, can we go back to that part?",
+    "Can you break it down, I didn't catch that?",
+    "Sorry, I need you to repeat that bit."
+  ],
+  "can you re-explain how that works?": [
+    "Can you explain that again?",
+    "Can you break it down for me?",
+    "Can you go back over that?"
+  ],
+  "ok so say what": [
+    "So you're saying what now?",
+    "So what's the deal?",
+    "So what's going on?"
+  ],
+  "huh!!": [
+    "Huh, what was that again?",
+    "Huh, say that once more?",
+    "Huh, can you repeat?"
+  ],
+  "wwhaat?": [
+    "What did you just say?",
+    "Huh, wth?",
+    "What was that noise?"
+  ],
+  "I didn't understand, please it again.": [
+    "Could you please repeat that?",
+    "Sorry, I didn't get it, can you say it again?",
+    "Hey, can you repeat what you said? I didn't quite catch it."
+  ],
+  "Let me see that again?": [],
+  "WHAT U MEAN": [],
+  "i didntt catch tat": [],
+  "what was that!!": [
+    "huh?",
+    "can you repeat that",
+    "what's that mean?"
+  ],
+  "CAN YOU RE-EXPLAIN HOW THAT WORKS?": [
+    "could you explain that again?",
+    "can you break it down for me?",
+    "i'm not sure i understood, can you walk me through it?"
+  ],
+  "i'm confused ereat plase": [
+    "What are you talking about with 'ereat'?",
+    "I'm lost, can you explain that 'ereat' thing again?",
+    "I don't get it, what's with 'ereat'?"
+  ],
+  "what did you just say?": [
+    "Can you repeat that for me?",
+    "Sorry, what was that you were saying?",
+    "Can you clarify that?"
+  ],
+  "Can re-explain how that works?": [
+    "Can you break it down again?",
+    "That was a bit confusing, can you explain it better?",
+    "Can you go over that part again, please?"
+  ],
+  "so huh": [
+    "So, what was the deal?",
+    "Huh? Could you repeat that?",
+    "Can you break it down for me?"
+  ],
+  "right Can you go back to the previous slide for a second?": [
+    "Let me get this straight... Can we go back to the slide before that?",
+    "Hold up, can you go back to the previous slide for a second?",
+    "Can we go back and review that slide again, please?"
+  ],
+  "Ca nyou re-run hat example?": [
+    "Can you run that example again?",
+    "Can you do that example again, pleeease?",
+    "Can you go back and do that example for me?"
+  ],
+  "Can you re-walk me through how that works?": [
+    "Can you walk me through that process again?",
+    "How does that work again?",
+    "Can you explain that in more detail?"
+  ],
+  "Go bck to that last point please.": [
+    "Go back to that last point, okay?",
+    "Can we go back and look at that last thing?",
+    "Can you repeat what you said last?"
+  ],
+  "repea": [
+    "Can you say that again?",
+    "Can you repeat that for me?",
+    "Say it again, please?"
+  ],
+  "Can you e-run that example?": [
+    "Can you run that example again?",
+    "Can you show me that example one more time?",
+    "Like, can you repeat that?"
+  ],
+  "Can you show thhat xeaample one moore time?": [
+    "Could we see that example once more?",
+    "What did you mean by that, can you show it to me again?",
+    "Yo, can you replay that example?"
+  ],
+  "like Wait, what was that?": [
+    "Huh? Could you explain that again?",
+    "I didn't catch that, can you show me an example?",
+    "Can you break that down for me, like, what was it again?"
+  ],
+  "wha tdid u sayy": [
+    "What'd you just say?",
+    "Say that again, please?",
+    "I didn't hear that, can you repeat it?"
+  ],
+  "over go ha ttgaain": [
+    "Can you repeat that again, please?",
+    "I don't get it, can you go over it one more time?",
+    "Can you say that bit again?"
+  ],
+  "Huh? Can recap?": [
+    "Can you recap that for me?",
+    "Sorry, I didn't catch it, can you repeat?",
+    "Can you run through that again?"
+  ],
+  "I need to hear thaat explanation again?": [
+    "I'd like to hear that explanation again, please.",
+    "Can you clarify that for me?",
+    "I need a bit more explanation on that, can you repeat?"
+  ],
+  "Can you go back to the previous slide for aa secoond?": [
+    "Can you show us the slide that came before that again?",
+    "Do you think we could go back to the previous slide for another second?",
+    "Can we see the previous slide one more time?"
+  ],
+  "didn't that get": [
+    "Could you repeat that for me?",
+    "That didn't quite register, can you say it again?",
+    "Can you say it one more time?"
+  ],
+  "basically didn't get that": [
+    "So, to clarify, I didn't quite get that.",
+    "Just to make sure, can you explain it again?",
+    "Can you break it down for me again?"
+  ],
+  "Can you re-run example? that": [
+    "Can you run that example again?",
+    "Can you demonstrate it one more time?",
+    "Let me see that in action again."
+  ],
+  "me Let see that slide again.": [
+    "Can we take another look at that slide?",
+    "Let me see that slide one more time.",
+    "Can you show us that slide again?"
+  ],
+  "can we go over thtt agaain": [
+    "Can we go over that again, please?",
+    "Can you repeat that part for us?",
+    "Let's go over that one more time."
+  ],
+  "ONE MORE TIME!!": [
+    "Can you repeat that?",
+    "Can you say that again?",
+    "I didn't quite catch that, can you repeat?"
+  ],
+  "what did just you say": [
+    "uh what was that again?",
+    "can you repeat that for me?",
+    "can you say that one more time?"
+  ],
+  "did what u say": [
+    "what did you just say",
+    "can you repeat that",
+    "huh?"
+  ],
+  "honestly what?": [
+    "what's going on",
+    "you said something, right?",
+    "what was that?"
+  ],
+  "what was that?": [
+    "can you repeat that for me?",
+    "sorry, could you say that again?",
+    "what did you just say, can you repeat it?"
+  ],
+  "huhh": [
+    "huh?",
+    "wha'?",
+    "what's that mean?"
+  ],
+  "umm what?": [
+    "um, did you say something?",
+    "excuse me, could you clarify?",
+    "i didn't quite catch that, can you say it again?"
+  ],
+  "like run that back": [
+    "Can you repeat that?",
+    "Repeat that, would ya?",
+    "Mind repeating what you just said?"
+  ],
+  "wha htappened?": [
+    "What just happened?",
+    "What's going on?",
+    "What happened, though?"
+  ],
+  "I need to hea rthatt xeplanatiion again?": [
+    "I'd love to hear that explanation again.",
+    "Can you break it down for me again?",
+    "Repeat that explanation, that was cool."
+  ],
+  "what happeened?": [
+    "could you repeat that?",
+    "whats the dealio?",
+    "can you say that again, please?"
+  ],
+  "can u redo": [
+    "can you do it again?",
+    "u mind redoin?",
+    "do it again, please?"
+  ],
+  "redo": [
+    "say that again",
+    "redo that for me",
+    "could you do that again?"
+  ],
+  "run that back?": [
+    "can you repeat that?",
+    "huh?",
+    "can you play that back?"
+  ],
+  "RUN THAT BACK?": [
+    "PLAY THAT BACK?",
+    "REPLAY PLEASE?",
+    "WHAT'D THEY SAY?"
+  ],
+  "so ??": [
+    "so yeah?",
+    "um, so?",
+    "so..."
+  ],
+  "i'm confused rpeeat please": [
+    "Can you repeat that, please?",
+    "I'm not sure I got that, can you say it again?",
+    "Repeat what you just said, I didn't catch it"
+  ],
+  "Let me see that slide again": [
+    "May I take a look at that slide again?",
+    "Can you show me that slide one more time?",
+    "I'd love to take another glance at that slide, please"
+  ],
+  "Go back to that last point pplease.": [
+    "Can you go back to your last point, please?",
+    "I didn't quite catch that last bit, can you repeat it?",
+    "Let's go back to that last point real quick"
+  ],
+  "run that ack": [
+    "Can you run that again, please?",
+    "I didn't quite get that, can you show me again?",
+    "Let me see that process run one more time"
+  ],
+  "Can you re-explain how works? that": [
+    "Can you break down how works again?",
+    "Can you explain how is supposed to work?",
+    "What's the deal with how ?"
+  ],
+  "u lost there": [
+    "i didn't understand that",
+    "can you repeat that",
+    "lost you there"
+  ],
+  "CCan you re-runn htat examlpe?": [
+    "Can you repeat that example again?",
+    "Can you go over that example one more time?",
+    "Sorry, could you run that example again for me?"
+  ],
+  "I lost you there, can you start over on that point": [
+    "Can you explain that bit again, please?",
+    "I didn't catch that, could you repeat it?",
+    "Can you start from where you were before on that?"
+  ],
+  "come gaain": [
+    "What's going on again?",
+    "Can you do that thing you did before?",
+    "Can you show me that thing again?"
+  ],
+  "so again?": [
+    "So, what was that example again?",
+    "Can you tell me about that one more time?",
+    "One more time, okay?"
+  ],
+  "I didn't understand, say it again.": [
+    "Can you repeat that, please?",
+    "I didn't quite catch it, can you say it again?",
+    "Could you speak up, I didn't hear you"
+  ],
+  "Go back tto that last pooint pleasse.": [
+    "Can we go over that last part again?",
+    "I'm a bit confused, can you review that last point?",
+    "Let's go back to the last point, I didn't quite get it"
+  ],
+  "HUH": [
+    "Huh?",
+    "Say what?",
+    "What was that?"
+  ],
+  "could u recap": [
+    "can you repeat that?",
+    "hey, what was that again?",
+    "sorry, can you summarize?"
+  ],
+  "HEY WHAT HAPPENED?": [
+    "yo, recap for me!",
+    "hey, what went down?",
+    "can you hit me with a quick summary, pls?"
+  ],
+  "so lost u there": [
+    "Honestly, I got a bit lost there, can you repeat that?",
+    "I'm totally lost, u guys are going so fast!",
+    "Sorry but I didn't catch that, could you explain it again?"
+  ],
+  "umm Go back to last that point please.": [
+    "Excuse me, could you go back to where you were before? I lost track.",
+    "Yo, can you repeat the last bit please?",
+    "Sorry to interrupt, could you clarify that point again?"
+  ],
+  "wait, what was that?": [
+    "Can you repeat that point one more time, please?",
+    "Um, can you go back to where you were before, I got lost.",
+    "Wait, could you say that again? I missed it."
+  ],
+  "WHAT DID YOU JUST SAY": [
+    "Can you repeat what you just said?",
+    "What was the last thing you mentioned?",
+    "Could you say that again?"
+  ],
+  "Go back to that last point pleasse.": [
+    "Can you go back to that last thing you said please?",
+    "Can you repeat what you were saying before?",
+    "Can we go back a sec?"
+  ],
+  "sorrry what": [
+    "Sorry, what was that?",
+    "Sorry, I didn't quite catch that",
+    "Sorry, could you say that again, I didn't understand"
+  ],
+  "can you show that example one more time!!": [
+    "Can you show me that example one more time, please?",
+    "Can you repeat the example we just went over?",
+    "Can we go back and look at that example again?"
+  ],
+  "umm ??": [
+    "sorry, can you repeat that?",
+    "can you say that again?",
+    "repeat that, please"
+  ],
+  "what did you say": [
+    "could you clarify what you just said?",
+    "what was that again?",
+    "can you repeat yourself?"
+  ],
+  "sorry wwhat": [
+    "huh?",
+    "wha",
+    "sorry, i didn't catch that"
+  ],
+  "Can you show that example more one time?": [
+    "Could you show me that example one more time?",
+    "Do you mind showing that example again?",
+    "Can you repeat that example for me?"
+  ],
+  "i'm confwork withd repeat please": [
+    "Can you repeat that, I didn't quite catch it.",
+    "Can you repeat the question, I'm having trouble hearing.",
+    "Sorry, could you repeat that? I didn't catch it"
+  ],
+  "i didnt catch that?": [
+    "Can you repeat what you said? I'm not sure I got it.",
+    "I didn't quite get that, can you repeat it for me?",
+    "Repeat that, I'm having a little trouble understanding"
+  ],
+  "what u say": [
+    "what was that",
+    "what u mean",
+    "what's the deal with that?"
+  ],
+  "sorry wht": [
+    "sorry can you repeat",
+    "wht does it say",
+    "sorry cant hear you"
+  ],
+  "Can you how re-explain that works?": [
+    "can you break it down again",
+    "can you explain it step by step",
+    "can you give me a quick rundown"
+  ],
+  "one more time!!": [
+    "Can you repeat that again?",
+    "Repeat that for me, please",
+    "Say it one more time!"
+  ],
+  "recap": [
+    "Can you summarize that?",
+    "Just give me a quick rundown",
+    "That was a bit unclear, can you explain?"
+  ],
+  "los u there": [
+    "What's goin on?",
+    "Lemme catch up",
+    "I was spaced out, what was said?"
+  ],
+  "say again!!": [
+    "Can you repeat that?",
+    "Say it again, please!",
+    "Can you go over it one more time?"
+  ],
+  "Can you re-run that sample?": [
+    "Can we try that example again?",
+    "Could you show us that example one more time?",
+    "Can you redo that sample for us?"
+  ],
+  "can u rrepeat": [
+    "can you repeat that",
+    "can you say it again",
+    "can you repeat what you said"
+  ],
+  "so can we go over that again": [
+    "Can you repeat that for me again?",
+    "Let's go over it one more time.",
+    "Could you please clarify that?"
+  ],
+  "say aagin it": [
+    "Aight, let's try that again.",
+    "Yo, can you say it aight?",
+    "Say it again, dude."
+  ],
+  "say like again": [
+    "could you repeat that",
+    "say it again please",
+    "can you repeat the example"
+  ],
+  "Can you re-run that example!!": [
+    "can we rewind that a bit",
+    "play that back again for me",
+    "can you do that example again"
+  ],
+  "can we over go that again": [
+    "can you go over that once more",
+    "can you repeat the last thing",
+    "let's go over that again"
+  ],
+  "Can yuo re-elaborate on how tthat works?": [
+    "Can you break it down for me again?",
+    "I didn't quite catch how that works, can you explain it to me again?",
+    "Hey, can you repeat that part about how it works?"
+  ],
+  "I need to hear that again. explanation": [
+    "Can you elaborate on that a bit more?",
+    "How does that actually work?",
+    "Sorry, I didn't understand that part, can you explain it again?"
+  ],
+  "wwhat u eman": [
+    "Huh, what's going on?",
+    "What's up with that?",
+    "Can you repeat that, please?"
+  ],
+  "Wait, what that? was": [
+    "Can you repeat what you said?",
+    "What did you just say?",
+    "Can you say that again, please?"
+  ],
+  "umm Let me see that slide again?": [
+    "Can you show me that slide one more time?",
+    "Sorry, I didn't quite catch that. Could you repeat it?",
+    "Could you repeat that slide, I want to make sure I understand"
+  ],
+  "actually i'm confused repeat please": [
+    "Can you repeat what you just said? I'm a bit confused.",
+    "I'm not sure I got that. Can you repeat it?",
+    "Sorry, could you repeat the information on the slide?"
+  ],
+  "oone moe time": [
+    "Show me that slide again, please",
+    "I didn't get it. Repeat for me, okay?",
+    "One more time, please, I need to see that slide"
+  ],
+  "Go back to that last point please": [
+    "Can you go back to what you just said?",
+    "Hey, can you repeat the last part?",
+    "Go back a sec, that last point was kinda confusing"
+  ],
+  "umm can u repeat": [
+    "can you repeat that",
+    "umm can you say that again",
+    "can you repeat what you just said"
+  ],
+  "umm go that over again": [
+    "Can you repeat that, please?",
+    "Sorry, could you go over that again?",
+    "Let me get that straight, can you explain it one more time?"
+  ],
+  "what u did say!!": [
+    "What's that thing you said?!",
+    "Huh, what did ya just say?",
+    "Hold up, could you repeat what you said?!!"
+  ],
+  "Can show you that example one more time?": [
+    "May I see that example once more?",
+    "Could you demonstrate that example again, please?",
+    "If you don't mind, I'd love to see that example one more time."
+  ],
+  "I need to that hear explanation again.": [
+    "Can you repeat that explanation for me?",
+    "That explanation didn't quite sink in, can you say it again?",
+    "Can you give me another rundown on that?"
+  ],
+  "wat?": [
+    "can you repeat that?",
+    "huh? what was that?",
+    "can you say that again?"
+  ],
+  "Can you present that example one more time?": [
+    "Can you show me that example again?",
+    "Can you replay the example we just went over?",
+    "Can you repeat that last example for me?"
+  ],
+  "could u repea?t": [
+    "can you say that again please",
+    "could you repeat that for me",
+    "could you repeat what you just said"
+  ],
+  "didn't I understand, plesaee say it aagain.": [
+    "am i right in thinking you said that again?",
+    "did i get that right, can you repeat it?",
+    "could you please repeat your last message"
+  ],
+  "honestly say that one more time": [
+    "honestly can you say that again",
+    "can you repeat that for me please",
+    "say that one more time, okay?"
+  ],
+  "actually Can you show that illustration one more time?": [
+    "if you don't mind could you show that illustration again",
+    "can you show us that diagram one more time, please?",
+    "could you illustrate that point again, please?"
+  ],
+  "RUN THAT BACK": [
+    "Repeat that for me",
+    "Say that again, please",
+    "Can you repeat what you just said?"
+  ],
+  "so what?": [
+    "Seriously though, what was that?",
+    "Hold up, so you're saying",
+    "So like, what's the thing you just mentioned?"
+  ],
+  "i'm confused please": [
+    "Can you repeat that? I didn't quite get it",
+    "Can you say it again I'm a bit lost",
+    "I'm not sure I understand, could you repeat?"
+  ],
+  "actualyl say it again": [
+    "Say it again, dude",
+    "C'mon, say it again, I didn't hear you",
+    "Yo, can you repeat that? I didn't catch it"
+  ],
+  "can we go over thaa tagain": [
+    "can we go over that again?",
+    "can we review that tag thing?",
+    "can you explain that part in tag again?"
+  ],
+  "I lost there, you can you start over on that point?": [
+    "I'm lost, can you start over with that point?",
+    "can you run that again from the beginning?",
+    "can you repeat that last part about tag?"
+  ],
+  "go that over again": [
+    "Could you say that again?",
+    "Can you repeat that?",
+    "Say it again, please"
+  ],
+  "COULD U REPEAT?": [
+    "u can repeat that rite?",
+    "can u repeat that??",
+    "can u say it again??"
+  ],
+  "WAIT, WHAT WAS THAT?": [
+    "Hold on, what was that exactly?",
+    "Can you clarify what you just said?",
+    "Just to make sure I understand, can you repeat that?"
+  ],
+  "well what?": [
+    "huh?",
+    "what's going on?",
+    "could you repeat that?"
+  ],
+  "say again it": [
+    "can you repeat that please?",
+    "say it one more time",
+    "can you repeat what you just said?"
+  ],
+  "honestly what did u say": [
+    "can you say that again?",
+    "what did you just say?",
+    "can you repeat that?"
+  ],
+  "go over that again!!": [
+    "say it again, please!!",
+    "seriously, repeat that!!",
+    "can you go over that again??"
+  ],
+  "Cna you show thatt example moree time?": [
+    "Can you show that example one more time?",
+    "Can you do that example again?",
+    "Show me that example a little longer, please."
+  ],
+  "so one more time": [
+    "So can you repeat that example?",
+    "How about another go at that example?",
+    "I didn't quite get that example, can you run through it again?"
+  ],
+  "Cann you show thaat example one more time?": [
+    "Can you show that example again, please?",
+    "Hey, can we see that example one more time?",
+    "Can you repeat that example for me?"
+  ],
+  "right what did you just say": [
+    "What did you just say, right?",
+    "Just to confirm, what's the example?",
+    "Can you repeat the example you just showed us?"
+  ],
+  "i wasn't listening!!": [
+    "Seriously, I didn't catch that - can you repeat it?",
+    "I totally spaced out - can you show me the example again?",
+    "Sorry, what was that? Can you show me the example again?"
+  ],
+  "CAN U REPEAT": [
+    "Can you repeat that for me?",
+    "Can u repeat, pls?",
+    "What was that again?"
+  ],
+  "Go to back that last point please.": [
+    "Can you go back to what you were saying just now?",
+    "Can you repeat the last point?",
+    "Just to clarify, what was that?"
+  ],
+  "LOST U THERE": [
+    "I think I lost you, can you repeat?",
+    "Can you repeat that? I didn't quite get it",
+    "Huh? Can you say that again?"
+  ],
+  "sorry wat": [
+    "huh?",
+    "what was that?",
+    "sorry, can you repeat?"
+  ],
+  "right repeat": [
+    "you said right?",
+    "can you repeat that right thing?",
+    "so you're saying right?"
+  ],
+  "hu": [
+    "Can you repeat that?",
+    "Huh? Could you repeat what you just said?",
+    "Sorry, I didn't quite catch that, can you repeat it?"
+  ],
+  "so Go back to that last point please.": [
+    "Can you go back to what you were saying before?",
+    "So, can you repeat that last bit?",
+    "Can you go back to the last point, please?"
+  ],
+  "can we go over that agin": [
+    "can you repeat that for me",
+    "can we review that one more time",
+    "can you go over it with me again"
   ]
 }

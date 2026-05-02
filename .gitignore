@@ -51,6 +51,8 @@ ai_service/models/clean_question_model/
 *.pt
 *.pth
 *.keras
+mlruns/
+Intent_Classifier_Model/mlruns/
 # HuggingFace / PyTorch cache
 .cache/
 *.lock
