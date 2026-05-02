@@ -6,6 +6,9 @@ import PracticeArea from "./pages/student/PracticeArea";
 import Leaderboard from "./pages/student/Leaderboard";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import AdminStudents from "./pages/admin/AdminStudents";
+import AdminCourseEditor from "./pages/admin/AdminCourseEditor";
+import InstructorDashboard from "./pages/instructor/InstructorDashboard";
+import InstructorLayout from "./layouts/InstructorLayout";
 import Profile from "./pages/Profile";
 import NotFound from "./pages/shared/NotFound";
 import StudentLayout from "./layouts/StudentLayout";
@@ -64,6 +67,19 @@ export const router = createBrowserRouter([
         children: [
             { path: "admin", Component: AdminDashboard },
             { path: "admin/students", Component: AdminStudents },
+            { path: "admin/courses/:courseId/editor", Component: AdminCourseEditor },
+        ],
+    },
+
+    // Instructor routes
+    {
+        element: (
+            <RequireAuth allowedRoles={["instructor"]}>
+                <InstructorLayout />
+            </RequireAuth>
+        ),
+        children: [
+            { path: "instructor", Component: InstructorDashboard },
         ],
     },
 

@@ -1,5 +1,6 @@
 import requests
 from django.db.models import Avg
+from django.core.cache import cache
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny
@@ -9,6 +10,8 @@ from .serializers import (
     CourseSerializer, ModuleSerializer, LessonSerializer, LessonDetailSerializer,
     SlideSerializer, CodeChallengeStudentSerializer, EnrollmentSerializer, CourseRatingSerializer,
 )
+
+CACHE_TTL = 60 * 15  # 15 minutes
 
 
 class CourseViewSet(viewsets.ModelViewSet):
@@ -36,11 +39,39 @@ class CourseViewSet(viewsets.ModelViewSet):
 
         return qs
 
+    def list(self, request, *args, **kwargs):
+        cache_key = f"course_list_{request.query_params.urlencode()}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached)
+        response = super().list(request, *args, **kwargs)
+        cache.set(cache_key, response.data, CACHE_TTL)
+        return response
+
+    def retrieve(self, request, *args, **kwargs):
+        cache_key = f"course_detail_{kwargs['pk']}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached)
+        response = super().retrieve(request, *args, **kwargs)
+        cache.set(cache_key, response.data, CACHE_TTL)
+        return response
+
     def perform_create(self, serializer):
         if self.request.user.is_authenticated:
             serializer.save(instructor=self.request.user)
         else:
             serializer.save()
+        cache.delete_pattern("course_list_*") if hasattr(cache, 'delete_pattern') else cache.clear()
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        cache.delete(f"course_detail_{instance.pk}")
+        cache.delete_pattern("course_list_*") if hasattr(cache, 'delete_pattern') else None
+
+    def perform_destroy(self, instance):
+        cache.delete(f"course_detail_{instance.pk}")
+        instance.delete()
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
     def rate(self, request, pk=None):
@@ -61,22 +92,30 @@ class CourseViewSet(viewsets.ModelViewSet):
         return Response({"avg_rating": round(avg, 2), "your_rating": obj.rating})
 
 
-class ModuleViewSet(viewsets.ReadOnlyModelViewSet):
-    """List/retrieve modules. Filter by ?course_id=<id>."""
+class IsAdminOrReadOnly(permissions.BasePermission):
+    """Allow full access to admins; read-only to everyone else."""
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin'
+
+
+class ModuleViewSet(viewsets.ModelViewSet):
+    """CRUD for modules (write requires admin). Filter by ?course_id=<id>."""
     serializer_class = ModuleSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
 
     def get_queryset(self):
-        qs = Module.objects.all()
+        qs = Module.objects.all().order_by('module_order')
         course_id = self.request.query_params.get("course_id")
         if course_id:
             qs = qs.filter(course_id=course_id)
         return qs
 
 
-class LessonViewSet(viewsets.ReadOnlyModelViewSet):
-    """List/retrieve lessons. Filter by ?module_id=<id>. Detail includes slides + challenges."""
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+class LessonViewSet(viewsets.ModelViewSet):
+    """CRUD for lessons (write requires admin). Filter by ?module_id=<id>. Detail includes slides + challenges."""
+    permission_classes = [IsAdminOrReadOnly]
 
     def get_serializer_class(self):
         if self.action == "retrieve":
@@ -84,7 +123,7 @@ class LessonViewSet(viewsets.ReadOnlyModelViewSet):
         return LessonSerializer
 
     def get_queryset(self):
-        qs = Lesson.objects.all()
+        qs = Lesson.objects.all().order_by('lesson_order')
         module_id = self.request.query_params.get("module_id")
         if module_id:
             qs = qs.filter(module_id=module_id)
@@ -182,6 +221,42 @@ def admin_stats(request):
         "avg_completion": round(avg_completion, 1),
         "recent_enrollments": recent,
     })
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def my_courses(request):
+    """Returns courses where instructor = request.user (instructor role)."""
+    if request.user.role not in ("instructor", "admin"):
+        return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+    courses = Course.objects.filter(instructor=request.user).order_by("-created_at")
+    serializer = CourseSerializer(courses, many=True)
+    return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def my_course_students(request, course_id):
+    """Returns enrollments for a course taught by the requesting instructor."""
+    if request.user.role not in ("instructor", "admin"):
+        return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+    try:
+        course = Course.objects.get(pk=course_id, instructor=request.user)
+    except Course.DoesNotExist:
+        return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+    enrollments = Enrollment.objects.filter(course=course).select_related("student")
+    data = [
+        {
+            "id": e.id,
+            "student_id": e.student.id,
+            "username": e.student.username,
+            "progress_percentage": e.progress_percentage,
+            "current_score": e.current_score,
+            "enrolled_at": e.enrolled_at,
+        }
+        for e in enrollments
+    ]
+    return Response(data)
 
 
 @api_view(['POST'])

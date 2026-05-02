@@ -19,7 +19,7 @@ interface NavItem {
 }
 
 interface TopNavProps {
-  variant?: 'student' | 'admin';
+  variant?: 'student' | 'admin' | 'instructor';
 }
 
 const studentNavItems: NavItem[] = [
@@ -34,18 +34,25 @@ const adminNavItems: NavItem[] = [
   { path: '/admin/students', label: 'Students', icon: Users },
 ];
 
+const instructorNavItems: NavItem[] = [
+  { path: '/instructor', label: 'My Courses', icon: BookOpen },
+  { path: '/instructor/students', label: 'Students', icon: Users },
+];
+
 export function TopNav({ variant = 'student' }: TopNavProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
 
-  const navItems = variant === 'admin' ? adminNavItems : studentNavItems;
+  const navItems = variant === 'admin' ? adminNavItems : variant === 'instructor' ? instructorNavItems : studentNavItems;
 
   const isActive = (path: string) => {
     if (path === '/dashboard') return location.pathname === '/' || location.pathname === '/dashboard';
     if (path === '/admin') return location.pathname === '/admin';
     if (path === '/admin/students') return location.pathname.startsWith('/admin/students');
+    if (path === '/instructor') return location.pathname === '/instructor';
+    if (path === '/instructor/students') return location.pathname.startsWith('/instructor/students');
     return location.pathname.startsWith(path);
   };
 
@@ -60,14 +67,20 @@ export function TopNav({ variant = 'student' }: TopNavProps) {
   return (
     <header className="h-16 border-b border-border bg-card flex items-center px-6 shrink-0 z-40">
       {/* Left — Brand */}
-      <Link to={variant === 'admin' ? '/admin' : '/dashboard'} className="flex items-center gap-3 no-underline flex-shrink-0" style={{ marginRight: '3rem' }}>
+      <Link
+        to={variant === 'admin' ? '/admin' : variant === 'instructor' ? '/instructor' : '/dashboard'}
+        className="flex items-center gap-3 no-underline flex-shrink-0"
+        style={{ marginRight: '3rem' }}
+      >
         {variant === 'admin' ? (
           <Shield size={26} style={{ color: 'var(--primary)' }} />
+        ) : variant === 'instructor' ? (
+          <BookOpen size={26} style={{ color: '#f97316' }} />
         ) : (
           <Brain size={26} style={{ color: 'var(--primary)' }} />
         )}
         <span className="font-bold text-base text-foreground whitespace-nowrap">
-          {variant === 'admin' ? 'Admin Panel' : 'AI Learning Platform'}
+          {variant === 'admin' ? 'Admin Panel' : variant === 'instructor' ? 'Instructor Portal' : 'AI Learning Platform'}
         </span>
       </Link>
 
@@ -82,7 +95,9 @@ export function TopNav({ variant = 'student' }: TopNavProps) {
               to={item.path}
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all no-underline"
               style={active ? {
-                background: 'linear-gradient(to right, var(--secondary), var(--accent))',
+                background: variant === 'instructor'
+                  ? 'linear-gradient(to right, #f59e0b, #f97316)'
+                  : 'linear-gradient(to right, var(--secondary), var(--accent))',
                 color: '#fff',
               } : {}}
             >
