@@ -148,16 +148,15 @@ export default function Assessment() {
             try { await updatePlacementScore(enrollmentId, 0); } catch { /* ignore */ }
         }
         setSaving(false);
-        navigate(`/courses/${id}/lesson/start`, { replace: true });
-        // Fallback: go to dashboard if no lesson yet
-        navigate('/dashboard', { replace: true });
+        // Go to pathway generation
+        navigate(`/course/${id}/pathway`, { replace: true });
     };
 
     const handleBeginLearning = () => {
         if (firstLessonId) {
             navigate(`/course/${id}/lesson/${firstLessonId}`);
         } else {
-            navigate(`/course/${id}/pathway`); // or dashboard if not ready
+            navigate(`/course/${id}/pathway`); 
         }
     };
 

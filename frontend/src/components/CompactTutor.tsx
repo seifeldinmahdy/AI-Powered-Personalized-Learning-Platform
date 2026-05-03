@@ -16,7 +16,7 @@ import {
   getChatHistory,
   type SERResult,
 } from '../services/tutor';
-import { logEmotionEvent, getRecentFusedEmotion } from '../services/emotionLogger';
+
 import { fuseEmotions } from '../services/emotionFusion';
 import { NovaAvatar } from './NovaAvatar';
 
@@ -30,10 +30,12 @@ interface TranscriptEntry {
 interface CompactTutorProps {
   lessonTitle?: string;
   lessonId?: number;
+  sessionId?: string;
   subtopics?: string[];
   fusedEmotion?: string;
   currentSlideIndex?: number;
   currentSlideTitle?: string;
+  currentSlideContent?: string;
   onSessionStart?: () => void;
   onLatestSER?: (ser: SERResult) => void;
   onUpdateFusedEmotion?: (emotion: string) => void;
@@ -44,10 +46,12 @@ interface CompactTutorProps {
 export function CompactTutor({
   lessonTitle,
   lessonId,
+  sessionId,
   subtopics = [],
   fusedEmotion,
   currentSlideIndex = 0,
   currentSlideTitle,
+  currentSlideContent,
   onSessionStart,
   onLatestSER,
   onUpdateFusedEmotion,
@@ -81,10 +85,29 @@ export function CompactTutor({
   const isLoadingRef = useRef(false);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<{ stop: () => void } | null>(null);
+  const visitedSlidesRef = useRef<Set<number>>(new Set([0]));
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcript]);
+
+  // Handle auto-explain on new slide visit
+  useEffect(() => {
+    if (!sessionIdRef.current || !currentSlideContent) return;
+    
+    if (!visitedSlidesRef.current.has(currentSlideIndex)) {
+      visitedSlidesRef.current.add(currentSlideIndex);
+      
+      // Pause any ongoing lecture
+      if (audioRef.current && !audioRef.current.paused) {
+        audioRef.current.pause();
+      }
+      setIsSpeaking(false);
+      
+      // Trigger auto-explanation for the new slide
+      handleAskQuestion(`Please explain this slide. Title: ${currentSlideTitle}\nContent: ${currentSlideContent}`, fusedEmotion, true);
+    }
+  }, [currentSlideIndex, currentSlideContent, currentSlideTitle]);
 
   // Load chat history on mount
   useEffect(() => {
@@ -139,7 +162,7 @@ export function CompactTutor({
     try {
       setTutorEmotion('calm');
       // Pass the latest fused emotion for tone adaptation
-      const currentEmotion = fusedEmotion || getRecentFusedEmotion();
+      const currentEmotion = fusedEmotion || 'neutral';
       const chunk = await continueTutorSession(sid, true, currentEmotion !== 'neutral' ? currentEmotion : undefined);
       setProgress(chunk.progress);
 
@@ -231,7 +254,7 @@ export function CompactTutor({
     audioRef.current.muted = next;
   };
 
-  const handleAskQuestion = async (overrideQuestion?: string, overrideEmotion?: string) => {
+  const handleAskQuestion = async (overrideQuestion?: string, overrideEmotion?: string, isAutoTrigger = false) => {
     const q = (overrideQuestion ?? question).trim();
     if (!sessionIdRef.current || !q || isAsking) return;
     setQuestion('');
@@ -245,7 +268,10 @@ export function CompactTutor({
     }
 
     setIsAsking(true);
-    setTranscript((prev) => [...prev, { role: 'student', text: q }]);
+    setTranscript((prev) => [
+      ...prev,
+      { role: 'student', text: isAutoTrigger ? `Dr. Nova, please explain this slide: ${currentSlideTitle}` : q }
+    ]);
 
     try {
       // Keyword override before calling the model — catches short/ambiguous phrases
@@ -253,20 +279,23 @@ export function CompactTutor({
       const paceKeywords = ['slow down', 'too fast', 'speed up', 'faster', 'slower', 'skip'];
       const emotionKeywords = ['confused', 'lost', 'frustrated', 'don\'t understand', 'hard', 'difficult', 'give up', 'struggling'];
       const lower = q.toLowerCase();
-      let intent: import('../services/tutor').IntentName;
-      if (repeatKeywords.some(k => lower.includes(k))) {
-        intent = 'Repeat/clarification';
-      } else if (paceKeywords.some(k => lower.includes(k))) {
-        intent = 'Pace-Related';
-      } else if (emotionKeywords.some(k => lower.includes(k))) {
-        intent = 'Emotional-State';
-      } else {
-        // Format context to match the model's training format so it can
-        // correctly judge what is on-topic vs off-topic for this lesson.
-        const sessionContext = lessonTitle
-          ? `topic:${lessonTitle} | prev:${lessonTitle} | emotion:neutral | pace:normal`
-          : '';
-        intent = await classifyIntent(q, sessionContext);
+      let intent: import('../services/tutor').IntentName = 'On-Topic Question';
+      
+      if (!isAutoTrigger) {
+        if (repeatKeywords.some(k => lower.includes(k))) {
+          intent = 'Repeat/clarification';
+        } else if (paceKeywords.some(k => lower.includes(k))) {
+          intent = 'Pace-Related';
+        } else if (emotionKeywords.some(k => lower.includes(k))) {
+          intent = 'Emotional-State';
+        } else {
+          // Format context to match the model's training format so it can
+          // correctly judge what is on-topic vs off-topic for this lesson.
+          const sessionContext = lessonTitle
+            ? `topic:${lessonTitle} | prev:${lessonTitle} | emotion:neutral | pace:normal`
+            : '';
+          intent = await classifyIntent(q, sessionContext);
+        }
       }
 
       // Handle each intent differently
@@ -279,20 +308,10 @@ export function CompactTutor({
         }
       };
 
-      const currentEmotion = overrideEmotion || fusedEmotion || getRecentFusedEmotion();
+      const currentEmotion = overrideEmotion || fusedEmotion || 'neutral';
 
       const logInteraction = (responseSummary?: string) => {
-        logEmotionEvent({
-          timestamp: new Date().toISOString(),
-          slide_index: currentSlideIndex,
-          slide_title: currentSlideTitle,
-          subtopic: lessonTitle,
-          fused_emotion: currentEmotion,
-          event_type: 'question',
-          intent_classification: intent,
-          question_transcript: q,
-          dr_nova_response_summary: responseSummary?.slice(0, 200),
-        });
+        // Backend handles interaction logging via SharedSessionStore
       };
 
       if (intent === 'Off-Topic Question') {
@@ -524,7 +543,7 @@ export function CompactTutor({
             setError('Failed to transcribe voice input.');
           }
 
-          let finalEmotion = fusedEmotion || getRecentFusedEmotion();
+          let finalEmotion = fusedEmotion || 'neutral';
 
           // Handle SER result — report to LiveSession for fusion
           if (serResult.status === 'fulfilled' && onLatestSER) {
@@ -542,6 +561,7 @@ export function CompactTutor({
                   slide_index: currentSlideIndex,
                   slide_title: currentSlideTitle,
                   subtopic: lessonTitle,
+                  session_id: sessionId,
                 },
               );
               finalEmotion = fusion.fused_emotion;

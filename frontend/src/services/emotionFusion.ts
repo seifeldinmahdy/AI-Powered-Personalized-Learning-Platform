@@ -20,6 +20,7 @@ export interface FusionContext {
   slide_index?: number;
   slide_title?: string;
   subtopic?: string;
+  session_id?: string;
 }
 
 export interface FusionResult {
@@ -48,6 +49,25 @@ export async function fuseEmotions(
 
   // Both present and agree
   if (fer_emotion.toLowerCase() === ser_emotion.toLowerCase()) {
+    // If they agree, we still want to log it if session_id is present
+    if (context.session_id) {
+      try {
+        fetch(`${AI_URL}/profiler/fuse-emotions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fer_emotion,
+            fer_confidence: fer_confidence ?? 0,
+            ser_emotion,
+            ser_confidence: ser_confidence ?? 0,
+            slide_index: context.slide_index ?? 0,
+            slide_title: context.slide_title ?? '',
+            subtopic: context.subtopic ?? '',
+            session_id: context.session_id,
+          }),
+        }).catch(console.error);
+      } catch {}
+    }
     return { fused_emotion: fer_emotion, reasoning: 'FER and SER agree' };
   }
 
@@ -67,6 +87,7 @@ export async function fuseEmotions(
         slide_index: context.slide_index ?? 0,
         slide_title: context.slide_title ?? '',
         subtopic: context.subtopic ?? '',
+        session_id: context.session_id,
       }),
       signal: controller.signal,
     });

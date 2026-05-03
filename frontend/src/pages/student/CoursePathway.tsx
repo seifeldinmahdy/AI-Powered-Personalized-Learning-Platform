@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from 'react-router';
 import { useState, useEffect, useRef } from 'react';
 import { generatePathway, type PathwayPlan, type PathwaySession } from '../../services/pathway';
+import api, { getEnrollments } from '../../services/api';
 import { BookOpen, Clock, Layers, ChevronRight, Loader2, Sparkles } from 'lucide-react';
 
 const LOADING_MESSAGES = [
@@ -22,6 +23,7 @@ export default function CoursePathway() {
   const [error, setError] = useState('');
   const [messageIndex, setMessageIndex] = useState(0);
   const [fadingOut, setFadingOut] = useState(false);
+  const [firstLessonId, setFirstLessonId] = useState<number | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Cycle loading messages
@@ -46,6 +48,32 @@ export default function CoursePathway() {
 
     async function run() {
       try {
+        // Fetch first lesson ID from Django
+        import('../../services/lessons').then(async ({ getModules, getLessons }) => {
+          try {
+            const mods = await getModules(Number(courseId));
+            if (mods.length > 0) {
+              mods.sort((a, b) => a.module_order - b.module_order);
+              const firstMod = mods[0];
+              const lessons = await getLessons(firstMod.id);
+              if (lessons.length > 0) {
+                lessons.sort((a, b) => a.lesson_order - b.lesson_order);
+                if (!cancelled) setFirstLessonId(lessons[0].id);
+              } else {
+                if (!cancelled) setFirstLessonId(1); // fallback
+              }
+            } else {
+              if (!cancelled) setFirstLessonId(1); // fallback
+            }
+          } catch (e) {
+            console.error('Failed to load lessons for routing', e);
+            if (!cancelled) setFirstLessonId(1); // fallback
+          }
+        });
+
+        const authUser = localStorage.getItem('auth_user');
+        const studentId = authUser ? JSON.parse(authUser).id : 'mvp_student_001';
+
         const result = await generatePathway({
           student_id: 'mvp_student_001',
           course_id: 'pythonlearn',
@@ -54,7 +82,23 @@ export default function CoursePathway() {
           language_proficiency: 'Elementary',
           use_synthetic_context: false,
         });
+
         if (!cancelled) {
+          // Notify backend that pathway is ready
+          try {
+            const enrollRes = await getEnrollments();
+            const list = Array.isArray(enrollRes.data) ? enrollRes.data : enrollRes.data?.results || [];
+            const enrollment = list.find((e: any) => e.course === Number(courseId));
+
+            if (enrollment) {
+              await api.post(`/courses/enrollments/${enrollment.id}/save_pathway/`, {
+                pathway: result
+              });
+            }
+          } catch (backendError) {
+            console.error("Failed to sync pathway to backend", backendError);
+          }
+
           setPlan(result);
           setLoading(false);
         }
@@ -117,9 +161,8 @@ export default function CoursePathway() {
           {/* Rotating status message */}
           <div className="h-8 flex items-center justify-center">
             <p
-              className={`text-purple-300 text-base font-medium transition-opacity duration-400 ${
-                fadingOut ? 'opacity-0' : 'opacity-100'
-              }`}
+              className={`text-purple-300 text-base font-medium transition-opacity duration-400 ${fadingOut ? 'opacity-0' : 'opacity-100'
+                }`}
             >
               {LOADING_MESSAGES[messageIndex]}
             </p>
@@ -130,13 +173,12 @@ export default function CoursePathway() {
             {LOADING_MESSAGES.map((_, i) => (
               <div
                 key={i}
-                className={`h-1.5 rounded-full transition-all duration-300 ${
-                  i === messageIndex
+                className={`h-1.5 rounded-full transition-all duration-300 ${i === messageIndex
                     ? 'bg-purple-400 w-8'
                     : i < messageIndex
-                    ? 'bg-purple-600 w-1.5'
-                    : 'bg-white/10 w-1.5'
-                }`}
+                      ? 'bg-purple-600 w-1.5'
+                      : 'bg-white/10 w-1.5'
+                  }`}
               />
             ))}
           </div>
@@ -210,15 +252,17 @@ export default function CoursePathway() {
         {/* Begin Course button */}
         <div className="mt-10 flex justify-center">
           <button
+            disabled={firstLessonId === null}
             onClick={() => {
-              // Navigate to session 1 — store the plan in sessionStorage for the live session to use
               sessionStorage.setItem('pathway_plan', JSON.stringify(plan));
-              navigate(`/course/${courseId}/pathway/session/1`);
+              if (firstLessonId) {
+                navigate(`/course/${courseId}/lesson/${firstLessonId}`);
+              }
             }}
-            className="px-8 py-4 bg-gradient-to-r from-primary to-secondary text-white rounded-2xl font-bold text-lg hover:shadow-xl hover:-translate-y-0.5 transition-all flex items-center gap-3"
+            className="px-8 py-4 bg-gradient-to-r from-primary to-secondary text-white rounded-2xl font-bold text-lg hover:shadow-xl hover:-translate-y-0.5 transition-all flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Sparkles size={20} />
-            Begin Course
+            {firstLessonId === null ? 'Preparing Course...' : 'Begin Course'}
             <ChevronRight size={20} />
           </button>
         </div>

@@ -47,8 +47,9 @@ class EmotionEventInput(BaseModel):
 class UpdateProfileRequest(BaseModel):
     student_id: int = Field(..., description="Student user ID")
     lesson_title: str = Field(default="", description="Lesson title just completed")
+    session_id: Optional[str] = Field(default=None, description="Backend session ID to read logs from")
     session_log: List[EmotionEventInput] = Field(
-        default_factory=list, description="Full EmotionEvent array from the session"
+        default_factory=list, description="Fallback EmotionEvent array if session_id is not provided"
     )
     existing_profile_summary: str = Field(
         default="", description="Current profile_summary from DB (empty if first session)"
@@ -72,7 +73,7 @@ class FuseEmotionsRequest(BaseModel):
         description=(
             "Optional session ID.  When provided and slide_title / subtopic "
             "are empty, values are auto-read from SharedSessionStore.  "
-            "After fusion, fused_emotion and confidence are written back."
+            "After fusion, fused_emotion, confidence, and the emotion signal are written back."
         ),
     )
 
@@ -80,18 +81,40 @@ class FuseEmotionsRequest(BaseModel):
 # ─── Endpoints ───────────────────────────────────────────────────
 
 
-
-
 @router.post("/update")
 async def update(request: UpdateProfileRequest):
     """
     Rewrite the student's persistent learning profile.
 
-    Takes the existing profile + new session data and returns a synthesized
+    Takes the existing profile + new session data (optionally pulled directly
+    from SharedSessionStore via session_id) and returns a synthesized
     new profile (profile_summary + profile_data) to be saved to Django.
     """
     try:
         log_dicts = [e.model_dump() for e in request.session_log]
+        
+        # Override with backend-tracked session state if session_id is provided
+        if request.session_id:
+            from services.session_store import get_session_store
+            store = get_session_store()
+            session_data = store.get_session(request.session_id)
+            if session_data:
+                # Use emotion signals as the base interaction log
+                backend_logs = list(session_data.live.emotion_signals)
+                
+                # Merge tutor events into the log
+                for event in session_data.live.tutor_events:
+                    backend_logs.append({
+                        "timestamp": event.get("timestamp", ""),
+                        "slide_index": event.get("slide_index", 0),
+                        "event_type": "tutor_" + event.get("event_type", "event"),
+                        "dr_nova_response_summary": event.get("text", "")
+                    })
+                
+                if backend_logs:
+                    log_dicts = backend_logs
+                    logger.info("Profiler /update: Pulled %d interaction logs from SharedSessionStore for session %s", len(log_dicts), request.session_id)
+
         result = await update_profile(
             student_id=request.student_id,
             lesson_title=request.lesson_title,
@@ -159,20 +182,41 @@ async def fuse(request: FuseEmotionsRequest):
                 store = get_session_store()
                 fused = result.get("fused_emotion", "")
                 conf = max(request.fer_confidence, request.ser_confidence)
-                store.update_session(
-                    request.session_id,
-                    live_kwargs={
+                
+                session_data = store.get_session(request.session_id)
+                if session_data:
+                    signals = list(session_data.live.emotion_signals)
+                    
+                    import datetime
+                    new_signal = {
+                        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+                        "slide_index": slide_index,
+                        "slide_title": slide_title,
+                        "subtopic": subtopic,
+                        "fer_emotion": request.fer_emotion,
+                        "fer_confidence": request.fer_confidence,
+                        "ser_emotion": request.ser_emotion,
+                        "ser_confidence": request.ser_confidence,
                         "fused_emotion": fused,
-                        "fused_emotion_confidence": conf,
+                        "event_type": "passive"
                     }
-                )
-                logger.info(
-                    "Profiler /fuse-emotions: wrote fused_emotion=%r, "
-                    "confidence=%.2f back to SharedSessionStore for session %s",
-                    fused,
-                    conf,
-                    request.session_id,
-                )
+                    signals.append(new_signal)
+                    
+                    store.update_session(
+                        request.session_id,
+                        live_kwargs={
+                            "fused_emotion": fused,
+                            "fused_emotion_confidence": conf,
+                            "emotion_signals": signals
+                        }
+                    )
+                    logger.info(
+                        "Profiler /fuse-emotions: wrote fused_emotion=%r, "
+                        "confidence=%.2f back to SharedSessionStore for session %s",
+                        fused,
+                        conf,
+                        request.session_id,
+                    )
             except Exception as exc:
                 logger.warning(
                     "Failed to write fusion result to SharedSessionStore: %s",

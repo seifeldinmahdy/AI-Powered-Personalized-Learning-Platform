@@ -44,6 +44,7 @@ class LiveSessionState(BaseModel):
     
     current_slide_index: int = Field(default=0, description="Current slide being viewed")
     current_slide_title: str = Field(default="", description="Title of the current slide")
+    current_slide_content: str = Field(default="", description="Full text/content of the current slide")
     current_topic: str = Field(default="", description="Topic currently being taught")
     current_subtopic: str = Field(default="", description="Subtopic currently being taught")
     
@@ -53,6 +54,11 @@ class LiveSessionState(BaseModel):
         default_factory=list, 
         description="Rolling window of the last 10 conversational turns with the tutor"
     )
+
+    visited_slides: list[int] = Field(default_factory=list, description="List of visited slide indices")
+    time_spent_per_slide: dict[str, float] = Field(default_factory=dict, description="Time spent on each slide (str index -> float seconds)")
+    tutor_events: list[dict] = Field(default_factory=list, description="Log of tutor auto-explanations, questions, re-explanations")
+    emotion_signals: list[dict] = Field(default_factory=list, description="Log of all emotion events tagged with slide indices")
 
     fused_emotion: str = Field(default="", description="Current resolved student emotion")
     fused_emotion_confidence: float = Field(default=0.0, description="Confidence score of the fused emotion prediction")
