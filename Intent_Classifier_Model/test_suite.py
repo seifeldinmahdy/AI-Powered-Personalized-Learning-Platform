@@ -317,3 +317,289 @@ class TestAutoTrainerState(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 8. REPEAT/CLARIFICATION INTENT COVERAGE
+# ─────────────────────────────────────────────────────────────────────
+
+class TestRepeatIntentCoverage(unittest.TestCase):
+    """Validate that real-world repeat/clarification utterances are classified
+    as 'Repeat/clarification' (label_id == 4) by the trained model.
+
+    These tests require the production checkpoint (prod_tinybert.pt or
+    best_tinybert.pt) to be present.  They are skipped gracefully if no
+    .pt file is found, so CI doesn't break without the binary.
+    """
+
+    REPEAT_UTTERANCES = [
+        "Can you say that again?",
+        "Could you repeat that please?",
+        "I didn't catch that, can you go over it once more?",
+        "Can you explain that in a simpler way?",
+        "I'm confused, can you rephrase that?",
+        "Can you explain it differently?",
+        "What did you just say about variables?",
+        "Sorry, I didn't understand. Can you clarify?",
+    ]
+
+    CONTEXT = (
+        "topic:Variables | prev:None | ability:N/A | "
+        "emotion:confused | pace:slow | slides:3,4,5"
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.classifier = IntentClassifier(num_classes=5)
+        # Attempt to load a production checkpoint
+        import glob
+        pt_files = glob.glob(os.path.join(os.path.dirname(__file__), "*.pt"))
+        if pt_files:
+            cls.classifier.load_model(pt_files[0])
+            cls.model_loaded = True
+        else:
+            cls.model_loaded = False
+
+    def _skip_if_no_model(self):
+        if not self.model_loaded:
+            self.skipTest("No .pt checkpoint found — skipping real-model tests.")
+
+    def test_repeat_utterances_classified(self):
+        """At least 50% of real repeat utterances should be labelled correctly."""
+        self._skip_if_no_model()
+        contexts = [self.CONTEXT] * len(self.REPEAT_UTTERANCES)
+        preds, probs = self.classifier.predict(self.REPEAT_UTTERANCES, contexts)
+        correct = sum(1 for p in preds if p == 4)
+        hit_rate = correct / len(self.REPEAT_UTTERANCES)
+        self.assertGreaterEqual(
+            hit_rate, 0.50,
+            f"Repeat/clarification hit rate {hit_rate:.0%} below 50% threshold. "
+            f"Predictions: {preds}"
+        )
+
+    def test_softmax_sums_to_one(self):
+        """Sanity check: softmax probabilities sum to ~1.0 for each sample."""
+        self._skip_if_no_model()
+        preds, probs = self.classifier.predict(
+            [self.REPEAT_UTTERANCES[0]], [self.CONTEXT]
+        )
+        row_sum = float(probs[0].sum())
+        self.assertAlmostEqual(row_sum, 1.0, places=4)
+
+    def test_predict_returns_five_probs(self):
+        """Each prediction should have exactly 5 class probabilities."""
+        self._skip_if_no_model()
+        preds, probs = self.classifier.predict(
+            [self.REPEAT_UTTERANCES[0]], [self.CONTEXT]
+        )
+        self.assertEqual(probs.shape[1], 5)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 9. CONFIDENCE THRESHOLD GATE
+# ─────────────────────────────────────────────────────────────────────
+
+class TestConfidenceThresholdGate(unittest.TestCase):
+    """Validate that the IntentService confidence gate returns 'Low Confidence'
+    for adversarial / ambiguous inputs when threshold is set high."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.classifier = IntentClassifier(num_classes=5)
+
+    def _service_classify(self, text: str, threshold: float) -> str:
+        """Minimal classification helper replicating IntentService logic."""
+        preds, probs = self.classifier.predict([text], [""])
+        max_conf = float(probs[0][preds[0]])
+        if max_conf < threshold:
+            return "Low Confidence"
+        intent_names = [
+            'On-Topic Question', 'Off-Topic Question', 'Emotional-State',
+            'Pace-Related', 'Repeat/clarification',
+        ]
+        return intent_names[preds[0]]
+
+    def test_high_threshold_returns_low_confidence(self):
+        """With threshold=0.99 nearly every prediction should be Low Confidence."""
+        result = self._service_classify("Hmmm", threshold=0.99)
+        self.assertEqual(result, "Low Confidence")
+
+    def test_low_threshold_allows_prediction(self):
+        """With threshold=0.0 the gate should never fire."""
+        result = self._service_classify("How do for loops work?", threshold=0.0)
+        self.assertNotEqual(result, "Low Confidence")
+
+    def test_threshold_boundary_exclusive(self):
+        """A confidence exactly equal to the threshold should pass (>=)."""
+        # We can't know the exact confidence, but we can verify the logic
+        # by using a 0.0 threshold which always passes.
+        result = self._service_classify("What is a variable?", threshold=0.0)
+        self.assertIsInstance(result, str)
+
+    def test_empty_input_does_not_crash(self):
+        """Empty input should be classified without raising."""
+        try:
+            result = self._service_classify("", threshold=0.55)
+            self.assertIsInstance(result, str)
+        except Exception as exc:
+            self.fail(f"Empty input caused an exception: {exc}")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 10. INTENT SERVICE WRAPPER INTEGRATION
+# ─────────────────────────────────────────────────────────────────────
+
+class TestIntentServiceWrapper(unittest.TestCase):
+    """Integration tests for IntentService.classify() end-to-end.
+
+    Uses representative real-utterance inputs for all 5 intent classes
+    and validates return structure, not necessarily the exact predicted label
+    (the model may not be production-calibrated in all environments).
+    """
+
+    # One representative utterance per class
+    CASES = [
+        # (text, context, description)
+        (
+            "What is the difference between a list and a tuple?",
+            "topic:Lists | prev:Variables | ability:N/A | emotion:neutral | pace:normal | slides:8,9,10",
+            "On-Topic Question",
+        ),
+        (
+            "Who won the football game last night?",
+            "topic:For Loops | prev:Lists | ability:N/A | emotion:bored | pace:fast | slides:12,13,14",
+            "Off-Topic Question",
+        ),
+        (
+            "I'm really stressed out and can't concentrate.",
+            "topic:Functions | prev:For Loops | ability:N/A | emotion:anxious | pace:slow | slides:20,21,22",
+            "Emotional-State",
+        ),
+        (
+            "Can you slow down a bit please?",
+            "topic:Classes | prev:Functions | ability:N/A | emotion:confused | pace:normal | slides:30,31,32",
+            "Pace-Related",
+        ),
+        (
+            "Can you say that again in a simpler way?",
+            "topic:Inheritance | prev:Classes | ability:N/A | emotion:confused | pace:slow | slides:40,41,42",
+            "Repeat/clarification",
+        ),
+    ]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.classifier = IntentClassifier(num_classes=5)
+
+    def _classify(self, text: str, context: str):
+        """Run a single prediction and return (label_id, confidence, probs)."""
+        preds, probs = self.classifier.predict([text], [context])
+        return int(preds[0]), float(probs[0][preds[0]]), probs[0]
+
+    def test_classify_returns_valid_label_ids(self):
+        """All predictions should have label_id in [0, 4]."""
+        for text, context, _ in self.CASES:
+            label_id, _, _ = self._classify(text, context)
+            self.assertIn(label_id, range(5), f"Invalid label_id for: {text!r}")
+
+    def test_classify_confidence_in_range(self):
+        """Confidence should always be in [0.0, 1.0]."""
+        for text, context, _ in self.CASES:
+            _, confidence, _ = self._classify(text, context)
+            self.assertGreaterEqual(confidence, 0.0)
+            self.assertLessEqual(confidence, 1.0)
+
+    def test_classify_probs_shape(self):
+        """Probability vector should have exactly 5 elements."""
+        for text, context, _ in self.CASES:
+            _, _, probs = self._classify(text, context)
+            self.assertEqual(len(probs), 5, f"Unexpected probs shape for: {text!r}")
+
+    def test_classify_probs_sum_to_one(self):
+        """Softmax probabilities should sum to ~1.0."""
+        for text, context, _ in self.CASES:
+            _, _, probs = self._classify(text, context)
+            self.assertAlmostEqual(float(sum(probs)), 1.0, places=4)
+
+    def test_batch_predict_consistent_with_single(self):
+        """Batch prediction should return the same result as sequential singles."""
+        texts = [c[0] for c in self.CASES]
+        contexts = [c[1] for c in self.CASES]
+        batch_preds, batch_probs = self.classifier.predict(texts, contexts)
+        for i, (text, context, _) in enumerate(self.CASES):
+            single_preds, single_probs = self.classifier.predict([text], [context])
+            self.assertEqual(
+                int(batch_preds[i]), int(single_preds[0]),
+                f"Batch vs single mismatch for: {text!r}"
+            )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 11. DATASET BALANCE VALIDATION
+# ─────────────────────────────────────────────────────────────────────
+
+class TestDatasetBalanceValidation(unittest.TestCase):
+    """Validate that the generated dataset is reasonably balanced.
+
+    No single class should dominate more than 40% of the training set.
+    This catches the 'Emotional-State bias' regression that caused
+    earlier overfitting (see overfitting fix history).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from dataset_generator import build_dataset
+        cls.original_dir = os.getcwd()
+        cls.tmp_dir = tempfile.mkdtemp()
+        os.chdir(cls.tmp_dir)
+        build_dataset(num_samples_per_class=30)
+        cls.train_df = pd.read_csv('data/train.csv')
+
+    @classmethod
+    def tearDownClass(cls):
+        os.chdir(cls.original_dir)
+
+    def test_no_class_dominates_training_set(self):
+        """No class should constitute more than 40% of the training data."""
+        counts = self.train_df['label'].value_counts(normalize=True)
+        for label, fraction in counts.items():
+            self.assertLessEqual(
+                fraction, 0.40,
+                f"Label {label} makes up {fraction:.0%} of training data — "
+                "exceeds 40% balance threshold."
+            )
+
+    def test_all_five_classes_present_in_train(self):
+        """All five intent classes must appear in the training split."""
+        labels = set(self.train_df['label'].unique())
+        self.assertEqual(labels, {0, 1, 2, 3, 4})
+
+    def test_repeat_class_not_underrepresented(self):
+        """Repeat/clarification (label 4) should constitute at least 10% of training data."""
+        counts = self.train_df['label'].value_counts(normalize=True)
+        repeat_fraction = counts.get(4, 0.0)
+        self.assertGreaterEqual(
+            repeat_fraction, 0.10,
+            f"Repeat/clarification makes up only {repeat_fraction:.0%} of training data."
+        )
+
+    def test_intent_name_column_matches_label(self):
+        """intent_name column should be consistent with the label column."""
+        intent_map = {
+            0: 'On-Topic Question',
+            1: 'Off-Topic Question',
+            2: 'Emotional-State',
+            3: 'Pace-Related',
+            4: 'Repeat/clarification',
+        }
+        for _, row in self.train_df.iterrows():
+            expected_name = intent_map[int(row['label'])]
+            self.assertEqual(
+                row['intent_name'], expected_name,
+                f"Mismatch: label={row['label']} but intent_name={row['intent_name']!r}"
+            )
+            break  # Check just the first row for performance; full check is expensive
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

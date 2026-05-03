@@ -10,6 +10,7 @@ from services.tutor_service import (
     get_session,
     generate_lecture_chunk,
     answer_question,
+    repeat_lecture_chunk,
     stop_session,
     get_session_state,
     check_relevance,
@@ -257,6 +258,99 @@ async def tutor_synthesize_audio(request: TutorSynthesizeAudioRequest):
     except Exception as e:
         logger.error(f"Tutor synthesize audio error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Repeat / Clarification ───────────────────────────────────────────
+
+# Extra TTS rate applied in verbatim repeat mode to make delivery slower/clearer.
+_VERBATIM_REPEAT_RATE_DELTA = -20  # percentage points
+
+
+class RepeatRequest(BaseModel):
+    session_id: str = Field(..., description="Session ID")
+    mode: str = Field(
+        default="rephrase",
+        description=(
+            "'verbatim' — re-deliver the exact last chunk at a slower rate. "
+            "'rephrase' — re-generate a simpler explanation for the same subtopic."
+        ),
+    )
+    include_audio: bool = Field(default=True, description="Include TTS audio in response")
+    student_emotion: Optional[str] = Field(
+        default=None, description="Current student emotional state"
+    )
+
+
+@router.post("/repeat")
+async def repeat(request: RepeatRequest):
+    """
+    Handle a ``Repeat/clarification`` intent.
+
+    When the Intent Classifier returns ``Repeat/clarification``, the frontend
+    should call this endpoint instead of replaying the last audio blob.
+
+    - ``mode="verbatim"`` — returns the exact last lecture text re-synthesised
+      with a slower TTS rate (−20 pp) for clearer delivery.
+    - ``mode="rephrase"`` (default) — calls the LLM again for the same
+      subtopic with a simplification directive and returns fresh audio.
+
+    The topic pointer is **not** advanced in either mode.
+    """
+    session = get_session(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if request.mode not in ("verbatim", "rephrase"):
+        raise HTTPException(
+            status_code=400,
+            detail="'mode' must be 'verbatim' or 'rephrase'.",
+        )
+
+    try:
+        result = await repeat_lecture_chunk(request.session_id, mode=request.mode)
+    except ValueError as exc:
+        # Nothing to repeat yet, or session missing.
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("Repeat endpoint error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    audio_base64 = None
+    if request.include_audio and result["text"]:
+        # For verbatim mode apply a slower rate on top of existing modifiers.
+        if request.mode == "verbatim":
+            # Temporarily shift pace_modifier to bake in the -20pp delta.
+            original_pace = session.pace_modifier
+            session.pace_modifier = original_pace + _VERBATIM_REPEAT_RATE_DELTA
+            try:
+                audio_base64 = await _synthesize_audio(
+                    result["text"],
+                    session.voice,
+                    request.student_emotion,
+                    request.session_id,
+                )
+            finally:
+                session.pace_modifier = original_pace
+        else:
+            audio_base64 = await _synthesize_audio(
+                result["text"],
+                session.voice,
+                request.student_emotion,
+                request.session_id,
+            )
+
+    return {
+        "success": True,
+        "session_id": request.session_id,
+        "text": result["text"],
+        "audio_base64": audio_base64,
+        "topic": result["topic"],
+        "subtopic": result["subtopic"],
+        "mode": result["mode"],
+        "progress": result["progress"],
+        "status": result["status"],
+        "inference_time": result.get("inference_time"),
+    }
 
 
 @router.get("/health")
