@@ -1,0 +1,271 @@
+{
+  "profile": {
+    "student_id": "19",
+    "course_id": "3",
+    "mastery_level": "Novice",
+    "composition_mode": "balanced",
+    "language_proficiency": "Intermediate",
+    "strengths": [
+      "index",
+      "string slicing"
+    ],
+    "weaknesses": [
+      "Lists",
+      "tuples",
+      "dictionary usage",
+      "function definition",
+      "functions",
+      "recursion",
+      "Classes",
+      "inheritance",
+      "encapsulation",
+      "Class diagrams",
+      "instance methods",
+      "debugging",
+      "File I/O",
+      "Algorithm analysis",
+      "Markov analysis"
+    ],
+    "topic_performance": {
+      "index": 1.0,
+      "string indexing": 0.5,
+      "string slicing": 1.0,
+      "list operations": 0.5,
+      "Lists": 0.0,
+      "tuples": 0.0,
+      "dictionary usage": 0.0,
+      "function definition": 0.33,
+      "functions": 0.0,
+      "recursion": 0.0,
+      "Classes": 0.0,
+      "inheritance": 0.0,
+      "encapsulation": 0.0,
+      "Class diagrams": 0.0,
+      "instance methods": 0.0,
+      "debugging": 0.33,
+      "Runtime errors": 0.5,
+      "File I/O": 0.33,
+      "Algorithm analysis": 0.0,
+      "order of growth": 0.5,
+      "Markov analysis": 0.0
+    },
+    "incorrectly_answered": [
+      {
+        "question": "Given s = \"Python\", what is s[2]?",
+        "chosen_option": "y",
+        "correct_option": "t"
+      },
+      {
+        "question": "What is the output of len([[], [1,2], [3]])?",
+        "chosen_option": "4",
+        "correct_option": "3"
+      },
+      {
+        "question": "Which statement about tuples is true?",
+        "chosen_option": "They support item assignment",
+        "correct_option": "They can be used as dictionary keys"
+      },
+      {
+        "question": "How do you retrieve a value for key \"name\" from dictionary d without raising KeyError?",
+        "chosen_option": "d.pop('name')",
+        "correct_option": "d.get('name')"
+      },
+      {
+        "question": "After executing lst = [1,2,3]; lst.extend([4,5]); what is lst?",
+        "chosen_option": "[1,2,3,4]",
+        "correct_option": "[1,2,3,4,5]"
+      },
+      {
+        "question": "What does the method dict.items() return?",
+        "chosen_option": "A list of values",
+        "correct_option": "A view of (key, value) pairs"
+      },
+      {
+        "question": "What will be printed after executing the code below?\n\n```python\n\ndef add(a, b):\n    return a + b\n\nprint(add(2, 3))\n```",
+        "chosen_option": "3",
+        "correct_option": "5"
+      },
+      {
+        "question": "In Python, what does the `return` statement do inside a function?",
+        "chosen_option": "Creates a new variable in the global scope",
+        "correct_option": "Stops the function and sends a value back to the caller"
+      },
+      {
+        "question": "Which definition correctly provides a default value for the parameter `limit`?",
+        "chosen_option": "def fetch(limit:10):",
+        "correct_option": "def fetch(limit=10):"
+      },
+      {
+        "question": "What will be the output of the following code?\n\n```python\nx = 5\n\ndef modify():\n    x = 10\n    return x\n\nmodify()\nprint(x)\n```",
+        "chosen_option": "None",
+        "correct_option": "5"
+      },
+      {
+        "question": "Why is a base case essential in a recursive function?",
+        "chosen_option": "It improves the function's speed",
+        "correct_option": "It stops the recursion from continuing indefinitely"
+      },
+      {
+        "question": "What is the result of calling `factorial(3)` using the recursive definition below?\n\n```python\ndef factorial(n):\n    if n == 0:\n        return 1\n    else:\n        return n * factorial(n-1)\n```",
+        "chosen_option": "9",
+        "correct_option": "6"
+      },
+      {
+        "question": "If a recursive function never reaches a base case, which error will Python eventually raise?",
+        "chosen_option": "TypeError",
+        "correct_option": "RecursionError"
+      },
+      {
+        "question": "Given the function call `display('Hello', end='!')`, what type of argument is `end='!'`?",
+        "chosen_option": "Default argument",
+        "correct_option": "Keyword argument"
+      },
+      {
+        "question": "Which of the following creates an anonymous (lambda) function that adds two numbers?",
+        "chosen_option": "lambda = (x, y) => x + y",
+        "correct_option": "lambda x, y: x + y"
+      },
+      {
+        "question": "In Python, what is the purpose of the __init__ method inside a class?",
+        "chosen_option": "It creates a static method.",
+        "correct_option": "It initializes a new instance of the class with given attributes."
+      },
+      {
+        "question": "Which of the following statements correctly creates an instance of the class `Car`?",
+        "chosen_option": "my_car = Car.create()",
+        "correct_option": "my_car = Car()"
+      },
+      {
+        "question": "Given the classes below, what will be printed when `Dog().speak()` is called?\n\nclass Animal:\n    def speak(self):\n        print(\"generic sound\")\n\nclass Dog(Animal):\n    def speak(self):\n        print(\"woof\")",
+        "chosen_option": "Error because Dog does not call super()",
+        "correct_option": "woof"
+      },
+      {
+        "question": "In a subclass, how can you explicitly call the parent class's implementation of an overridden method?",
+        "chosen_option": "base.method_name(self)",
+        "correct_option": "super().method_name()"
+      },
+      {
+        "question": "Which naming convention in Python leads to name mangling that helps achieve encapsulation of a class attribute?",
+        "chosen_option": "attribute",
+        "correct_option": "__attribute"
+      },
+      {
+        "question": "What is the primary purpose of using the @property decorator in a Python class?",
+        "chosen_option": "To create a class variable.",
+        "correct_option": "To expose a method as a read‑only attribute while keeping internal data private."
+      },
+      {
+        "question": "In a UML class diagram, which symbol represents a private attribute?",
+        "chosen_option": "~ attributeName",
+        "correct_option": "- attributeName"
+      },
+      {
+        "question": "In a UML class diagram, how is a one‑to‑many relationship between `Library` and `Book` typically shown?",
+        "chosen_option": "Library \"*\" ---- \"*\" Book",
+        "correct_option": "Library \"1\" ---- \"*\" Book"
+      },
+      {
+        "question": "What is the role of the first parameter (commonly named `self`) in an instance method definition?",
+        "chosen_option": "It is required only for static methods.",
+        "correct_option": "It receives the instance on which the method is called."
+      },
+      {
+        "question": "Which of the following statements correctly distinguishes an instance method from a class method?",
+        "chosen_option": "Instance methods can be called without creating an object; class methods cannot.",
+        "correct_option": "Instance methods receive the instance (`self`) as the first argument; class methods receive the class (`cls`)."
+      },
+      {
+        "question": "When you run a Python script and see the message \"NameError: name 'total' is not defined\", what is the most likely cause?",
+        "chosen_option": "The Python interpreter is not installed correctly.",
+        "correct_option": "The variable 'total' was misspelled or never assigned before use."
+      },
+      {
+        "question": "Which built‑in function is used to open a file for reading text in Python?",
+        "chosen_option": "open('data.txt', 'x')",
+        "correct_option": "open('data.txt', 'r')"
+      },
+      {
+        "question": "You inserted a breakpoint using `breakpoint()` in your code, but the program still runs without stopping. What is the most common reason?",
+        "chosen_option": "The `breakpoint()` function is only available on Windows.",
+        "correct_option": "The Python version is older than 3.7 where `breakpoint()` was introduced."
+      },
+      {
+        "question": "What does the `with` statement guarantee when working with file objects?",
+        "chosen_option": "The file will be read only once.",
+        "correct_option": "The file will be automatically closed after the block, even if an error occurs."
+      },
+      {
+        "question": "During debugging, you notice that a loop runs infinitely. Which of the following techniques is most helpful to identify the problem?",
+        "chosen_option": "Rename the loop variable to a shorter name.",
+        "correct_option": "Add a `print()` statement inside the loop to display the loop variable each iteration."
+      },
+      {
+        "question": "You have the following code:\n\n```python\ntry:\n    result = 10 / int(user_input)\nexcept ZeroDivisionError:\n    print('Cannot divide by zero')\nexcept ValueError:\n    print('Invalid number')\n```\nIf `user_input` is the string \"0\", what will be printed?",
+        "chosen_option": "No output, the program crashes",
+        "correct_option": "Cannot divide by zero"
+      },
+      {
+        "question": "What is the primary purpose of algorithm analysis?",
+        "chosen_option": "To write code in a specific programming language",
+        "correct_option": "To estimate the resources an algorithm will consume"
+      },
+      {
+        "question": "Which of the following best describes the Big-O notation?",
+        "chosen_option": "An exact count of the number of operations",
+        "correct_option": "An upper bound on the running time for sufficiently large inputs"
+      },
+      {
+        "question": "When we talk about the worst‑case time complexity of an algorithm, we are referring to:",
+        "chosen_option": "The average number of steps over all possible inputs",
+        "correct_option": "The maximum number of steps the algorithm might take on any input of size n"
+      },
+      {
+        "question": "In a Markov chain with states A and B, the transition matrix is [[0.7, 0.3], [0.4, 0.6]]. What is the probability of moving from state B to state A in one step?",
+        "chosen_option": "0.6",
+        "correct_option": "0.4"
+      },
+      {
+        "question": "A state in a Markov chain that, once entered, cannot be left is called:",
+        "chosen_option": "Recurrent state",
+        "correct_option": "Absorbing state"
+      },
+      {
+        "question": "What is the time complexity of the following code?\n\nfor i in range(n):\n    for j in range(i, n):\n        do_constant_time_work()",
+        "chosen_option": "O(n log n)",
+        "correct_option": "O(n^2)"
+      },
+      {
+        "question": "When analyzing an algorithm, which of the following statements about space complexity is true?",
+        "chosen_option": "It only counts the memory used by input variables.",
+        "correct_option": "It includes both the memory for input and any additional data structures the algorithm creates."
+      },
+      {
+        "question": "For the Markov chain with transition matrix [[0.5, 0.5], [0.2, 0.8]], what is the steady‑state probability of being in state 1?",
+        "chosen_option": "0.4",
+        "correct_option": "0.2857"
+      }
+    ],
+    "use_synthetic_context": false,
+    "course_intent": "Python for Beginners",
+    "student_profile_summary": "Novice learner in Python for Beginners. Strong in: index, string slicing. Needs work on: Lists, tuples, dictionary usage, function definition, functions, recursion, Classes, inheritance, encapsulation, Class diagrams, instance methods, debugging, File I/O, Algorithm analysis, Markov analysis."
+  },
+  "live": {
+    "session_id": "",
+    "current_slide_index": 0,
+    "current_slide_title": "",
+    "current_slide_content": "",
+    "current_topic": "",
+    "current_subtopic": "",
+    "running_summary": "",
+    "tutor_transcript": [],
+    "visited_slides": [],
+    "time_spent_per_slide": {},
+    "tutor_events": [],
+    "emotion_signals": [],
+    "fused_emotion": "",
+    "fused_emotion_confidence": 0.0,
+    "pace_modifier": 0,
+    "last_updated_at": 1777836539.4996321
+  }
+}

@@ -49,9 +49,9 @@ class StudentContext(BaseModel):
         default_factory=dict,
         description="Topic → score mapping (0.0–1.0)",
     )
-    incorrectly_answered: list[str] = Field(
+    incorrectly_answered: list[dict] = Field(
         default_factory=list,
-        description="Chunk IDs of incorrectly answered assessment questions",
+        description="List of dicts with keys: question, chosen_option, correct_option",
     )
     use_synthetic_context: bool = Field(
         default=False,

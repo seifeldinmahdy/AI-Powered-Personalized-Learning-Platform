@@ -94,7 +94,7 @@ class GenerateRequest(BaseModel):
     strengths: list[str] = []
     weaknesses: list[str] = []
     topic_performance: dict[str, float] = {}
-    incorrectly_answered: list[str] = []
+    incorrectly_answered: list[dict] = []
     use_synthetic_context: bool = False
 
 
