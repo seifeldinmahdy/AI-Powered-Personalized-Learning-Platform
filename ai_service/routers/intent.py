@@ -117,13 +117,19 @@ async def chat_intent(request: ChatRequest):
         intent = top_prediction['intent_name']
         confidence = top_prediction['confidence']
         
-        # Simulated responses based on intent
+        # Responses based on intent.
+        # NOTE: 'Repeat/clarification' tells the frontend to call POST /tutor/repeat
+        # (default mode: "rephrase").  The intent classifier already resolves this
+        # label — no additional sub-intent detection is required here.
         responses = {
             'On-Topic Question': "That's a great question about the material! Let me explain...",
             'Off-Topic Question': "That seems a bit off-topic. Let's try to focus on the current subject.",
             'Emotional-State': "I understand you might be feeling overwhelmed. Let's take it step by step.",
             'Pace-Related': "I can adjust my pace. Would you like me to go faster or slower?",
-            'Repeat/clarification': "Of course, I can clarify that for you. Here it is in different words...",
+            'Repeat/clarification': (
+                "Of course! I'll explain that again in a simpler way. "
+                "[ACTION: POST /tutor/repeat {\"mode\": \"rephrase\"}]"
+            ),
             'Low Confidence': (
                 "I'm not quite sure what you mean. Could you rephrase that? "
                 "I want to make sure I understand you correctly."

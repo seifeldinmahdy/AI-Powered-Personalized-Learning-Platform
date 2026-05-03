@@ -69,6 +69,18 @@ RULES:
 - After answering, add a brief sentence to transition back to the lecture.
 """
 
+REPHRASE_SYSTEM_PROMPT = """\
+You are Dr. Nova, an expert AI tutor. A student has just asked you to explain the same topic in
+a different, simpler way.
+
+RULES:
+- Re-explain the SAME subtopic using different analogies, simpler vocabulary, or a fresh angle.
+- Keep it to 2-3 short paragraphs — roughly the same length as the original explanation.
+- Do NOT use markdown formatting, bullet points, or headers — your output will be spoken aloud via TTS.
+- Do NOT say "as I mentioned before" or "let me repeat" — just dive straight into the new explanation.
+- End with a brief reassurance that this is the same concept, just approached differently.
+"""
+
 
 # ── Session dataclass ──
 @dataclass
@@ -87,6 +99,12 @@ class TutorSession:
     student_profile_summary: Optional[str] = None
     pace_modifier: int = 0
     created_at: float = field(default_factory=time.time)
+
+    # ── Repeat/clarification state (ISSUE-006) ──────────────────────
+    # Populated after every generate_lecture_chunk() call so the system
+    # always knows what the last spoken content was.
+    last_chunk_text: Optional[str] = None
+    last_chunk_subtopic: Optional[str] = None
 
     @property
     def current_topic(self) -> Optional[str]:
@@ -372,6 +390,10 @@ async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str]
     if len(session.transcript) > 10:
         session.transcript = session.transcript[-10:]
 
+    # ── Remember last spoken chunk for Repeat/clarification (ISSUE-006) ──
+    session.last_chunk_text = lecture_text
+    session.last_chunk_subtopic = subtopic_name
+
     # Recursively update running summary
     await _update_summary(session, lecture_text)
 
@@ -470,6 +492,120 @@ async def answer_question(session_id: str, question: str, student_emotion: Optio
         "status": session.status,
         "inference_time": elapsed,
     }
+
+
+async def repeat_lecture_chunk(session_id: str, mode: str = "rephrase") -> dict:
+    """
+    Handle a ``Repeat/clarification`` intent without advancing the topic pointer.
+
+    Parameters
+    ----------
+    session_id : str
+        Active session ID.
+    mode : str
+        ``"verbatim"`` — return the exact same last chunk text (caller should
+        apply a slower TTS rate for clearer delivery).
+
+        ``"rephrase"`` — call the LLM again for the same subtopic with a
+        simplification directive, then store the result as the new
+        ``last_chunk_text``.
+
+    Returns
+    -------
+    dict
+        Keys: ``text``, ``topic``, ``subtopic``, ``mode``, ``progress``,
+        ``status``, and (rephrase only) ``inference_time``.
+
+    Raises
+    ------
+    ValueError
+        If the session does not exist or nothing has been spoken yet
+        (``last_chunk_text`` is ``None``).
+    """
+    session = _sessions.get(session_id)
+    if not session:
+        raise ValueError(f"Session {session_id} not found")
+
+    if not session.last_chunk_text:
+        raise ValueError(
+            "Nothing to repeat — the tutor has not spoken any lecture content yet."
+        )
+
+    prev_status = session.status
+    topic_name = session.current_topic or "General Review"
+    subtopic_name = session.last_chunk_subtopic or session.current_subtopic
+    elapsed: Optional[float] = None
+
+    if mode == "verbatim":
+        # Return the stored text as-is; the router will apply slower TTS rate.
+        response_text = session.last_chunk_text
+        logger.info(
+            "Repeat[verbatim] for session %s subtopic=%s",
+            session_id,
+            subtopic_name,
+        )
+    else:
+        # mode == "rephrase" (default)
+        context_parts = []
+        if session.running_summary:
+            context_parts.append(
+                f"SUMMARY OF WHAT YOU'VE COVERED SO FAR:\n{session.running_summary}"
+            )
+        context_parts.append(f"CURRENT MAIN TOPIC: {topic_name}")
+        if subtopic_name:
+            context_parts.append(f"SUBTOPIC TO RE-EXPLAIN: {subtopic_name}")
+        context_parts.append(
+            "INSTRUCTION: The student asked for a simpler or different explanation of "
+            "the content above. Explain this differently and more simply."
+        )
+
+        user_prompt = "\n\n".join(context_parts)
+        start = time.time()
+        response_text = await _call_ollama(REPHRASE_SYSTEM_PROMPT, user_prompt)
+        elapsed = round(time.time() - start, 2)
+
+        logger.info(
+            "Repeat[rephrase] generated in %ss for session %s subtopic=%s",
+            elapsed,
+            session_id,
+            subtopic_name,
+        )
+
+        # Store as new last chunk so a further repeat works off the rephrased text.
+        session.last_chunk_text = response_text
+
+        # Add rephrased explanation to transcript
+        session.transcript.append({
+            "role": "tutor",
+            "text": response_text,
+            "topic": topic_name,
+            "subtopic": subtopic_name,
+            "timestamp": time.time(),
+            "is_repeat": True,
+            "repeat_mode": "rephrase",
+        })
+        if len(session.transcript) > 10:
+            session.transcript = session.transcript[-10:]
+
+        # Update running summary with the rephrased content.
+        await _update_summary(session, response_text)
+
+    # Restore previous status (repeat does NOT advance the topic pointer)
+    session.status = prev_status if prev_status not in ("idle", "answering") else "lecturing"
+
+    _sync_to_shared_store(session)
+
+    result = {
+        "text": response_text,
+        "topic": topic_name,
+        "subtopic": subtopic_name,
+        "mode": mode,
+        "progress": session.progress,
+        "status": session.status,
+    }
+    if elapsed is not None:
+        result["inference_time"] = elapsed
+    return result
 
 
 def stop_session(session_id: str) -> bool:
