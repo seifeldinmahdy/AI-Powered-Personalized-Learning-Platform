@@ -45,12 +45,7 @@ class StudentContextStore:
         """Persist a UnifiedStudentContext to disk."""
         path = self._key_path(student_id, course_id)
         path.write_text(context.model_dump_json(indent=2), encoding="utf-8")
-        logger.info(
-            "student_context_saved",
-            student_id=student_id,
-            course_id=course_id,
-            path=str(path),
-        )
+        logger.info("student_context_saved student=%s course=%s path=%s", student_id, course_id, path)
 
     def load(
         self,

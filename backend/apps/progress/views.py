@@ -1,6 +1,6 @@
 from django.utils import timezone
 from rest_framework import viewsets, permissions, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 
 from .models import (
@@ -160,3 +160,38 @@ class StudentLearningProfileViewSet(viewsets.ModelViewSet):
             serializer.data,
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def practice_completion(request):
+    """Award bonus XP when a student passes a lesson-end practice problem.
+
+    Body: { lesson_id: int, score: int }
+    Returns: { xp_awarded: int, new_total: int, new_level: int }
+    """
+    from apps.users.models import StudentProfile
+
+    try:
+        score = int(request.data.get('score', 0))
+        lesson_id = int(request.data.get('lesson_id', 0))
+    except (TypeError, ValueError):
+        return Response({"error": "Invalid score or lesson_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+    if score < 60:
+        return Response({"xp_awarded": 0, "new_total": 0, "new_level": 0})
+
+    xp_awarded = 50 if score >= 90 else 25
+
+    try:
+        profile, _ = StudentProfile.objects.get_or_create(user=request.user)
+        profile.current_xp = (profile.current_xp or 0) + xp_awarded
+        profile.level = min(10, max(1, profile.current_xp // 200 + 1))
+        profile.save(update_fields=["current_xp", "level"])
+        return Response({
+            "xp_awarded": xp_awarded,
+            "new_total": profile.current_xp,
+            "new_level": profile.level,
+        })
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

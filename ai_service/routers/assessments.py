@@ -193,13 +193,8 @@ async def submit_placement(req: SubmitPlacementRequest):
     store.save(req.student_id, req.course_id, context)
 
     logger.info(
-        "placement_submitted",
-        student_id=req.student_id,
-        course_id=req.course_id,
-        score_pct=score_pct,
-        mastery=mastery_level,
-        strengths=strengths,
-        weaknesses=weaknesses,
+        "placement_submitted student=%s course=%s score=%s mastery=%s strengths=%s weaknesses=%s",
+        req.student_id, req.course_id, score_pct, mastery_level, strengths, weaknesses,
     )
 
     return PlacementResultResponse(

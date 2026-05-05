@@ -43,20 +43,14 @@ async def get_student_context(student_id: str, course_id: str):
     context = store.load(student_id, course_id)
 
     if context is None:
-        logger.warning(
-            "student_context_not_found",
-            student_id=student_id,
-            course_id=course_id,
-        )
+        logger.warning("student_context_not_found student=%s course=%s", student_id, course_id)
         raise HTTPException(
             status_code=404,
             detail=f"No student context found for student={student_id}, course={course_id}",
         )
 
     logger.info(
-        "student_context_retrieved",
-        student_id=student_id,
-        course_id=course_id,
-        mastery=context.profile.mastery_level,
+        "student_context_retrieved student=%s course=%s mastery=%s",
+        student_id, course_id, context.profile.mastery_level,
     )
     return context.model_dump()
