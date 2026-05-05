@@ -74,12 +74,28 @@ export default function CoursePathway() {
         const authUser = localStorage.getItem('auth_user');
         const studentId = authUser ? JSON.parse(authUser).id : 'mvp_student_001';
 
+        // Fetch real student context from persistence
+        let contextProfile: any = null;
+        try {
+          const ctxRes = await fetch(`${import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001'}/student-context/${studentId}/${courseId}`);
+          if (ctxRes.ok) {
+            const ctx = await ctxRes.json();
+            contextProfile = ctx.profile;
+          }
+        } catch (e) {
+          console.warn('Could not fetch student context, using defaults', e);
+        }
+
         const result = await generatePathway({
-          student_id: 'mvp_student_001',
-          course_id: 'pythonlearn',
-          mastery_level: 'Novice',
-          composition_mode: 'visual_heavy',
-          language_proficiency: 'Elementary',
+          student_id: contextProfile?.student_id || String(studentId),
+          course_id: contextProfile?.course_id || 'pythonlearn',
+          mastery_level: contextProfile?.mastery_level || 'Novice',
+          composition_mode: contextProfile?.composition_mode || 'balanced',
+          language_proficiency: contextProfile?.language_proficiency || 'Intermediate',
+          strengths: contextProfile?.strengths || [],
+          weaknesses: contextProfile?.weaknesses || [],
+          topic_performance: contextProfile?.topic_performance || {},
+          incorrectly_answered: contextProfile?.incorrectly_answered || [],
           use_synthetic_context: false,
         });
 

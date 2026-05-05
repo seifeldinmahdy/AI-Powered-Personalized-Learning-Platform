@@ -26,7 +26,10 @@ class StudentProfileState(BaseModel):
     strengths: list[str] = Field(default_factory=list)
     weaknesses: list[str] = Field(default_factory=list)
     topic_performance: dict[str, float] = Field(default_factory=dict)
-    incorrectly_answered: list[str] = Field(default_factory=list)
+    incorrectly_answered: list[dict] = Field(
+        default_factory=list,
+        description="List of dicts with keys: question, chosen_option, correct_option",
+    )
     use_synthetic_context: bool = False
     course_intent: str = ""
     student_profile_summary: str = Field(default="", description="Short text summary of the student's learning profile")
@@ -108,7 +111,10 @@ class UnifiedStudentContext(BaseModel):
             strengths=self.profile.strengths,
             weaknesses=self.profile.weaknesses,
             topic_performance=self.profile.topic_performance,
-            incorrectly_answered=self.profile.incorrectly_answered,
+            incorrectly_answered=[
+                item.get("question", str(item)) if isinstance(item, dict) else item
+                for item in self.profile.incorrectly_answered
+            ],
             use_synthetic_context=self.profile.use_synthetic_context,
             course_intent=self.profile.course_intent,
         )

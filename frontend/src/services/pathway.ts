@@ -37,7 +37,7 @@ export interface GeneratePathwayRequest {
   strengths?: string[];
   weaknesses?: string[];
   topic_performance?: Record<string, number>;
-  incorrectly_answered?: string[];
+  incorrectly_answered?: Array<{question: string; chosen_option: string; correct_option: string}>;
   use_synthetic_context?: boolean;
 }
 

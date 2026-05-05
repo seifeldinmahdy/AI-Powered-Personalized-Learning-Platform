@@ -131,14 +131,14 @@ def _ensure_models():
         return
 
     try:
-        from slide_gen.agents.content_specialist import _load_model
+        from slide_gen.agents.content_specialist import _load_model  # type: ignore
         _load_model(_T5_PATH)
         logger.info("slides_content_model_loaded: %s", _T5_PATH)
     except Exception as e:
         logger.warning("slides_content_model_load_failed: %s", str(e))
 
     try:
-        from slide_gen.agents.visual_classifier import _load_level1
+        from slide_gen.agents.visual_classifier import _load_level1  # type: ignore
         _load_level1(_CLASSIFIER_PATH)
         logger.info("slides_classifier_model_loaded: %s", _CLASSIFIER_PATH)
     except Exception as e:
@@ -176,10 +176,10 @@ def _generate_session_slides(
         Injected into the content specialist prompt so regenerated slides
         reflect what the tutor has already covered.
     """
-    from slide_gen.agents.content_specialist import generate_content
-    from slide_gen.agents.visual_classifier import classify_visual, should_render_visual
-    from slide_gen.agents.code_extractor import extract_code
-    from slide_gen.core.slide_schema import SlideType, Layout, HighlightType
+    from slide_gen.agents.content_specialist import generate_content  # type: ignore
+    from slide_gen.agents.visual_classifier import classify_visual, should_render_visual  # type: ignore
+    from slide_gen.agents.code_extractor import extract_code  # type: ignore
+    from slide_gen.core.slide_schema import SlideType, Layout, HighlightType  # type: ignore
 
     _ensure_models()
 
@@ -294,7 +294,7 @@ def _generate_session_slides(
                 visual_type = visual_decision["template_id"]
                 # Try param generation
                 try:
-                    from slide_gen.agents.visual_param_generator import generate_visual_params
+                    from slide_gen.agents.visual_param_generator import generate_visual_params  # type: ignore
                     bullet_texts = [it.get("text", "") for it in items]
                     params = generate_visual_params(visual_type, bullet_texts, title)
                     if params:

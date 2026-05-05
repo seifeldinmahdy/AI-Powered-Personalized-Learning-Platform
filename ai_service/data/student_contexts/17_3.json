@@ -1,0 +1,65 @@
+{
+  "profile": {
+    "student_id": "17",
+    "course_id": "3",
+    "mastery_level": "Intermediate",
+    "composition_mode": "balanced",
+    "language_proficiency": "Intermediate",
+    "strengths": [
+      "Variables",
+      "Control Flow",
+      "Error Handling"
+    ],
+    "weaknesses": [
+      "Data Types",
+      "Loops",
+      "Functions"
+    ],
+    "topic_performance": {
+      "Variables": 1.0,
+      "Data Types": 0.0,
+      "Control Flow": 1.0,
+      "Loops": 0.0,
+      "Functions": 0.0,
+      "Error Handling": 1.0
+    },
+    "incorrectly_answered": [
+      {
+        "question": "Which of the following built‑in types is mutable?",
+        "chosen_option": "tuple",
+        "correct_option": "list"
+      },
+      {
+        "question": "What sequence of numbers does range(3, 8, 2) produce?",
+        "chosen_option": "3, 4, 5, 6, 7, 8",
+        "correct_option": "3, 5, 7"
+      },
+      {
+        "question": "What is the effect of using a default argument in a function definition?",
+        "chosen_option": "It forces the caller to always supply the argument",
+        "correct_option": "It makes the argument optional if a value is not provided"
+      }
+    ],
+    "use_synthetic_context": false,
+    "course_intent": "Python for Beginners",
+    "student_profile_summary": "Intermediate learner in Python for Beginners. Strong in: Variables, Control Flow, Error Handling. Needs work on: Data Types, Loops, Functions."
+  },
+  "live": {
+    "session_id": "",
+    "current_slide_index": 0,
+    "current_slide_title": "",
+    "current_slide_content": "",
+    "current_topic": "",
+    "current_subtopic": "",
+    "running_summary": "",
+    "tutor_transcript": [],
+    "visited_slides": [],
+    "time_spent_per_slide": {},
+    "tutor_events": [],
+    "emotion_signals": [],
+    "fused_emotion": "",
+    "fused_emotion_confidence": 0.0,
+    "pace_modifier": 0,
+    "last_updated_at": 1777829577.106058
+  }
+}

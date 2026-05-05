@@ -27,7 +27,7 @@ export function VisualRenderer({ visual }: VisualRendererProps) {
     const points = Array.isArray(p.points) ? p.points : [];
     return (
       <div className={`${boxBase} bg-green-50 border border-green-300 p-4`}>
-        <div className="font-bold text-green-800 text-base mb-2">{title}</div>
+        <div className="font-bold text-green-800 text-base mb-2">{safeText(title)}</div>
         <ul className="list-disc m-0 pl-5 text-gray-700 space-y-1">
           {points.map((pt, i) => (
             <li key={i}>{safeText(pt)}</li>
@@ -46,7 +46,7 @@ export function VisualRenderer({ visual }: VisualRendererProps) {
     return (
       <div className={`${boxBase} flex gap-4`}>
         <div className="flex-1 bg-blue-50 border border-blue-300 rounded-lg p-3">
-          <div className="font-bold text-blue-800 text-center mb-2">{lt}</div>
+          <div className="font-bold text-blue-800 text-center mb-2">{safeText(lt)}</div>
           <ul className="list-disc m-0 pl-5 text-gray-700 space-y-1 text-xs">
             {li.map((x, i) => (
               <li key={i}>{safeText(x)}</li>
@@ -54,7 +54,7 @@ export function VisualRenderer({ visual }: VisualRendererProps) {
           </ul>
         </div>
         <div className="flex-1 bg-amber-50 border border-amber-300 rounded-lg p-3">
-          <div className="font-bold text-amber-900 text-center mb-2">{rt}</div>
+          <div className="font-bold text-amber-900 text-center mb-2">{safeText(rt)}</div>
           <ul className="list-disc m-0 pl-5 text-gray-700 space-y-1 text-xs">
             {ri.map((x, i) => (
               <li key={i}>{safeText(x)}</li>
@@ -169,7 +169,7 @@ export function VisualRenderer({ visual }: VisualRendererProps) {
           <thead>
             <tr>
               <td colSpan={2} className="bg-blue-700 text-white p-2 font-bold text-center text-xs">
-                {title}
+                {safeText(title)}
               </td>
             </tr>
           </thead>
