@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useParams, useLocation } from "react-router";
-import { Header } from "../../components/Header";
+import { useParams, useLocation, useNavigate } from "react-router";
 import Editor from "@monaco-editor/react";
 import { toast } from "sonner";
 import {
@@ -12,6 +11,7 @@ import {
     type GradedResult,
     type Rubric,
 } from "../../services/coding";
+import { reportPracticeCompletion } from "../../services/progress";
 import {
     Loader2,
     Sparkles,
@@ -19,42 +19,20 @@ import {
     CheckCircle2,
     XCircle,
     BookOpen,
-    Code2,
-    Trophy,
     Lightbulb,
     ChevronDown,
     ChevronUp,
+    ArrowLeft,
+    SkipForward,
+    Star,
 } from "lucide-react";
 
-const TOPIC_CATEGORIES = [
-    {
-        category: "Standard Coding Topics",
-        topics: ["Basic Syntax", "Control Flow", "Loops", "Functions"],
-    },
-    {
-        category: "Data Structures",
-        topics: ["Arrays/Lists", "Strings", "Dictionaries/Maps", "Sets", "Tuples"],
-    },
-    {
-        category: "Advanced Algorithmic Topics",
-        topics: ["Math", "Sorting & Searching", "Recursion", "Dynamic Programming (DP)"],
-    },
-    {
-        category: "Data Structures & Algorithms",
-        topics: ["Stack", "Queue", "Linked List", "Binary Search", "Two Pointers", "Sliding Window", "Tree Traversal", "Graph BFS/DFS"],
-    },
-    {
-        category: "Machine Learning Fundamentals",
-        topics: ["Data Preprocessing", "Feature Engineering", "Linear Regression", "Classification", "Clustering", "Model Evaluation", "Numpy Arrays", "Pandas DataFrames"],
-    },
-];
-
 function scoreColor(score: number): string {
-    if (score >= 90) return "#10b981"; // emerald
-    if (score >= 80) return "#3b82f6"; // blue
-    if (score >= 70) return "#6366f1"; // indigo
-    if (score >= 60) return "#f59e0b"; // amber
-    return "#ef4444";                  // rose
+    if (score >= 90) return "#10b981";
+    if (score >= 80) return "#3b82f6";
+    if (score >= 70) return "#6366f1";
+    if (score >= 60) return "#f59e0b";
+    return "#ef4444";
 }
 
 function scoreBg(score: number): string {
@@ -65,59 +43,66 @@ function scoreBg(score: number): string {
     return "rgba(239,68,68,0.1)";
 }
 
-export default function PracticeArea() {
-    const { topic: topicParam } = useParams<{ topic: string }>();
-    const location = useLocation();
-    const lessonTopic = (location.state as { topic?: string } | null)?.topic
-        || (topicParam ? decodeURIComponent(topicParam) : null);
+interface LocationState {
+    nextLessonId?: number | string;
+    courseId?: string;
+    lessonTitle?: string;
+}
 
-    const defaultCat = TOPIC_CATEGORIES[0];
-    const [selectedCategory, setSelectedCategory] = useState(defaultCat.category);
-    const [topic, setTopic] = useState(lessonTopic || defaultCat.topics[0]);
-    const [generating, setGenerating] = useState(false);
+export default function LessonPractice() {
+    const { courseId, lessonId } = useParams<{ courseId: string; lessonId: string }>();
+    const location = useLocation();
+    const navigate = useNavigate();
+    const state = (location.state as LocationState) ?? {};
+    const nextLessonId = state.nextLessonId;
+    const lessonTitle = state.lessonTitle ?? "this lesson";
+    const resolvedCourseId = courseId ?? state.courseId;
+
+    const [generating, setGenerating] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [question, setQuestion] = useState<GenerateQuestionResponse | null>(null);
     const [code, setCode] = useState("");
     const [result, setResult] = useState<GradedResult | null>(null);
     const [error, setError] = useState<string | null>(null);
-
-    // Rubric loaded in background after question generated
-    const rubricRef = useRef<Rubric | null>(null);
+    const [breakdownOpen, setBreakdownOpen] = useState(false);
 
     // Hint state
     const [hintLevel, setHintLevel] = useState(1);
     const [hintText, setHintText] = useState<string | null>(null);
     const [loadingHint, setLoadingHint] = useState(false);
 
-    // Breakdown expand/collapse
-    const [breakdownOpen, setBreakdownOpen] = useState(false);
+    const rubricRef = useRef<Rubric | null>(null);
 
+    // Auto-generate on mount using lesson title as topic
     useEffect(() => {
-        if (lessonTopic) handleGenerate(lessonTopic);
+        const topic = lessonTitle !== "this lesson" ? lessonTitle : "Programming";
+        generateQuestion(topic)
+            .then((data) => {
+                setQuestion(data);
+                setCode(data.starter_code ?? "");
+                // Load rubric in background
+                getRubric(data.question)
+                    .then((r) => { rubricRef.current = r; })
+                    .catch(() => {});
+            })
+            .catch((err) => {
+                setError(err instanceof Error ? err.message : "Failed to generate question");
+            })
+            .finally(() => setGenerating(false));
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const handleGenerate = async (overrideTopic?: string) => {
-        const topicToUse = overrideTopic ?? topic;
-        setGenerating(true);
-        setError(null);
-        setResult(null);
-        setHintText(null);
-        setHintLevel(1);
-        setBreakdownOpen(false);
-        rubricRef.current = null;
-        try {
-            const data = await generateQuestion(topicToUse);
-            setQuestion(data);
-            setCode(data.starter_code ?? "");
-            // Load rubric in background — don't block UI
-            getRubric(data.question)
-                .then((r) => { rubricRef.current = r; })
-                .catch(() => { /* rubric will be generated server-side on submit */ });
-        } catch (err: unknown) {
-            setError(err instanceof Error ? err.message : "Failed to generate question");
-        } finally {
-            setGenerating(false);
+    const navigateNext = () => {
+        if (nextLessonId && resolvedCourseId) {
+            navigate(`/course/${resolvedCourseId}/lesson/${nextLessonId}`);
+        } else if (resolvedCourseId) {
+            navigate(`/courses/${resolvedCourseId}`);
+        } else {
+            navigate("/dashboard");
         }
+    };
+
+    const handleSkip = () => {
+        navigateNext();
     };
 
     const handleHint = async () => {
@@ -128,7 +113,7 @@ export default function PracticeArea() {
             setHintText(data.hint);
             setHintLevel((prev) => Math.min(prev + 1, 4));
         } catch {
-            toast.error("Failed to get hint. Try again.");
+            toast.error("Failed to get hint.");
         } finally {
             setLoadingHint(false);
         }
@@ -139,44 +124,17 @@ export default function PracticeArea() {
 
         const trimmedCode = code.trim();
         if (!trimmedCode) {
-            setResult({
-                score: 0, letter_grade: "F", status: "Needs Work",
-                breakdown: [], feedback: "No code submitted. Write your solution and try again.", hint: "",
-            });
+            toast.error("Write some code before submitting.");
             return;
         }
 
         const trimmedStarter = (question.starter_code ?? "").trim();
         if (trimmedCode === trimmedStarter) {
-            setResult({
-                score: 0, letter_grade: "F", status: "Needs Work",
-                breakdown: [], feedback: "You haven't modified the starter code. Add your implementation.", hint: "",
-            });
-            return;
-        }
-
-        const bodyLines = trimmedCode.split("\n")
-            .map((l) => l.trim())
-            .filter((l) =>
-                l && !l.startsWith("#") && !l.startsWith("def ") && !l.startsWith("class ") &&
-                !l.startsWith('"""') && !l.startsWith("'''") &&
-                l !== "pass" && l !== "..."
-            );
-        const hasLogic = bodyLines.some((l) =>
-            l.includes("return") || l.includes("for ") || l.includes("while ") ||
-            l.includes("if ") || l.includes("=") || l.includes("(") ||
-            l.includes("print") || l.includes("append") || l.includes("yield")
-        );
-        if (!hasLogic) {
-            setResult({
-                score: 0, letter_grade: "F", status: "Needs Work",
-                breakdown: [], feedback: "Your function has no real implementation. Add logic like loops, conditions, or return statements.", hint: "",
-            });
+            toast.error("Add your implementation before submitting.");
             return;
         }
 
         setSubmitting(true);
-        setError(null);
         setResult(null);
         setBreakdownOpen(false);
         try {
@@ -186,106 +144,100 @@ export default function PracticeArea() {
                 rubricRef.current ?? undefined
             );
             setResult(data);
-            if (data.status === "Pass") {
-                toast.success(`Passed! Score: ${data.score}/100 (${data.letter_grade})`);
+
+            if (data.score >= 60) {
+                // Award XP on backend
+                let xpAwarded = 0;
+                try {
+                    const xpResult = await reportPracticeCompletion(
+                        Number(lessonId),
+                        data.score
+                    );
+                    xpAwarded = xpResult.xp_awarded ?? 0;
+                } catch {
+                    // XP award is best-effort
+                }
+
+                if (xpAwarded > 0) {
+                    toast.success(`+${xpAwarded} XP earned! Keep it up!`);
+                } else {
+                    toast.success(`Passed with ${data.score}/100 (${data.letter_grade})!`);
+                }
             }
         } catch (err: unknown) {
-            setError(err instanceof Error ? err.message : "Failed to evaluate code");
+            toast.error(err instanceof Error ? err.message : "Evaluation failed.");
         } finally {
             setSubmitting(false);
         }
     };
 
     return (
-        <>
-            <Header
-                title="Practice & Challenge"
-                subtitle="Sharpen your Python skills with AI-generated problems"
-            />
-
-            <div className="flex-1 flex overflow-hidden min-h-0">
-                {/* ====== LEFT PANEL — Controls, Question, Feedback (35%) ====== */}
-                <div
-                    className="border-r-2 border-border flex flex-col overflow-y-auto overflow-x-hidden bg-card"
-                    style={{ flex: "0 0 35%", maxWidth: "35%" }}
-                >
-                    {/* Topic Selector */}
-                    <div className="px-5 py-5 border-b border-border flex flex-col gap-3">
-                        <p className="text-sm font-bold text-foreground">Choose a Topic</p>
-
-                        {/* Category dropdown */}
-                        <div className="flex flex-col gap-1">
-                            <label className="text-sm font-semibold text-foreground">Category</label>
-                            <select
-                                value={selectedCategory}
-                                onChange={(e) => {
-                                    const cat = TOPIC_CATEGORIES.find((c) => c.category === e.target.value)!;
-                                    setSelectedCategory(cat.category);
-                                    setTopic(cat.topics[0]);
-                                }}
-                                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-secondary/40"
-                            >
-                                {TOPIC_CATEGORIES.map((cat) => (
-                                    <option key={cat.category} value={cat.category}>{cat.category}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        {/* Topic dropdown */}
-                        <div className="flex flex-col gap-1">
-                            <label className="text-sm font-semibold text-foreground">Topic</label>
-                            <select
-                                value={topic}
-                                onChange={(e) => setTopic(e.target.value)}
-                                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-secondary/40"
-                            >
-                                {(TOPIC_CATEGORIES.find((c) => c.category === selectedCategory) ?? TOPIC_CATEGORIES[0]).topics.map((t) => (
-                                    <option key={t} value={t}>{t}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        {/* Generate button */}
-                        <button
-                            onClick={() => handleGenerate()}
-                            disabled={generating}
-                            className="w-full py-2.5 rounded-xl font-semibold text-white flex items-center justify-center gap-2 transition-all mt-1"
-                            style={{ background: "linear-gradient(to right, var(--secondary, #6366f1), var(--accent, #8b5cf6))", opacity: generating ? 0.6 : 1 }}
-                        >
-                            {generating ? (
-                                <><Loader2 size={16} className="animate-spin" /><span>Generating…</span></>
-                            ) : (
-                                <><Sparkles size={16} /><span>Generate Question</span></>
-                            )}
-                        </button>
+        <div className="flex flex-col h-screen bg-background">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-card shadow-sm">
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => navigate(`/courses/${resolvedCourseId}`)}
+                        className="p-2 rounded-lg hover:bg-muted transition-colors"
+                    >
+                        <ArrowLeft size={18} />
+                    </button>
+                    <div>
+                        <h1 className="text-lg font-bold leading-none">Lesson Practice</h1>
+                        <p className="text-sm text-muted-foreground mt-0.5">{lessonTitle}</p>
                     </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <Star size={16} className="text-amber-400" />
+                    <span className="text-sm text-muted-foreground">Complete for bonus XP</span>
+                </div>
+            </div>
 
-                    {error && (
-                        <div className="mx-6 mt-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded-xl text-sm">
-                            {error}
+            <div className="flex flex-1 overflow-hidden min-h-0">
+                {/* Left panel */}
+                <div
+                    className="border-r-2 border-border flex flex-col overflow-y-auto bg-card"
+                    style={{ flex: "0 0 38%", maxWidth: "38%" }}
+                >
+                    {generating && (
+                        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
+                            <Loader2 size={32} className="animate-spin text-secondary" />
+                            <span className="text-sm">Generating your practice problem…</span>
                         </div>
                     )}
 
-                    {/* Question Display */}
-                    {question && (
+                    {error && (
+                        <div className="m-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-xl text-sm">
+                            {error}
+                            <button
+                                onClick={() => navigate("/dashboard")}
+                                className="ml-2 underline font-medium"
+                            >
+                                Go to dashboard
+                            </button>
+                        </div>
+                    )}
+
+                    {question && !generating && (
                         <div className="px-6 py-5 border-b border-border">
                             <div className="flex items-center gap-2 mb-3">
                                 <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-secondary to-accent flex items-center justify-center">
                                     <BookOpen size={14} className="text-white" />
                                 </div>
                                 <h4 className="mb-0 text-base font-semibold">Problem</h4>
-                                <span className="ml-auto px-2.5 py-1 bg-secondary/10 text-secondary rounded-lg text-xs font-semibold">
-                                    {topic}
+                                <span className="ml-auto flex items-center gap-1 px-2.5 py-1 bg-secondary/10 text-secondary rounded-lg text-xs font-semibold">
+                                    <Sparkles size={10} />
+                                    {lessonTitle}
                                 </span>
                             </div>
                             <div className="p-4 bg-muted/30 rounded-xl border border-border text-sm leading-relaxed whitespace-pre-wrap text-foreground/90">
                                 {question.question}
                             </div>
 
-                            {/* Hint button */}
+                            {/* Hint */}
                             <div className="mt-3">
                                 {hintText && (
-                                    <div className="mb-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800 leading-relaxed">
+                                    <div className="mb-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
                                         <span className="font-semibold">Hint {hintLevel - 1}:</span> {hintText}
                                     </div>
                                 )}
@@ -306,31 +258,10 @@ export default function PracticeArea() {
                         </div>
                     )}
 
-                    {!question && !generating && (
-                        <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
-                            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary/10 to-accent/10 flex items-center justify-center mb-5">
-                                <Code2 size={36} className="text-secondary" />
-                            </div>
-                            <h4 className="mb-2">Ready to Practice?</h4>
-                            <p className="text-sm text-muted-foreground max-w-xs">
-                                Select a topic above and click <strong>Generate Question</strong>{" "}
-                                to receive an AI-crafted coding challenge.
-                            </p>
-                        </div>
-                    )}
-
-                    {/* Graded Feedback */}
+                    {/* Graded result */}
                     {result && (
                         <div className="px-6 py-5">
-                            <div className="flex items-center gap-2 mb-3">
-                                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-                                    <Trophy size={14} className="text-white" />
-                                </div>
-                                <h4 className="mb-0 text-base font-semibold">AI Feedback</h4>
-                            </div>
-
                             <div className="rounded-xl border border-border overflow-hidden">
-                                {/* Score header */}
                                 <div
                                     className="px-4 py-4 flex items-center gap-3"
                                     style={{ background: scoreBg(result.score), borderBottom: `1px solid ${scoreColor(result.score)}33` }}
@@ -340,10 +271,7 @@ export default function PracticeArea() {
                                         <span className="text-xs font-medium" style={{ color: scoreColor(result.score), opacity: 0.6 }}>/100</span>
                                     </div>
                                     <div>
-                                        <div
-                                            className="text-2xl font-bold"
-                                            style={{ color: scoreColor(result.score) }}
-                                        >
+                                        <div className="text-2xl font-bold" style={{ color: scoreColor(result.score) }}>
                                             {result.letter_grade}
                                         </div>
                                         <div className="flex items-center gap-1 mt-0.5">
@@ -356,12 +284,10 @@ export default function PracticeArea() {
                                     </div>
                                 </div>
 
-                                {/* Feedback */}
                                 <div className="p-4 bg-card text-sm leading-relaxed text-foreground/85">
                                     {result.feedback}
                                 </div>
 
-                                {/* Breakdown toggle */}
                                 {result.breakdown.length > 0 && (
                                     <div className="border-t border-border">
                                         <button
@@ -377,21 +303,14 @@ export default function PracticeArea() {
                                                     <div key={item.criterion} className="p-3 bg-muted/20 rounded-lg text-xs">
                                                         <div className="flex items-center justify-between mb-1">
                                                             <span className="font-semibold">{item.criterion}</span>
-                                                            <span
-                                                                className="font-bold"
-                                                                style={{ color: scoreColor(Math.round((item.earned / item.max) * 100)) }}
-                                                            >
+                                                            <span className="font-bold" style={{ color: scoreColor(Math.round((item.earned / item.max) * 100)) }}>
                                                                 {item.earned}/{item.max}
                                                             </span>
                                                         </div>
-                                                        {/* Progress bar */}
                                                         <div className="h-1.5 bg-muted rounded-full overflow-hidden mb-1">
                                                             <div
-                                                                className="h-full rounded-full transition-all"
-                                                                style={{
-                                                                    width: `${Math.round((item.earned / item.max) * 100)}%`,
-                                                                    background: scoreColor(Math.round((item.earned / item.max) * 100)),
-                                                                }}
+                                                                className="h-full rounded-full"
+                                                                style={{ width: `${Math.round((item.earned / item.max) * 100)}%`, background: scoreColor(Math.round((item.earned / item.max) * 100)) }}
                                                             />
                                                         </div>
                                                         <span className="text-muted-foreground">{item.comment}</span>
@@ -402,20 +321,27 @@ export default function PracticeArea() {
                                     </div>
                                 )}
 
-                                {/* Hint from evaluator */}
                                 {result.hint && (
-                                    <div className="px-4 pb-4 pt-0">
+                                    <div className="px-4 pb-4">
                                         <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
                                             <span className="font-semibold">Try: </span>{result.hint}
                                         </div>
                                     </div>
                                 )}
                             </div>
+
+                            {/* Continue button after result */}
+                            <button
+                                onClick={navigateNext}
+                                className="mt-4 w-full py-3 bg-gradient-to-r from-primary to-secondary text-white rounded-xl font-semibold flex items-center justify-center gap-2 hover:shadow-lg transition-all"
+                            >
+                                Continue to Next Lesson
+                            </button>
                         </div>
                     )}
                 </div>
 
-                {/* ====== RIGHT PANEL — Monaco Editor ====== */}
+                {/* Right panel — Editor */}
                 <div className="flex flex-col bg-[#1e1e1e]" style={{ flex: "1 1 0%", minWidth: 0 }}>
                     <div className="px-4 py-2.5 bg-[#252526] border-b border-[#3e3e42] flex items-center justify-between">
                         <div className="flex items-center gap-2">
@@ -446,21 +372,29 @@ export default function PracticeArea() {
                         />
                     </div>
 
+                    {/* Action bar */}
                     <div className="px-5 py-4 bg-[#252526] border-t border-[#3e3e42] flex items-center gap-3">
+                        <button
+                            onClick={handleSkip}
+                            className="px-5 py-3 rounded-xl border border-[#3e3e42] text-[#cccccc] text-sm font-medium flex items-center gap-2 hover:bg-[#2d2d2d] transition-colors"
+                        >
+                            <SkipForward size={16} />
+                            Skip & Continue
+                        </button>
                         <button
                             onClick={handleSubmit}
                             disabled={submitting || !question}
-                            className="flex-1 py-3 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold hover:shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="flex-1 py-3 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg transition-all"
                         >
                             {submitting ? (
                                 <><Loader2 size={18} className="animate-spin" /><span>Evaluating…</span></>
                             ) : (
-                                <><Send size={18} /><span>Submit Code</span></>
+                                <><Send size={18} /><span>Submit & Earn XP</span></>
                             )}
                         </button>
                     </div>
                 </div>
             </div>
-        </>
+        </div>
     );
 }

@@ -1,6 +1,6 @@
 import { Bell } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
-import { getNotifications, markAllNotificationsRead, type Notification } from '../services/notifications';
+import { getNotifications, markNotificationRead, markAllNotificationsRead, type Notification } from '../services/notifications';
 
 function timeAgo(dateStr: string): string {
     const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
@@ -39,6 +39,18 @@ export function NotificationBell() {
         return () => document.removeEventListener('mousedown', handler);
     }, []);
 
+    // Mark all read when dropdown opens
+    const handleOpen = async () => {
+        const wasOpen = open;
+        setOpen((o) => !o);
+        if (!wasOpen && unreadCount > 0) {
+            try {
+                await markAllNotificationsRead();
+                setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+            } catch { /* ignore */ }
+        }
+    };
+
     const handleMarkAllRead = async () => {
         try {
             await markAllNotificationsRead();
@@ -46,10 +58,20 @@ export function NotificationBell() {
         } catch { /* ignore */ }
     };
 
+    const handleClickNotification = async (n: Notification) => {
+        if (n.is_read) return;
+        try {
+            await markNotificationRead(n.id);
+            setNotifications((prev) =>
+                prev.map((item) => item.id === n.id ? { ...item, is_read: true } : item)
+            );
+        } catch { /* ignore */ }
+    };
+
     return (
         <div ref={ref} style={{ position: 'relative' }}>
             <button
-                onClick={() => setOpen((o) => !o)}
+                onClick={handleOpen}
                 style={{ position: 'relative', padding: '6px', borderRadius: '8px', background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit' }}
                 title="Notifications"
             >
@@ -94,24 +116,32 @@ export function NotificationBell() {
                             </p>
                         ) : (
                             notifications.map((n) => (
-                                <div key={n.id} style={{
-                                    padding: '12px 16px',
-                                    borderBottom: '1px solid var(--border)',
-                                    background: n.is_read ? 'transparent' : 'var(--primary, #6366f1)10',
-                                    opacity: n.is_read ? 0.75 : 1,
-                                }}>
+                                <div
+                                    key={n.id}
+                                    onClick={() => handleClickNotification(n)}
+                                    style={{
+                                        padding: '12px 16px',
+                                        borderBottom: '1px solid var(--border)',
+                                        background: n.is_read ? 'transparent' : 'rgba(99,102,241,0.07)',
+                                        opacity: n.is_read ? 0.7 : 1,
+                                        cursor: n.is_read ? 'default' : 'pointer',
+                                        transition: 'background 0.2s',
+                                    }}
+                                >
                                     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
                                         <div style={{ flex: 1 }}>
-                                            <p style={{ margin: 0, fontSize: '0.8125rem', fontWeight: 600, color: 'var(--foreground)' }}>{n.title}</p>
+                                            <p style={{ margin: 0, fontSize: '0.8125rem', fontWeight: n.is_read ? 400 : 600, color: 'var(--foreground)' }}>{n.title}</p>
                                             <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--muted-foreground)', lineHeight: 1.4 }}>{n.body}</p>
                                         </div>
-                                        <span style={{ fontSize: '0.7rem', color: 'var(--muted-foreground)', whiteSpace: 'nowrap', marginTop: 2 }}>
-                                            {timeAgo(n.created_at)}
-                                        </span>
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                                            <span style={{ fontSize: '0.7rem', color: 'var(--muted-foreground)', whiteSpace: 'nowrap', marginTop: 2 }}>
+                                                {timeAgo(n.created_at)}
+                                            </span>
+                                            {!n.is_read && (
+                                                <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--secondary, #6366f1)', display: 'inline-block' }} />
+                                            )}
+                                        </div>
                                     </div>
-                                    {!n.is_read && (
-                                        <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'var(--secondary, #6366f1)', marginTop: 6 }} />
-                                    )}
                                 </div>
                             ))
                         )}

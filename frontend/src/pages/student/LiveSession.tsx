@@ -571,12 +571,16 @@ export default function LiveSession() {
         }
       }
 
-      // Go to next lesson if available, otherwise dashboard
-      if (nextLesson) {
-        navigate(`/course/${courseId}/lesson/${nextLesson.id}`);
-      } else {
+      // Route to lesson-end practice (skippable), passing next destination in state
+      navigate(`/course/${courseId}/lesson/${lesson.id}/practice`, {
+        state: {
+          nextLessonId: nextLesson?.id ?? null,
+          courseId,
+          lessonTitle: lesson.title,
+        },
+      });
+      if (!nextLesson) {
         toast.success('Course complete! Great work!');
-        navigate('/dashboard');
       }
     } catch {
       toast.error('Failed to mark lesson as complete. Please try again.');

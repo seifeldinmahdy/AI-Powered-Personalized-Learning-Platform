@@ -110,3 +110,20 @@ export async function createBookmark(lessonId: number, slideIndex?: number): Pro
 export async function deleteBookmark(bookmarkId: number): Promise<void> {
     await api.delete(`/progress/bookmarks/${bookmarkId}/`);
 }
+
+export interface PracticeCompletionResult {
+    xp_awarded: number;
+    new_total: number;
+    new_level: number;
+}
+
+export async function reportPracticeCompletion(
+    lessonId: number,
+    score: number
+): Promise<PracticeCompletionResult> {
+    const response = await api.post<PracticeCompletionResult>(
+        '/progress/practice-completion/',
+        { lesson_id: lessonId, score }
+    );
+    return response.data;
+}

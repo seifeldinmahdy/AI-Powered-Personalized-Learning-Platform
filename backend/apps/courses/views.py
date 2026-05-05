@@ -304,3 +304,73 @@ def evaluate_student_code(request):
             {"error": "AI Grading Service is currently offline. Is port 8001 running?"},
             status=status.HTTP_503_SERVICE_UNAVAILABLE
         )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def evaluate_student_code_graded(request):
+    """Bridge to AI service graded evaluation endpoint (returns 0–100 score + breakdown)."""
+    question = request.data.get('question')
+    user_code = request.data.get('code')
+    rubric = request.data.get('rubric')  # optional
+
+    if not question or not user_code:
+        return Response(
+            {"error": "Missing 'question' or 'code' in request payload"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    payload = {"question": question, "code": user_code}
+    if rubric:
+        payload["rubric"] = rubric
+
+    try:
+        ai_response = requests.post("http://127.0.0.1:8001/api/coding/evaluate-graded", json=payload)
+        return Response(ai_response.json(), status=status.HTTP_200_OK)
+    except requests.exceptions.ConnectionError:
+        return Response(
+            {"error": "AI Grading Service is currently offline."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def get_coding_rubric(request):
+    """Bridge to AI service rubric generation endpoint."""
+    question = request.data.get('question')
+    if not question:
+        return Response({"error": "Missing 'question'"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        ai_response = requests.post("http://127.0.0.1:8001/api/coding/rubric", json={"question": question})
+        return Response(ai_response.json(), status=status.HTTP_200_OK)
+    except requests.exceptions.ConnectionError:
+        return Response(
+            {"error": "AI Grading Service is currently offline."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def get_coding_hint(request):
+    """Bridge to AI service hint endpoint."""
+    question = request.data.get('question')
+    code = request.data.get('code', '')
+    hint_level = request.data.get('hint_level', 1)
+
+    if not question:
+        return Response({"error": "Missing 'question'"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        ai_response = requests.post(
+            "http://127.0.0.1:8001/api/coding/hint",
+            json={"question": question, "code": code, "hint_level": hint_level}
+        )
+        return Response(ai_response.json(), status=status.HTTP_200_OK)
+    except requests.exceptions.ConnectionError:
+        return Response(
+            {"error": "AI Grading Service is currently offline."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
