@@ -38,7 +38,7 @@ class TopicInput(BaseModel):
 class StartSessionRequest(BaseModel):
     topics: List[TopicInput] = Field(..., min_length=1, description="List of topics to cover")
     session_id: Optional[str] = Field(default=None, description="Optional custom session ID")
-    voice: str = Field(default="en-US-JennyNeural", description="TTS voice name")
+    voice: str = Field(default="en-US-GuyNeural", description="TTS voice name")
     student_profile_summary: Optional[str] = Field(default=None, description="Student's learning profile summary for personalization")
 
 

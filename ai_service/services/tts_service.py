@@ -48,7 +48,7 @@ class TTSService:
 
         Args:
             text:  The text to convert to speech.
-            voice: Edge TTS voice name (e.g. 'en-US-JennyNeural').
+            voice: Edge TTS voice name (e.g. 'en-US-GuyNeural').
             rate:  Speed adjustment (e.g. '+20%', '-30%').
             pitch: Pitch adjustment (e.g. '+50Hz', '-50Hz').
 

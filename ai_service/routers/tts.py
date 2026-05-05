@@ -22,7 +22,7 @@ router = APIRouter(
 class SynthesizeRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=5000,
                       description="Text to convert to speech")
-    voice: str = Field(default="en-US-JennyNeural",
+    voice: str = Field(default="en-US-GuyNeural",
                        description="Edge TTS voice name")
     rate: str = Field(default="+0%",
                       description="Speed adjustment (e.g. '+20%', '-30%')")

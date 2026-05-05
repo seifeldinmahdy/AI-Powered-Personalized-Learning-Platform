@@ -48,7 +48,7 @@ export interface SERResult {
 export async function startTutorSession(
   lessonTitle: string,
   subtopics: string[] = [],
-  voice = 'en-US-JennyNeural',
+  voice = 'en-US-GuyNeural',
   student_profile_summary?: string,
 ): Promise<TutorSession> {
   const body: Record<string, unknown> = {
@@ -260,7 +260,7 @@ export async function synthesizeAudio(text: string, emotion?: string, session_id
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       text,
-      voice: 'en-US-JennyNeural',
+      voice: 'en-US-GuyNeural',
       rate: emotion === 'calm' ? '-10%' : '+0%',
       pitch: '+0Hz',
     }),

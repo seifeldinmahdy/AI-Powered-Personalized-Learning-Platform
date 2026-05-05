@@ -244,7 +244,7 @@ def _sync_to_shared_store(session: TutorSession) -> None:
 
 def create_session(
     topics: List[dict],
-    voice: str = "en-US-JennyNeural",
+    voice: str = "en-US-GuyNeural",
     session_id: Optional[str] = None,
     student_profile_summary: Optional[str] = None,
 ) -> TutorSession:

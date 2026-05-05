@@ -75,7 +75,7 @@ def _audio_stream_generator(wav_path: str):
             yield AudioWithEmotionStream(audio_with_emotion=audio_data)
 
     # 3 — End-of-audio
-    yield AudioWithEmotionStream(end_of_audio=True)
+    yield AudioWithEmotionStream(end_of_audio=AudioWithEmotionStream.EndOfAudio())
 
 
 def get_blendshapes(wav_path: str) -> dict | None:
