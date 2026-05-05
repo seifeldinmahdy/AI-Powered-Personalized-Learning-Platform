@@ -1,5 +1,5 @@
-import { Mic, MicOff, Volume2, VolumeX, MessageCircle, Pause, Play, Send, Loader2, Code2 } from 'lucide-react';
-import { useState, useEffect, useRef } from 'react';
+import { Mic, MicOff, Volume2, VolumeX, MessageCircle, Pause, Play, Send, Loader2, Code2, GripHorizontal } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import {
   startTutorSession,
@@ -18,7 +18,8 @@ import {
 } from '../services/tutor';
 
 import { fuseEmotions } from '../services/emotionFusion';
-import { NovaAvatar } from './NovaAvatar';
+import { Nova3DAvatar } from './Nova3DAvatar';
+import type { BlendshapeData } from '../services/tutor';
 
 interface TranscriptEntry {
   role: 'tutor' | 'student';
@@ -39,6 +40,7 @@ interface CompactTutorProps {
   onSessionStart?: () => void;
   onLatestSER?: (ser: SERResult) => void;
   onUpdateFusedEmotion?: (emotion: string) => void;
+  onNextSlide?: () => void;
   studentProfileSummary?: string;
   isFloating?: boolean;
 }
@@ -55,6 +57,7 @@ export function CompactTutor({
   onSessionStart,
   onLatestSER,
   onUpdateFusedEmotion,
+  onNextSlide,
   studentProfileSummary,
   isFloating = false,
 }: CompactTutorProps) {
@@ -72,9 +75,17 @@ export function CompactTutor({
   const [error, setError] = useState('');
   const [started, setStarted] = useState(false);
   const [tutorEmotion, setTutorEmotion] = useState('calm');
+  const [currentBlendshapes, setCurrentBlendshapes] = useState<BlendshapeData | null>(null);
 
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+
+  // Draggable avatar state
+  const [isDetached, setIsDetached] = useState(false);
+  const [avatarPos, setAvatarPos] = useState({ x: 0, y: 0 });
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioBlobUrlRef = useRef<string | null>(null);
@@ -90,6 +101,49 @@ export function CompactTutor({
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcript]);
+
+  // ── Drag: starts inline, becomes floating when dragged away, snaps back when dropped on panel ──
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+
+    // When first detaching, position the bubble at the cursor
+    const startX = isDetached ? avatarPos.x : e.clientX;
+    const startY = isDetached ? avatarPos.y : e.clientY;
+    const offsetX = e.clientX - startX;
+    const offsetY = e.clientY - startY;
+
+    if (!isDetached) {
+      setAvatarPos({ x: startX, y: startY });
+      setIsDetached(true);
+    }
+
+    const onMove = (ev: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+      setAvatarPos({
+        x: ev.clientX - offsetX,
+        y: ev.clientY - offsetY,
+      });
+    };
+    const onUp = (ev: MouseEvent) => {
+      isDraggingRef.current = false;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      // If dropped over the panel, snap back to docked
+      const panel = panelRef.current;
+      if (panel) {
+        const rect = panel.getBoundingClientRect();
+        if (ev.clientX >= rect.left && ev.clientX <= rect.right && ev.clientY >= rect.top && ev.clientY <= rect.bottom) {
+          setIsDetached(false);
+        }
+      }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [avatarPos, isDetached]);
+
+  // Reset to docked when switching modes
+  useEffect(() => { setIsDetached(false); }, [isFloating]);
 
   // Handle auto-explain on new slide visit
   useEffect(() => {
@@ -173,6 +227,8 @@ export function CompactTutor({
         ]);
       }
 
+      setCurrentBlendshapes(chunk.blendshapes || null);
+
       if (chunk.audio_base64) {
         setAudioSrc(chunk.audio_base64);
         setIsSpeaking(true);
@@ -214,7 +270,7 @@ export function CompactTutor({
       onSessionStart?.();
       await fetchAndPlay(session.session_id);
     } catch {
-      setError('Dr. Nova is unavailable right now.');
+      setError('LearnPal is unavailable right now.');
       setIsLoading(false);
       isLoadingRef.current = false;
     }
@@ -243,6 +299,7 @@ export function CompactTutor({
     setIsSpeaking(false);
     isPausedRef.current = false;
     setIsPaused(false);
+    onNextSlide?.();
     fetchAndPlay(sessionIdRef.current);
   };
 
@@ -270,7 +327,7 @@ export function CompactTutor({
     setIsAsking(true);
     setTranscript((prev) => [
       ...prev,
-      { role: 'student', text: isAutoTrigger ? `Dr. Nova, please explain this slide: ${currentSlideTitle}` : q }
+      { role: 'student', text: isAutoTrigger ? `LearnPal, please explain this slide: ${currentSlideTitle}` : q }
     ]);
 
     try {
@@ -351,6 +408,7 @@ export function CompactTutor({
         logInteraction(res.answer);
         setTutorEmotion('happy');
         setTutorEmotion('happy');
+        setCurrentBlendshapes(res.blendshapes || null);
         if (res.audio_base64) {
           isPausedRef.current = false;
           setIsPaused(false);
@@ -457,6 +515,7 @@ export function CompactTutor({
       setTutorEmotion('happy');
       setTutorEmotion('happy');
 
+      setCurrentBlendshapes(res.blendshapes || null);
       if (res.audio_base64) {
         isPausedRef.current = false;
         setIsPaused(false);
@@ -590,12 +649,13 @@ export function CompactTutor({
   };
 
   return (
-    <div 
+    <div
+      ref={panelRef}
       style={isFloating ? { width: 320, maxWidth: '90vw', top: 16, left: 16, maxHeight: '80vh' } : { width: 320, minWidth: 320 }}
-      className={isFloating
+      className={`relative ${isFloating
       ? 'absolute rounded-2xl border border-border bg-card/95 backdrop-blur-md flex flex-col overflow-hidden shadow-2xl z-50'
       : 'shrink-0 border-l-2 border-border bg-card flex flex-col overflow-hidden'
-    }>
+    }`}>
       <audio
         ref={audioRef}
         onEnded={() => {
@@ -606,88 +666,140 @@ export function CompactTutor({
         style={{ display: 'none' }}
       />
 
-      {/* Header */}
-      <div className="px-4 py-3 border-b border-border bg-gradient-to-br from-primary/5 to-accent/5">
-        <div className="flex items-center gap-2 mb-1">
-          <div className={`w-2 h-2 rounded-full ${error ? 'bg-red-500' : isFinished ? 'bg-muted-foreground' : started ? 'bg-green-500 animate-pulse' : 'bg-yellow-400'}`} />
-          <h4 className="mb-0 text-sm">Dr. Nova</h4>
-          {progress > 0 && (
-            <span className="ml-auto text-xs text-muted-foreground">{progress}%</span>
-          )}
+      {/* Header — always visible when docked */}
+      {(!started || !isDetached) && (
+        <div className="px-4 py-3 border-b border-border bg-gradient-to-br from-primary/5 to-accent/5">
+          <div className="flex items-center gap-3 mb-1">
+            <div className={`w-2 h-2 rounded-full shrink-0 ${error ? 'bg-red-500' : isFinished ? 'bg-muted-foreground' : started ? 'bg-green-500 animate-pulse' : 'bg-yellow-400'}`} />
+            <h4 className="mb-0 text-sm font-bold bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent">LearnPal</h4>
+            {progress > 0 && (
+              <span className="ml-auto text-xs text-muted-foreground font-medium">{progress}%</span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">AI Teaching Assistant</p>
         </div>
-        <p className="text-xs text-muted-foreground">AI Teaching Assistant</p>
-      </div>
+      )}
 
-      {/* Avatar */}
-      <div className={`px-4 flex flex-col items-center border-b border-border bg-gradient-to-br from-primary/5 via-secondary/5 to-accent/5 ${started || isFloating ? 'py-2' : 'py-4'}`}>
-        <div className={`relative ${started || isFloating ? 'mb-2' : 'mb-3'}`}>
-          <div className="absolute inset-0 bg-gradient-to-br from-secondary to-accent rounded-full blur-xl opacity-20 pointer-events-none" />
-          <div className={`relative rounded-full bg-gradient-to-br from-primary via-secondary to-accent p-1 shadow-xl ${isFloating ? 'w-14 h-14' : started ? 'w-16 h-16' : 'w-24 h-24'}`}>
-            <div className="w-full h-full rounded-full flex items-center justify-center overflow-hidden bg-background">
-              <NovaAvatar
+      {/* Avatar section — inline (docked) or floating (detached) */}
+      {started && isDetached ? (
+        /* ── DETACHED: floating bubble, position:fixed ── */
+        <div
+          onMouseDown={onDragStart}
+          style={{
+            position: 'fixed',
+            top: avatarPos.y,
+            left: avatarPos.x,
+            transform: 'translate(-50%, -50%)',
+            zIndex: 9999,
+            cursor: 'grab',
+            userSelect: 'none',
+          }}
+          className="flex flex-col items-center gap-1.5"
+        >
+          {/* Floating name pill */}
+          <div className="flex items-center gap-2 bg-card/95 backdrop-blur-md rounded-xl px-3 py-1.5 border border-border shadow-lg mb-0.5">
+            <div className={`w-2 h-2 rounded-full shrink-0 ${error ? 'bg-red-500' : isFinished ? 'bg-muted-foreground' : 'bg-green-500 animate-pulse'}`} />
+            <span className="text-xs font-bold bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent">LearnPal</span>
+            {progress > 0 && <span className="text-[10px] text-muted-foreground ml-1">{progress}%</span>}
+            <GripHorizontal size={12} className="text-muted-foreground/40 ml-1" />
+          </div>
+          <div className="relative">
+            <div className="absolute inset-0 bg-gradient-to-br from-secondary to-accent rounded-full blur-xl opacity-30 pointer-events-none" />
+            <div className="relative rounded-full bg-gradient-to-br from-primary via-secondary to-accent p-1.5 shadow-2xl w-36 h-36">
+              <Nova3DAvatar
                 audioRef={audioRef}
-                emotion={tutorEmotion}
-                isSpeaking={isSpeaking}
-                isLoading={isAsking || isLoading}
-                size={isFloating ? 48 : started ? 56 : 88}
+                emotion={fusedEmotion || tutorEmotion}
+                blendshapeData={currentBlendshapes}
+                size={126}
+                isFloating={false}
               />
             </div>
           </div>
-        </div>
-
-        {/* Controls */}
-        {!started ? (
-          <button
-            onClick={handleStart}
-            disabled={isLoading}
-            className="px-6 py-2 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold hover:shadow-lg transition-all flex items-center gap-2 text-sm disabled:opacity-60"
-          >
-            {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-            <span>{isLoading ? 'Preparing...' : 'Start Lecture'}</span>
-          </button>
-        ) : (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handlePlayPause}
-              disabled={isFinished}
-              className={`p-2 rounded-lg border-2 transition-all disabled:opacity-40 ${!isPaused ? 'border-secondary bg-secondary text-white shadow-md' : 'border-border bg-card hover:border-secondary'
-                }`}
-              title={isPaused ? 'Resume' : 'Pause'}
-            >
-              {isPaused ? <Play size={16} /> : <Pause size={16} />}
+          {/* Controls */}
+          <div className="flex items-center gap-1.5 bg-card/95 backdrop-blur-md rounded-xl px-2.5 py-1.5 border border-border shadow-lg">
+            <button onClick={handlePlayPause} disabled={isFinished}
+              className={`p-1.5 rounded-lg border transition-all disabled:opacity-40 ${!isPaused ? 'border-secondary bg-secondary text-white shadow-md' : 'border-border bg-card hover:border-secondary'}`}
+              title={isPaused ? 'Resume' : 'Pause'}>
+              {isPaused ? <Play size={14} /> : <Pause size={14} />}
             </button>
-
-            <button
-              onClick={handleNext}
-              disabled={isLoading || isFinished}
-              className="p-2 rounded-lg border-2 border-border bg-card hover:border-secondary transition-colors disabled:opacity-40 text-xs font-semibold px-3"
-            >
+            <button onClick={handleNext} disabled={isLoading || isFinished}
+              className="p-1.5 rounded-lg border border-border bg-card hover:border-secondary transition-colors disabled:opacity-40 text-xs font-semibold px-2">
               Next
             </button>
-
-            <button
-              onClick={handleMute}
-              className="p-2 rounded-lg border-2 border-border bg-card hover:border-secondary transition-colors"
-              title={isMuted ? 'Unmute' : 'Mute'}
-            >
-              {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+            <button onClick={handleMute}
+              className="p-1.5 rounded-lg border border-border bg-card hover:border-secondary transition-colors"
+              title={isMuted ? 'Unmute' : 'Mute'}>
+              {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
             </button>
           </div>
-        )}
-
-        {isFinished && (
-          <div className="flex flex-col items-center gap-1 mt-1">
-            <p className="text-xs text-muted-foreground">Lecture complete</p>
-            <button
-              onClick={() => navigate(`/practice/${encodeURIComponent(lessonTitle || 'Programming')}`, { state: { topic: lessonTitle } })}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold text-sm hover:shadow-lg transition-all"
-            >
-              <Code2 size={15} />
-              Practice Now
-            </button>
+          {isFinished && (
+            <div className="flex flex-col items-center gap-1 mt-1">
+              <p className="text-xs text-muted-foreground">Lecture complete</p>
+              <button
+                onClick={() => navigate(`/practice/${encodeURIComponent(lessonTitle || 'Programming')}`, { state: { topic: lessonTitle } })}
+                className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold text-xs hover:shadow-lg transition-all">
+                <Code2 size={13} /> Practice Now
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        /* ── DOCKED: inline avatar with controls ── */
+        <div className={`px-4 flex flex-col items-center border-b border-border bg-gradient-to-br from-primary/5 via-secondary/5 to-accent/5 ${started ? 'py-3' : 'py-4'}`}>
+          <div
+            className={`relative ${started ? 'mb-2 cursor-grab' : 'mb-3'}`}
+            onMouseDown={started ? onDragStart : undefined}
+            style={started ? { userSelect: 'none' } : undefined}
+          >
+            <div className="absolute inset-0 bg-gradient-to-br from-secondary to-accent rounded-full blur-xl opacity-20 pointer-events-none" />
+            <div className="relative rounded-full bg-gradient-to-br from-primary via-secondary to-accent p-1.5 shadow-xl w-40 h-40">
+              <Nova3DAvatar
+                audioRef={audioRef}
+                emotion={fusedEmotion || tutorEmotion}
+                blendshapeData={currentBlendshapes}
+                size={154}
+                isFloating={isFloating}
+              />
+            </div>
           </div>
-        )}
-      </div>
+          {!started ? (
+            <button
+              onClick={handleStart}
+              disabled={isLoading}
+              className="px-6 py-2 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold hover:shadow-lg transition-all flex items-center gap-2 text-sm disabled:opacity-60">
+              {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+              <span>{isLoading ? 'Preparing...' : 'Start Lecture'}</span>
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button onClick={handlePlayPause} disabled={isFinished}
+                className={`p-2 rounded-lg border-2 transition-all disabled:opacity-40 ${!isPaused ? 'border-secondary bg-secondary text-white shadow-md' : 'border-border bg-card hover:border-secondary'}`}
+                title={isPaused ? 'Resume' : 'Pause'}>
+                {isPaused ? <Play size={16} /> : <Pause size={16} />}
+              </button>
+              <button onClick={handleNext} disabled={isLoading || isFinished}
+                className="p-2 rounded-lg border-2 border-border bg-card hover:border-secondary transition-colors disabled:opacity-40 text-xs font-semibold px-3">
+                Next
+              </button>
+              <button onClick={handleMute}
+                className="p-2 rounded-lg border-2 border-border bg-card hover:border-secondary transition-colors"
+                title={isMuted ? 'Unmute' : 'Mute'}>
+                {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+              </button>
+            </div>
+          )}
+          {isFinished && (
+            <div className="flex flex-col items-center gap-1 mt-1">
+              <p className="text-xs text-muted-foreground">Lecture complete</p>
+              <button
+                onClick={() => navigate(`/practice/${encodeURIComponent(lessonTitle || 'Programming')}`, { state: { topic: lessonTitle } })}
+                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold text-sm hover:shadow-lg transition-all">
+                <Code2 size={15} /> Practice Now
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Current Topic */}
       <div className="px-4 py-2 border-b border-border bg-muted/20">
@@ -706,7 +818,7 @@ export function CompactTutor({
         )}
         {!started && !error && (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-            <p className="text-sm text-muted-foreground">Click "Start Lecture" to hear Dr. Nova explain this lesson.</p>
+            <p className="text-sm text-muted-foreground">Click "Start Lecture" to hear LearnPal explain this lesson.</p>
           </div>
         )}
         {started && transcript.length === 0 && !error && (
@@ -761,7 +873,7 @@ export function CompactTutor({
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleAskQuestion(question)}
-                placeholder="Ask Dr. Nova..."
+                placeholder="Ask LearnPal..."
                 className="flex-1 text-sm px-3 py-2 rounded-xl border border-border bg-background focus:outline-none focus:border-secondary"
                 disabled={isAsking}
               />

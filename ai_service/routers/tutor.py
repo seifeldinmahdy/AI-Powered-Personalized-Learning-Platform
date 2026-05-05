@@ -113,6 +113,7 @@ async def continue_session(request: ContinueRequest):
 
         # Generate TTS audio if requested and there's text
         audio_base64 = None
+        blendshapes = None
         if request.include_audio and result["text"]:
             audio_base64 = await _synthesize_audio(
                 result["text"], 
@@ -120,12 +121,18 @@ async def continue_session(request: ContinueRequest):
                 request.student_emotion,
                 request.session_id
             )
+            # Generate A2F blendshapes (falls back to None if unavailable)
+            blendshapes = await _generate_blendshapes(
+                result["text"], session.voice,
+                request.student_emotion, request.session_id,
+            )
 
         return {
             "success": True,
             "session_id": request.session_id,
             "text": result["text"],
             "audio_base64": audio_base64,
+            "blendshapes": blendshapes,
             "topic": result["topic"],
             "subtopic": result["subtopic"],
             "progress": result["progress"],
@@ -154,6 +161,7 @@ async def ask(request: AskQuestionRequest):
         result = await answer_question(request.session_id, request.question, student_emotion=request.student_emotion)
 
         audio_base64 = None
+        blendshapes = None
         if request.include_audio and result["answer"]:
             audio_base64 = await _synthesize_audio(
                 result["answer"], 
@@ -161,12 +169,18 @@ async def ask(request: AskQuestionRequest):
                 request.student_emotion,
                 request.session_id
             )
+            # Generate A2F blendshapes (falls back to None if unavailable)
+            blendshapes = await _generate_blendshapes(
+                result["answer"], session.voice,
+                request.student_emotion, request.session_id,
+            )
 
         return {
             "success": True,
             "session_id": request.session_id,
             "answer": result["answer"],
             "audio_base64": audio_base64,
+            "blendshapes": blendshapes,
             "topic": result["topic"],
             "subtopic": result["subtopic"],
             "progress": result["progress"],
@@ -428,7 +442,26 @@ def _emotion_to_prosody(emotion: Optional[str]) -> tuple[str, str]:
     return rate, pitch
 
 
-# ─── Helper ──────────────────────────────────────────────────────
+# ─── Helpers ─────────────────────────────────────────────────────
+
+def _get_prosody(
+    student_emotion: Optional[str] = None,
+    session_id: Optional[str] = None,
+) -> tuple[str, str]:
+    """Compute (rate, pitch) from emotion + session pace modifier."""
+    rate, pitch = _emotion_to_prosody(student_emotion)
+    if session_id:
+        from services.tutor_service import get_session
+        session = get_session(session_id)
+        if session and hasattr(session, 'pace_modifier') and session.pace_modifier != 0:
+            try:
+                current_rate = int(rate.replace("%", "").replace("+", ""))
+            except ValueError:
+                current_rate = 0
+            new_rate = current_rate + session.pace_modifier
+            rate = f"+{new_rate}%" if new_rate >= 0 else f"{new_rate}%"
+    return rate, pitch
+
 
 async def _synthesize_audio(
     text: str,
@@ -443,24 +476,49 @@ async def _synthesize_audio(
     carries. Overridden by permanent pace if set by student intent.
     """
     try:
-        rate, pitch = _emotion_to_prosody(student_emotion)
-        
-        # Check if student explicitly requested a global pace change
-        if session_id:
-            from services.tutor_service import get_session
-            session = get_session(session_id)
-            if session and hasattr(session, 'pace_modifier') and session.pace_modifier != 0:
-                try:
-                    current_rate = int(rate.replace("%", "").replace("+", ""))
-                except ValueError:
-                    current_rate = 0
-                new_rate = current_rate + session.pace_modifier
-                rate = f"+{new_rate}%" if new_rate >= 0 else f"{new_rate}%"
-
+        rate, pitch = _get_prosody(student_emotion, session_id)
         tts = get_tts_service()
         result = await tts.synthesize(text=text, voice=voice, rate=rate, pitch=pitch)
         return base64.b64encode(result["audio_bytes"]).decode("utf-8")
     except Exception as e:
         logger.warning(f"TTS synthesis failed, returning text only: {e}")
+        return None
+
+
+async def _generate_blendshapes(
+    text: str,
+    voice: str,
+    student_emotion: Optional[str] = None,
+    session_id: Optional[str] = None,
+) -> Optional[dict]:
+    """Generate A2F blendshape animation data for the given text.
+
+    Returns a dict with keys ``names`` and ``frames`` on success,
+    or ``None`` if Audio2Face is unavailable (frontend uses fallback visemes).
+    """
+    import os
+    try:
+        rate, pitch = _get_prosody(student_emotion, session_id)
+        tts = get_tts_service()
+        wav_path = await tts.synthesize_wav(text=text, voice=voice, rate=rate, pitch=pitch)
+
+        from services.a2f_client import get_blendshapes
+        result = get_blendshapes(wav_path)
+
+        # Cleanup temp WAV
+        try:
+            os.remove(wav_path)
+        except OSError:
+            pass
+
+        if result is None:
+            return None
+
+        return {
+            "names": result["blendshape_names"],
+            "frames": result["frames"],
+        }
+    except Exception as e:
+        logger.warning(f"A2F blendshape generation failed (using fallback): {e}")
         return None
 

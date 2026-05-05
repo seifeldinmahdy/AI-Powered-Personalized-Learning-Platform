@@ -794,7 +794,7 @@ export default function LiveSession() {
         document.body!
       )}
 
-      <div ref={contentRef} className="flex-1 flex overflow-hidden gap-0 relative bg-background">
+      <div ref={contentRef} className="flex-1 flex min-h-0 overflow-hidden gap-0 relative bg-background">
         {/* Slides Viewer */}
         {slides.length > 0 ? (
           <GeneratedSlidesViewer
@@ -832,6 +832,7 @@ export default function LiveSession() {
           onSessionStart={handleSessionStart}
           onLatestSER={handleLatestSER}
           onUpdateFusedEmotion={setFusedEmotion}
+          onNextSlide={handleNextSlideOrLesson}
           studentProfileSummary={studentProfileSummary}
           isFloating={isFullscreen}
         />

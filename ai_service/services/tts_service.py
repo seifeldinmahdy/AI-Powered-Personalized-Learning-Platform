@@ -7,6 +7,7 @@ import asyncio
 import tempfile
 import os
 import time
+import subprocess
 from typing import Dict, List, Optional
 import logging
 
@@ -91,6 +92,75 @@ class TTSService:
         except Exception as e:
             logger.error(f"TTS synthesis error: {e}")
             raise RuntimeError(f"Failed to synthesize speech: {e}") from e
+
+    async def synthesize_wav(
+        self,
+        text: str,
+        voice: str = DEFAULT_VOICE,
+        rate: str = "+0%",
+        pitch: str = "+0Hz",
+    ) -> str:
+        """Synthesize speech and convert to 16 kHz mono 16-bit PCM WAV.
+
+        This WAV format is what Audio2Face-3D NIM expects as input.
+
+        Args:
+            text:  The text to convert to speech.
+            voice: Edge TTS voice name.
+            rate:  Speed adjustment.
+            pitch: Pitch adjustment.
+
+        Returns:
+            Path to the temporary WAV file. Caller MUST delete after use.
+        """
+        try:
+            import imageio_ffmpeg
+
+            logger.info(f"Synthesizing WAV for A2F — {len(text)} chars")
+            start = time.time()
+
+            # Step 1: Generate MP3 via edge-tts
+            _, tmp_mp3 = tempfile.mkstemp(suffix=".mp3")
+            communicate = edge_tts.Communicate(
+                text=text, voice=voice, rate=rate, pitch=pitch,
+            )
+            await communicate.save(tmp_mp3)
+
+            # Step 2: Convert to 16kHz mono 16-bit PCM WAV via ffmpeg
+            _, tmp_wav = tempfile.mkstemp(suffix=".wav")
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+            cmd = [
+                ffmpeg_exe,
+                "-i", tmp_mp3,
+                "-ac", "1",           # mono
+                "-ar", "16000",       # 16 kHz
+                "-sample_fmt", "s16", # 16-bit signed PCM
+                tmp_wav,
+                "-y",                 # overwrite output
+            ]
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                logger.error(f"ffmpeg conversion failed: {result.stderr}")
+                raise RuntimeError(f"ffmpeg failed: {result.stderr}")
+
+            # Step 3: Cleanup temp MP3
+            try:
+                os.remove(tmp_mp3)
+            except OSError:
+                pass
+
+            elapsed = round(time.time() - start, 3)
+            wav_size = os.path.getsize(tmp_wav)
+            logger.info(
+                f"WAV synthesis complete — {wav_size} bytes in {elapsed}s"
+            )
+            return tmp_wav
+
+        except Exception as e:
+            logger.error(f"WAV synthesis error: {e}")
+            raise RuntimeError(f"Failed to synthesize WAV: {e}") from e
 
     async def list_voices(self, language: str = "en") -> List[Dict]:
         """Return available Edge TTS voices for a language prefix."""

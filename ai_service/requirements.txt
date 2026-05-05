@@ -22,6 +22,11 @@ sentencepiece==0.2.1
 datasets==4.6.1
 mlflow>=2.14
 
+# Audio2Face 3D avatar pipeline
+nvidia-audio2face-3d    # gRPC protobuf stubs for A2F NIM
+grpcio                  # gRPC runtime
+imageio-ffmpeg          # Bundled ffmpeg — no system install needed
+
 # Testing
 pytest>=8.0
 pytest-asyncio>=0.23

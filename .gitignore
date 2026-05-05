@@ -70,3 +70,6 @@ latest_deck.json
 
 # issues
 issues/*
+
+# Large files
+ai_service/static/buffer.bin

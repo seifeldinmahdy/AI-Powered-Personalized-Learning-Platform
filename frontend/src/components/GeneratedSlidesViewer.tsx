@@ -41,15 +41,16 @@ export function GeneratedSlidesViewer({
   };
 
   return (
-    <div className="flex-1 flex flex-col bg-background relative">
+    <div className="flex-1 flex flex-col bg-background" style={{ minHeight: 0 }}>
       <div
-        className="flex-1 flex items-center justify-center p-8 bg-gradient-to-br from-muted/20 to-background"
-        style={isFullscreen ? { paddingLeft: 360 } : undefined}
+        className="flex-1 flex items-center justify-center bg-gradient-to-br from-muted/20 to-background relative"
+        style={{ minHeight: 0, padding: '24px 56px', ...(isFullscreen ? { paddingLeft: 360 } : {}) }}
       >
         {/* Left arrow */}
         <button
           onClick={handlePrev}
-          className="absolute left-4 z-10 p-2 rounded-full bg-card/80 border border-border shadow-md hover:bg-card hover:border-secondary transition-all"
+          className="absolute z-20 p-2 rounded-full bg-card/80 border border-border shadow-md hover:bg-card hover:border-secondary transition-all"
+          style={{ left: 12, top: '50%', transform: 'translateY(-50%)' }}
           title="Previous slide"
         >
           <ChevronLeft size={20} />
@@ -58,16 +59,17 @@ export function GeneratedSlidesViewer({
         {/* Right arrow */}
         <button
           onClick={handleNext}
-          className="absolute right-4 z-10 p-2 rounded-full bg-card/80 border border-border shadow-md hover:bg-card hover:border-secondary transition-all"
-          style={isFullscreen ? undefined : { right: '340px' }}
+          className="absolute z-20 p-2 rounded-full bg-card/80 border border-border shadow-md hover:bg-card hover:border-secondary transition-all"
+          style={{ right: 12, top: '50%', transform: 'translateY(-50%)' }}
           title="Next slide"
         >
           <ChevronRight size={20} />
         </button>
 
-        <div className="w-full h-full max-w-5xl bg-card rounded-2xl shadow-2xl border-2 border-border overflow-hidden flex flex-col">
-          {/* Slide Header */}
-          <div className="px-8 py-4 border-b border-border bg-gradient-to-r from-primary/5 to-secondary/5 flex items-center justify-between">
+        {/* Slide card - fixed to container height */}
+        <div className="w-full max-w-5xl bg-card rounded-2xl shadow-2xl border-2 border-border flex flex-col" style={{ height: '100%', overflow: 'hidden' }}>
+          {/* Slide Header - fixed */}
+          <div className="px-8 py-4 border-b border-border bg-gradient-to-r from-primary/5 to-secondary/5 flex items-center justify-between" style={{ flexShrink: 0 }}>
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <span className="inline-block px-2 py-0.5 bg-secondary/10 text-secondary rounded text-xs font-semibold">
@@ -91,8 +93,8 @@ export function GeneratedSlidesViewer({
             </button>
           </div>
 
-          {/* Slide Content */}
-          <div className="flex-1 overflow-y-auto p-12">
+          {/* Slide Content - SCROLLABLE */}
+          <div className="p-12" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto' }}>
             <div className="max-w-3xl mx-auto">
               {currentSlide ? (
                 <SlideRenderer slide={currentSlide} />
@@ -104,8 +106,8 @@ export function GeneratedSlidesViewer({
             </div>
           </div>
 
-          {/* Slide Footer */}
-          <div className="px-8 py-3 border-t border-border bg-muted/20 flex items-center justify-between">
+          {/* Slide Footer - fixed */}
+          <div className="px-8 py-3 border-t border-border bg-muted/20 flex items-center justify-between" style={{ flexShrink: 0 }}>
             <span className="text-sm text-muted-foreground font-mono">
               Slide {currentIndex + 1} of {totalSlides}
             </span>

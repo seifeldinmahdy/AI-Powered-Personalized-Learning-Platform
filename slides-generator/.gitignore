@@ -64,3 +64,4 @@ results/
 
 # Jupyter Notebook
 .ipynb_checkpoints/
+ai_service/static/*.bin

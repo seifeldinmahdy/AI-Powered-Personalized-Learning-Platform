@@ -7,6 +7,7 @@ import sys
 import logging
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 # Add intent_model to path before any routers are imported
 _intent_model_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "intent_model")
@@ -15,6 +16,7 @@ if _intent_model_dir not in sys.path:
 from fastapi.middleware.cors import CORSMiddleware
 from routers import health, asr, coding, assessments
 from routers import intent, tts, fer, ser, tutor, rag, profiler, slides, session
+from routers import a2f_health
 
 # Add course_pathway to sys.path for the pathway router
 from pathlib import Path as _Path
@@ -83,6 +85,7 @@ async def root():
             "session_get": "/session/{session_id} [GET]",
             "assessments_generate": "/assessments/generate",
             "assessments_health": "/assessments/health",
+            "a2f_health": "/a2f/health",
         }
     }
 
@@ -101,3 +104,9 @@ app.include_router(slides.router)
 app.include_router(session.router)
 app.include_router(assessments.router)
 app.include_router(pathway_router)
+app.include_router(a2f_health.router)
+
+# Serve static files (3D avatar model, etc.)
+_static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+if os.path.isdir(_static_dir):
+    app.mount("/static", StaticFiles(directory=_static_dir), name="static")

@@ -9,11 +9,17 @@ export interface TutorSession {
   voice: string;
 }
 
+export interface BlendshapeData {
+  names: string[];
+  frames: number[][];
+}
+
 export interface LectureChunk {
   success: boolean;
   session_id: string;
   text: string;
   audio_base64: string | null;
+  blendshapes: BlendshapeData | null;
   topic: string;
   subtopic: string | null;
   progress: number;
@@ -26,6 +32,7 @@ export interface AskResponse {
   session_id: string;
   answer: string;
   audio_base64: string | null;
+  blendshapes: BlendshapeData | null;
   topic: string;
   subtopic: string | null;
   progress: number;
