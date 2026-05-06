@@ -538,6 +538,14 @@ export function CompactTutor({
       return;
     }
 
+    // If lecture audio is currently playing, pause it to prevent overlap
+    if (isSpeaking && !isPausedRef.current) {
+      audioRef.current?.pause();
+      isPausedRef.current = true;
+      setIsPaused(true);
+      setIsSpeaking(false);
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 

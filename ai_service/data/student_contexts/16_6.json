@@ -1,0 +1,225 @@
+{
+  "profile": {
+    "student_id": "16",
+    "course_id": "6",
+    "mastery_level": "Novice",
+    "composition_mode": "visual_heavy",
+    "language_proficiency": "Native",
+    "strengths": [],
+    "weaknesses": [
+      "functions",
+      "function definition",
+      "function parameters",
+      "recursion",
+      "Tuples",
+      "dictionary usage",
+      "index",
+      "Runtime errors",
+      "debugging"
+    ],
+    "topic_performance": {
+      "functions": 0.25,
+      "function definition": 0.0,
+      "function parameters": 0.33,
+      "recursion": 0.3,
+      "Tuples": 0.0,
+      "dictionary usage": 0.0,
+      "index": 0.0,
+      "Runtime errors": 0.0,
+      "debugging": 0.2
+    },
+    "incorrectly_answered": [
+      {
+        "question": "In the context of machine learning, what best describes a function?",
+        "chosen_option": "A collection of data points",
+        "correct_option": "A mapping from inputs to outputs"
+      },
+      {
+        "question": "Which of the following lines correctly defines a Python function that returns the square of its argument?",
+        "chosen_option": "function square(x) { return x * x; }",
+        "correct_option": "def square(x): return x * x"
+      },
+      {
+        "question": "Regarding function parameters, which statement is true?",
+        "chosen_option": "Arguments are the names of variables inside the function body.",
+        "correct_option": "Parameters are the variable names listed in the function definition."
+      },
+      {
+        "question": "Which description matches a higher‑order function?",
+        "chosen_option": "A function that has more than three parameters.",
+        "correct_option": "A function that takes another function as an argument or returns a function."
+      },
+      {
+        "question": "In Python, what is the scope of a parameter variable inside a function?",
+        "chosen_option": "It is global throughout the module.",
+        "correct_option": "It is local to the function."
+      },
+      {
+        "question": "Which of the following function definitions will raise a `SyntaxError` in Python?",
+        "chosen_option": "def foo(x, y): return x + y",
+        "correct_option": "def foo(x y): return x + y"
+      },
+      {
+        "question": "When implementing the factorial function recursively, which condition typically serves as the base case?",
+        "chosen_option": "n < 0",
+        "correct_option": "n == 0"
+      },
+      {
+        "question": "Does Python support function overloading based on differing parameter signatures?",
+        "chosen_option": "Yes, you can define multiple functions with the same name and different parameters.",
+        "correct_option": "No, Python does not support overload by signature."
+      },
+      {
+        "question": "Which of the following best describes recursion in the context of algorithms?",
+        "chosen_option": "A loop that iterates until a condition is met",
+        "correct_option": "A function that calls itself directly or indirectly"
+      },
+      {
+        "question": "Why is a base case essential in a recursive function?",
+        "chosen_option": "It converts the recursion into an iterative process",
+        "correct_option": "It provides a condition that stops further recursive calls"
+      },
+      {
+        "question": "What will happen if a recursive function lacks a proper base case?",
+        "chosen_option": "The compiler will automatically add a base case",
+        "correct_option": "The program will enter an infinite recursion leading to a stack overflow"
+      },
+      {
+        "question": "Given the recurrence T(n) = 2·T(n/2) + n, what is the asymptotic time complexity?",
+        "chosen_option": "O(n)",
+        "correct_option": "O(n log n)"
+      },
+      {
+        "question": "What is the primary purpose of memoization when applied to a recursive algorithm?",
+        "chosen_option": "To convert recursion into parallel execution",
+        "correct_option": "To store previously computed results and avoid redundant calculations"
+      },
+      {
+        "question": "Which divide‑and‑conquer algorithm relies on recursion to sort an array?",
+        "chosen_option": "Bubble sort",
+        "correct_option": "Quick sort"
+      },
+      {
+        "question": "Applying the Master Theorem to the recurrence T(n) = 3·T(n/4) + n² yields which complexity?",
+        "chosen_option": "O(n^{log₄3})",
+        "correct_option": "O(n²)"
+      },
+      {
+        "question": "What happens when you try to assign a new value to an element of a Python tuple?",
+        "chosen_option": "The value is silently ignored",
+        "correct_option": "A TypeError is raised"
+      },
+      {
+        "question": "Given t = (10, 20, 30, 40), what is the result of t[2]?",
+        "chosen_option": "40",
+        "correct_option": "30"
+      },
+      {
+        "question": "Which of the following can be used as a key in a Python dictionary?",
+        "chosen_option": "A set",
+        "correct_option": "A tuple"
+      },
+      {
+        "question": "What is the output of the following code?\nmy_dict = {'a': 1, 'b': 2, 'a': 3}\nprint(my_dict['a'])",
+        "chosen_option": "2",
+        "correct_option": "3"
+      },
+      {
+        "question": "Which method returns None instead of raising an exception when a key is missing?",
+        "chosen_option": "dict.pop()",
+        "correct_option": "dict.get()"
+      },
+      {
+        "question": "After executing the code below, what is the value of my_dict['x']?\nmy_dict = {'x': 5}\nmy_dict['x'] += 2",
+        "chosen_option": "Error",
+        "correct_option": "7"
+      },
+      {
+        "question": "Which expression correctly checks whether the key 'score' exists in the dictionary results?",
+        "chosen_option": "results.has_key('score')",
+        "correct_option": "'score' in results"
+      },
+      {
+        "question": "In Python, what does the expression my_list[-1] return?",
+        "chosen_option": "Raises IndexError",
+        "correct_option": "The last element"
+      },
+      {
+        "question": "What exception is raised when you try to access an index that is outside the bounds of a list?",
+        "chosen_option": "TypeError",
+        "correct_option": "IndexError"
+      },
+      {
+        "question": "Which built‑in function can be used to iterate over a sequence while also obtaining the current index?",
+        "chosen_option": "range()",
+        "correct_option": "enumerate()"
+      },
+      {
+        "question": "When a Python script raises a `NameError`, what is the most likely cause?",
+        "chosen_option": "The file cannot be found",
+        "correct_option": "A variable was used before being defined"
+      },
+      {
+        "question": "Which of the following is the best practice for debugging a model that is overfitting?",
+        "chosen_option": "Increase the learning rate",
+        "correct_option": "Use early stopping and regularization"
+      },
+      {
+        "question": "A `ValueError: could not convert string to float` occurs during data preprocessing. What should you check first?",
+        "chosen_option": "Whether the model architecture matches the data",
+        "correct_option": "If there are non-numeric strings in numeric columns"
+      },
+      {
+        "question": "During training, you notice the loss becomes NaN after a few epochs. Which debugging step is most appropriate?",
+        "chosen_option": "Increase the number of epochs",
+        "correct_option": "Check for exploding gradients and lower the learning rate"
+      },
+      {
+        "question": "What does the Python traceback provide that is essential for debugging?",
+        "chosen_option": "The GPU utilization statistics",
+        "correct_option": "The exact line numbers where the error occurred"
+      },
+      {
+        "question": "If a script fails with `ImportError: cannot import name 'train_test_split' from 'sklearn'`, what is the most probable fix?",
+        "chosen_option": "Increase the Python recursion limit",
+        "correct_option": "Install a newer version of scikit-learn"
+      },
+      {
+        "question": "A model training script runs indefinitely without raising an error. Which of the following is a likely cause?",
+        "chosen_option": "An incorrect loss function name",
+        "correct_option": "A missing `break` statement in a while loop"
+      },
+      {
+        "question": "Which of the following techniques can help you isolate the source of a segmentation fault when using a C++ extension in Python?",
+        "chosen_option": "Add print statements in the Python code",
+        "correct_option": "Run the script with `gdb` or `lldb` attached"
+      },
+      {
+        "question": "If you encounter `MemoryError` while loading a large dataset into memory, what is an effective debugging strategy?",
+        "chosen_option": "Add more hidden layers to the model",
+        "correct_option": "Load the data in smaller batches or use memory‑mapped files"
+      }
+    ],
+    "use_synthetic_context": false,
+    "course_intent": "Machine Learning Fundamentals",
+    "student_profile_summary": "Novice learner in Machine Learning Fundamentals. Strong in: no topics yet. Needs work on: functions, function definition, function parameters, recursion, Tuples, dictionary usage, index, Runtime errors, debugging."
+  },
+  "live": {
+    "session_id": "",
+    "current_slide_index": 0,
+    "current_slide_title": "",
+    "current_slide_content": "",
+    "current_topic": "",
+    "current_subtopic": "",
+    "running_summary": "",
+    "tutor_transcript": [],
+    "visited_slides": [],
+    "time_spent_per_slide": {},
+    "tutor_events": [],
+    "emotion_signals": [],
+    "fused_emotion": "",
+    "fused_emotion_confidence": 0.0,
+    "pace_modifier": 0,
+    "last_updated_at": 1778060664.6912534
+  }
+}
