@@ -1,7 +1,7 @@
 """
 Profiler Service — LLM-powered session analysis and emotion fusion.
 
-Uses Groq (llama-3.1-8b-instant) for:
+Uses Groq (openai/gpt-oss-120b) for:
   • Cross-session profile rewriting (persistent student profile)
   • Real-time emotion fusion when FER and SER conflict
 """
@@ -32,7 +32,7 @@ else:
 logger = logging.getLogger(__name__)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_MODEL = os.getenv("GROQ_PROFILER_MODEL", "openai/gpt-oss-120b")
 
 
 def _get_groq_client() -> Groq:
