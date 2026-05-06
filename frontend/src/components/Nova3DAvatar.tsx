@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 
 const AI_URL = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001';
 
@@ -20,14 +21,14 @@ const STUDENT_TO_AVATAR: Record<string, string> = {
 };
 
 const AVATAR_EMOTIONS: Record<string, Record<string, number>> = {
-  warm:        { MouthSmileLeft: 0.35, MouthSmileRight: 0.35, CheekSquintLeft: 0.2, CheekSquintRight: 0.2 },
-  excited:     { MouthSmileLeft: 0.6, MouthSmileRight: 0.6, EyeWideLeft: 0.2, EyeWideRight: 0.2, BrowInnerUp: 0.3 },
-  empathetic:  { BrowInnerUp: 0.4, MouthFrownLeft: 0.15, MouthFrownRight: 0.15, EyeSquintLeft: 0.15, EyeSquintRight: 0.15 },
+  warm: { MouthSmileLeft: 0.35, MouthSmileRight: 0.35, CheekSquintLeft: 0.2, CheekSquintRight: 0.2 },
+  excited: { MouthSmileLeft: 0.6, MouthSmileRight: 0.6, EyeWideLeft: 0.2, EyeWideRight: 0.2, BrowInnerUp: 0.3 },
+  empathetic: { BrowInnerUp: 0.4, MouthFrownLeft: 0.15, MouthFrownRight: 0.15, EyeSquintLeft: 0.15, EyeSquintRight: 0.15 },
   encouraging: { MouthSmileLeft: 0.4, MouthSmileRight: 0.4, BrowInnerUp: 0.2, CheekSquintLeft: 0.15, CheekSquintRight: 0.15 },
-  calm:        { MouthSmileLeft: 0.15, MouthSmileRight: 0.15 },
-  reassuring:  { MouthSmileLeft: 0.3, MouthSmileRight: 0.3, BrowInnerUp: 0.25, EyeSquintLeft: 0.1, EyeSquintRight: 0.1 },
-  engaging:    { MouthSmileLeft: 0.5, MouthSmileRight: 0.5, EyeWideLeft: 0.25, EyeWideRight: 0.25, BrowOuterUpLeft: 0.2, BrowOuterUpRight: 0.2 },
-  neutral:     {},
+  calm: { MouthSmileLeft: 0.15, MouthSmileRight: 0.15 },
+  reassuring: { MouthSmileLeft: 0.3, MouthSmileRight: 0.3, BrowInnerUp: 0.25, EyeSquintLeft: 0.1, EyeSquintRight: 0.1 },
+  engaging: { MouthSmileLeft: 0.5, MouthSmileRight: 0.5, EyeWideLeft: 0.25, EyeWideRight: 0.25, BrowOuterUpLeft: 0.2, BrowOuterUpRight: 0.2 },
+  neutral: {},
 };
 
 /* ─── Fallback viseme sequence ─── */
@@ -60,13 +61,13 @@ const EYE_POSITIONS: Record<string, number>[] = [
 ];
 
 const EYE_LOOK_NAMES = [
-  'EyeLookOutLeft','EyeLookInRight','EyeLookInLeft','EyeLookOutRight',
-  'EyeLookUpLeft','EyeLookUpRight','EyeLookDownLeft','EyeLookDownRight',
-  'EyeSquintLeft','EyeSquintRight',
+  'EyeLookOutLeft', 'EyeLookInRight', 'EyeLookInLeft', 'EyeLookOutRight',
+  'EyeLookUpLeft', 'EyeLookUpRight', 'EyeLookDownLeft', 'EyeLookDownRight',
+  'EyeSquintLeft', 'EyeSquintRight',
 ];
 
-const VISEME_NAMES = ['JawOpen','MouthFunnel','MouthPucker','MouthLowerDownLeft','MouthLowerDownRight'];
-const BLINK_NAMES = ['EyeBlinkLeft','EyeBlinkRight'];
+const VISEME_NAMES = ['JawOpen', 'MouthFunnel', 'MouthPucker', 'MouthLowerDownLeft', 'MouthLowerDownRight'];
+const BLINK_NAMES = ['EyeBlinkLeft', 'EyeBlinkRight'];
 
 export function Nova3DAvatar({ audioRef, emotion, blendshapeData, size = 120, isFloating = false }: Nova3DAvatarProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -138,54 +139,69 @@ export function Nova3DAvatar({ audioRef, emotion, blendshapeData, size = 120, is
 
     // ── Load model ──
     const loader = new GLTFLoader();
-    const modelUrl = `${AI_URL}/static/metaHumanHead_52shapekeys_01.gltf`;
+    
+    // Add DRACOLoader to support compressed .glb models
+    const dracoLoader = new DRACOLoader();
+    dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+    loader.setDRACOLoader(dracoLoader);
 
-    loader.load(modelUrl, (gltf) => {
-      if (!s.mounted) return;
-      const model = gltf.scene;
-      const group = new THREE.Group();
-      group.add(model);
-      scene.add(group);
-      s.rootGroup = group;
+    const loadModel = (url: string, fallbackUrl?: string) => {
+      loader.load(url, (gltf) => {
+        if (!s.mounted) return;
+        const model = gltf.scene;
+        const group = new THREE.Group();
+        group.add(model);
+        scene.add(group);
+        s.rootGroup = group;
 
-      // Collect morph meshes
-      const morphMeshes: THREE.Mesh[] = [];
-      model.traverse((child) => {
-        if ((child as THREE.Mesh).isMesh) {
-          const mesh = child as THREE.Mesh;
-          if (mesh.morphTargetDictionary && mesh.morphTargetInfluences) {
-            morphMeshes.push(mesh);
+        // Collect morph meshes
+        const morphMeshes: THREE.Mesh[] = [];
+        model.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            const mesh = child as THREE.Mesh;
+            if (mesh.morphTargetDictionary && mesh.morphTargetInfluences) {
+              morphMeshes.push(mesh);
+            }
           }
+        });
+        s.morphMeshes = morphMeshes;
+        console.log('[Nova3D] Morph meshes found:', morphMeshes.length);
+        if (morphMeshes.length > 0) {
+          console.log('[Nova3D] Morph targets:', Object.keys(morphMeshes[0].morphTargetDictionary!));
+        }
+
+        // Center the model in the scene
+        const box = new THREE.Box3().setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+        const bSize = box.getSize(new THREE.Vector3());
+        // Offset model so the head is centered in the circle
+        // We move the target point higher up the bounding box
+        const headY = center.y + bSize.y * 0.42;
+        model.position.set(-center.x, -headY, -center.z);
+
+        // Camera looks straight at origin, moved closer to zoom in
+        camera.position.set(0, 0, bSize.y * 0.35);
+        camera.lookAt(0, 0, 0);
+        camera.updateProjectionMatrix();
+
+        s.loaded = true;
+
+        // Start idle timers
+        scheduleBlink();
+        scheduleEyeMove();
+        scheduleMicroSmile();
+      }, undefined, (err) => {
+        if (fallbackUrl) {
+          console.warn(`[Nova3D] Failed to load ${url}, trying fallback ${fallbackUrl}...`);
+          loadModel(fallbackUrl);
+        } else {
+          console.error('[Nova3D] Model load failed:', err);
         }
       });
-      s.morphMeshes = morphMeshes;
-      console.log('[Nova3D] Morph meshes found:', morphMeshes.length);
-      if (morphMeshes.length > 0) {
-        console.log('[Nova3D] Morph targets:', Object.keys(morphMeshes[0].morphTargetDictionary!));
-      }
+    };
 
-      // Center the model in the scene
-      const box = new THREE.Box3().setFromObject(model);
-      const center = box.getCenter(new THREE.Vector3());
-      const bSize = box.getSize(new THREE.Vector3());
-      // Offset model so head+neck is centered in the circle
-      const headY = center.y + bSize.y * 0.15;
-      model.position.set(-center.x, -headY, -center.z);
-
-      // Camera looks straight at origin
-      camera.position.set(0, 0, bSize.y * 1.3);
-      camera.lookAt(0, 0, 0);
-      camera.updateProjectionMatrix();
-
-      s.loaded = true;
-
-      // Start idle timers
-      scheduleBlink();
-      scheduleEyeMove();
-      scheduleMicroSmile();
-    }, undefined, (err) => {
-      console.error('[Nova3D] Model load failed:', err);
-    });
+    // Try loading avatar.glb first, then fallback to avatar.gltf
+    loadModel(`${AI_URL}/static/avatar.glb`, `${AI_URL}/static/avatar.gltf`);
 
     // ── Blendshape helpers ──
     function findMorphIdx(mesh: THREE.Mesh, name: string): number | undefined {
