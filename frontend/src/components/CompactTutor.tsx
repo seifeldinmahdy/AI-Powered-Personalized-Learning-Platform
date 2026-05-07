@@ -1,4 +1,4 @@
-import { Mic, MicOff, Volume2, VolumeX, MessageCircle, Pause, Play, Send, Loader2, Code2, GripHorizontal } from 'lucide-react';
+import { Mic, MicOff, Volume2, VolumeX, MessageCircle, Pause, Play, Send, Loader2, Code2, GripHorizontal, Maximize2, Minimize2 } from 'lucide-react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import {
@@ -83,6 +83,7 @@ export function CompactTutor({
   // Draggable avatar state
   const [isDetached, setIsDetached] = useState(false);
   const [avatarPos, setAvatarPos] = useState({ x: 0, y: 0 });
+  const [bubbleScale, setBubbleScale] = useState(1);
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const panelRef = useRef<HTMLDivElement>(null);
@@ -148,16 +149,16 @@ export function CompactTutor({
   // Handle auto-explain on new slide visit
   useEffect(() => {
     if (!sessionIdRef.current || !currentSlideContent) return;
-    
+
     if (!visitedSlidesRef.current.has(currentSlideIndex)) {
       visitedSlidesRef.current.add(currentSlideIndex);
-      
+
       // Pause any ongoing lecture
       if (audioRef.current && !audioRef.current.paused) {
         audioRef.current.pause();
       }
       setIsSpeaking(false);
-      
+
       // Trigger auto-explanation for the new slide
       handleAskQuestion(`Please explain this slide. Title: ${currentSlideTitle}\nContent: ${currentSlideContent}`, fusedEmotion, true);
     }
@@ -263,7 +264,7 @@ export function CompactTutor({
 
     // Step 2: fetch session + chunk (async, after unlock)
     try {
-      const session = await startTutorSession(lessonTitle, subtopics, undefined, studentProfileSummary);
+      const session = await startTutorSession(lessonTitle, subtopics, undefined, studentProfileSummary, sessionId);
       sessionIdRef.current = session.session_id;
       isLoadingRef.current = false;
       setIsLoading(false);
@@ -337,7 +338,7 @@ export function CompactTutor({
       const emotionKeywords = ['confused', 'lost', 'frustrated', 'don\'t understand', 'hard', 'difficult', 'give up', 'struggling'];
       const lower = q.toLowerCase();
       let intent: import('../services/tutor').IntentName = 'On-Topic Question';
-      
+
       if (!isAutoTrigger) {
         if (repeatKeywords.some(k => lower.includes(k))) {
           intent = 'Repeat/clarification';
@@ -381,7 +382,7 @@ export function CompactTutor({
         logInteraction(msg);
         setTutorEmotion('confused');
         setTutorEmotion('confused');
-        
+
         try {
           const b64 = await synthesizeAudio(msg, 'calm', sessionIdRef.current);
           isPausedRef.current = false;
@@ -423,22 +424,22 @@ export function CompactTutor({
         const textToAnalyze = q.toLowerCase();
         let targetPace: 'slow' | 'normal' | 'fast' = 'normal';
         if (textToAnalyze.includes('slow') || (textToAnalyze.includes('fast') && textToAnalyze.includes('too'))) {
-           targetPace = 'slow';
+          targetPace = 'slow';
         } else if (textToAnalyze.includes('fast') || (textToAnalyze.includes('slow') && textToAnalyze.includes('too'))) {
-           targetPace = 'fast';
+          targetPace = 'fast';
         }
 
         try {
-           if (sessionIdRef.current) {
-             await setTutorPace(sessionIdRef.current, targetPace);
-           }
+          if (sessionIdRef.current) {
+            await setTutorPace(sessionIdRef.current, targetPace);
+          }
         } catch { /* ignore */ }
 
-        const msg = targetPace === 'slow' 
-          ? "Got it! I will slow down my speaking pace for the rest of the session." 
+        const msg = targetPace === 'slow'
+          ? "Got it! I will slow down my speaking pace for the rest of the session."
           : targetPace === 'fast'
-          ? "Got it! I will speak faster for the rest of the session."
-          : "Got it! You can use the Pause button to take a break or Next to skip ahead. I'll keep going at your pace.";
+            ? "Got it! I will speak faster for the rest of the session."
+            : "Got it! You can use the Pause button to take a break or Next to skip ahead. I'll keep going at your pace.";
 
         setTranscript((prev) => [...prev, {
           role: 'tutor',
@@ -661,9 +662,9 @@ export function CompactTutor({
       ref={panelRef}
       style={isFloating ? { width: 320, maxWidth: '90vw', top: 16, left: 16, maxHeight: '80vh' } : { width: 320, minWidth: 320 }}
       className={`relative ${isFloating
-      ? 'absolute rounded-2xl border border-border bg-card/95 backdrop-blur-md flex flex-col overflow-hidden shadow-2xl z-50'
-      : 'shrink-0 border-l-2 border-border bg-card flex flex-col overflow-hidden'
-    }`}>
+        ? 'absolute rounded-2xl border border-border bg-card/95 backdrop-blur-md flex flex-col overflow-hidden shadow-2xl z-50'
+        : 'shrink-0 border-l-2 border-border bg-card flex flex-col overflow-hidden'
+        }`}>
       <audio
         ref={audioRef}
         onEnded={() => {
@@ -697,57 +698,61 @@ export function CompactTutor({
             position: 'fixed',
             top: avatarPos.y,
             left: avatarPos.x,
-            transform: 'translate(-50%, -50%)',
+            transform: `translate(-50%, -50%)`,
             zIndex: 9999,
             cursor: 'grab',
             userSelect: 'none',
           }}
-          className="flex flex-col items-center gap-1.5"
+          className="flex flex-col items-center gap-2"
         >
           {/* Floating name pill */}
-          <div className="flex items-center gap-2 bg-card/95 backdrop-blur-md rounded-xl px-3 py-1.5 border border-border shadow-lg mb-0.5">
+          <div className="flex items-center gap-2 bg-card/95 backdrop-blur-md px-3 py-1.5 border border-border shadow-lg mb-0.5 transition-all duration-300"
+               style={{ borderRadius: 16 * bubbleScale, transform: `scale(${bubbleScale})`, transformOrigin: 'bottom center' }}>
             <div className={`w-2 h-2 rounded-full shrink-0 ${error ? 'bg-red-500' : isFinished ? 'bg-muted-foreground' : 'bg-green-500 animate-pulse'}`} />
             <span className="text-xs font-bold bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent">LearnPal</span>
             {progress > 0 && <span className="text-[10px] text-muted-foreground ml-1">{progress}%</span>}
             <GripHorizontal size={12} className="text-muted-foreground/40 ml-1" />
           </div>
-          <div className="relative">
-            <div className="absolute inset-0 bg-gradient-to-br from-secondary to-accent rounded-full blur-xl opacity-30 pointer-events-none" />
-            <div className="relative rounded-full bg-gradient-to-br from-primary via-secondary to-accent p-1.5 shadow-2xl w-36 h-36">
+          <div className="relative transition-all duration-300">
+            <div className="absolute inset-0 bg-gradient-to-br from-secondary to-accent rounded-full blur-xl opacity-30 pointer-events-none transition-all duration-300" />
+            <div className="relative rounded-full bg-gradient-to-br from-primary via-secondary to-accent p-1.5 shadow-2xl transition-all duration-300 flex items-center justify-center"
+                 style={{ width: 144 * bubbleScale, height: 144 * bubbleScale }}>
               <Nova3DAvatar
                 audioRef={audioRef}
                 emotion={fusedEmotion || tutorEmotion}
                 blendshapeData={currentBlendshapes}
-                size={126}
+                size={144 * bubbleScale - 12}
                 isFloating={false}
               />
             </div>
           </div>
           {/* Controls */}
-          <div className="flex items-center gap-1.5 bg-card/95 backdrop-blur-md rounded-xl px-2.5 py-1.5 border border-border shadow-lg">
+          <div onMouseDown={(e) => e.stopPropagation()} 
+               style={{ transform: `scale(${bubbleScale})`, transformOrigin: 'top center' }}
+               className="flex items-center gap-2.5 bg-card/95 backdrop-blur-md rounded-full px-4 py-2 border border-border shadow-lg mt-1 transition-all duration-300">
             <button onClick={handlePlayPause} disabled={isFinished}
-              className={`p-1.5 rounded-lg border transition-all disabled:opacity-40 ${!isPaused ? 'border-secondary bg-secondary text-white shadow-md' : 'border-border bg-card hover:border-secondary'}`}
+              className={`p-2 rounded-full border transition-all disabled:opacity-40 flex items-center justify-center ${!isPaused ? 'border-secondary bg-secondary text-white shadow-md' : 'border-border bg-card hover:border-secondary'}`}
               title={isPaused ? 'Resume' : 'Pause'}>
               {isPaused ? <Play size={14} /> : <Pause size={14} />}
             </button>
             <button onClick={handleNext} disabled={isLoading || isFinished}
-              className="p-1.5 rounded-lg border border-border bg-card hover:border-secondary transition-colors disabled:opacity-40 text-xs font-semibold px-2">
-              Next
+              className="p-2 rounded-full border border-border bg-card hover:border-secondary transition-colors disabled:opacity-40 text-xs font-semibold w-[64px] flex justify-center items-center">
+              {isLoading ? <Loader2 size={14} className="animate-spin" /> : 'Next'}
             </button>
             <button onClick={handleMute}
-              className="p-1.5 rounded-lg border border-border bg-card hover:border-secondary transition-colors"
+              className="p-2 rounded-full border border-border bg-card hover:border-secondary transition-colors flex items-center justify-center"
               title={isMuted ? 'Unmute' : 'Mute'}>
               {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+            </button>
+            <button onClick={() => setBubbleScale(s => s === 1 ? 1.5 : 1)}
+              className="p-2 rounded-full border border-border bg-card hover:border-secondary transition-colors flex items-center justify-center"
+              title={bubbleScale === 1 ? 'Enlarge' : 'Shrink'}>
+              {bubbleScale === 1 ? <Maximize2 size={14} /> : <Minimize2 size={14} />}
             </button>
           </div>
           {isFinished && (
             <div className="flex flex-col items-center gap-1 mt-1">
               <p className="text-xs text-muted-foreground">Lecture complete</p>
-              <button
-                onClick={() => navigate(`/practice/${encodeURIComponent(lessonTitle || 'Programming')}`, { state: { topic: lessonTitle } })}
-                className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold text-xs hover:shadow-lg transition-all">
-                <Code2 size={13} /> Practice Now
-              </button>
             </div>
           )}
         </div>
@@ -786,8 +791,8 @@ export function CompactTutor({
                 {isPaused ? <Play size={16} /> : <Pause size={16} />}
               </button>
               <button onClick={handleNext} disabled={isLoading || isFinished}
-                className="p-2 rounded-lg border-2 border-border bg-card hover:border-secondary transition-colors disabled:opacity-40 text-xs font-semibold px-3">
-                Next
+                className="p-2 rounded-lg border-2 border-border bg-card hover:border-secondary transition-colors disabled:opacity-40 text-xs font-semibold px-3 w-16 flex justify-center items-center">
+                {isLoading ? <Loader2 size={16} className="animate-spin" /> : 'Next'}
               </button>
               <button onClick={handleMute}
                 className="p-2 rounded-lg border-2 border-border bg-card hover:border-secondary transition-colors"
@@ -799,11 +804,6 @@ export function CompactTutor({
           {isFinished && (
             <div className="flex flex-col items-center gap-1 mt-1">
               <p className="text-xs text-muted-foreground">Lecture complete</p>
-              <button
-                onClick={() => navigate(`/practice/${encodeURIComponent(lessonTitle || 'Programming')}`, { state: { topic: lessonTitle } })}
-                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold text-sm hover:shadow-lg transition-all">
-                <Code2 size={15} /> Practice Now
-              </button>
             </div>
           )}
         </div>
@@ -842,30 +842,30 @@ export function CompactTutor({
               <div className="flex-1 h-px bg-border" />
             </div>
           ) : (
-          <div
-            key={i}
-            className={`rounded-lg p-4 ${entry.role === 'tutor'
+            <div
+              key={i}
+              className={`rounded-lg p-4 ${entry.role === 'tutor'
                 ? 'bg-primary/5 border-l-2 border-primary'
                 : 'bg-secondary/10 border-l-2 border-secondary ml-4'
-              }`}
-          >
-            {entry.role === 'student' && (
-              <span className="text-sm font-semibold text-secondary block mb-1">You</span>
-            )}
-            {entry.topic && entry.role === 'tutor' && (
-              <span className="text-sm font-semibold text-muted-foreground block mb-1">{entry.topic}</span>
-            )}
-            <p className="text-sm text-foreground/80 leading-relaxed break-words whitespace-pre-wrap">{entry.text}</p>
-            {entry.sources && entry.sources.length > 0 && (
-              <div className="mt-2 space-y-0.5">
-                {entry.sources.map((s, si) => (
-                  <span key={si} className="inline-block text-xs bg-secondary/10 text-secondary rounded px-2 py-0.5 mr-1">
-                    📖 {s.book} p.{s.page_start}–{s.page_end}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
+                }`}
+            >
+              {entry.role === 'student' && (
+                <span className="text-sm font-semibold text-secondary block mb-1">You</span>
+              )}
+              {entry.topic && entry.role === 'tutor' && (
+                <span className="text-sm font-semibold text-muted-foreground block mb-1">{entry.topic}</span>
+              )}
+              <p className="text-sm text-foreground/80 leading-relaxed break-words whitespace-pre-wrap">{entry.text}</p>
+              {entry.sources && entry.sources.length > 0 && (
+                <div className="mt-2 space-y-0.5">
+                  {entry.sources.map((s, si) => (
+                    <span key={si} className="inline-block text-xs bg-secondary/10 text-secondary rounded px-2 py-0.5 mr-1">
+                      📖 {s.book} p.{s.page_start}–{s.page_end}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
           )
         ))}
         <div ref={transcriptEndRef} />
@@ -906,8 +906,8 @@ export function CompactTutor({
             onClick={handleVoiceInput}
             disabled={isTranscribing}
             className={`w-full py-2 border-2 rounded-xl transition-colors flex items-center justify-center gap-2 text-sm font-medium disabled:opacity-50 ${isRecording
-                ? 'border-red-500 bg-red-50 text-red-600 animate-pulse'
-                : 'border-border hover:border-secondary'
+              ? 'border-red-500 bg-red-50 text-red-600 animate-pulse'
+              : 'border-border hover:border-secondary'
               }`}
           >
             {isTranscribing ? (

@@ -121,9 +121,9 @@ export function Nova3DAvatar({ audioRef, emotion, blendshapeData, size = 120, is
     // ── Scene setup ──
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 100);
-    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: "high-performance" });
     renderer.setSize(size, size);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.max(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(renderer.domElement);
     s.renderer = renderer; s.scene = scene; s.camera = camera;
@@ -440,7 +440,14 @@ export function Nova3DAvatar({ audioRef, emotion, blendshapeData, size = 120, is
         container.removeChild(renderer.domElement);
       }
     };
-  }, [size, isFloating]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isFloating]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const s = stateRef.current;
+    if (s.renderer) {
+      s.renderer.setSize(size, size);
+    }
+  }, [size]);
 
   return (
     <div
