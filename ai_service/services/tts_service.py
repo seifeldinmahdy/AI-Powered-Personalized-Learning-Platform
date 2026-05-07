@@ -55,43 +55,46 @@ class TTSService:
         Returns:
             Dict with audio_bytes, content_type, and metadata.
         """
-        try:
-            logger.info(
-                f"Synthesizing {len(text)} chars | voice={voice} rate={rate} pitch={pitch}"
-            )
-            start = time.time()
+        for attempt in range(3):
+            try:
+                logger.info(
+                    f"Synthesizing {len(text)} chars | voice={voice} rate={rate} pitch={pitch} (attempt {attempt+1})"
+                )
+                start = time.time()
 
-            communicate = edge_tts.Communicate(
-                text=text, voice=voice, rate=rate, pitch=pitch,
-            )
+                communicate = edge_tts.Communicate(
+                    text=text, voice=voice, rate=rate, pitch=pitch,
+                )
 
-            # Collect audio bytes in memory
-            audio_chunks: list[bytes] = []
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    audio_chunks.append(chunk["data"])
+                # Collect audio bytes in memory
+                audio_chunks: list[bytes] = []
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        audio_chunks.append(chunk["data"])
 
-            audio_bytes = b"".join(audio_chunks)
-            elapsed = round(time.time() - start, 3)
+                audio_bytes = b"".join(audio_chunks)
+                elapsed = round(time.time() - start, 3)
 
-            logger.info(
-                f"Synthesis complete — {len(audio_bytes)} bytes in {elapsed}s"
-            )
+                logger.info(
+                    f"Synthesis complete — {len(audio_bytes)} bytes in {elapsed}s"
+                )
 
-            return {
-                "audio_bytes": audio_bytes,
-                "content_type": "audio/mpeg",
-                "voice": voice,
-                "rate": rate,
-                "pitch": pitch,
-                "text_length": len(text),
-                "audio_size_bytes": len(audio_bytes),
-                "inference_time": elapsed,
-            }
+                return {
+                    "audio_bytes": audio_bytes,
+                    "content_type": "audio/mpeg",
+                    "voice": voice,
+                    "rate": rate,
+                    "pitch": pitch,
+                    "text_length": len(text),
+                    "audio_size_bytes": len(audio_bytes),
+                    "inference_time": elapsed,
+                }
 
-        except Exception as e:
-            logger.error(f"TTS synthesis error: {e}")
-            raise RuntimeError(f"Failed to synthesize speech: {e}") from e
+            except Exception as e:
+                logger.error(f"TTS synthesis error (attempt {attempt+1}): {e}")
+                if attempt == 2:
+                    raise RuntimeError(f"Failed to synthesize speech: {e}") from e
+                await asyncio.sleep(1)
 
     async def synthesize_wav(
         self,
@@ -113,54 +116,64 @@ class TTSService:
         Returns:
             Path to the temporary WAV file. Caller MUST delete after use.
         """
-        try:
-            import imageio_ffmpeg
-
-            logger.info(f"Synthesizing WAV for A2F — {len(text)} chars")
-            start = time.time()
-
-            # Step 1: Generate MP3 via edge-tts
-            _, tmp_mp3 = tempfile.mkstemp(suffix=".mp3")
-            communicate = edge_tts.Communicate(
-                text=text, voice=voice, rate=rate, pitch=pitch,
-            )
-            await communicate.save(tmp_mp3)
-
-            # Step 2: Convert to 16kHz mono 16-bit PCM WAV via ffmpeg
-            _, tmp_wav = tempfile.mkstemp(suffix=".wav")
-            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-            cmd = [
-                ffmpeg_exe,
-                "-i", tmp_mp3,
-                "-ac", "1",           # mono
-                "-ar", "16000",       # 16 kHz
-                "-sample_fmt", "s16", # 16-bit signed PCM
-                tmp_wav,
-                "-y",                 # overwrite output
-            ]
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=30,
-            )
-            if result.returncode != 0:
-                logger.error(f"ffmpeg conversion failed: {result.stderr}")
-                raise RuntimeError(f"ffmpeg failed: {result.stderr}")
-
-            # Step 3: Cleanup temp MP3
+        for attempt in range(3):
             try:
-                os.remove(tmp_mp3)
-            except OSError:
-                pass
+                import imageio_ffmpeg
 
-            elapsed = round(time.time() - start, 3)
-            wav_size = os.path.getsize(tmp_wav)
-            logger.info(
-                f"WAV synthesis complete — {wav_size} bytes in {elapsed}s"
-            )
-            return tmp_wav
+                logger.info(f"Synthesizing WAV for A2F — {len(text)} chars (attempt {attempt+1})")
+                start = time.time()
 
-        except Exception as e:
-            logger.error(f"WAV synthesis error: {e}")
-            raise RuntimeError(f"Failed to synthesize WAV: {e}") from e
+                # Step 1: Generate MP3 via edge-tts
+                _, tmp_mp3 = tempfile.mkstemp(suffix=".mp3")
+                communicate = edge_tts.Communicate(
+                    text=text, voice=voice, rate=rate, pitch=pitch,
+                )
+                await communicate.save(tmp_mp3)
+
+                # Step 2: Convert to 16kHz mono 16-bit PCM WAV via ffmpeg
+                _, tmp_wav = tempfile.mkstemp(suffix=".wav")
+                ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+                cmd = [
+                    ffmpeg_exe,
+                    "-i", tmp_mp3,
+                    "-ac", "1",           # mono
+                    "-ar", "16000",       # 16 kHz
+                    "-sample_fmt", "s16", # 16-bit signed PCM
+                    tmp_wav,
+                    "-y",                 # overwrite output
+                ]
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=30,
+                )
+                if result.returncode != 0:
+                    logger.error(f"ffmpeg conversion failed: {result.stderr}")
+                    raise RuntimeError(f"ffmpeg failed: {result.stderr}")
+
+                # Step 3: Cleanup temp MP3
+                try:
+                    os.remove(tmp_mp3)
+                except OSError:
+                    pass
+
+                elapsed = round(time.time() - start, 3)
+                wav_size = os.path.getsize(tmp_wav)
+                logger.info(
+                    f"WAV synthesis complete — {wav_size} bytes in {elapsed}s"
+                )
+                return tmp_wav
+
+            except Exception as e:
+                logger.error(f"WAV synthesis error (attempt {attempt+1}): {e}")
+                # Ensure cleanup on failure
+                try:
+                    if 'tmp_mp3' in locals():
+                        os.remove(tmp_mp3)
+                except OSError:
+                    pass
+                    
+                if attempt == 2:
+                    raise RuntimeError(f"Failed to synthesize WAV: {e}") from e
+                await asyncio.sleep(1)
 
     async def list_voices(self, language: str = "en") -> List[Dict]:
         """Return available Edge TTS voices for a language prefix."""

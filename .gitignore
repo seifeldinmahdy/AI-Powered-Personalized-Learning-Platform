@@ -73,3 +73,5 @@ issues/*
 
 # Large files
 ai_service/static/buffer.bin
+ai_service/static/*.gltf
+ai_service/static/*.glb

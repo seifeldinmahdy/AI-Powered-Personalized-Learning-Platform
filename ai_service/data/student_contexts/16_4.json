@@ -1,0 +1,337 @@
+{
+  "profile": {
+    "student_id": "16",
+    "course_id": "4",
+    "mastery_level": "Novice",
+    "composition_mode": "balanced",
+    "language_proficiency": "Native",
+    "strengths": [
+      "Stack"
+    ],
+    "weaknesses": [
+      "Recursion",
+      "Tower of Hanoi",
+      "Maze Search",
+      "anagram detection",
+      "balanced parentheses",
+      "infix to postfix",
+      "Parse tree construction",
+      "bubble sort",
+      "Insertion Sort",
+      "Shell sort",
+      "merge sort",
+      "binary search",
+      "Sequential Search",
+      "hash functions",
+      "hash table indexing",
+      "list pop complexity",
+      "Binary Search Tree",
+      "Linked List Traversal",
+      "BST Deletion",
+      "BST insertion",
+      "Tree Construction",
+      "Binary Heap",
+      "deque",
+      "abstract data type",
+      "Big-O notation",
+      "Algorithm Analysis",
+      "string formatting",
+      "Python list methods"
+    ],
+    "topic_performance": {
+      "Recursion": 0.0,
+      "Tower of Hanoi": 0.0,
+      "Maze Search": 0.0,
+      "anagram detection": 0.0,
+      "balanced parentheses": 0.0,
+      "infix to postfix": 0.0,
+      "Parse tree construction": 0.0,
+      "bubble sort": 0.0,
+      "Insertion Sort": 0.0,
+      "Shell sort": 0.0,
+      "merge sort": 0.0,
+      "binary search": 0.0,
+      "Sequential Search": 0.0,
+      "hash functions": 0.0,
+      "hash table indexing": 0.0,
+      "list pop complexity": 0.0,
+      "Binary Search Tree": 0.0,
+      "Linked List Traversal": 0.0,
+      "BST Deletion": 0.0,
+      "BST insertion": 0.0,
+      "Tree Construction": 0.0,
+      "Binary Heap": 0.0,
+      "Stack": 1.0,
+      "deque": 0.0,
+      "abstract data type": 0.0,
+      "Big-O notation": 0.0,
+      "Algorithm Analysis": 0.0,
+      "string formatting": 0.0,
+      "Python list methods": 0.0,
+      "Printer simulation": 0.5
+    },
+    "incorrectly_answered": [
+      {
+        "question": "Which of the following statements best describes a base case in a recursive function?",
+        "chosen_option": "A loop that iterates over input data",
+        "correct_option": "A condition that stops further recursive calls"
+      },
+      {
+        "question": "What is the time complexity of the naive recursive implementation of the Fibonacci sequence (without memoization)?",
+        "chosen_option": "O(log n)",
+        "correct_option": "O(2^n)"
+      },
+      {
+        "question": "For the Tower of Hanoi problem with n disks, what is the minimum number of moves required to transfer the entire stack?",
+        "chosen_option": "n!",
+        "correct_option": "2^n - 1"
+      },
+      {
+        "question": "In the standard recursive solution to Tower of Hanoi, which sub‑problem is solved first?",
+        "chosen_option": "Move the largest disk from source to auxiliary",
+        "correct_option": "Move n‑1 disks from source to auxiliary"
+      },
+      {
+        "question": "When using recursion to search a maze, which of the following is true about backtracking?",
+        "chosen_option": "It requires a priority queue to manage frontier cells",
+        "correct_option": "It explores all possible paths until the goal is reached"
+      },
+      {
+        "question": "Which data structure is most naturally used to implement a recursive depth‑first search (DFS) for maze solving?",
+        "chosen_option": "Hash table",
+        "correct_option": "Stack"
+      },
+      {
+        "question": "Which method correctly determines whether two strings are anagrams of each other?",
+        "chosen_option": "Count the number of vowels in each string",
+        "correct_option": "Sort both strings and check for equality"
+      },
+      {
+        "question": "What is the most efficient way to check for balanced parentheses in a string?",
+        "chosen_option": "Replace all pairs \"()\" repeatedly until none remain",
+        "correct_option": "Use a stack to push opening symbols and pop on matching closing symbols"
+      },
+      {
+        "question": "When converting the infix expression \"A + B * C - D\" to postfix, which operator appears first in the output?",
+        "chosen_option": "A",
+        "correct_option": "*"
+      },
+      {
+        "question": "Given the postfix expression \"AB+C*\", which of the following represents the correct parse tree (root at top)?",
+        "chosen_option": "Root '-', left child '*', right child 'C'",
+        "correct_option": "Root '*', left child 'A', right child '+', which has children 'B' and 'C'"
+      },
+      {
+        "question": "What is the worst‑case time complexity of the standard Bubble Sort algorithm on an array of n elements?",
+        "chosen_option": "O(2^n)",
+        "correct_option": "O(n^2)"
+      },
+      {
+        "question": "Which modification to Bubble Sort can detect that the array is already sorted and stop early?",
+        "chosen_option": "Increasing the gap between compared elements each pass",
+        "correct_option": "Adding a flag that checks if any swap occurred in a pass"
+      },
+      {
+        "question": "In the best case, what is the time complexity of Insertion Sort on an already sorted array of n elements?",
+        "chosen_option": "O(log n)",
+        "correct_option": "O(n)"
+      },
+      {
+        "question": "During the worst‑case execution of Insertion Sort, how many element shifts (assignments) are performed in total?",
+        "chosen_option": "2^n",
+        "correct_option": "n(n‑1)/2"
+      },
+      {
+        "question": "Which of the following statements about Shell Sort is true?",
+        "chosen_option": "It always requires O(n) extra space",
+        "correct_option": "Using the original Shell gap sequence (n/2, n/4, …) yields O(n^2) worst‑case time"
+      },
+      {
+        "question": "When Shell Sort utilizes the Pratt (or Hibbard) gap sequence, its average‑case time complexity is closest to:",
+        "chosen_option": "O(n)",
+        "correct_option": "O(n^(3/2))"
+      },
+      {
+        "question": "Why is Merge Sort considered a stable sorting algorithm?",
+        "chosen_option": "It sorts in place without extra memory",
+        "correct_option": "During the merge step, equal elements are copied from the left subarray before the right"
+      },
+      {
+        "question": "What is the additional auxiliary space complexity of the classic top‑down recursive Merge Sort implementation?",
+        "chosen_option": "O(n log n)",
+        "correct_option": "O(n)"
+      },
+      {
+        "question": "Which recurrence relation correctly models the running time T(n) of Merge Sort for n > 1?",
+        "chosen_option": "T(n) = 2T(n/2) + log n",
+        "correct_option": "T(n) = 2T(n/2) + n"
+      },
+      {
+        "question": "For a nearly sorted array of size n, which algorithm generally outperforms the other in practice?",
+        "chosen_option": "Shell Sort always beats both",
+        "correct_option": "Insertion Sort is faster than Merge Sort"
+      },
+      {
+        "question": "Which of the following conditions must be true for binary search to work correctly on an array?",
+        "chosen_option": "The array must have an even number of elements.",
+        "correct_option": "The array must be sorted in non‑decreasing order."
+      },
+      {
+        "question": "What is the worst‑case number of comparisons performed by binary search on a sorted array of 1024 elements?",
+        "chosen_option": "13",
+        "correct_option": "10"
+      },
+      {
+        "question": "In a sequential (linear) search of an unsorted array of n distinct elements, what is the expected number of comparisons to find a target that is present?",
+        "chosen_option": "log₂ n",
+        "correct_option": "(n+1)/2"
+      },
+      {
+        "question": "When is sequential search preferred over binary search?",
+        "chosen_option": "When the algorithm must run in O(log n) time.",
+        "correct_option": "When the list is very small or unsorted."
+      },
+      {
+        "question": "Which property is most important for a good hash function?",
+        "chosen_option": "It must preserve the order of keys.",
+        "correct_option": "It should distribute keys uniformly across the table."
+      },
+      {
+        "question": "Given a hash table of size 50, what is the hash index for the key 12345 using the hash function h(k) = k mod m?",
+        "chosen_option": "15",
+        "correct_option": "45"
+      },
+      {
+        "question": "Which collision‑resolution technique stores all elements that hash to the same slot in a linked list attached to that slot?",
+        "chosen_option": "Double hashing",
+        "correct_option": "Separate chaining"
+      },
+      {
+        "question": "If a hash table’s load factor exceeds 0.75, which of the following actions is most commonly taken?",
+        "chosen_option": "Change the hash function to a constant value.",
+        "correct_option": "Rehash into a larger table (typically double the size)."
+      },
+      {
+        "question": "In Python, what is the time complexity of list.pop() when called without an index (i.e., popping the last element)?",
+        "chosen_option": "O(n log n)",
+        "correct_option": "O(1) amortized"
+      },
+      {
+        "question": "Why does popping an element from the end of a dynamic array (e.g., Python list) run in O(1) amortized time, while popping from the middle runs in O(n)?",
+        "chosen_option": "Because Python uses a linked‑list representation for the middle of the list.",
+        "correct_option": "Because removing the last element does not require shifting any other elements."
+      },
+      {
+        "question": "In a binary search tree, which property holds for every node?",
+        "chosen_option": "All nodes have exactly two children",
+        "correct_option": "All left descendants have keys less than the node's key"
+      },
+      {
+        "question": "During traversal of a singly linked list, which pointer must be updated to move to the next node?",
+        "chosen_option": "tail",
+        "correct_option": "next"
+      },
+      {
+        "question": "When deleting a node with two children in a BST, what is the standard replacement strategy?",
+        "chosen_option": "Replace with its right child",
+        "correct_option": "Replace with its in-order successor"
+      },
+      {
+        "question": "Inserting a key into a binary search tree takes O(h) time, where h represents what?",
+        "chosen_option": "balance factor",
+        "correct_option": "height of the tree"
+      },
+      {
+        "question": "Which traversal order, when paired with preorder, can uniquely reconstruct a binary tree?",
+        "chosen_option": "Breadth-first",
+        "correct_option": "Inorder"
+      },
+      {
+        "question": "In a binary min-heap stored in a 0‑based array, which formula gives the index of the parent of the element at index i?",
+        "chosen_option": "2i",
+        "correct_option": "(i-1)/2"
+      },
+      {
+        "question": "A double-ended queue (deque) allows insertion and deletion at:",
+        "chosen_option": "Neither",
+        "correct_option": "Both front and rear"
+      },
+      {
+        "question": "Which statement best describes an abstract data type (ADT)?",
+        "chosen_option": "A compiled library",
+        "correct_option": "A set of operations and their mathematical properties, independent of implementation"
+      },
+      {
+        "question": "What is the time complexity of building a binary heap from an unsorted array of n elements using Floyd's algorithm?",
+        "chosen_option": "O(n²)",
+        "correct_option": "O(n)"
+      },
+      {
+        "question": "Which of the following best describes the meaning of O(n^2) in Big-O notation?",
+        "chosen_option": "The algorithm's running time grows exponentially with the input size.",
+        "correct_option": "The algorithm's running time grows proportionally to the square of the input size."
+      },
+      {
+        "question": "If an algorithm has a worst‑case time complexity of O(n log n) and a best‑case time complexity of O(n), which statement is true?",
+        "chosen_option": "The algorithm cannot have a best case of O(n).",
+        "correct_option": "The algorithm is bounded above by O(n log n) for all inputs."
+      },
+      {
+        "question": "Which case analysis is most appropriate when evaluating the performance of quicksort with a random pivot selection?",
+        "chosen_option": "Amortized case",
+        "correct_option": "Average case"
+      },
+      {
+        "question": "The recurrence T(n) = 2T(n/2) + n describes the running time of which classic algorithm?",
+        "chosen_option": "Heap sort",
+        "correct_option": "Merge sort"
+      },
+      {
+        "question": "Given the variables name = \"Alice\" and score = 95, which f‑string produces the output \"Alice scored 95 points\"?",
+        "chosen_option": "\"%s scored %d points\" % (name, score)",
+        "correct_option": "f\"{name} scored {score} points\""
+      },
+      {
+        "question": "Which format specification will left‑align a string within a width of 10 characters?",
+        "chosen_option": "\"{:10}\"",
+        "correct_option": "\"{:<10}\""
+      },
+      {
+        "question": "What is the difference between list.append(x) and list.extend(iterable) in Python?",
+        "chosen_option": "append can only add numbers; extend can add any type.",
+        "correct_option": "append adds the whole iterable as a single element; extend adds each element of iterable individually."
+      },
+      {
+        "question": "After executing lst = [1, 2, 3, 4]; lst.pop(2); what is the resulting list?",
+        "chosen_option": "[2, 3, 4]",
+        "correct_option": "[1, 2, 4]"
+      },
+      {
+        "question": "A printer takes 5 seconds to warm up before printing any pages. Job A needs 3 pages (1 s per page) and Job B needs 2 pages. If jobs arrive in order A then B, what is the total time to finish both jobs?",
+        "chosen_option": "16 seconds",
+        "correct_option": "13 seconds"
+      }
+    ],
+    "use_synthetic_context": false,
+    "course_intent": "Data Structures & Algorithms",
+    "student_profile_summary": "Novice learner in Data Structures & Algorithms. Strong in: Stack. Needs work on: Recursion, Tower of Hanoi, Maze Search, anagram detection, balanced parentheses, infix to postfix, Parse tree construction, bubble sort, Insertion Sort, Shell sort, merge sort, binary search, Sequential Search, hash functions, hash table indexing, list pop complexity, Binary Search Tree, Linked List Traversal, BST Deletion, BST insertion, Tree Construction, Binary Heap, deque, abstract data type, Big-O notation, Algorithm Analysis, string formatting, Python list methods."
+  },
+  "live": {
+    "session_id": "",
+    "current_slide_index": 0,
+    "current_slide_title": "",
+    "current_slide_content": "",
+    "current_topic": "",
+    "current_subtopic": "",
+    "running_summary": "",
+    "tutor_transcript": [],
+    "visited_slides": [],
+    "time_spent_per_slide": {},
+    "tutor_events": [],
+    "emotion_signals": [],
+    "fused_emotion": "",
+    "fused_emotion_confidence": 0.0,
+    "pace_modifier": 0,
+    "last_updated_at": 1778148602.0543973
+  }
+}
