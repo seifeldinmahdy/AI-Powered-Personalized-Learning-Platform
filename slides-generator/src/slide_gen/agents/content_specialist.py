@@ -16,7 +16,11 @@ Output format trained on:
 import os
 import re
 from pathlib import Path
+import torch
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+# Auto-detect device: prefer CUDA, fallback to CPU
+_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Resolve absolute path to local model folder
 CURRENT_DIR = Path(__file__).parent
@@ -40,7 +44,9 @@ def _load_model(model_path: str = DEFAULT_MODEL_PATH):
 
         _tokenizer = AutoTokenizer.from_pretrained(model_path, legacy=False)
         _model = AutoModelForSeq2SeqLM.from_pretrained(model_path)
+        _model.to(_device)
         _model.eval()
+        print(f"🚀 Content Specialist loaded on: {_device}")
     return _model, _tokenizer
 
 
@@ -200,6 +206,8 @@ def generate_content(
         max_length=512,
         truncation=True,
     )
+    # Move inputs to same device as model
+    inputs = {k: v.to(_device) for k, v in inputs.items()}
     try:
         outputs = _model.generate(
             **inputs,

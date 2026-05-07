@@ -163,66 +163,101 @@ export default function LiveSession() {
           }
         }
 
-        // ─── AI Slide Generation ─────────────────────────────
+        // ─── AI Slide Generation (with cache) ─────────────────
         const rawPlan = sessionStorage.getItem('pathway_plan');
         if (rawPlan) {
           const pathwayPlan: PathwayPlan = JSON.parse(rawPlan);
           if (!cancelled) setPlan(pathwayPlan);
           const currentSession = pathwayPlan.sessions.find(s => s.session_number === sessionNum);
           if (currentSession) {
-            try {
-              const chunksRes = await fetch(`${AI_URL}/pathway/session-chunks`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  student_id: pathwayPlan.student_id,
-                  course_id: pathwayPlan.course_id,
-                  session_number: sessionNum,
-                }),
-              });
+            // Check cache first to avoid re-generation on reload
+            const cacheKey = `slides_cache_${lessonId}`;
+            const cachedSlides = sessionStorage.getItem(cacheKey);
+            if (cachedSlides) {
+              try {
+                const parsed = JSON.parse(cachedSlides);
+                if (!cancelled && parsed.length > 0) {
+                  setSlides(parsed);
 
-              if (chunksRes.ok) {
-                const chunks = await chunksRes.json();
-                if (chunks.length > 0) {
-                  const slideResponse = await generateSlides({
+                  // Re-initialize backend session context from cached slides
+                  await fetch(`${AI_URL}/session/${sessionIdRef.current}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      current_slide_index: 0,
+                      current_slide_title: parsed[0].title,
+                      current_slide_content: parsed[0].body_content?.map((i: any) => i.text).join('\n') || '',
+                      current_topic: currentSession.session_title,
+                      visited_slides_push: 0
+                    })
+                  }).catch(console.error);
+                }
+              } catch {
+                sessionStorage.removeItem(cacheKey); // corrupted cache
+              }
+            }
+
+            // Only generate if we didn't load from cache
+            if (!cachedSlides) {
+              try {
+                const chunksRes = await fetch(`${AI_URL}/pathway/session-chunks`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    student_id: pathwayPlan.student_id,
+                    course_id: pathwayPlan.course_id,
                     session_number: sessionNum,
-                    session_title: currentSession.session_title,
-                    topics_covered: currentSession.topics_covered,
-                    book: currentSession.book,
-                    chunks: chunks.map((c: any) => ({
-                      chunk_id: c.chunk_id,
-                      raw_text: c.raw_text,
-                      topic: c.topic,
-                      page_start: c.page_start,
-                      page_end: c.page_end,
-                    })),
-                    mastery_level: 'Novice',
-                    composition_mode: 'visual_heavy',
-                    language_proficiency: 'Elementary',
-                  });
+                  }),
+                });
 
-                  if (!cancelled) {
-                    setSlides(slideResponse.slides);
+                if (chunksRes.ok) {
+                  const chunks = await chunksRes.json();
+                  if (chunks.length > 0) {
+                    const slideResponse = await generateSlides({
+                      session_number: sessionNum,
+                      session_title: currentSession.session_title,
+                      topics_covered: currentSession.topics_covered,
+                      book: currentSession.book,
+                      chunks: chunks.map((c: any) => ({
+                        chunk_id: c.chunk_id,
+                        raw_text: c.raw_text,
+                        topic: c.topic,
+                        page_start: c.page_start,
+                        page_end: c.page_end,
+                      })),
+                      mastery_level: 'Novice',
+                      composition_mode: 'visual_heavy',
+                      language_proficiency: 'Elementary',
+                    });
 
-                    // Initialize backend session context
-                    if (slideResponse.slides.length > 0) {
-                      await fetch(`${AI_URL}/session/${sessionIdRef.current}`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          current_slide_index: 0,
-                          current_slide_title: slideResponse.slides[0].title,
-                          current_slide_content: slideResponse.slides[0].body_content?.map(i => i.text).join('\n') || '',
-                          current_topic: currentSession.session_title,
-                          visited_slides_push: 0
-                        })
-                      }).catch(console.error);
+                    if (!cancelled) {
+                      setSlides(slideResponse.slides);
+
+                      // Cache the generated slides
+                      try {
+                        sessionStorage.setItem(cacheKey, JSON.stringify(slideResponse.slides));
+                      } catch { /* storage full — non-critical */ }
+
+                      // Initialize backend session context
+                      if (slideResponse.slides.length > 0) {
+                        await fetch(`${AI_URL}/session/${sessionIdRef.current}`, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            current_slide_index: 0,
+                            current_slide_title: slideResponse.slides[0].title,
+                            current_slide_content: slideResponse.slides[0].body_content?.map(i => i.text).join('\n') || '',
+                            current_topic: currentSession.session_title,
+                            visited_slides_push: 0
+                          })
+                        }).catch(console.error);
+                      }
                     }
                   }
                 }
+              } catch (e) {
+                console.error("Failed to generate AI slides", e);
               }
-            } catch (e) {
-              console.error("Failed to generate AI slides", e);
             }
           }
         }

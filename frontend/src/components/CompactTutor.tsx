@@ -121,10 +121,11 @@ export function CompactTutor({
 
     const onMove = (ev: MouseEvent) => {
       if (!isDraggingRef.current) return;
-      setAvatarPos({
-        x: ev.clientX - offsetX,
-        y: ev.clientY - offsetY,
-      });
+      // Clamp to viewport boundaries (40px margin for the bubble radius)
+      const margin = 40;
+      const clampedX = Math.max(margin, Math.min(window.innerWidth - margin, ev.clientX - offsetX));
+      const clampedY = Math.max(margin, Math.min(window.innerHeight - margin, ev.clientY - offsetY));
+      setAvatarPos({ x: clampedX, y: clampedY });
     };
     const onUp = (ev: MouseEvent) => {
       isDraggingRef.current = false;

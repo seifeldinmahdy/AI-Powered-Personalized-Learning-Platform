@@ -13,6 +13,10 @@ Supports:
 
 import json
 from pathlib import Path
+import torch
+
+# Auto-detect device: prefer CUDA, fallback to CPU
+_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from slide_gen.core.slide_schema import VALID_TEMPLATES
 from slide_gen.core.hierarchy import (
@@ -78,9 +82,10 @@ def _load_level1(model_base: str | Path):
     _l1_model = DistilBertForSequenceClassification.from_pretrained(
         str(l1_path), num_labels=len(_l1_labels)
     )
+    _l1_model.to(_device)
     _l1_model.eval()
 
-    print(f"📋 Loaded Level 1 model: {len(_l1_labels)} categories")
+    print(f"📋 Loaded Level 1 model: {len(_l1_labels)} categories (device: {_device})")
     return _l1_model, _l1_tokenizer, _l1_labels
 
 
@@ -115,10 +120,11 @@ def _load_level2(model_base: str | Path, category: str):
     model = DistilBertForSequenceClassification.from_pretrained(
         str(l2_path), num_labels=len(labels)
     )
+    model.to(_device)
     model.eval()
 
     _l2_models[category] = (model, tokenizer, labels)
-    print(f"📋 Loaded Level 2 model for '{category}': {len(labels)} templates")
+    print(f"📋 Loaded Level 2 model for '{category}': {len(labels)} templates (device: {_device})")
     return _l2_models[category]
 
 
@@ -133,6 +139,8 @@ def _predict(model, tokenizer, labels, text: str) -> dict:
         truncation=True,
         padding=True,
     )
+    # Move inputs to same device as model
+    inputs = {k: v.to(_device) for k, v in inputs.items()}
 
     with torch.no_grad():
         outputs = model(**inputs)

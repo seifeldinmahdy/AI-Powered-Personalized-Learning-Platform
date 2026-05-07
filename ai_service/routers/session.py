@@ -87,11 +87,17 @@ class UpdateLiveSessionRequest(BaseModel):
 
 @router.patch("/{session_id}")
 async def update_session_state(session_id: str, request: UpdateLiveSessionRequest):
-    """Update fields in the live session state."""
+    """Update fields in the live session state. Auto-creates if not found."""
     store = get_session_store()
     data = store.get_session(session_id)
+
+    # Auto-create if not found — the frontend may send PATCH before tutor /start
     if data is None:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        from schemas.student_context import StudentProfileState
+        profile = StudentProfileState()
+        store.create_session(session_id, profile=profile)
+        data = store.get_session(session_id)
+        logger.info("Auto-created session %s via PATCH endpoint", session_id)
 
     live_kwargs = {}
     if request.current_slide_index is not None:
