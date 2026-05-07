@@ -39,18 +39,33 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "https://ollama.com")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
 
-# ── System prompts ──
-LECTURE_SYSTEM_PROMPT = """\
+# ── TTS/Speech-output awareness (injected into every prompt) ──
+_TTS_AWARENESS = (
+    "OUTPUT MODALITY: Your text will be converted to speech via a Text-to-Speech engine "
+    "and spoken aloud by an avatar. Therefore: "
+    "never use markdown, bullet points, numbered lists, headers, asterisks, or any visual formatting. "
+    "Write in natural spoken sentences. Avoid parenthetical asides. "
+    "Do not include stage directions like '[pause]' or '(laughs)'. "
+    "Spell out abbreviations the first time (for example say 'Application Programming Interface' not 'API'). "
+    "Keep sentences short so the TTS sounds natural."
+)
+
+# ── System prompts (finetuned for pedagogical benchmarks) ──
+
+LECTURE_SYSTEM_PROMPT = f"""\
 You are Dr. Nova, an expert AI tutor giving a private one-on-one lecture.
+
+{_TTS_AWARENESS}
+
+TURN LENGTH: Keep each turn to roughly 50 to 80 words. Aim for about 30 seconds of speech, not 90.
 
 RULES:
 - Speak naturally as if talking to a student face-to-face.
-- Explain the CURRENT TOPIC clearly in 2-3 short paragraphs.
-- Use simple analogies and real-world examples.
-- Do NOT use markdown formatting, bullet points, or headers — your output will be spoken aloud via TTS.
+- Explain ONE key idea per turn using a simple analogy or real-world example.
 - Do NOT greet or introduce yourself unless this is the very first chunk of the session.
-- End with a brief transition sentence leading into the next subtopic if there is one.
-- Be concise but thorough. Aim for about 60-90 seconds of speech.
+- End every turn with exactly ONE short, open-ended question to check understanding or spark curiosity. Never ask more than one question.
+- Do NOT give away the full answer to your own question. Let the student think.
+- If there is a next subtopic, weave a brief transition into your question.
 """
 
 SUMMARIZE_SYSTEM_PROMPT = """\
@@ -59,27 +74,89 @@ produce a concise merged summary that captures ALL key points covered so far.
 Keep it under 300 words. Do not add opinions or new information.
 """
 
-ANSWER_SYSTEM_PROMPT = """\
+ANSWER_SYSTEM_PROMPT = f"""\
 You are Dr. Nova, an expert AI tutor. A student has asked a question during your lecture.
 
+{_TTS_AWARENESS}
+
+TURN LENGTH: Keep your response to roughly 50 to 80 words.
+
 RULES:
-- Answer the question clearly and concisely (1-2 paragraphs).
-- Use the provided context (what you've covered so far and the current topic) to give a relevant answer.
-- Do NOT use markdown formatting — your output will be spoken aloud via TTS.
-- After answering, add a brief sentence to transition back to the lecture.
+- Do NOT give the answer directly. Instead, guide the student toward it with a hint, a simpler sub-question, or a relatable analogy.
+- If the student is clearly stuck after multiple attempts, give a partial answer and ask them to complete the rest.
+- End with exactly ONE follow-up question that helps the student think deeper. Never list multiple questions.
+- Transition back to the lecture naturally after the question.
 """
 
-REPHRASE_SYSTEM_PROMPT = """\
+REPHRASE_SYSTEM_PROMPT = f"""\
 You are Dr. Nova, an expert AI tutor. A student has just asked you to explain the same topic in
 a different, simpler way.
 
+{_TTS_AWARENESS}
+
+TURN LENGTH: Keep your response to roughly 50 to 80 words.
+
 RULES:
 - Re-explain the SAME subtopic using different analogies, simpler vocabulary, or a fresh angle.
-- Keep it to 2-3 short paragraphs — roughly the same length as the original explanation.
-- Do NOT use markdown formatting, bullet points, or headers — your output will be spoken aloud via TTS.
 - Do NOT say "as I mentioned before" or "let me repeat" — just dive straight into the new explanation.
-- End with a brief reassurance that this is the same concept, just approached differently.
+- End with ONE open-ended question to verify the new explanation landed.
 """
+
+
+# ── Modular Skills System (Anthropic-inspired composable prompt fragments) ──
+# Each skill is a standalone prompt paragraph activated by runtime session state.
+# Skills are appended to the system prompt dynamically, keeping prompts lean.
+
+TUTOR_SKILLS = {
+    # Activated on the very first chunk of a session
+    "BACKGROUND_PROBE": (
+        "SKILL — BACKGROUND PROBE: This is your first interaction with this student. "
+        "Before diving into the material, briefly ask what they already know about the topic "
+        "and what they hope to get out of this session. Keep it to one warm sentence plus one question."
+    ),
+
+    # Activated when the student's fused emotion is 'confused' or similar
+    "CONFUSION_DIAGNOSIS": (
+        "SKILL — CONFUSION DIAGNOSIS: The student appears confused. "
+        "Do NOT re-explain the entire concept again. Instead, ask exactly one specific question "
+        "to pinpoint what part is unclear, for example: 'Which part lost you — the analogy or the definition itself?' "
+        "Wait for their answer before re-explaining."
+    ),
+
+    # Activated periodically (every N chunks) to trigger teach-back
+    "TEACH_BACK": (
+        "SKILL — TEACH-BACK CHECK: You have just finished explaining a concept. "
+        "Before moving on, ask the student to explain what they just learned back to you in their own words. "
+        "Frame it warmly, for example: 'Can you walk me through that concept as if you were explaining it to a friend?' "
+        "Do NOT proceed to new material until you hear their explanation."
+    ),
+
+    # Activated when a student profile with engagement patterns exists
+    "ENGAGEMENT_ADAPT": (
+        "SKILL — ENGAGEMENT PERSONALIZATION: A learner profile is available for this student. "
+        "Use the engagement patterns, learning style signals, and recommended approaches from the profile "
+        "to adapt your teaching style. If the profile notes the student disengages during long theory, "
+        "lead with examples. If the student learns best through analogies, prioritize analogies. "
+        "Do not mention the profile to the student."
+    ),
+
+    # Always active during Q&A to enforce Socratic method
+    "SOCRATIC_GUARD": (
+        "SKILL — SOCRATIC GUARD: You must NEVER give the student the direct answer. "
+        "Your job is to ask guiding questions, provide hints, and help the student arrive at the answer themselves. "
+        "If they ask 'what is X?', respond with something like 'What do you think X might mean based on what we discussed?' "
+        "Only after two failed attempts should you provide a partial answer."
+    ),
+}
+
+
+def _build_system_prompt(base_prompt: str, active_skills: list[str]) -> str:
+    """Compose the final system prompt by appending active skill fragments."""
+    parts = [base_prompt.strip()]
+    for skill_key in active_skills:
+        if skill_key in TUTOR_SKILLS:
+            parts.append(TUTOR_SKILLS[skill_key])
+    return "\n\n".join(parts)
 
 
 # ── Session dataclass ──
@@ -105,6 +182,14 @@ class TutorSession:
     # always knows what the last spoken content was.
     last_chunk_text: Optional[str] = None
     last_chunk_subtopic: Optional[str] = None
+
+    # ── Teach-back loop counter ──────────────────────────────────────
+    # Incremented each chunk; triggers TEACH_BACK skill every N chunks.
+    teach_back_counter: int = 0
+    teach_back_interval: int = 3  # ask for teach-back every 3 chunks
+
+    # ── Engagement personalization data from profiler ─────────────────
+    student_profile_data: Optional[dict] = None
 
     @property
     def current_topic(self) -> Optional[str]:
@@ -167,7 +252,7 @@ async def _call_ollama(system_prompt: str, user_prompt: str) -> str:
         "stream": False,
         "options": {
             "temperature": 0.7,
-            "num_predict": 1024,
+            "num_predict": 256,
         },
     }
 
@@ -247,6 +332,7 @@ def create_session(
     voice: str = "en-US-GuyNeural",
     session_id: Optional[str] = None,
     student_profile_summary: Optional[str] = None,
+    student_profile_data: Optional[dict] = None,
 ) -> TutorSession:
     """Create a new tutoring session."""
     sid = session_id or str(uuid.uuid4())
@@ -270,6 +356,7 @@ def create_session(
         voice=voice,
         status="idle",
         student_profile_summary=student_profile_summary,
+        student_profile_data=student_profile_data,
     )
     _sessions[sid] = session
     logger.info(f"Session {sid} created with {len(topics)} topics")
@@ -323,6 +410,29 @@ async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str]
 
     session.status = "lecturing"
 
+    # ── Determine which skills to activate ──
+    active_skills: list[str] = []
+
+    if session.is_first_chunk:
+        active_skills.append("BACKGROUND_PROBE")
+
+    # Confusion diagnosis: if the student looks confused, ask what's unclear
+    if student_emotion and student_emotion.lower() in ("confused", "surprise", "fear"):
+        active_skills.append("CONFUSION_DIAGNOSIS")
+
+    # Teach-back: every N chunks, ask the student to explain back
+    session.teach_back_counter += 1
+    if session.teach_back_counter >= session.teach_back_interval:
+        active_skills.append("TEACH_BACK")
+        session.teach_back_counter = 0  # reset
+
+    # Engagement personalization: if profiler data is available
+    if session.student_profile_data or session.student_profile_summary:
+        active_skills.append("ENGAGEMENT_ADAPT")
+
+    # Build the composed system prompt
+    system_prompt = _build_system_prompt(LECTURE_SYSTEM_PROMPT, active_skills)
+
     # Build the lecture prompt
     topic_name = session.current_topic or "General Review"
     subtopic_name = session.current_subtopic
@@ -343,11 +453,24 @@ async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str]
         # Inject student profile for personalization from the first chunk
         if session.student_profile_summary:
             context_parts.append(
-                f"Before this session begins, here is what is known about this student as a learner:\n"
-                f"{session.student_profile_summary}\n\n"
-                f"Use this to personalize your teaching style from the very first explanation. "
-                f"This is background context — do not mention it explicitly to the student or refer to it directly."
+                f"STUDENT LEARNER PROFILE (use to personalize, do NOT mention to student):\n"
+                f"{session.student_profile_summary}"
             )
+
+        # Inject detailed engagement patterns from profiler if available
+        if session.student_profile_data:
+            import json as _json
+            engagement = session.student_profile_data.get("engagement_patterns", {})
+            approaches = session.student_profile_data.get("recommended_approaches", [])
+            if engagement or approaches:
+                profile_context = "ENGAGEMENT PATTERNS FROM PROFILER:\n"
+                if engagement.get("high"):
+                    profile_context += f"Student engages most when: {', '.join(engagement['high'])}\n"
+                if engagement.get("low"):
+                    profile_context += f"Student disengages when: {', '.join(engagement['low'])}\n"
+                if approaches:
+                    profile_context += f"Recommended approaches: {', '.join(approaches)}\n"
+                context_parts.append(profile_context)
 
         session.is_first_chunk = False
 
@@ -358,21 +481,24 @@ async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str]
     else:
         context_parts.append("This is the LAST subtopic. Wrap up with a brief conclusion.")
 
-    # Inject student emotion for tone adaptation (Feature 5)
+    # Inject student emotion for tone adaptation
     if student_emotion:
         context_parts.append(
             f"Current student emotional state: {student_emotion}. "
-            "Adjust your tone and delivery accordingly — if bored, be more energetic or add a relatable example; "
-            "if confused, slow down and simplify; if anxious, be more reassuring; if engaged/happy, maintain current energy. "
-            "Do NOT change the subtopic content or skip any planned material. "
-            "Only adapt tone, pacing, word choice, and whether to add a brief check-in question."
+            "Adjust your tone accordingly — if bored, be more energetic; "
+            "if confused, slow down and simplify; if anxious, be reassuring; if engaged, maintain energy. "
+            "Do NOT skip planned material. Only adapt tone and pacing."
         )
+
+    # Log active skills for debugging
+    if active_skills:
+        logger.info(f"Active skills for this chunk: {active_skills}")
 
     user_prompt = "\n\n".join(context_parts)
 
-    # Call Ollama
+    # Call Ollama with reduced token budget for shorter turns
     start = time.time()
-    lecture_text = await _call_ollama(LECTURE_SYSTEM_PROMPT, user_prompt)
+    lecture_text = await _call_ollama(system_prompt, user_prompt)
     elapsed = round(time.time() - start, 2)
 
     logger.info(f"Lecture chunk generated in {elapsed}s for [{topic_name} > {subtopic_name}]")
@@ -411,6 +537,7 @@ async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str]
         "is_finished": is_finished,
         "status": session.status,
         "inference_time": elapsed,
+        "active_skills": active_skills,
     }
 
 
@@ -426,6 +553,13 @@ async def answer_question(session_id: str, question: str, student_emotion: Optio
 
     prev_status = session.status
     session.status = "answering"
+
+    # ── Determine active skills for Q&A ──
+    qa_skills: list[str] = ["SOCRATIC_GUARD"]  # always active during Q&A
+    if student_emotion and student_emotion.lower() in ("confused", "surprise", "fear"):
+        qa_skills.append("CONFUSION_DIAGNOSIS")
+
+    system_prompt = _build_system_prompt(ANSWER_SYSTEM_PROMPT, qa_skills)
 
     context_parts = []
     if session.running_summary:
@@ -455,7 +589,7 @@ async def answer_question(session_id: str, question: str, student_emotion: Optio
     user_prompt = "\n\n".join(context_parts)
 
     start = time.time()
-    answer_text = await _call_ollama(ANSWER_SYSTEM_PROMPT, user_prompt)
+    answer_text = await _call_ollama(system_prompt, user_prompt)
     elapsed = round(time.time() - start, 2)
 
     # Add to transcript

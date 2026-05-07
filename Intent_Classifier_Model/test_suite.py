@@ -233,9 +233,9 @@ class TestDatasetGenerator(unittest.TestCase):
         cls.tmp_dir = tempfile.mkdtemp()
         os.chdir(cls.tmp_dir)
         build_dataset(num_samples_per_class=20)
-        cls.train_df = pd.read_csv('data/train.csv')
-        cls.val_df = pd.read_csv('data/val.csv')
-        cls.test_df = pd.read_csv('data/test.csv')
+        cls.train_df = pd.read_csv('data/train.csv').fillna({'session_context': ''})
+        cls.val_df = pd.read_csv('data/val.csv').fillna({'session_context': ''})
+        cls.test_df = pd.read_csv('data/test.csv').fillna({'session_context': ''})
 
     @classmethod
     def tearDownClass(cls):
@@ -255,7 +255,10 @@ class TestDatasetGenerator(unittest.TestCase):
         self.assertEqual(all_labels, {0, 1, 2, 3, 4})
 
     def test_compact_context_format(self):
-        ctx = self.train_df.iloc[0]['session_context']
+        # Find a row where context was not dropped out
+        non_empty_ctxs = self.train_df[self.train_df['session_context'] != '']['session_context']
+        self.assertGreater(len(non_empty_ctxs), 0, "All contexts were dropped out!")
+        ctx = non_empty_ctxs.iloc[0]
         self.assertIn('topic:', ctx)
         self.assertIn('prev:', ctx)
         self.assertIn('emotion:', ctx)

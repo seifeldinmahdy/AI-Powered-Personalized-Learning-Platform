@@ -40,6 +40,7 @@ class StartSessionRequest(BaseModel):
     session_id: Optional[str] = Field(default=None, description="Optional custom session ID")
     voice: str = Field(default="en-US-GuyNeural", description="TTS voice name")
     student_profile_summary: Optional[str] = Field(default=None, description="Student's learning profile summary for personalization")
+    student_profile_data: Optional[dict] = Field(default=None, description="Profiler engagement patterns and recommended approaches for personalization")
 
 
 class ContinueRequest(BaseModel):
@@ -77,6 +78,7 @@ async def start_session(request: StartSessionRequest):
             voice=request.voice,
             session_id=request.session_id,
             student_profile_summary=request.student_profile_summary,
+            student_profile_data=request.student_profile_data,
         )
         return {
             "success": True,
