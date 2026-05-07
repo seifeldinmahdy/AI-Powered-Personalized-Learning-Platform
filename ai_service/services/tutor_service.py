@@ -252,7 +252,7 @@ async def _call_ollama(system_prompt: str, user_prompt: str) -> str:
         "stream": False,
         "options": {
             "temperature": 0.7,
-            "num_predict": 256,
+            "num_predict": 512,
         },
     }
 
