@@ -71,7 +71,7 @@ export default function Leaderboard() {
       )}
 
       {!loading && data && (
-        <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
+        <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden max-h-[70vh] overflow-y-auto">
           {data.top20.map((entry) => {
             const isMe = entry.username === data.current_user.username;
             const special = rankStyle[entry.rank];

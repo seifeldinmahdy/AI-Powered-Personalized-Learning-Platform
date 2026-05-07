@@ -270,18 +270,36 @@ async def _call_ollama(system_prompt: str, user_prompt: str) -> str:
 # ── Relevance check ──
 
 async def check_relevance(question: str, lesson_title: str) -> bool:
-    """Return True if the question is relevant to the lesson or educational in general."""
+    """Return True if the question is relevant to the lesson or educational in general.
+
+    This is deliberately permissive — we only reject clearly non-educational
+    queries (celebrity gossip, sports scores, etc.). Student responses to
+    tutor-initiated questions (background probes, teach-back explanations,
+    emotional check-ins) must always pass.
+    """
+    # Short responses (< 12 words) are almost always answers to tutor questions
+    # (teach-back, background probe, clarification). Always allow them.
+    if len(question.split()) < 12:
+        return True
+
     system = (
         "You are a relevance classifier for an AI tutoring platform. "
-        "Your only job is to decide if a student's question is relevant to the lesson topic or is a legitimate educational/technical question. "
+        "Your only job is to decide if a student's message is acceptable in a tutoring context. "
+        "The student may be: answering a question the tutor asked, explaining a concept back, "
+        "sharing their background knowledge, expressing emotions, or asking a question. "
+        "All of these are acceptable. "
         "Reply with exactly one word: YES or NO. Nothing else."
     )
     user = (
         f"Lesson topic: {lesson_title}\n"
-        f"Student question: {question}\n\n"
-        "Is this question relevant to the lesson topic or a legitimate educational/technical question? "
-        "Answer YES if it is related to programming, computer science, math, science, or the lesson topic. "
-        "Answer NO only if it is completely unrelated to education (e.g. sports results, celebrity gossip, entertainment, politics). "
+        f"Student message: {question}\n\n"
+        "Is this message acceptable in a tutoring session? "
+        "Answer YES if it is ANY of: a question about the lesson, a response to the tutor's question, "
+        "an explanation of a concept, sharing background knowledge, expressing confusion or emotions, "
+        "or anything related to education, learning, programming, science, or math. "
+        "Answer NO ONLY if it is completely unrelated to education AND is clearly not a response "
+        "to something the tutor asked (e.g. sports results, celebrity gossip, ordering food). "
+        "When in doubt, answer YES. "
         "Reply with exactly one word: YES or NO."
     )
     try:
@@ -447,6 +465,21 @@ async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str]
     else:
         context_parts.append(f"Explain this topic as a whole.")
 
+    # ── Inject current slide content from SharedSessionStore ──
+    # This grounds the tutor in the actual slide material, not just topic names.
+    try:
+        from services.session_store import get_session_store
+        store = get_session_store()
+        ctx = store.get_session(session.session_id)
+        if ctx and ctx.live.current_slide_content:
+            slide_info = f"CURRENT SLIDE CONTENT (base your explanation on this material):\n"
+            if ctx.live.current_slide_title:
+                slide_info += f"Slide title: {ctx.live.current_slide_title}\n"
+            slide_info += ctx.live.current_slide_content
+            context_parts.append(slide_info)
+    except Exception as exc:
+        logger.debug("Could not inject slide content: %s", exc)
+
     if session.is_first_chunk:
         context_parts.append("This is the BEGINNING of the session. Start with a brief warm greeting.")
 
@@ -567,6 +600,20 @@ async def answer_question(session_id: str, question: str, student_emotion: Optio
     context_parts.append(f"CURRENT TOPIC: {session.current_topic or 'N/A'}")
     if session.current_subtopic:
         context_parts.append(f"CURRENT SUBTOPIC: {session.current_subtopic}")
+
+    # Inject current slide content so answers are grounded in slide material
+    try:
+        from services.session_store import get_session_store
+        store = get_session_store()
+        ctx = store.get_session(session.session_id)
+        if ctx and ctx.live.current_slide_content:
+            slide_info = f"CURRENT SLIDE CONTENT (use this to inform your answer):\n"
+            if ctx.live.current_slide_title:
+                slide_info += f"Slide title: {ctx.live.current_slide_title}\n"
+            slide_info += ctx.live.current_slide_content
+            context_parts.append(slide_info)
+    except Exception:
+        pass
 
     # Inject emotion-aware tone adaptation
     if student_emotion and student_emotion.lower() not in ("neutral", "unknown"):

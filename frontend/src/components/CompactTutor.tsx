@@ -13,7 +13,6 @@ import {
   synthesizeAudio,
   setTutorPace,
   persistChatLog,
-  getChatHistory,
   type SERResult,
 } from '../services/tutor';
 
@@ -98,6 +97,7 @@ export function CompactTutor({
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<{ stop: () => void } | null>(null);
   const visitedSlidesRef = useRef<Set<number>>(new Set([0]));
+  const currentSlideRef = useRef(0);  // tracks latest slide for staleness checks
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -148,6 +148,7 @@ export function CompactTutor({
 
   // Handle auto-explain on new slide visit
   useEffect(() => {
+    currentSlideRef.current = currentSlideIndex;  // always track latest slide
     if (!sessionIdRef.current || !currentSlideContent) return;
 
     if (!visitedSlidesRef.current.has(currentSlideIndex)) {
@@ -160,24 +161,11 @@ export function CompactTutor({
       setIsSpeaking(false);
 
       // Trigger auto-explanation for the new slide
-      handleAskQuestion(`Please explain this slide. Title: ${currentSlideTitle}\nContent: ${currentSlideContent}`, fusedEmotion, true);
+      handleAskQuestion(`Please explain this slide. Title: ${currentSlideTitle}\nContent: ${currentSlideContent}`, fusedEmotion, true, currentSlideIndex);
     }
   }, [currentSlideIndex, currentSlideContent, currentSlideTitle]);
 
-  // Load chat history on mount
-  useEffect(() => {
-    if (!lessonId) return;
-    getChatHistory(lessonId).then((history) => {
-      if (history.length === 0) return;
-      const historical: TranscriptEntry[] = [];
-      historical.push({ role: 'tutor', text: '— Previous Questions —', topic: 'history' });
-      history.forEach((entry) => {
-        historical.push({ role: 'student', text: entry.transcript_text });
-        historical.push({ role: 'tutor', text: entry.ai_response_text, topic: 'Answer' });
-      });
-      setTranscript(historical);
-    });
-  }, [lessonId]); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   // Cleanup on unmount
   useEffect(() => {
@@ -312,9 +300,15 @@ export function CompactTutor({
     audioRef.current.muted = next;
   };
 
-  const handleAskQuestion = async (overrideQuestion?: string, overrideEmotion?: string, isAutoTrigger = false) => {
+  const handleAskQuestion = async (overrideQuestion?: string, overrideEmotion?: string, isAutoTrigger = false, triggeredForSlide?: number) => {
     const q = (overrideQuestion ?? question).trim();
     if (!sessionIdRef.current || !q || isAsking) return;
+
+    // If this is a stale auto-trigger (student already moved past this slide), discard silently
+    if (isAutoTrigger && triggeredForSlide !== undefined && triggeredForSlide !== currentSlideRef.current) {
+      return;
+    }
+
     setQuestion('');
 
     // If lecture audio is currently playing, pause it
@@ -504,6 +498,14 @@ export function CompactTutor({
 
       const augmentedQuestion = ragContext ? `${q}${ragContext}` : q;
       const res = await askTutor(sessionIdRef.current, augmentedQuestion, !isMutedRef.current, currentEmotion !== 'neutral' ? currentEmotion : undefined);
+
+      // Staleness guard: if this was an auto-explain and the student moved
+      // to a different slide while we were waiting, discard the response.
+      if (isAutoTrigger && triggeredForSlide !== undefined && triggeredForSlide !== currentSlideRef.current) {
+        setIsAsking(false);
+        return;
+      }
+
       setTranscript((prev) => [...prev, {
         role: 'tutor',
         text: res.answer,
@@ -513,7 +515,6 @@ export function CompactTutor({
 
       if (lessonId) persistChatLog(lessonId, q, res.answer);
       logInteraction(res.answer);
-      setTutorEmotion('happy');
       setTutorEmotion('happy');
 
       setCurrentBlendshapes(res.blendshapes || null);
@@ -835,29 +836,22 @@ export function CompactTutor({
           </div>
         )}
         {transcript.map((entry, i) => (
-          entry.topic === 'history' ? (
-            <div key={i} className="flex items-center gap-2 py-1">
-              <div className="flex-1 h-px bg-border" />
-              <span className="text-xs text-muted-foreground font-medium px-1">{entry.text}</span>
-              <div className="flex-1 h-px bg-border" />
-            </div>
-          ) : (
             <div
               key={i}
-              className={`rounded-lg p-4 ${entry.role === 'tutor'
+              className={`rounded-lg p-3 ${entry.role === 'tutor'
                 ? 'bg-primary/5 border-l-2 border-primary'
                 : 'bg-secondary/10 border-l-2 border-secondary ml-4'
                 }`}
             >
               {entry.role === 'student' && (
-                <span className="text-sm font-semibold text-secondary block mb-1">You</span>
+                <span className="text-xs font-semibold text-secondary block mb-0.5">You</span>
               )}
               {entry.topic && entry.role === 'tutor' && (
-                <span className="text-sm font-semibold text-muted-foreground block mb-1">{entry.topic}</span>
+                <span className="text-xs font-semibold text-muted-foreground block mb-0.5">{entry.topic}</span>
               )}
               <p className="text-sm text-foreground/80 leading-relaxed break-words whitespace-pre-wrap">{entry.text}</p>
               {entry.sources && entry.sources.length > 0 && (
-                <div className="mt-2 space-y-0.5">
+                <div className="mt-1.5 space-y-0.5">
                   {entry.sources.map((s, si) => (
                     <span key={si} className="inline-block text-xs bg-secondary/10 text-secondary rounded px-2 py-0.5 mr-1">
                       📖 {s.book} p.{s.page_start}–{s.page_end}
@@ -866,7 +860,6 @@ export function CompactTutor({
                 </div>
               )}
             </div>
-          )
         ))}
         <div ref={transcriptEndRef} />
       </div>
