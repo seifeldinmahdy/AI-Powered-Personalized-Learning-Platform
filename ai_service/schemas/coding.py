@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Literal
+from typing import Literal, Optional
 
 
 class TopicRequest(BaseModel):
@@ -57,3 +57,84 @@ class HintRequest(BaseModel):
 class HintResponse(BaseModel):
     hint: str
     level: int
+
+
+class LabSlideContext(BaseModel):
+    title: str = ""
+    content: str = ""
+    code: str = ""
+
+
+class CodingLabGenerateRequest(BaseModel):
+    student_id: str = ""
+    course_id: str
+    lesson_id: str
+    lesson_title: str
+    session_id: Optional[str] = None
+    student_profile_summary: str = ""
+    slides: list[LabSlideContext] = Field(default_factory=list)
+    force_regenerate: bool = False
+
+
+class LabChecklistItem(BaseModel):
+    id: str
+    item: str
+    reason: str = ""
+
+
+class LabCell(BaseModel):
+    id: str
+    cell_type: Literal["explanation", "code", "task"] = "explanation"
+    title: str
+    narrative: str = ""
+    code: str = ""
+    expected_output: str = ""
+    task_prompt: str = ""
+    starter_code: str = ""
+    success_criteria: list[str] = Field(default_factory=list)
+    tutor_script: str = ""
+    tips: list[str] = Field(default_factory=list)
+
+
+class CodingLab(BaseModel):
+    title: str
+    intro: str
+    estimated_minutes: int = 15
+    tutor_opening: str = ""
+    cells: list[LabCell]
+    completion_message: str = "Lab complete. You are ready for the coding question."
+
+
+class CodingLabGenerateResponse(BaseModel):
+    lab_id: str
+    cached: bool = False
+    generated_at: str
+    checklist: list[LabChecklistItem]
+    lab: CodingLab
+
+
+class CodingLabExplainRequest(BaseModel):
+    session_id: Optional[str] = None
+    lab_title: str = ""
+    cell: LabCell
+    mode: Literal["explain", "tip"] = "explain"
+    student_profile_summary: str = ""
+
+
+class CodingLabExplainResponse(BaseModel):
+    success: bool = True
+    text: str
+    audio_base64: Optional[str] = None
+    blendshapes: Optional[dict] = None
+
+
+class CodingLabRunRequest(BaseModel):
+    code: str
+    timeout_seconds: int = Field(default=5, ge=1, le=10)
+
+
+class CodingLabRunResponse(BaseModel):
+    success: bool
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int = 0

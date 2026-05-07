@@ -1,0 +1,133 @@
+{
+  "lab_id": "16_7_49",
+  "cached": false,
+  "generated_at": "2026-05-07T16:37:59.312272Z",
+  "checklist": [
+    {
+      "id": "C1",
+      "item": "Include a visual diagram explaining variables and types with step-by-step annotations",
+      "reason": "Student profile indicates preference for concrete explanations and visual supports to avoid disengagement from abstract concepts"
+    },
+    {
+      "id": "C2",
+      "item": "Provide syntax practice exercises with variable declaration examples (int, float, string) and operator usage (e.g., modulus %)",
+      "reason": "Session data shows focus on variables, operators, and statements; aligns with 'Understanding Variables, Operators, and Statements' slide content"
+    },
+    {
+      "id": "C3",
+      "item": "Implement a task where students create a simple program using variables to solve a relatable real-world scenario (e.g., calculating expenses)",
+      "reason": "Student profile emphasizes hands-on activities; matches 'Programming Basics' and 'Why Learning Programming Matters' session topics"
+    },
+    {
+      "id": "C4",
+      "item": "Offer personalized scenario choices for implementation tasks (e.g., gaming stats tracker vs. recipe ingredient calculator)",
+      "reason": "Student profile shows need for personalization to maintain engagement and connect to individual interests"
+    },
+    {
+      "id": "C5",
+      "item": "Include a tutor tip to demonstrate each coding step with live annotations while solving sample problems",
+      "reason": "Student profile recommends step-by-step demonstrations to reinforce learning and maintain focus"
+    },
+    {
+      "id": "C6",
+      "item": "Add a debugging exercise with common variable type errors (e.g., integer vs string concatenation issues)",
+      "reason": "Session transcript emphasizes foundations as 'building blocks'; helps solidify understanding of type systems"
+    },
+    {
+      "id": "C7",
+      "item": "Provide a visual memory map comparing CPU/main memory/secondary memory roles during variable storage",
+      "reason": "Slide content covers computer architecture; aligns with 'Computer Hardware Architecture' and 'Core Computer Components' materials"
+    },
+    {
+      "id": "C8",
+      "item": "Include a 'Check Your Understanding' section with multiple-choice questions about variable scope and data types",
+      "reason": "Session data includes exercises on secondary memory and program concepts; ensures foundational knowledge retention"
+    }
+  ],
+  "lab": {
+    "title": "Variables & Types",
+    "intro": "In this lab, we will explore the basics of variables and types in Python. You will learn how to declare variables, use different data types, and practice with various operators.",
+    "estimated_minutes": 20,
+    "tutor_opening": "Hello, let's get started with variables and types in Python. This lab is designed to help you understand the basics of variables, data types, and operators. You will have hands-on practice with various examples and tasks.",
+    "cells": [
+      {
+        "id": "cell-1",
+        "cell_type": "explanation",
+        "title": "Introduction to Variables",
+        "narrative": "A variable is a named box that holds a value. You can think of it as a labeled box where you can store a value. In Python, you can declare a variable using the assignment operator (=). For example: x = 5",
+        "code": "x = 5\nprint(x)",
+        "expected_output": "5",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Let's start with the basics. A variable is a named box that holds a value. You can declare a variable using the assignment operator (=). Try running this code to see how it works.",
+        "tips": []
+      },
+      {
+        "id": "cell-2",
+        "cell_type": "code",
+        "title": "Data Types",
+        "narrative": "Python has several built-in data types, including integers, floats, and strings. You can use the type() function to check the data type of a variable.",
+        "code": "x = 5\ny = 3.14\nz = 'hello'\nprint(type(x))\nprint(type(y))\nprint(type(z))",
+        "expected_output": "<class 'int'>\n<class 'float'>\n<class 'str'>",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Now, let's explore the different data types in Python. You can use the type() function to check the data type of a variable. Try running this code to see how it works.",
+        "tips": []
+      },
+      {
+        "id": "cell-3",
+        "cell_type": "task",
+        "title": "Variable Declaration",
+        "narrative": "Declare three variables: x, y, and z. Assign x an integer value, y a float value, and z a string value.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "Declare three variables: x, y, and z. Assign x an integer value, y a float value, and z a string value.",
+        "starter_code": "x = \ny = \nz = ",
+        "success_criteria": [
+          "x is an integer",
+          "y is a float",
+          "z is a string"
+        ],
+        "tutor_script": "Now it's your turn to practice. Declare three variables: x, y, and z. Assign x an integer value, y a float value, and z a string value. Use the type() function to check the data type of each variable.",
+        "tips": [
+          "Use the assignment operator (=) to assign a value to a variable.",
+          "Use the type() function to check the data type of a variable."
+        ]
+      },
+      {
+        "id": "cell-4",
+        "cell_type": "task",
+        "title": "Operator Practice",
+        "narrative": "Use the modulus operator (%) to find the remainder of 17 divided by 5.",
+        "code": "",
+        "expected_output": "2",
+        "task_prompt": "Use the modulus operator (%) to find the remainder of 17 divided by 5.",
+        "starter_code": "result = 17 % 5",
+        "success_criteria": [
+          "result is equal to 2"
+        ],
+        "tutor_script": "Now, let's practice using the modulus operator (%). Use the modulus operator (%) to find the remainder of 17 divided by 5.",
+        "tips": [
+          "The modulus operator (%) returns the remainder of the division.",
+          "Use the print() function to print the result."
+        ]
+      },
+      {
+        "id": "cell-5",
+        "cell_type": "explanation",
+        "title": "Conclusion",
+        "narrative": "In this lab, you learned about variables and data types in Python. You practiced declaring variables, using different data types, and working with operators.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Congratulations! You have completed the lab. You now have a good understanding of variables and data types in Python. Keep practicing and you will become proficient in no time.",
+        "tips": []
+      }
+    ],
+    "completion_message": "Congratulations! You have completed the Variables & Types lab. You now have a good understanding of variables and data types in Python. Keep practicing and you will become proficient in no time."
+  }
+}

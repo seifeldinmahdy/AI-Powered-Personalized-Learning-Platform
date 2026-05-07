@@ -50,6 +50,7 @@ export async function startTutorSession(
   subtopics: string[] = [],
   voice = 'en-US-GuyNeural',
   student_profile_summary?: string,
+  session_id?: string,
 ): Promise<TutorSession> {
   const body: Record<string, unknown> = {
     topics: [{ name: lessonTitle, subtopics }],
@@ -57,6 +58,9 @@ export async function startTutorSession(
   };
   if (student_profile_summary) {
     body.student_profile_summary = student_profile_summary;
+  }
+  if (session_id) {
+    body.session_id = session_id;
   }
   const res = await fetch(`${AI_URL}/tutor/start`, {
     method: 'POST',

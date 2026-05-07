@@ -1,0 +1,156 @@
+{
+  "lab_id": "16_7_51",
+  "cached": false,
+  "generated_at": "2026-05-07T17:47:33.026261Z",
+  "checklist": [
+    {
+      "id": "C1",
+      "item": "Include a concept recap with visual diagrams of error types (syntax, runtime, semantic) and try-catch flow.",
+      "reason": "Student thrives with visual supports and concrete examples to reinforce abstract concepts."
+    },
+    {
+      "id": "C2",
+      "item": "Provide syntax practice exercises for try-except blocks with step-by-step code completion prompts.",
+      "reason": "Hands-on syntax practice aligns with the student's preference for active learning over theory-heavy explanations."
+    },
+    {
+      "id": "C3",
+      "item": "Implement a temperature conversion task using try-except to handle invalid user input.",
+      "reason": "Applies error handling to a real-world scenario mentioned in the session transcript (e.g., fahren.py example)."
+    },
+    {
+      "id": "C4",
+      "item": "Add a file-reading task with error handling for missing files, using the FileNotFoundError example from slides.",
+      "reason": "Reinforces practical error handling patterns demonstrated in the 'Missing Files' slide content."
+    },
+    {
+      "id": "C5",
+      "item": "Incorporate a semantic error debugging challenge where students fix a logically incorrect but syntactically valid program.",
+      "reason": "Addresses the 'Debugging Semantic Errors' slide content and builds systematic problem-solving skills."
+    },
+    {
+      "id": "C6",
+      "item": "Offer personalization options: let students choose between debugging a recipe calculator or a file counter.",
+      "reason": "Engages the student with scenario-based choices that match their hands-on learning style."
+    },
+    {
+      "id": "C7",
+      "item": "Include a tutor tip to demonstrate each task step-by-step using a live code walkthrough with annotations.",
+      "reason": "Supports the student's need for concrete, visual demonstrations as noted in their profile summary."
+    },
+    {
+      "id": "C8",
+      "item": "Add a tutor tip to provide instant feedback on syntax errors using a linter or code validator tool.",
+      "reason": "Prevents frustration by catching errors early, mirroring the 'safety net' analogy from the session transcript."
+    }
+  ],
+  "lab": {
+    "title": "Error Handling and Debugging in Python",
+    "intro": "In this lab, we will explore error handling and debugging techniques in Python. You will learn how to anticipate and handle potential errors, and how to systematically debug your code.",
+    "estimated_minutes": 45,
+    "tutor_opening": "Welcome to this lab on error handling and debugging in Python! I'll guide you through the process of anticipating and handling potential errors, and show you how to debug your code step by step.",
+    "cells": [
+      {
+        "id": "cell-1",
+        "cell_type": "explanation",
+        "title": "Error Types and Try-Catch Flow",
+        "narrative": "There are three main types of errors in Python: syntax errors, runtime errors, and semantic errors. Syntax errors occur when the code violates Python's grammatical rules, runtime errors occur when the code encounters an error during execution, and semantic errors occur when the code produces the wrong result. We can use try-except blocks to catch and handle exceptions.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Let's start with the basics of error handling. Can you think of a time when you wrote code that didn't work as expected? Maybe you forgot to define a variable or used the wrong data type. That's where try-except blocks come in.",
+        "tips": []
+      },
+      {
+        "id": "cell-2",
+        "cell_type": "code",
+        "title": "Try-Except Blocks",
+        "narrative": "Here's an example of a try-except block in Python:",
+        "code": "try:\n    x = 5 / 0\nexcept ZeroDivisionError:\n    print('Cannot divide by zero!')",
+        "expected_output": "Cannot divide by zero!",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "See how the try block attempts to divide by zero, and the except block catches the ZeroDivisionError and prints a friendly message?",
+        "tips": []
+      },
+      {
+        "id": "cell-3",
+        "cell_type": "task",
+        "title": "Temperature Conversion with Error Handling",
+        "narrative": "Let's apply error handling to a real-world scenario. Write a program that converts Fahrenheit to Celsius, and handles invalid user input.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "Write a program that takes a Fahrenheit temperature as input, converts it to Celsius, and handles invalid input.",
+        "starter_code": "inp = input('Enter Fahrenheit Temperature: ')\ntry:\n    # Your code here\nexcept ValueError:\n    print('Please enter a number!')",
+        "success_criteria": [
+          "The program takes a Fahrenheit temperature as input",
+          "The program converts the temperature to Celsius",
+          "The program handles invalid input"
+        ],
+        "tutor_script": "Now it's your turn! Can you write a program that takes a Fahrenheit temperature as input, converts it to Celsius, and handles invalid input? Remember to use a try-except block to catch any errors.",
+        "tips": [
+          "Use the input() function to get user input",
+          "Use a try-except block to catch any errors",
+          "Use the float() function to convert the input to a number"
+        ]
+      },
+      {
+        "id": "cell-4",
+        "cell_type": "task",
+        "title": "File Reading with Error Handling",
+        "narrative": "Let's practice error handling with file reading. Write a program that reads a file and handles the case where the file is missing.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "Write a program that reads a file and handles the case where the file is missing.",
+        "starter_code": "try:\n    with open('example.txt', 'r') as file:\n        # Your code here\nexcept FileNotFoundError:\n    print('File not found!')",
+        "success_criteria": [
+          "The program attempts to open the file",
+          "The program handles the case where the file is missing"
+        ],
+        "tutor_script": "Now let's try reading a file. Can you write a program that attempts to open a file and handles the case where the file is missing? Remember to use a try-except block to catch any errors.",
+        "tips": [
+          "Use the open() function to open the file",
+          "Use a try-except block to catch any errors",
+          "Use the FileNotFoundError exception to handle the case where the file is missing"
+        ]
+      },
+      {
+        "id": "cell-5",
+        "cell_type": "task",
+        "title": "Semantic Error Debugging",
+        "narrative": "Let's practice debugging a semantic error. Write a program that calculates the sum of all numbers in a list, but has a logical error.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "Write a program that calculates the sum of all numbers in a list, but has a logical error.",
+        "starter_code": "numbers = [1, 2, 3, 4, 5]\nsum = 0\nfor number in numbers:\n    # Your code here\nprint(sum)",
+        "success_criteria": [
+          "The program calculates the sum of all numbers in the list",
+          "The program has a logical error"
+        ],
+        "tutor_script": "Now let's try debugging a semantic error. Can you write a program that calculates the sum of all numbers in a list, but has a logical error? Remember to use print statements or a debugger to inspect the program's state.",
+        "tips": [
+          "Use print statements to inspect the program's state",
+          "Use a debugger to step through the code",
+          "Check the program's logic for any errors"
+        ]
+      },
+      {
+        "id": "cell-6",
+        "cell_type": "explanation",
+        "title": "Conclusion",
+        "narrative": "That's it for this lab! You've learned how to anticipate and handle potential errors, and how to systematically debug your code. Remember to always use try-except blocks to catch any errors, and to use print statements or a debugger to inspect the program's state.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Great job making it through this lab! You now have the skills to handle errors and debug your code like a pro.",
+        "tips": []
+      }
+    ],
+    "completion_message": "Congratulations! You have completed the error handling and debugging lab. You now have the skills to anticipate and handle potential errors, and to systematically debug your code."
+  }
+}

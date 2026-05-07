@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router";
 import Login from "./pages/auth/Login";
 import Dashboard from "./pages/student/Dashboard";
 import LiveSession from "./pages/student/LiveSession";
+import CodingLab from "./pages/student/CodingLab";
 import PracticeArea from "./pages/student/PracticeArea";
 import LessonPractice from "./pages/student/LessonPractice";
 import Leaderboard from "./pages/student/Leaderboard";
@@ -49,6 +50,7 @@ export const router = createBrowserRouter([
             },
             { path: "practice", Component: PracticeArea },
             { path: "practice/:topic", Component: PracticeArea },
+            { path: "course/:courseId/lesson/:lessonId/lab", Component: CodingLab },
             { path: "course/:courseId/lesson/:lessonId/practice", Component: LessonPractice },
             { path: "leaderboard", Component: Leaderboard },
             { path: "profile", Component: Profile },

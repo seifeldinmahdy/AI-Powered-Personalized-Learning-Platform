@@ -571,23 +571,38 @@ export default function LiveSession() {
         }
       }
 
-      // Route to lesson-end practice (skippable), passing next destination in state
-      navigate(`/course/${courseId}/lesson/${lesson.id}/practice`, {
+      const labSlides = slides.length > 0
+        ? slides.map((slide) => ({
+          title: slide.title,
+          content: slide.body_content?.map((item) => item.text).join('\n') || '',
+          code: slide.code_block?.code || '',
+        }))
+        : (lesson.slides || []).map((slide, index) => ({
+          title: String(slide.content_json?.title || `Slide ${index + 1}`),
+          content: JSON.stringify(slide.content_json || {}),
+          code: String((slide.content_json?.code as string | undefined) || ''),
+        }));
+
+      // Route to the lesson-end coding lab before the existing practice question.
+      navigate(`/course/${courseId}/lesson/${lesson.id}/lab`, {
         state: {
           nextLessonId: nextLesson?.id ?? null,
           courseId,
           lessonTitle: lesson.title,
+          sessionId: sessionIdRef.current,
+          studentProfileSummary,
+          slides: labSlides,
         },
       });
       if (!nextLesson) {
-        toast.success('Course complete! Great work!');
+        toast.success('Final session complete. Finish the lab and coding question to wrap up.');
       }
     } catch {
       toast.error('Failed to mark lesson as complete. Please try again.');
     } finally {
       setIsCompleting(false);
     }
-  }, [lesson, courseId, navigate, nextLesson, fireAndForgetProfiler, stopFERPolling]);
+  }, [lesson, courseId, navigate, nextLesson, fireAndForgetProfiler, stopFERPolling, slides, studentProfileSummary]);
 
   // ─── Callbacks for CompactTutor ───────────────────────────────
 

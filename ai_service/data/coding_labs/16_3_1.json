@@ -1,0 +1,147 @@
+{
+  "lab_id": "16_3_1",
+  "cached": false,
+  "generated_at": "2026-05-07T19:21:31.713098Z",
+  "checklist": [
+    {
+      "id": "C1",
+      "item": "Include a concept recap section covering CPU, memory hierarchy, and program execution flow using visual diagrams.",
+      "reason": "Aligns with session content on computer architecture and matches student preference for visual, step-by-step explanations."
+    },
+    {
+      "id": "C2",
+      "item": "Provide syntax practice for variable declaration, arithmetic operators, and modulus operation with concrete examples.",
+      "reason": "Addresses core programming basics from slides and leverages student strength in hands-on coding tasks."
+    },
+    {
+      "id": "C3",
+      "item": "Implement a task where students build a simple automation script (e.g., file organizer or calculator) using covered concepts.",
+      "reason": "Connects theory to practical application as emphasized in the 'Why Learning Programming Matters' slides."
+    },
+    {
+      "id": "C4",
+      "item": "Offer personalization options: let students choose between creating a text-based or visual (flowchart) solution for exercises.",
+      "reason": "Accommodates student preference for visual diagrams and hands-on customization."
+    },
+    {
+      "id": "C5",
+      "item": "Include tutor tips to break complex tasks into sequential steps and use analogies (e.g., memory as storage shelves).",
+      "reason": "Supports student learning style by maintaining concrete, step-by-step explanations and avoiding abstraction."
+    }
+  ],
+  "lab": {
+    "title": "Introduction to Python Basics",
+    "intro": "Welcome to the Introduction to Python lab, where we'll explore the basics of Python programming through hands-on exercises and visual explanations.",
+    "estimated_minutes": 20,
+    "tutor_opening": "Hello, I'm your tutor for this lab. We'll be covering the fundamentals of Python, including variables, arithmetic operators, and the modulus operation. Let's get started!",
+    "cells": [
+      {
+        "id": "cell-1",
+        "cell_type": "explanation",
+        "title": "Introduction to CPU, Memory Hierarchy, and Program Execution Flow",
+        "narrative": "The CPU (Central Processing Unit) acts as the brain of the computer, executing instructions and handling data. The memory hierarchy consists of main memory (RAM) and secondary memory (hard drives or solid-state drives). Programs are executed by the CPU, which retrieves instructions and data from memory.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [
+          "Understand the role of the CPU"
+        ],
+        "tutor_script": "Let's start with the basics of computer architecture. The CPU is responsible for executing instructions, while the memory hierarchy stores data. Think of main memory like a shelf where you can quickly access books, and secondary memory like a library where you can store more books.",
+        "tips": [
+          "Visualize the CPU as a librarian, retrieving books (data) from the shelf (main memory) or the library (secondary memory)."
+        ]
+      },
+      {
+        "id": "cell-2",
+        "cell_type": "code",
+        "title": "Variable Declaration and Arithmetic Operators",
+        "narrative": "In Python, you can declare variables using the assignment operator (=). Arithmetic operators include addition (+), subtraction (-), multiplication (*), and division (/).",
+        "code": "x = 5\ny = 3\nresult = x + y\nprint(result)",
+        "expected_output": "8",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [
+          "Understand variable declaration"
+        ],
+        "tutor_script": "Now, let's see how variables and arithmetic operators work in Python. In this example, we declare two variables, x and y, and then add them together using the + operator.",
+        "tips": [
+          "Remember that in Python, you don't need to specify the data type of a variable."
+        ]
+      },
+      {
+        "id": "cell-3",
+        "cell_type": "task",
+        "title": "Practice with Variables and Arithmetic Operators",
+        "narrative": "Write a Python program that declares two variables, adds them together, and prints the result.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "Declare two variables, x and y, with values 10 and 2, respectively. Then, add them together and print the result.",
+        "starter_code": "x = 10\ny = 2",
+        "success_criteria": [
+          "Declare variables correctly",
+          "Use arithmetic operators correctly"
+        ],
+        "tutor_script": "Now it's your turn to practice! Declare two variables, x and y, and then add them together using the + operator. Don't forget to print the result.",
+        "tips": [
+          "Use the assignment operator (=) to declare variables.",
+          "Use the + operator to add the variables together."
+        ]
+      },
+      {
+        "id": "cell-4",
+        "cell_type": "code",
+        "title": "Modulus Operation",
+        "narrative": "The modulus operation (%) returns the remainder of a division operation. For example, 17 % 5 returns 2, because 17 divided by 5 leaves a remainder of 2.",
+        "code": "result = 17 % 5\nprint(result)",
+        "expected_output": "2",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [
+          "Understand the modulus operation"
+        ],
+        "tutor_script": "Now, let's look at the modulus operation. The % operator returns the remainder of a division operation. In this example, we calculate the remainder of 17 divided by 5.",
+        "tips": [
+          "Think of the modulus operation like finding the remaining balance after dividing a number of items into groups."
+        ]
+      },
+      {
+        "id": "cell-5",
+        "cell_type": "task",
+        "title": "Build a Simple Automation Script",
+        "narrative": "Write a Python program that uses variables, arithmetic operators, and the modulus operation to automate a simple task.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "Write a program that calculates the remainder of a division operation and prints the result. Then, use the result to make a decision.",
+        "starter_code": "# Define variables and calculate the remainder",
+        "success_criteria": [
+          "Use variables and arithmetic operators correctly",
+          "Use the modulus operation correctly"
+        ],
+        "tutor_script": "Now, let's build a simple automation script. Use variables, arithmetic operators, and the modulus operation to automate a task. For example, you could calculate the remainder of a division operation and use the result to make a decision.",
+        "tips": [
+          "Use the % operator to calculate the remainder of a division operation.",
+          "Use if-else statements to make decisions based on the result."
+        ]
+      },
+      {
+        "id": "cell-6",
+        "cell_type": "explanation",
+        "title": "Conclusion and Next Steps",
+        "narrative": "In this lab, we covered the basics of Python programming, including variables, arithmetic operators, and the modulus operation. We also built a simple automation script using these concepts.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [
+          "Understand the basics of Python programming"
+        ],
+        "tutor_script": "Congratulations! You've completed the Introduction to Python lab. You now have a solid foundation in the basics of Python programming. In the next lab, we'll explore more advanced topics, such as control structures and functions.",
+        "tips": [
+          "Practice, practice, practice! The more you practice, the more comfortable you'll become with Python programming."
+        ]
+      }
+    ],
+    "completion_message": "Congratulations! You've completed the Introduction to Python lab. You now have a solid foundation in the basics of Python programming."
+  }
+}

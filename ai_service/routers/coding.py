@@ -4,11 +4,15 @@ from schemas.coding import (
     RubricRequest, RubricModel,
     EvaluateGradedRequest, GradedResultResponse,
     HintRequest, HintResponse,
+    CodingLabGenerateRequest, CodingLabGenerateResponse,
+    CodingLabExplainRequest, CodingLabExplainResponse,
+    CodingLabRunRequest, CodingLabRunResponse,
 )
 from services.coding_service import generate_problem, evaluate_code
 from services.rubric_service import generate_rubric
 from services.evaluator import evaluate_submission_graded
 from services.hint_service import get_hint
+from services.lab_service import generate_coding_lab, explain_lab_cell, run_lab_code
 
 router = APIRouter(
     prefix="/api/coding",
@@ -58,5 +62,40 @@ async def hint_endpoint(req: HintRequest):
         import asyncio
         result = await asyncio.to_thread(get_hint, req.question, req.code, req.hint_level)
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/labs/generate", response_model=CodingLabGenerateResponse)
+async def generate_lab_endpoint(req: CodingLabGenerateRequest):
+    """Generate or load a local notebook-style coding lab for a completed session."""
+    try:
+        import asyncio
+        return await asyncio.to_thread(generate_coding_lab, req)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/labs/explain", response_model=CodingLabExplainResponse)
+async def explain_lab_endpoint(req: CodingLabExplainRequest):
+    """Generate spoken tutor narration for a lab cell without requiring a tutor session."""
+    try:
+        return await explain_lab_cell(
+            lab_title=req.lab_title,
+            cell=req.cell,
+            mode=req.mode,
+            student_profile_summary=req.student_profile_summary,
+            session_id=req.session_id,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/labs/run", response_model=CodingLabRunResponse)
+async def run_lab_code_endpoint(req: CodingLabRunRequest):
+    """Compile and execute a short Python lab snippet."""
+    try:
+        import asyncio
+        return await asyncio.to_thread(run_lab_code, req.code, req.timeout_seconds)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
