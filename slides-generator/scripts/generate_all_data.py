@@ -29,7 +29,7 @@ sys.path.insert(0, str(project_root / "src"))
 
 
 def run_content_generator(ollama_host, ollama_model, max_retries, api_key,
-                          raw_books_dir, output_dir, prompts_path):
+                          raw_books_dir, output_dir, prompts_path, append):
     """Run content data generation in a subprocess."""
     # Re-import inside subprocess (multiprocessing)
     sys.path.insert(0, str(project_root / "src"))
@@ -65,13 +65,14 @@ def run_content_generator(ollama_host, ollama_model, max_retries, api_key,
         chunks=all_chunks,
         output_filename="content_train.jsonl",
         resume=True,
+        append=append,
     )
 
     print(f"\n[CONTENT] ✅ Done! Generated {total_generated} content examples.")
 
 
 def run_classifier_generator(ollama_host, ollama_model, max_retries, api_key,
-                             raw_books_dir, output_dir, prompts_path):
+                             raw_books_dir, output_dir, prompts_path, append):
     """Run classifier data generation in a subprocess."""
     sys.path.insert(0, str(project_root / "src"))
     from slide_gen.training.classifier_data_generator import ClassifierDataGenerator
@@ -106,12 +107,18 @@ def run_classifier_generator(ollama_host, ollama_model, max_retries, api_key,
         chunks=all_chunks,
         output_filename="classifier_train.jsonl",
         resume=True,
+        append=append,
     )
 
     print(f"\n[CLASSIFIER] ✅ Done! Generated {total_generated} classifier examples.")
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Generate all training data")
+    parser.add_argument("--append", action="store_true", help="Append to existing data instead of overwriting")
+    args = parser.parse_args()
+
     load_dotenv(project_root / ".env")
 
     ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
@@ -159,9 +166,9 @@ def main():
 
     # Shared args
     content_args = (ollama_host, ollama_model, max_retries, api_key,
-                    raw_books_dir, output_dir, content_prompts)
+                    raw_books_dir, output_dir, content_prompts, args.append)
     classifier_args = (ollama_host, ollama_model, max_retries, api_key,
-                       raw_books_dir, output_dir, classifier_prompts)
+                       raw_books_dir, output_dir, classifier_prompts, args.append)
 
     # Launch as separate processes
     content_proc = multiprocessing.Process(

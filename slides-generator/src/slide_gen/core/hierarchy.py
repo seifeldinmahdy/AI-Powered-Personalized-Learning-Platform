@@ -2,7 +2,8 @@
 Hierarchical Visual Template Classification — Category Definitions.
 
 Two-level hierarchy:
-  Level 1 (Category): data_structure, flow_diagram, comparison, conceptual, none
+  Level 1 (Category): data_structure, flow_diagram, comparison, chart,
+                       conceptual, architectural, none
   Level 2 (Template): specific template_id within each category
 
 Used by both training (train_classifier.py) and inference (visual_classifier.py).
@@ -17,19 +18,23 @@ from __future__ import annotations
 
 CATEGORY_HIERARCHY: dict[str, list[str]] = {
     "data_structure": [
-        "linear_chain", "binary_tree", "stack", "queue", "graph",
+        "linear_chain", "binary_tree", "general_tree",
+        "stack", "queue", "graph",
     ],
     "flow_diagram": [
         "flowchart", "cycle",
     ],
     "comparison": [
-        "comparison", "grid",
+        "comparison",
     ],
     "chart": [
-        "bar_chart", "pie_chart",
+        "bar_chart",
     ],
     "conceptual": [
         "concept_box",
+    ],
+    "architectural": [
+        "layered_stack", "architecture_diagram",
     ],
     "none": [],
 }
@@ -43,7 +48,8 @@ ID_TO_CATEGORY: dict[int, str] = {i: c for i, c in enumerate(CATEGORY_LIST)}
 TEMPLATE_TO_CATEGORY: dict[str, str] = {}
 for _cat, _templates in CATEGORY_HIERARCHY.items():
     for _tmpl in _templates:
-        TEMPLATE_TO_CATEGORY[_tmpl] = _cat
+        if _tmpl not in TEMPLATE_TO_CATEGORY:
+            TEMPLATE_TO_CATEGORY[_tmpl] = _cat
 # "none" maps to itself
 TEMPLATE_TO_CATEGORY["none"] = "none"
 
@@ -62,6 +68,14 @@ LEVEL2_LABEL_TO_ID: dict[str, dict[str, int]] = {
 LEVEL2_ID_TO_LABEL: dict[str, dict[int, str]] = {
     cat: {i: label for i, label in enumerate(labels)}
     for cat, labels in LEVEL2_LABELS.items()
+}
+
+# Categories that have only one template — skip Level 2 model loading
+# and return the template directly with full L1 confidence.
+SINGLE_TEMPLATE_CATEGORIES: dict[str, str] = {
+    cat: templates[0]
+    for cat, templates in CATEGORY_HIERARCHY.items()
+    if len(templates) == 1
 }
 
 # All template IDs that have a valid category mapping

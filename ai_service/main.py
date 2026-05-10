@@ -88,6 +88,7 @@ async def root():
             "assessments_health": "/assessments/health",
             "a2f_health": "/a2f/health",
             "student_context_get": "/student-context/{student_id}/{course_id}",
+            "student_context_update_performance": "/student-context/{student_id}/{course_id}/update-performance",
         }
     }
 

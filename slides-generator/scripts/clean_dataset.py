@@ -75,7 +75,126 @@ DOUBLE_SEMICOLON_REGEX = re.compile(r";{2,}")
 DOUBLE_PERIOD_REGEX = re.compile(r"(?<!\.)\.\.(?!\.)(?=\s|$)")
 
 # Step 6: Encoding Artifacts
-ENCODING_ARTIFACTS_ONESHOTS = ["\ufffd", "â€", "Â", "Ã"]
+ENCODING_ARTIFACTS_ONESHOTS = ["\ufffd", "\uffff", "â€", "Â", "Ã"]
+
+# Step 6b: Mathematical Italic Symbols → plain text (PDF math-mode artifacts U+1D400–U+1D7FF)
+MATH_ITALIC_MAP = {
+    "\U0001D714": "omega",    # 𝜔
+    "\U0001D717": "theta",    # 𝜗
+    "\U0001D700": "epsilon",  # 𝜀
+    "\U0001D71B": "pi",       # 𝜛
+    "\U0001D71A": "rho",      # 𝜚
+}
+
+# Step 6c: Private Use Area characters (U+E000–U+F8FF) — PDF font garbage
+PUA_REGEX = re.compile(r"[\uE000-\uF8FF]")
+
+# Step 6d: Unicode Math/Symbol/Greek → ASCII equivalents
+# This is the critical step that prevents T5 from learning to output
+# raw math notation in bullets (which would duplicate the math extractor).
+UNICODE_SYMBOL_MAP = {
+    # Arrows
+    "\u2192": "->",   # → RIGHTWARDS ARROW
+    "\u2190": "<-",   # ← LEFTWARDS ARROW
+    "\u2191": "^",    # ↑ UPWARDS ARROW
+    "\u2193": "v",    # ↓ DOWNWARDS ARROW
+    "\u21D2": "=>",   # ⇒ RIGHTWARDS DOUBLE ARROW
+    "\u2194": "<->",  # ↔ LEFT RIGHT ARROW
+    # Math operators
+    "\u2212": "-",    # − MINUS SIGN
+    "\u00D7": "x",    # × MULTIPLICATION SIGN
+    "\u00F7": "/",    # ÷ DIVISION SIGN
+    "\u2211": "sum",  # ∑ N-ARY SUMMATION
+    "\u221A": "sqrt", # √ SQUARE ROOT
+    "\u2264": "<=",   # ≤ LESS-THAN OR EQUAL TO
+    "\u2265": ">=",   # ≥ GREATER-THAN OR EQUAL TO
+    "\u2248": "~=",   # ≈ ALMOST EQUAL TO
+    "\u226B": ">>",   # ≫ MUCH GREATER-THAN
+    "\u226A": "<<",   # ≪ MUCH LESS-THAN
+    "\u2208": "in",   # ∈ ELEMENT OF
+    "\u2209": "not in",  # ∉ NOT ELEMENT OF
+    "\u00B1": "+/-",  # ± PLUS-MINUS SIGN
+    "\u2225": "||",   # ∥ PARALLEL TO
+    "\u2217": "*",    # ∗ ASTERISK OPERATOR
+    "\u2032": "'",    # ′ PRIME
+    "\u00B7": ".",    # · MIDDLE DOT
+    "\u00AF": "-",    # ¯ MACRON
+    "\u2044": "/",    # ⁄ FRACTION SLASH
+    "\u2026": "...",  # … HORIZONTAL ELLIPSIS
+    # Modifier / combining characters
+    "\u02C6": "^",    # ˆ MODIFIER LETTER CIRCUMFLEX
+    "\u0302": "",     # ̂  COMBINING CIRCUMFLEX — remove (already on the letter)
+    "\u0304": "",     # ̄  COMBINING MACRON — remove
+    "\u00B5": "u",    # µ MICRO SIGN
+    "\u2113": "l",    # ℓ SCRIPT SMALL L
+    "\u00DF": "ss",   # ß SHARP S
+    "\u00B0": " degrees",  # ° DEGREE SIGN
+    # Superscript digits → ^N
+    "\u00B2": "^2",   # ²
+    "\u00B3": "^3",   # ³
+    "\u00B9": "^1",   # ¹
+    "\u207F": "^n",   # ⁿ
+    "\u207B": "^-",   # ⁻ SUPERSCRIPT MINUS
+    "\u207A": "^+",   # ⁺ SUPERSCRIPT PLUS
+    "\u2070": "^0",   # ⁰
+    "\u2074": "^4",   # ⁴
+    "\u2075": "^5",   # ⁵
+    "\u2076": "^6",   # ⁶
+    "\u2077": "^7",   # ⁷
+    "\u2078": "^8",   # ⁸
+    "\u2079": "^9",   # ⁹
+    # Subscript digits → _N
+    "\u2080": "_0",   # ₀
+    "\u2081": "_1",   # ₁
+    "\u2082": "_2",   # ₂
+    "\u2083": "_3",   # ₃
+    "\u2084": "_4",   # ₄
+    "\u2085": "_5",   # ₅
+    "\u2086": "_6",   # ₆
+    "\u2087": "_7",   # ₇
+    "\u2088": "_8",   # ₈
+    "\u2089": "_9",   # ₉
+    # Greek letters → spelled out for T5 comprehension
+    "\u03B1": "alpha",
+    "\u03B2": "beta",
+    "\u03B3": "gamma",
+    "\u03B4": "delta",
+    "\u03B5": "epsilon",
+    "\u03F5": "epsilon",
+    "\u03B6": "zeta",
+    "\u03B7": "eta",
+    "\u03B8": "theta",
+    "\u03B9": "iota",
+    "\u03BA": "kappa",
+    "\u03BB": "lambda",
+    "\u03BC": "mu",
+    "\u03BD": "nu",
+    "\u03BE": "xi",
+    "\u03C0": "pi",
+    "\u03C1": "rho",
+    "\u03C3": "sigma",
+    "\u03C4": "tau",
+    "\u03C5": "upsilon",
+    "\u03C6": "phi",
+    "\u03C7": "chi",
+    "\u03C8": "psi",
+    "\u03C9": "omega",
+    # Capital Greek
+    "\u0393": "Gamma",
+    "\u0394": "Delta",
+    "\u0398": "Theta",
+    "\u039B": "Lambda",
+    "\u03A0": "Pi",
+    "\u03A3": "Sigma",
+    "\u03A6": "Phi",
+    "\u03A8": "Psi",
+    "\u03A9": "Omega",
+    # Accented Latin used in math contexts
+    "\u0177": "y",    # ŷ (y-hat) → y
+    "\u00EF": "i",    # ï → i
+    # Narrow no-break space (PDF formatting artifact)
+    "\u202F": " ",
+}
 
 # Step 7: Whitespace Normalization
 MULTI_SPACE_REGEX = re.compile(r"[ \t]{2,}")
@@ -171,7 +290,25 @@ def process_text_field(text, artifact_counts, broken_word_counter):
         if art in text:
             artifact_counts["Encoding Artifacts Removed"] += text.count(art)
             text = text.replace(art, "")
-            
+
+    # --- Step 6b: Math Italic Symbols → plain text ---
+    for sym, repl in MATH_ITALIC_MAP.items():
+        if sym in text:
+            artifact_counts["Math Italic Symbols Normalized"] += text.count(sym)
+            text = text.replace(sym, repl)
+
+    # --- Step 6c: Private Use Area garbage removal ---
+    pua_matches = PUA_REGEX.findall(text)
+    if pua_matches:
+        artifact_counts["Private Use Area Chars Removed"] += len(pua_matches)
+        text = PUA_REGEX.sub("", text)
+
+    # --- Step 6d: Unicode Math/Symbol/Greek → ASCII ---
+    for sym, repl in UNICODE_SYMBOL_MAP.items():
+        if sym in text:
+            artifact_counts["Unicode Symbols Normalized"] += text.count(sym)
+            text = text.replace(sym, repl)
+
     # --- Step 7: Whitespace Normalization ---
     lines = text.split("\n")
     processed_lines = []

@@ -19,8 +19,8 @@ from pathlib import Path
 import torch
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-# Auto-detect device: prefer CUDA, fallback to CPU
-_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Auto-detect device: prefer CUDA, fallback to MPS, then CPU
+_device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
 # Resolve absolute path to local model folder
 CURRENT_DIR = Path(__file__).parent

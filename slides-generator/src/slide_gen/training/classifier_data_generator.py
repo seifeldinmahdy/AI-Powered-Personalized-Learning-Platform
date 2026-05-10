@@ -41,9 +41,11 @@ VALID_TEMPLATE_IDS = ALL_TEMPLATE_IDS
 TEMPLATE_KEYWORDS = {
     "linear_chain": ["linked list", "chain", "pointer", "next", "node", "singly", "doubly"],
     "binary_tree": ["tree", "binary", "root", "left", "right", "child", "parent", "leaf"],
+    "general_tree": ["tree", "hierarchy", "root", "child", "parent", "trie", "B-tree", "file system", "inheritance"],
     "stack": ["stack", "lifo", "push", "pop"],
     "queue": ["queue", "fifo", "enqueue", "dequeue", "front", "rear"],
     "graph": ["graph", "vertex", "edge", "adjacen", "network", "path", "shortest"],
+    "layered_stack": ["layer", "architecture", "abstraction", "tier", "level", "osi", "stack", "software layer"],
     "layers": ["layer", "architecture", "abstraction", "tier", "level"],
     "flowchart": ["if", "else", "condition", "decision", "branch", "algorithm"],
     "process_flow": ["step", "process", "procedure", "workflow", "sequence"],
@@ -51,7 +53,7 @@ TEMPLATE_KEYWORDS = {
     "cycle": ["cycle", "loop", "circular", "repeat", "iterate"],
     "timeline": ["timeline", "history", "year", "version", "evolution", "released"],
     "bar_chart": ["percentage", "frequency", "count", "categories"],
-    "pie_chart": ["proportion", "percentage", "share", "distribution"],
+    "architecture_diagram": ["neural network", "transformer", "encoder", "decoder", "attention", "LSTM", "CNN", "ResNet", "microservices", "pipeline", "compiler", "model architecture", "system architecture"],
     "sequence": ["message", "request", "response", "actor", "api", "call"],
 }
 
@@ -507,6 +509,7 @@ class ClassifierDataGenerator:
         content_jsonl_path: str | Path,
         output_filename: str = "classifier_train.jsonl",
         resume: bool = True,
+        append: bool = False,
     ) -> tuple[int, int]:
         """
         Generate classifier data from existing content_train.jsonl.
@@ -549,7 +552,7 @@ class ClassifierDataGenerator:
             print(f"   Already generated: {already_generated}")
             print(f"   Skipping {start_idx} completed examples")
         else:
-            if output_path.exists():
+            if not append and output_path.exists():
                 output_path.unlink()
             if checkpoint_path.exists():
                 checkpoint_path.unlink()
@@ -637,6 +640,7 @@ class ClassifierDataGenerator:
         chunks: list[str],
         output_filename: str = "classifier_train.jsonl",
         resume: bool = True,
+        append: bool = False,
     ) -> tuple[int, int]:
         """
         Generate classifier data directly from PDF chunks.
@@ -677,7 +681,7 @@ class ClassifierDataGenerator:
             print(f"   Already generated: {already_generated}")
             print(f"   Skipping {start_idx} completed chunks")
         else:
-            if output_path.exists():
+            if not append and output_path.exists():
                 output_path.unlink()
             if checkpoint_path.exists():
                 checkpoint_path.unlink()

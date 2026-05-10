@@ -1,7 +1,8 @@
 """Slide instruction schema definitions."""
 
 from enum import Enum
-from typing import Optional, Any
+from typing import Literal, Optional, Any
+
 
 from pydantic import BaseModel, Field
 
@@ -55,6 +56,21 @@ class VisualTemplate(BaseModel):
     )
 
 
+class EquationItem(BaseModel):
+    """A single mathematical equation extracted from slide content."""
+
+    latex: str = Field(
+        description="Raw LaTeX math expression (no $ delimiters or environments)"
+    )
+    label: str = Field(
+        description="Short human-readable name for the equation"
+    )
+    display: bool = Field(
+        default=True,
+        description="True for display-mode (centered block), False for inline"
+    )
+
+
 class ContentItem(BaseModel):
     """Single content item (bullet point or definition) on a slide."""
     
@@ -100,24 +116,47 @@ class SlideInstruction(BaseModel):
         default=None,
         description="Optional code block for programming examples"
     )
+    equation_block: Optional[list[EquationItem]] = Field(
+        default=None,
+        description="Extracted math equations rendered via KaTeX on the frontend"
+    )
     alt_text: Optional[str] = Field(
         default=None,
         description="Accessibility text describing visuals"
     )
-    
+    mastery_metadata: Optional["SlideMasteryMetadata"] = Field(
+        default=None,
+        description="Per-slide mastery provenance — how mastery was derived for this slide"
+    )
+
+
+class SlideMasteryMetadata(BaseModel):
+    """Per-slide mastery provenance — tracks how mastery was derived."""
+    mastery_used: Literal["Novice", "Intermediate", "Expert"]
+    global_mastery: Literal["Novice", "Intermediate", "Expert"]
+    topic_score: float | None = None
+    topic_matched: str | None = None
+    mastery_source: Literal["topic_performance", "global_fallback"]
+
+
+# Update forward ref
+SlideInstruction.model_rebuild()
 
 
 
 # List of valid template IDs for validation
 VALID_TEMPLATES = [
     # Data Structures (Graphviz)
-    "linear_chain", "binary_tree", "stack", "queue", "graph",
+    "linear_chain", "binary_tree", "general_tree", "stack", "queue", "graph",
     # Flow Diagrams (Mermaid)
     "flowchart", "cycle",
     # Comparison
-    "comparison", "grid",
+    "comparison",
     # Quantitative
-    "bar_chart", "pie_chart",
-    # Conceptual (Fallback)
+    "bar_chart",
+    # Conceptual
     "concept_box",
+    # Architectural
+    "layered_stack", "architecture_diagram",
 ]
+

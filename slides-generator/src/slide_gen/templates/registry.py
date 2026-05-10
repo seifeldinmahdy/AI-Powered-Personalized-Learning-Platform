@@ -639,6 +639,87 @@ TEMPLATE_REGISTRY.register(Template(
     render_func=_render_layers,
 ))
 
+TEMPLATE_REGISTRY.register(Template(
+    id="layered_stack",
+    name="Layered Stack Architecture",
+    description="Stacked horizontal layers with optional descriptions",
+    renderer=Renderer.GRAPHVIZ,
+    keywords=["layer", "stack", "OSI", "architecture", "abstraction", "tier"],
+    required_params=["layers"],
+    optional_params=["title", "arrows", "descriptions"],
+    render_func=_render_layers,
+))
+
+
+def _render_architecture_diagram(params: dict) -> str:
+    """Render a free-form architecture diagram using Graphviz DOT.
+
+    Supports layered grouping via the 'layer' field on each node,
+    and flexible edge connections between any nodes.
+    """
+    nodes = params.get("nodes", [])
+    edges = params.get("edges", [])
+    title = params.get("title", "")
+    layout = params.get("layout", "LR")
+
+    rankdir = "TB" if layout == "layered" else "LR"
+
+    lines = [
+        "digraph {",
+        f"    rankdir={rankdir};",
+        '    node [shape=box, style="filled,rounded", fillcolor="#E3F2FD", fontname="Helvetica"];',
+        '    edge [arrowhead=vee, color="#666666"];',
+    ]
+
+    if title:
+        lines.append(f'    labelloc="t";')
+        lines.append(f'    label="{title}";')
+        lines.append(f'    fontsize=16;')
+
+    # Group nodes by layer using subgraphs with rank=same
+    layer_groups: dict[int, list[dict]] = {}
+    for node in nodes:
+        layer = node.get("layer", 0)
+        layer_groups.setdefault(layer, []).append(node)
+
+    for layer_idx in sorted(layer_groups.keys()):
+        group_nodes = layer_groups[layer_idx]
+        lines.append(f"    subgraph cluster_layer{layer_idx} {{")
+        lines.append(f"        rank=same;")
+        lines.append(f'        style=invis;')
+        for n in group_nodes:
+            nid = n.get("id", f"n{layer_idx}")
+            label = n.get("label", nid)
+            lines.append(f'        {nid} [label="{label}"];')
+        lines.append("    }")
+
+    # Edges
+    for edge in edges:
+        src = edge.get("from", "")
+        dst = edge.get("to", "")
+        elabel = edge.get("label", "")
+        if src and dst:
+            if elabel:
+                lines.append(f'    {src} -> {dst} [label="{elabel}"];')
+            else:
+                lines.append(f"    {src} -> {dst};")
+
+    lines.append("}")
+    return "\n".join(lines)
+
+
+TEMPLATE_REGISTRY.register(Template(
+    id="architecture_diagram",
+    name="Architecture Diagram",
+    description="Free-form component architecture with nodes and edges",
+    renderer=Renderer.GRAPHVIZ,
+    keywords=["architecture", "neural network", "transformer", "encoder", "decoder",
+              "microservices", "pipeline", "system design", "model architecture"],
+    required_params=["nodes", "edges"],
+    optional_params=["title", "layout"],
+    render_func=_render_architecture_diagram,
+))
+
 # Register Mermaid templates
 TEMPLATE_REGISTRY.register(Template(
     id="flowchart",

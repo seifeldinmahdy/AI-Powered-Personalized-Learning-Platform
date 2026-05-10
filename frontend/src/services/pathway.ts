@@ -59,6 +59,12 @@ export interface SlideVisual {
   params: Record<string, unknown>;
 }
 
+export interface SlideEquationItem {
+  latex: string;
+  label: string;
+  display: boolean;
+}
+
 export interface GeneratedSlide {
   slide_number: number;
   slide_type: string;
@@ -67,6 +73,7 @@ export interface GeneratedSlide {
   body_content: SlideContentItem[];
   visual?: SlideVisual | null;
   code_block?: SlideCodeBlock | null;
+  equation_block?: SlideEquationItem[] | null;
   alt_text?: string | null;
   source_chunk_id: string;
   source_topic: string;

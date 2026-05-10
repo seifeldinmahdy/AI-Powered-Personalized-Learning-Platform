@@ -1,7 +1,8 @@
 """
 Train Hierarchical Visual Classifier — Two-level DistilBERT classification.
 
-Level 1: Predicts category (6 classes: data_structure, flow_diagram, comparison, chart, conceptual, none)
+Level 1: Predicts category (7 classes: data_structure, flow_diagram, comparison,
+         chart, conceptual, architectural, none)
 Level 2: Predicts specific template within category (one model per category)
 
 Features:

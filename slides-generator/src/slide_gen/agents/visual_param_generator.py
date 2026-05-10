@@ -10,6 +10,7 @@ This is the bridge between the Visual Classifier output and the Template Registr
 
 import os
 import json
+import re
 from typing import Any
 
 import requests
@@ -43,6 +44,24 @@ TEMPLATE_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
             "right_children": "list of strings — right subtree children",
         },
         "example": {"root": "50", "left": "30", "right": "70", "left_children": ["20", "40"], "right_children": ["60", "80"]},
+    },
+    "general_tree": {
+        "description": "A general tree with one root and multiple children at each level. Used for hierarchies like master-slave architectures, file systems, OOP inheritance, and organizational structures. Different from binary_tree because branching factor is arbitrary, not strictly left/right.",
+        "schema": {
+            "root": "string — the root node label",
+            "children": "dict mapping each parent node label to a list of its child node labels. Can be multi-level.",
+            "title": "string — optional title for the diagram",
+            "relationship_label": "string — optional label placed on all edges describing the relationship, e.g. 'manages', 'contains', 'inherits from'. Leave empty for pure data structure trees.",
+        },
+        "example": {
+            "root": "NameNode",
+            "children": {
+                "NameNode": ["DataNode 1", "DataNode 2", "DataNode 3"],
+                "DataNode 1": ["Block A", "Block B"],
+            },
+            "title": "HDFS Master-Slave Architecture",
+            "relationship_label": "manages"
+        }
     },
     "stack": {
         "description": "A stack (LIFO) data structure showing items top to bottom",
@@ -117,6 +136,25 @@ TEMPLATE_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
             "right_items": ["O(1) insertion", "Dynamic size", "Extra memory for pointers"],
         },
     },
+    "venn_diagram": {
+        "description": "Two overlapping circles showing shared and distinct properties between two concepts. Use when content compares two things with some shared and some distinct properties.",
+        "schema": {
+            "left_label": "string — name of left concept",
+            "right_label": "string — name of right concept",
+            "left_only": "list of strings — properties unique to left concept",
+            "right_only": "list of strings — properties unique to right concept",
+            "shared": "list of strings — properties common to both concepts",
+            "title": "string — optional title",
+        },
+        "example": {
+            "left_label": "TCP",
+            "right_label": "UDP",
+            "left_only": ["Connection-oriented", "Guaranteed delivery", "Flow control"],
+            "right_only": ["Connectionless", "Faster", "No overhead"],
+            "shared": ["Uses ports", "Transport layer", "IP-based"],
+            "title": "TCP vs UDP"
+        },
+    },
 
     # --- Charts (Quantitative) ---
     "bar_chart": {
@@ -130,15 +168,6 @@ TEMPLATE_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "example": {"labels": ["Python", "Java", "C++"], "values": [35, 30, 20], "title": "Language Popularity", "xlabel": "Language", "ylabel": "Popularity %"},
     },
-    "pie_chart": {
-        "description": "A pie chart showing proportions/percentages",
-        "schema": {
-            "labels": "list of strings — slice labels",
-            "values": "list of numbers — slice values (will be converted to percentages)",
-            "title": "string — chart title",
-        },
-        "example": {"labels": ["Stack", "Heap", "Code"], "values": [30, 50, 20], "title": "Memory Layout"},
-    },
 
     # --- Fallback ---
     "concept_box": {
@@ -148,6 +177,77 @@ TEMPLATE_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
             "points": "list of strings — key points about the concept",
         },
         "example": {"title": "Polymorphism", "points": ["Method overriding", "Method overloading", "Duck typing"]},
+    },
+    "analogy_diagram": {
+        "description": "A two-panel mapping showing a familiar real-world concept on the left mapped to the technical concept on the right, with labeled correspondences between elements. Use when content explains a technical concept by comparing it to something familiar.",
+        "schema": {
+            "familiar_label": "string — the familiar real-world thing being used as the analogy",
+            "technical_label": "string — the technical concept being explained",
+            "mappings": "list of dicts with {familiar: string, technical: string} pairs showing what corresponds to what",
+            "title": "string — optional title",
+        },
+        "example": {
+            "familiar_label": "Library",
+            "technical_label": "Database",
+            "mappings": [
+                {"familiar": "Book", "technical": "Record"},
+                {"familiar": "Catalog", "technical": "Index"},
+                {"familiar": "Librarian", "technical": "DBMS"},
+                {"familiar": "Reading room", "technical": "Cache"},
+            ],
+            "title": "Database as a Library"
+        },
+    },
+
+    # --- Architectural ---
+    "layered_stack": {
+        "description": "A layered architecture diagram showing horizontal layers stacked vertically, each labeled, with optional arrows showing interaction between adjacent layers. Used for OSI model, OS architecture, software stacks, neural network layer descriptions.",
+        "schema": {
+            "layers": "list of strings — layer names from top to bottom",
+            "title": "string — optional title",
+            "arrows": "boolean — whether to show bidirectional arrows between adjacent layers, default true",
+            "descriptions": "dict mapping layer name to short description string, optional",
+        },
+        "example": {
+            "layers": ["Application", "Transport", "Network", "Data Link", "Physical"],
+            "title": "OSI Model",
+            "arrows": True,
+            "descriptions": {
+                "Application": "HTTP, FTP, DNS",
+                "Transport": "TCP, UDP",
+                "Network": "IP, Routing",
+            }
+        }
+    },
+    "architecture_diagram": {
+        "description": "A flexible free-form architecture diagram for any system, model, or component architecture. Used for neural networks, transformers, attention mechanisms, LSTM, ResNet, microservices, compiler pipelines, database architectures, or any content describing components with connections and data flow.",
+        "schema": {
+            "title": "string — diagram title",
+            "nodes": "list of dicts with {id: string, label: string, layer: int} — layer controls vertical position, nodes with same layer value are grouped side by side",
+            "edges": "list of dicts with {from: string, to: string, label: string (optional)} — from/to must match node ids",
+            "layout": "string — 'layered' for top-to-bottom flow, 'LR' for left-to-right flow, default 'LR'",
+        },
+        "example": {
+            "title": "Transformer Encoder Block",
+            "nodes": [
+                {"id": "input", "label": "Input Embedding", "layer": 0},
+                {"id": "pos", "label": "Positional Encoding", "layer": 0},
+                {"id": "mha", "label": "Multi-Head Attention", "layer": 1},
+                {"id": "norm1", "label": "Add & Norm", "layer": 2},
+                {"id": "ffn", "label": "Feed Forward", "layer": 3},
+                {"id": "norm2", "label": "Add & Norm", "layer": 4},
+                {"id": "output", "label": "Output", "layer": 5},
+            ],
+            "edges": [
+                {"from": "input", "to": "mha"},
+                {"from": "pos", "to": "mha"},
+                {"from": "mha", "to": "norm1"},
+                {"from": "norm1", "to": "ffn"},
+                {"from": "ffn", "to": "norm2"},
+                {"from": "norm2", "to": "output"},
+            ],
+            "layout": "LR",
+        },
     },
 }
 
@@ -168,7 +268,224 @@ RULES:
 5. For flowcharts: identify decision points (if/else/conditions) as 'diamond' nodes
 6. For comparisons: split the content into two meaningful groups
 7. For charts: extract or infer reasonable numerical values from the content
-8. For timelines: extract chronological order from the content"""
+8. For architecture diagrams: identify components and their connections, assign layers for grouping
+9. For venn diagrams: identify shared vs distinct properties between the two concepts
+10. For analogy diagrams: map the familiar concept elements to their technical counterparts"""
+
+
+# =============================================================================
+# LLM TEMPLATE VALIDATION
+# =============================================================================
+
+_TEMPLATE_DESCRIPTIONS = {
+    "linear_chain": "Linked lists, sequences of connected nodes",
+    "binary_tree": "Binary trees with strict left/right children",
+    "general_tree": "Hierarchies with arbitrary branching: file systems, inheritance trees, tries, B-trees",
+    "stack": "LIFO data structures with push/pop",
+    "queue": "FIFO data structures with enqueue/dequeue",
+    "graph": "Networks of nodes and edges, adjacency relationships",
+    "flowchart": "Algorithm flow with decision/branch logic, if/else, conditional steps",
+    "cycle": "Circular processes, repeating loops",
+    "comparison": "Side-by-side analysis, attribute-by-attribute differences, pros/cons",
+    "bar_chart": "Comparing quantities across discrete categories",
+    "concept_box": "General concepts, definitions, abstract ideas",
+    "layered_stack": "Layered architectures (OSI, OS layers, software stacks), horizontal layers stacked vertically",
+    "architecture_diagram": "System or model architecture: neural networks, transformers, microservices, compiler pipelines, any component-connection diagram",
+}
+
+_VALIDATION_SYSTEM_PROMPT = """You are a visual template classifier for educational slides.
+
+Given a text chunk and a predicted template type, decide if the prediction is correct or suggest a better template.
+
+AVAILABLE TEMPLATES:
+{template_list}
+
+Output ONLY a JSON object with one field:
+{{"corrected_template": "template_id_here"}}
+
+If the prediction is correct, return the same template_id. If a different template fits better, return that one instead. ONLY use template IDs from the list above."""
+
+
+def _llm_validate_template(
+    template_id: str,
+    raw_chunk: str,
+    bullets: list[str],
+    title: str,
+    ollama_host: str | None = None,
+    ollama_model: str | None = None,
+    api_key: str | None = None,
+) -> str | None:
+    """
+    Ask the LLM to confirm or correct the classifier's template prediction.
+
+    Args:
+        template_id: The classifier's predicted template
+        raw_chunk: The raw source text chunk
+        bullets: Extracted bullet points
+        title: Slide title
+        ollama_host: Ollama API host
+        ollama_model: Model to use
+        api_key: API key for cloud access
+
+    Returns:
+        Corrected template ID string, or None if the LLM call fails
+    """
+    host = (ollama_host or os.getenv("OLLAMA_HOST", "http://localhost:11434")).rstrip("/")
+    model = ollama_model or os.getenv("OLLAMA_MODEL", "llama3")
+    key = api_key or os.getenv("OLLAMA_API_KEY")
+
+    # Build template list for the prompt
+    template_list = "\n".join(
+        f"- {tid}: {desc}" for tid, desc in _TEMPLATE_DESCRIPTIONS.items()
+    )
+
+    system_prompt = _VALIDATION_SYSTEM_PROMPT.format(template_list=template_list)
+
+    bullets_text = "\n".join(f"- {b}" for b in bullets)
+    user_prompt = (
+        f"## RAW TEXT CHUNK:\n{raw_chunk[:500]}\n\n"
+        f"## SLIDE TITLE:\n{title}\n\n"
+        f"## EXTRACTED BULLETS:\n{bullets_text}\n\n"
+        f"## CLASSIFIER PREDICTION: {template_id}\n\n"
+        f"Is this prediction correct? If not, which template from the list above fits better?\n"
+        f"Output ONLY the JSON object."
+    )
+
+    url = f"{host}/api/chat"
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "stream": False,
+        "format": "json",
+        "options": {
+            "temperature": 0.1,
+            "top_p": 0.9,
+        },
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        response.raise_for_status()
+        result = response.json()
+        text = result.get("message", {}).get("content", "")
+        parsed = extract_json_from_response(text)
+        if parsed and "corrected_template" in parsed:
+            corrected = parsed["corrected_template"].strip().lower()
+            return corrected
+    except Exception as e:
+        print(f"    LLM template validation failed: {e}")
+
+    return None
+
+
+# =============================================================================
+# LLM ENRICHMENT LAYER
+# =============================================================================
+
+_ANALOGY_ENRICHMENT_PROMPT = """You are an educational content analyzer. Given this educational text, decide if a real-world analogy would genuinely help a student understand this concept better than a simple summary box.
+
+The analogy must be natural and illuminating — not forced. Only say yes if the mapping is obvious and pedagogically valuable.
+
+## TEXT:
+{text}
+
+## TITLE:
+{title}
+
+Output ONLY valid JSON:
+{{"use_analogy": true/false, "familiar_label": "...", "technical_label": "...", "mappings": [{{"familiar": "...", "technical": "..."}}, ...]}}
+
+If use_analogy is false, the other fields can be empty strings/lists."""
+
+_VENN_ENRICHMENT_PROMPT = """You are an educational content analyzer. Given this comparison text, decide if the two concepts have explicitly shared properties as well as distinct ones, such that a Venn diagram showing overlap would be more informative than a side-by-side table.
+
+Only say yes if shared properties are explicitly stated or strongly implied in the text.
+
+## TEXT:
+{text}
+
+## TITLE:
+{title}
+
+Output ONLY valid JSON:
+{{"use_venn": true/false, "left_label": "...", "right_label": "...", "left_only": [...], "right_only": [...], "shared": [...]}}
+
+If use_venn is false, the other fields can be empty strings/lists."""
+
+
+def _llm_enrich_template(
+    template_id: str,
+    raw_chunk: str,
+    bullets: list[str],
+    title: str,
+    ollama_host: str | None = None,
+    ollama_model: str | None = None,
+    api_key: str | None = None,
+) -> tuple[str, dict | None]:
+    """
+    Optional LLM enrichment that may upgrade a classifier prediction to a
+    richer visual template.
+
+    Condition A: concept_box → analogy_diagram (if a natural analogy exists)
+    Condition B: comparison → venn_diagram (if shared properties exist)
+
+    Returns:
+        (template_id, params_or_None)
+        If enrichment succeeds: (new_template_id, complete_params_dict)
+        If enrichment declines or fails: (original_template_id, None)
+    """
+    if template_id not in ("concept_box", "comparison"):
+        return template_id, None
+
+    host = (ollama_host or os.getenv("OLLAMA_HOST", "http://localhost:11434")).rstrip("/")
+    model = ollama_model or os.getenv("OLLAMA_MODEL", "llama3")
+    key = api_key or os.getenv("OLLAMA_API_KEY")
+
+    text = "\n".join(bullets) if bullets else raw_chunk[:500]
+
+    try:
+        if template_id == "concept_box":
+            prompt = _ANALOGY_ENRICHMENT_PROMPT.format(text=text, title=title)
+            result = _call_ollama(host, model, key, prompt)
+            if result and result.get("use_analogy") is True:
+                mappings = result.get("mappings", [])
+                if mappings and result.get("familiar_label") and result.get("technical_label"):
+                    params = {
+                        "familiar_label": result["familiar_label"],
+                        "technical_label": result["technical_label"],
+                        "mappings": mappings,
+                        "title": title,
+                    }
+                    return "analogy_diagram", params
+
+        elif template_id == "comparison":
+            prompt = _VENN_ENRICHMENT_PROMPT.format(text=text, title=title)
+            result = _call_ollama(host, model, key, prompt)
+            if result and result.get("use_venn") is True:
+                shared = result.get("shared", [])
+                if shared and result.get("left_label") and result.get("right_label"):
+                    params = {
+                        "left_label": result["left_label"],
+                        "right_label": result["right_label"],
+                        "left_only": result.get("left_only", []),
+                        "right_only": result.get("right_only", []),
+                        "shared": shared,
+                        "title": title,
+                    }
+                    return "venn_diagram", params
+
+    except Exception:
+        # Enrichment is optional — never surface errors
+        pass
+
+    return template_id, None
 
 
 # =============================================================================
@@ -182,6 +499,8 @@ def generate_visual_params(
     ollama_host: str | None = None,
     ollama_model: str | None = None,
     api_key: str | None = None,
+    classifier_confidence: float = 1.0,
+    raw_chunk: str = "",
 ) -> dict:
     """
     Generate structured visual parameters using LLM.
@@ -193,6 +512,8 @@ def generate_visual_params(
         ollama_host: Ollama API host
         ollama_model: Model to use
         api_key: API key for cloud access
+        classifier_confidence: Combined L1×L2 confidence from the classifier
+        raw_chunk: Raw source text chunk for LLM validation
 
     Returns:
         Dict of structured parameters for the template renderer
@@ -200,6 +521,26 @@ def generate_visual_params(
     host = ollama_host or os.getenv("OLLAMA_HOST", "http://localhost:11434")
     model = ollama_model or os.getenv("OLLAMA_MODEL", "llama3")
     key = api_key or os.getenv("OLLAMA_API_KEY")
+
+    # ── LLM Enrichment: try upgrading concept_box/comparison ──
+    enriched_template, enriched_params = _llm_enrich_template(
+        template_id, raw_chunk, bullets, title, host, model, key
+    )
+    if enriched_params is not None:
+        # Enrichment produced complete params — return directly
+        return enriched_params
+
+    # Use enriched template_id (same as original if enrichment declined)
+    template_id = enriched_template
+
+    # LLM validation step for low-confidence predictions
+    if classifier_confidence < 0.85 and raw_chunk:
+        corrected = _llm_validate_template(
+            template_id, raw_chunk, bullets, title,
+            host, model, key
+        )
+        if corrected and corrected != template_id and corrected in TEMPLATE_PARAM_SCHEMAS:
+            template_id = corrected
 
     schema_info = TEMPLATE_PARAM_SCHEMAS.get(template_id)
 
@@ -217,10 +558,15 @@ def generate_visual_params(
         # Validate the result has the expected keys
         validated = _validate_params(result, template_id, schema_info)
         if validated:
+            # Fix duplicate chart title
+            if template_id == "bar_chart":
+                chart_title = str(validated.get("title", ""))
+                if chart_title and title and chart_title[:25] == title[:25]:
+                    validated["title"] = ""
             return validated
 
     # If the LLM failed to generate a chart, drop the visual entirely.
-    if template_id in ("bar_chart", "pie_chart"):
+    if template_id == "bar_chart":
         return None
 
     # Fallback: generate basic params deterministically for text-based diagrams
@@ -343,6 +689,34 @@ def _deterministic_fallback(
             "left_items": bullets[:mid] if mid > 0 else bullets[:1],
             "right_items": bullets[mid:] if mid > 0 else bullets[1:],
         }
+    elif template_id == "venn_diagram":
+        # Split bullets: first half left-only, second half right-only, no shared
+        mid = len(bullets) // 2
+        left_only = bullets[:mid] if mid > 0 else bullets[:1]
+        right_only = bullets[mid:] if mid > 0 else bullets[1:]
+        # Derive labels from title
+        left_label, right_label = _split_title_labels(title)
+        return {
+            "left_label": left_label,
+            "right_label": right_label,
+            "left_only": left_only,
+            "right_only": right_only,
+            "shared": [],
+            "title": title,
+        }
+    elif template_id == "analogy_diagram":
+        # First bullet → familiar concept description, rest → mappings
+        familiar_label = _extract_analogy_familiar(bullets)
+        technical_label = title
+        mappings = []
+        for b in bullets[1:] if len(bullets) > 1 else bullets:
+            mappings.append({"familiar": b[:40], "technical": b[:40]})
+        return {
+            "familiar_label": familiar_label,
+            "technical_label": technical_label,
+            "mappings": mappings if mappings else [{"familiar": "Example", "technical": "Concept"}],
+            "title": title,
+        }
     elif template_id in ("stack", "queue"):
         return {"items": bullets}
     elif template_id in ("linear_chain", "cycle"):
@@ -351,11 +725,65 @@ def _deterministic_fallback(
         nodes = [{"id": chr(65 + i), "label": b[:30], "type": "box"} for i, b in enumerate(bullets)]
         edges = [{"from": chr(65 + i), "to": chr(66 + i)} for i in range(len(bullets) - 1)]
         return {"nodes": nodes, "edges": edges, "direction": "TD"}
-    elif template_id == "grid":
-        return {
-            "data": [[b] for b in bullets],
-            "col_labels": ["Content"],
-            "title": title,
-        }
+    elif template_id == "general_tree":
+        root = bullets[0] if bullets else title
+        children = {root: bullets[1:]} if len(bullets) > 1 else {}
+        return {"root": root, "children": children, "title": title, "relationship_label": ""}
+    elif template_id == "layered_stack":
+        return {"layers": bullets, "title": title, "arrows": True, "descriptions": {}}
+    elif template_id == "architecture_diagram":
+        nodes = [
+            {"id": f"n{i}", "label": b[:30], "layer": i}
+            for i, b in enumerate(bullets)
+        ]
+        edges = [
+            {"from": f"n{i}", "to": f"n{i+1}"}
+            for i in range(len(bullets) - 1)
+        ]
+        return {"title": title, "nodes": nodes, "edges": edges, "layout": "LR"}
     else:
         return {"title": title, "points": bullets}
+
+
+def _split_title_labels(title: str) -> tuple[str, str]:
+    """
+    Split a slide title into two labels for venn_diagram.
+
+    Tries splitting on 'vs', 'versus', 'and', 'or'.
+    Falls back to 'Concept A' / 'Concept B'.
+    """
+    title_lower = title.lower()
+    for sep in [" vs ", " versus ", " vs. "]:
+        if sep in title_lower:
+            idx = title_lower.index(sep)
+            return title[:idx].strip(), title[idx + len(sep):].strip()
+    for sep in [" and ", " or "]:
+        if sep in title_lower:
+            idx = title_lower.index(sep)
+            return title[:idx].strip(), title[idx + len(sep):].strip()
+    return "Concept A", "Concept B"
+
+
+def _extract_analogy_familiar(bullets: list[str]) -> str:
+    """
+    Extract the familiar concept label from bullet text for analogy_diagram.
+
+    Looks for signals like 'like a', 'similar to', 'think of', 'works like'.
+    Falls back to 'Real World'.
+    """
+    if not bullets:
+        return "Real World"
+    first = bullets[0].lower()
+    patterns = [
+        (r"like (?:a |an )(.+?)(?:\.|,|$)", 1),
+        (r"similar to (?:a |an )?(.+?)(?:\.|,|$)", 1),
+        (r"think of (?:a |an )?(.+?)(?:\.|,|$)", 1),
+        (r"works like (?:a |an )?(.+?)(?:\.|,|$)", 1),
+        (r"imagine (?:a |an )?(.+?)(?:\.|,|$)", 1),
+        (r"picture (?:a |an )?(.+?)(?:\.|,|$)", 1),
+    ]
+    for pattern, group in patterns:
+        m = re.search(pattern, first)
+        if m:
+            return m.group(group).strip().title()[:30]
+    return "Real World"

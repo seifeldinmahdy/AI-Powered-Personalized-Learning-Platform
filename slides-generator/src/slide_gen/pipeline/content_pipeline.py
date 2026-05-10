@@ -16,9 +16,11 @@ from slide_gen.agents.visual_classifier import classify_visual, should_render_vi
 from slide_gen.agents.code_extractor import extract_code
 from slide_gen.agents.accessibility import generate_alt_text
 from slide_gen.agents.visual_param_generator import generate_visual_params
+from slide_gen.agents.math_extractor import extract_math
 from slide_gen.core.slide_schema import (
     CodeBlock,
     ContentItem,
+    EquationItem,
     HighlightType,
     Layout,
     SlideInstruction,
@@ -158,11 +160,14 @@ def process_chunk(
 
         if visual_decision is not None:
             attempted_template_id = visual_decision["template_id"]
+            attempted_confidence = visual_decision.get("confidence", 1.0)
 
             # Generate visual params (with deterministic fallback)
             bullet_texts = [item["text"] for item in items]
             attempted_params = generate_visual_params(
-                attempted_template_id, bullet_texts, title
+                attempted_template_id, bullet_texts, title,
+                classifier_confidence=attempted_confidence,
+                raw_chunk=chunk,
             )
 
             if attempted_params is not None:
@@ -188,7 +193,15 @@ def process_chunk(
         screen_reader_active=profile.screen_reader_active,
     )
 
+    # ---- Agent 6: Math Extractor (runs on raw chunk, parallel-safe) ----
+    equation_block = None
+    try:
+        equation_block = extract_math(chunk)
+    except Exception:
+        equation_block = None
+
     # ---- Layout Selection (Component 4) ----
+    has_math = equation_block is not None and len(equation_block) > 0
     layout = _choose_layout(
         has_visual=visual is not None,
         has_code=code_block is not None,
@@ -202,6 +215,7 @@ def process_chunk(
         body_content=body_content,
         visual=visual,
         code_block=code_block,
+        equation_block=equation_block,
         alt_text=alt_text,
     )
 
