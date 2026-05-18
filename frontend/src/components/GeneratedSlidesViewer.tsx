@@ -1,6 +1,7 @@
 import { Maximize2, Minimize2, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
-import type { GeneratedSlide, SlideContentItem, SlideCodeBlock, SlideVisual } from '../services/pathway';
+import type { GeneratedSlide, SlideContentItem, SlideCodeBlock, SlideVisual, SlideEquationItem } from '../services/pathway';
 import { VisualRenderer } from './VisualRenderer';
+import { EquationRenderer } from './EquationRenderer';
 
 interface GeneratedSlidesViewerProps {
   slides: GeneratedSlide[];
@@ -238,6 +239,11 @@ function ContentSlide({ slide }: { slide: GeneratedSlide }) {
 
       {/* Visual indicator */}
       {slide.visual && <VisualRenderer visual={slide.visual} />}
+
+      {/* Equation block — bottom zone, full width */}
+      {slide.equation_block && slide.equation_block.length > 0 && (
+        <EquationRenderer equations={slide.equation_block} />
+      )}
     </>
   );
 }

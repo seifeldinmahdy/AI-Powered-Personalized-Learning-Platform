@@ -91,6 +91,7 @@ async def root():
             "problem_set_generate": "/problem-set/generate",
             "problem_set_submit": "/problem-set/submit",
             "problem_set_get": "/problem-set/{problem_set_id}",
+            "student_context_update_performance": "/student-context/{student_id}/{course_id}/update-performance",
         }
     }
 

@@ -314,7 +314,13 @@ class ContentDataGenerator:
             return yaml.safe_load(f)
 
     def _call_ollama(self, prompt: str) -> str | None:
-        """Call Ollama API (local or cloud) and return response text."""
+        """Call Ollama API (local or cloud) and return response text.
+        
+        Returns:
+            Response text string on success.
+            "RATE_LIMITED" sentinel string if the API returns HTTP 429.
+            None on any other error.
+        """
         url = f"{self.ollama_host}/api/generate"
 
         headers = {}
@@ -334,9 +340,18 @@ class ContentDataGenerator:
 
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=180)
+            if response.status_code == 429:
+                print(f"\n\n🚫 Rate limit hit (HTTP 429) — triggering graceful shutdown.")
+                return "RATE_LIMITED"
             response.raise_for_status()
             result = response.json()
             return result.get("response", "")
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 429:
+                print(f"\n\n🚫 Rate limit hit (HTTP 429) — triggering graceful shutdown.")
+                return "RATE_LIMITED"
+            print(f"    Ollama API error: {e}")
+            return None
         except requests.RequestException as e:
             print(f"    Ollama API error: {e}")
             return None
@@ -373,11 +388,14 @@ class ContentDataGenerator:
         self,
         chunk: str,
         profile: StudentProfile,
-    ) -> dict | None:
+    ) -> tuple[dict | None, bool]:
         """
         Generate a single content training example with retry-feedback.
 
-        Returns {input, target} dict or None if all retries fail.
+        Returns:
+            (example_dict, rate_limited)
+            - example_dict is {input, target} on success, None on failure
+            - rate_limited is True if the API returned HTTP 429
         """
         base_prompt = self._format_prompt(chunk, profile)
         last_error = None
@@ -394,6 +412,10 @@ class ContentDataGenerator:
                 )
 
             response_text = self._call_ollama(prompt)
+
+            # Rate limit — propagate immediately, do not retry
+            if response_text == "RATE_LIMITED":
+                return None, True
 
             if not response_text:
                 last_error = "no_response"
@@ -426,9 +448,9 @@ class ContentDataGenerator:
             input_text = format_training_input(chunk, profile)
             target_text = self._format_t5_target(parsed)
 
-            return {"input": input_text, "target": target_text}
+            return {"input": input_text, "target": target_text}, False
 
-        return None
+        return None, False
 
     def _track_error(self, error_code: str):
         """Track error frequency for reporting."""
@@ -441,6 +463,7 @@ class ContentDataGenerator:
         chunks: list[str],
         output_filename: str = "content_train.jsonl",
         resume: bool = True,
+        append: bool = False,
     ) -> tuple[int, int]:
         """
         Run content data generation on all chunks with all profile variations.
@@ -497,8 +520,8 @@ class ContentDataGenerator:
             print(f"   Already failed: {already_failed}")
             print(f"   Skipping {completed} completed iterations")
         else:
-            # Fresh start — clear existing output
-            if output_path.exists():
+            # Fresh start — clear existing output unless appending
+            if not append and output_path.exists():
                 output_path.unlink()
             if checkpoint_path.exists():
                 checkpoint_path.unlink()
@@ -581,7 +604,20 @@ class ContentDataGenerator:
                         })
 
                         profile = var_generator()
-                        example = self.generate_one(chunk, profile)
+                        example, rate_limited = self.generate_one(chunk, profile)
+
+                        # Rate limit hit — save checkpoint and shut down gracefully
+                        if rate_limited:
+                            self._save_checkpoint(
+                                checkpoint_path, chunk_idx, var_idx,
+                                self.stats["generated"], self.stats["failed"],
+                                chunk_idx * len(variations) + var_idx,
+                            )
+                            print(f"   ✅ Checkpoint saved at chunk {chunk_idx + 1}, "
+                                  f"variation '{var_name}'")
+                            print(f"   Run the same command to resume from this point.\n")
+                            self._print_summary(output_path, valid_chunks, variations)
+                            return self.stats["generated"], len(valid_chunks)
 
                         if example:
                             self.stats["generated"] += 1

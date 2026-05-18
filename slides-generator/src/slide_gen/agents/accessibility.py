@@ -19,6 +19,13 @@ _ALT_TEXT_GENERATORS = {
         f"left child '{p.get('left', 'Left')}', and "
         f"right child '{p.get('right', 'Right')}'"
     ),
+    "general_tree": lambda p: (
+        f"A general tree diagram"
+        f"{' titled ' + chr(39) + p.get('title', '') + chr(39) if p.get('title') else ''}"
+        f" with root node '{p.get('root', 'Root')}' and "
+        f"{sum(len(v) for v in p.get('children', {}).values())} total child nodes"
+        f"{'. Relationship: ' + p.get('relationship_label', '') if p.get('relationship_label') else ''}"
+    ),
     "stack": lambda p: (
         f"A stack data structure with {len(p.get('items', []))} items "
         f"from bottom to top: {', '.join(str(i) for i in p.get('items', []))}"
@@ -53,9 +60,15 @@ _ALT_TEXT_GENERATORS = {
     ),
     "comparison": lambda p: (
         f"A side-by-side comparison of "
-        f"'{p.get('left_label', 'Left')}' vs '{p.get('right_label', 'Right')}'. "
+        f"'{p.get('left_label', p.get('left_title', 'Left'))}' vs '{p.get('right_label', p.get('right_title', 'Right'))}'. "
         f"Left has {len(p.get('left_items', []))} items, "
         f"Right has {len(p.get('right_items', []))} items"
+    ),
+    "venn_diagram": lambda p: (
+        f"A Venn diagram comparing '{p.get('left_label', 'Left')}' and '{p.get('right_label', 'Right')}'. "
+        f"{len(p.get('left_only', []))} unique to left, "
+        f"{len(p.get('right_only', []))} unique to right, "
+        f"{len(p.get('shared', []))} shared properties"
     ),
     "sequence": lambda p: (
         f"A sequence diagram with actors: "
@@ -71,19 +84,8 @@ _ALT_TEXT_GENERATORS = {
         f"A bar chart with categories: "
         f"{', '.join(f'{l}={v}' for l, v in zip(p.get('labels', []), p.get('values', [])))}"
     ),
-    "pie_chart": lambda p: (
-        f"A pie chart showing proportions: "
-        f"{', '.join(f'{l}: {v}%' for l, v in zip(p.get('labels', []), p.get('values', [])))}"
-    ),
     "line_chart": lambda p: (
         f"A line chart with {len(p.get('x_values', []))} data points"
-    ),
-    "grid": lambda p: (
-        f"A data grid/table with {len(p.get('data', []))} rows"
-    ),
-    "venn": lambda p: (
-        f"A Venn diagram comparing set "
-        f"'{p.get('set_a_label', 'A')}' and set '{p.get('set_b_label', 'B')}'"
     ),
 
     # Fallback templates
@@ -92,6 +94,11 @@ _ALT_TEXT_GENERATORS = {
         f"{len(p.get('points', []))} key points: "
         f"{'; '.join(str(pt) for pt in p.get('points', []))}"
     ),
+    "analogy_diagram": lambda p: (
+        f"An analogy diagram mapping '{p.get('familiar_label', 'Familiar')}' to "
+        f"'{p.get('technical_label', 'Technical')}' with "
+        f"{len(p.get('mappings', []))} correspondences"
+    ),
     "info_card": lambda p: (
         f"An information card titled '{p.get('title', 'Info')}' "
         f"with {len(p.get('items', []))} key-value pairs"
@@ -99,6 +106,20 @@ _ALT_TEXT_GENERATORS = {
     "definition_box": lambda p: (
         f"A definition box for the term '{p.get('term', 'Term')}': "
         f"{p.get('definition', 'No definition provided')}"
+    ),
+
+    # Architectural
+    "layered_stack": lambda p: (
+        f"A layered architecture diagram"
+        f"{' titled ' + chr(39) + p.get('title', '') + chr(39) if p.get('title') else ''}"
+        f" with {len(p.get('layers', []))} layers from top to bottom: "
+        f"{', '.join(str(l) for l in p.get('layers', []))}"
+    ),
+    "architecture_diagram": lambda p: (
+        f"An architecture diagram"
+        f"{' titled ' + chr(39) + p.get('title', '') + chr(39) if p.get('title') else ''}"
+        f" with {len(p.get('nodes', []))} components and "
+        f"{len(p.get('edges', []))} connections"
     ),
 }
 

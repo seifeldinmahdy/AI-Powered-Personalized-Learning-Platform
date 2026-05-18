@@ -51,6 +51,13 @@ class PathwaySettings(BaseSettings):
     # ── LLM curriculum ordering ──────────────────────────────────
     ollama_curriculum_timeout: int = 600
 
+    # ── Per-slide mastery derivation ─────────────────────────────
+    topic_mastery_expert_threshold: float = 0.75
+    topic_mastery_intermediate_threshold: float = 0.45
+    topic_match_threshold: float = 0.75
+    topic_performance_update_weight: float = 0.3
+
+
     # ── Storage ──────────────────────────────────────────────────
     sqlite_db_path: str = ""
 

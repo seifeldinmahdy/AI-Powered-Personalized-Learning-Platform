@@ -47,13 +47,13 @@ from pathway.session.grouper import SessionGrouper
 from pathway.storage.plan_store import PlanStore
 
 # Slides-generator pipeline imports
-from slide_gen.core.profile_schema import (
+from slide_gen.core.profile_schema import (  # type: ignore
     CompositionMode,
     LanguageProficiency,
     MasteryLevel,
     StudentProfile,
 )
-from slide_gen.core.slide_schema import (
+from slide_gen.core.slide_schema import (  # type: ignore
     CodeBlock,
     ContentItem,
     HighlightType,
@@ -62,16 +62,16 @@ from slide_gen.core.slide_schema import (
     SlideType,
     VisualTemplate,
 )
-from slide_gen.agents.content_specialist import (
+from slide_gen.agents.content_specialist import (  # type: ignore
     format_input as _cs_format_input,
     parse_output as _cs_parse_output,
 )
-from slide_gen.agents.code_extractor import extract_code
-from slide_gen.agents.visual_classifier import classify_visual, should_render_visual
-from slide_gen.agents.accessibility import generate_alt_text
-from slide_gen.agents.visual_param_generator import generate_visual_params
-from slide_gen.pipeline.summary_generator import generate_summary_slide
-from slide_gen.pipeline.validation import validate_deck
+from slide_gen.agents.code_extractor import extract_code  # type: ignore
+from slide_gen.agents.visual_classifier import classify_visual, should_render_visual  # type: ignore
+from slide_gen.agents.accessibility import generate_alt_text  # type: ignore
+from slide_gen.agents.visual_param_generator import generate_visual_params  # type: ignore
+from slide_gen.pipeline.summary_generator import generate_summary_slide  # type: ignore
+from slide_gen.pipeline.validation import validate_deck  # type: ignore
 
 
 logger = structlog.get_logger(__name__)
@@ -108,6 +108,52 @@ PYTHON_IMPORTS_RE = re.compile(
     r"\b(importnumpy|importmatplotlib|importpandas|fromnumpy|asnp|aspd)\b"
 )
 
+# Math Italic Symbols → plain text (PDF math-mode artifacts U+1D400–U+1D7FF)
+MATH_ITALIC_MAP = {
+    "\U0001D714": "omega", "\U0001D717": "theta",
+    "\U0001D700": "epsilon", "\U0001D71B": "pi", "\U0001D71A": "rho",
+}
+PUA_RE = re.compile(r"[\uE000-\uF8FF]")
+
+# Unicode Math/Symbol/Greek → ASCII (prevents T5 from learning to output math notation)
+UNICODE_SYMBOL_MAP = {
+    "\u2192": "->", "\u2190": "<-", "\u2191": "^", "\u2193": "v",
+    "\u21D2": "=>", "\u2194": "<->",
+    "\u2212": "-", "\u00D7": "x", "\u00F7": "/",
+    "\u2211": "sum", "\u221A": "sqrt",
+    "\u2264": "<=", "\u2265": ">=", "\u2248": "~=",
+    "\u226B": ">>", "\u226A": "<<",
+    "\u2208": "in", "\u2209": "not in",
+    "\u00B1": "+/-", "\u2225": "||", "\u2217": "*",
+    "\u2032": "'", "\u00B7": ".", "\u00AF": "-",
+    "\u2044": "/", "\u2026": "...",
+    "\u02C6": "^", "\u0302": "", "\u0304": "",
+    "\u00B5": "u", "\u2113": "l", "\u00DF": "ss",
+    "\u00B0": " degrees",
+    # Superscripts/subscripts
+    "\u00B2": "^2", "\u00B3": "^3", "\u00B9": "^1",
+    "\u207F": "^n", "\u207B": "^-", "\u207A": "^+",
+    "\u2070": "^0", "\u2074": "^4", "\u2075": "^5",
+    "\u2076": "^6", "\u2077": "^7", "\u2078": "^8", "\u2079": "^9",
+    "\u2080": "_0", "\u2081": "_1", "\u2082": "_2", "\u2083": "_3",
+    "\u2084": "_4", "\u2085": "_5", "\u2086": "_6", "\u2087": "_7",
+    "\u2088": "_8", "\u2089": "_9",
+    # Greek → spelled out
+    "\u03B1": "alpha", "\u03B2": "beta", "\u03B3": "gamma",
+    "\u03B4": "delta", "\u03B5": "epsilon", "\u03F5": "epsilon",
+    "\u03B6": "zeta", "\u03B7": "eta", "\u03B8": "theta",
+    "\u03B9": "iota", "\u03BA": "kappa", "\u03BB": "lambda",
+    "\u03BC": "mu", "\u03BD": "nu", "\u03BE": "xi",
+    "\u03C0": "pi", "\u03C1": "rho", "\u03C3": "sigma",
+    "\u03C4": "tau", "\u03C5": "upsilon", "\u03C6": "phi",
+    "\u03C7": "chi", "\u03C8": "psi", "\u03C9": "omega",
+    "\u0393": "Gamma", "\u0394": "Delta", "\u0398": "Theta",
+    "\u039B": "Lambda", "\u03A0": "Pi", "\u03A3": "Sigma",
+    "\u03A6": "Phi", "\u03A8": "Psi", "\u03A9": "Omega",
+    "\u0177": "y", "\u00EF": "i",
+    "\u202F": " ",
+}
+
 
 def _clean_broken_words_outside_code(text: str) -> str:
     parts = text.split("`")
@@ -137,6 +183,14 @@ def clean_text(text: str) -> str:
     text = DOUBLE_PERIOD_RE.sub(".", text)
     for art in ENCODING_ARTIFACTS:
         text = text.replace(art, "")
+    # Math Italic Symbols
+    for sym, repl in MATH_ITALIC_MAP.items():
+        text = text.replace(sym, repl)
+    # PUA garbage
+    text = PUA_RE.sub("", text)
+    # Unicode Math/Symbol/Greek → ASCII
+    for sym, repl in UNICODE_SYMBOL_MAP.items():
+        text = text.replace(sym, repl)
     out_lines: list[str] = []
     in_code = False
     for ln in text.split("\n"):
@@ -340,10 +394,13 @@ def _process_chunk_full_pipeline(
         )
         if visual_decision is not None:
             attempted_id = visual_decision["template_id"]
+            attempted_confidence = visual_decision.get("confidence", 1.0)
             bullet_texts = [item["text"] for item in items]
             attempted_params = generate_visual_params(
                 attempted_id, bullet_texts, title,
                 ollama_host=ollama_host, ollama_model=ollama_model, api_key=ollama_api_key,
+                classifier_confidence=attempted_confidence,
+                raw_chunk=raw_text,
             )
             if attempted_params is not None:
                 template_id = attempted_id
@@ -896,10 +953,82 @@ def main():
         classifier_path = str(_VISUAL_CLASSIFIER_DIR)
         settings = get_settings()
 
+        # ── Per-slide mastery derivation for the tester ─────────
+        # The tester's SessionChunk has no per-chunk topic field.
+        # Use session.topics_covered as a pool to match against
+        # the student's topic_performance data (if loaded via JSON).
+        import sys as _sys
+        _ai_service_dir = str(_PROJECT_ROOT / "ai_service")
+        if _ai_service_dir not in _sys.path:
+            _sys.path.insert(0, _ai_service_dir)
+        from services.topic_mastery import (  # type: ignore
+            derive_topic_mastery,
+            match_topic_to_performance,
+            smooth_mastery_sequence,
+        )
+
+        # Load topic_performance from student context store if available
+        topic_performance: dict[str, float] | None = None
+        try:
+            ctx_path = _PROJECT_ROOT / "ai_service" / "data" / "student_contexts"
+            student_id_val = st.session_state.get("student_id", "")
+            course_id_val = selected_course or ""
+            # Try to find a matching context JSON file
+            if ctx_path.exists() and student_id_val:
+                import glob
+                for fp in sorted(ctx_path.glob("*.json")):
+                    try:
+                        with open(fp, "r", encoding="utf-8") as f:
+                            ctx_data = json.load(f)
+                        prof = ctx_data.get("profile", {})
+                        if prof.get("student_id") == student_id_val:
+                            tp = prof.get("topic_performance", {})
+                            if tp:
+                                topic_performance = tp
+                                logger.info("tester_loaded_topic_performance",
+                                            student_id=student_id_val, topics=len(tp))
+                            break
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+        # Derive per-chunk mastery for each session chunk
+        # Since SessionChunk has no topic, use session.topics_covered
+        # and assign the first topic to each chunk in order (best effort)
+        chunk_topics = session.topics_covered or []
+        n_chunks = len(session.chunks)
+        per_chunk_topics = []
+        for i in range(n_chunks):
+            # Spread topics across chunks proportionally
+            topic_idx = min(i * len(chunk_topics) // max(n_chunks, 1), len(chunk_topics) - 1) if chunk_topics else -1
+            per_chunk_topics.append(chunk_topics[topic_idx] if topic_idx >= 0 else "")
+
+        raw_masteries = []
+        match_results_list = []
+        for topic_str in per_chunk_topics:
+            score, matched_key = match_topic_to_performance(
+                topic_str, topic_performance,
+                similarity_threshold=settings.topic_match_threshold
+                if hasattr(settings, "topic_match_threshold") else 0.75,
+            )
+            mastery = derive_topic_mastery(
+                score, eff_mastery,
+                expert_threshold=settings.topic_mastery_expert_threshold
+                if hasattr(settings, "topic_mastery_expert_threshold") else 0.75,
+                intermediate_threshold=settings.topic_mastery_intermediate_threshold
+                if hasattr(settings, "topic_mastery_intermediate_threshold") else 0.45,
+            )
+            raw_masteries.append(mastery)
+            match_results_list.append((score, matched_key))
+
+        smoothed_masteries = smooth_mastery_sequence(raw_masteries)
+
         content_slides: list[SlideInstruction] = []
         raw_outputs: list[str] = []
         inputs_used: list[str] = []
         trims: list[int] = []
+        slide_mastery_meta: list[dict] = []
 
         progress_bar = st.progress(0, text="Generating slides...")
         for i, chunk in enumerate(session.chunks):
@@ -907,8 +1036,17 @@ def main():
                 (i + 1) / len(session.chunks),
                 text=f"Processing chunk {i + 1}/{len(session.chunks)}...",
             )
+
+            # Override the profile mastery for this chunk
+            chunk_mastery = smoothed_masteries[i] if i < len(smoothed_masteries) else eff_mastery
+            chunk_profile = StudentProfile(
+                mastery_level=MasteryLevel(chunk_mastery),
+                composition_mode=mode_enum,
+                language_proficiency=lang_enum,
+            )
+
             slide, inp_used, raw_out, trimmed = _process_chunk_full_pipeline(
-                chunk.raw_text, sg_profile, t5_model, t5_tokenizer, classifier_path,
+                chunk.raw_text, chunk_profile, t5_model, t5_tokenizer, classifier_path,
                 ollama_host=settings.ollama_host,
                 ollama_model=settings.ollama_model,
                 ollama_api_key=settings.ollama_api_key,
@@ -917,6 +1055,15 @@ def main():
             raw_outputs.append(raw_out)
             inputs_used.append(inp_used)
             trims.append(trimmed)
+
+            t_score, t_key = match_results_list[i] if i < len(match_results_list) else (None, None)
+            slide_mastery_meta.append({
+                "mastery_used": chunk_mastery,
+                "global_mastery": eff_mastery,
+                "topic_score": t_score,
+                "topic_matched": t_key,
+                "mastery_source": "topic_performance" if t_score is not None else "global_fallback",
+            })
         progress_bar.empty()
 
         # Summary slide
@@ -956,6 +1103,8 @@ def main():
         st.session_state[f"raw_{selected_idx}"] = raw_outputs
         st.session_state[f"inputs_{selected_idx}"] = inputs_used
         st.session_state[f"trims_{selected_idx}"] = trims
+        st.session_state[f"mastery_meta_{selected_idx}"] = slide_mastery_meta
+
 
     # ── Display per-chunk details ────────────────────────────────
     content_slides = st.session_state.get(f"content_slides_{selected_idx}")
@@ -967,6 +1116,8 @@ def main():
     if content_slides:
         st.subheader(f"Per-Chunk Details ({len(content_slides)} content slides)")
 
+        mastery_meta_list = st.session_state.get(f"mastery_meta_{selected_idx}", [])
+
         for i, (slide, src_chunk, raw_out, inp_used, trimmed) in enumerate(
             zip(content_slides, session.chunks, raw_outputs, inputs_used, trims)
         ):
@@ -977,6 +1128,35 @@ def main():
                 label += f" [{trimmed} tokens trimmed]"
 
             with st.expander(label, expanded=(i == 0)):
+                # ── Mastery Badge ────────────────────────────────
+                if i < len(mastery_meta_list):
+                    meta = mastery_meta_list[i]
+                    m_used = meta.get("mastery_used", "?")
+                    m_source = meta.get("mastery_source", "global_fallback")
+                    m_score = meta.get("topic_score")
+                    m_matched = meta.get("topic_matched")
+
+                    # Color coding: Novice=amber, Intermediate=blue, Expert=green
+                    _badge_colors = {
+                        "Novice": ("#92400e", "#fef3c7", "#fcd34d"),
+                        "Intermediate": ("#1e40af", "#dbeafe", "#93c5fd"),
+                        "Expert": ("#166534", "#dcfce7", "#86efac"),
+                    }
+                    fg, bg, border = _badge_colors.get(m_used, ("#374151", "#f3f4f6", "#d1d5db"))
+                    source_label = "Topic Match" if m_source == "topic_performance" else "Global Fallback"
+                    score_str = f" · Score: {m_score:.0%}" if m_score is not None else ""
+                    matched_str = f" · Matched: {m_matched}" if m_matched else ""
+
+                    st.markdown(
+                        f'<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">'
+                        f'<span style="background:{bg}; color:{fg}; border:1px solid {border}; '
+                        f'padding:2px 10px; border-radius:12px; font-size:12px; font-weight:600;">'
+                        f'{m_used}</span>'
+                        f'<span style="color:#6b7280; font-size:11px;">{source_label}{score_str}{matched_str}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
                 # Render the slide as a card (visuals are inside the card)
                 slide_html = _render_slide_html(slide, i + 3, len(content_slides) + 3)
                 st.markdown(slide_html, unsafe_allow_html=True)
@@ -992,6 +1172,7 @@ def main():
                 # Formatted model input
                 with st.expander("Formatted model input"):
                     st.code(inp_used[:800], language="text")
+
 
         # ── Summary panel ────────────────────────────────────────
         st.divider()

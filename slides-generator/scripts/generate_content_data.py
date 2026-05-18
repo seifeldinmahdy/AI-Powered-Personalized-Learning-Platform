@@ -29,6 +29,11 @@ from slide_gen.data_engine.pdf_loader import load_and_chunk_pdf
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Generate content training data")
+    parser.add_argument("--append", action="store_true", help="Append to existing data instead of overwriting")
+    args = parser.parse_args()
+
     load_dotenv(project_root / ".env")
 
     ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
@@ -90,6 +95,7 @@ def main():
     total_generated, total_chunks = generator.run(
         chunks=all_chunks,
         output_filename="content_train.jsonl",
+        append=args.append,
     )
 
     print(f"\n✅ Done! Generated {total_generated} content examples.")

@@ -7,70 +7,116 @@ classifier_system_prompt: |
   Your task: Given bullet points from a slide, classify which visual template would BEST represent the content.
   Output ONLY valid JSON with your classification and reasoning.
 
-  ## AVAILABLE TEMPLATES (grouped by category):
+  ## AVAILABLE TEMPLATES:
 
-  **Data Structures** (select when content describes a specific CS data structure):
-  - linear_chain: Linked lists, sequences, chains, pointers, nodes
-  - binary_tree: Trees, hierarchies, root/child/parent relationships
-  - stack: LIFO structures, push/pop operations
-  - queue: FIFO structures, enqueue/dequeue operations
-  - graph: Networks, vertices, edges, adjacency
+  **Data Structures** — select when content describes a specific CS data structure or its operations:
+  - linear_chain: linked list, singly linked, doubly linked, chain of nodes, pointer to next, head node, tail node, sequential nodes, node traversal, list traversal, linear sequence of elements, next pointer, prev pointer
+  - binary_tree: binary tree, BST, binary search tree, root node, left child, right child, tree traversal, inorder, preorder, postorder, tree height, tree depth, leaf node, parent node, subtree, AVL tree, red-black tree, heap, priority queue, expression tree, decision tree structure
+  - general_tree: general tree, n-ary tree, trie, prefix tree, B-tree, B+ tree, file system tree, directory tree, XML tree, DOM tree, organizational hierarchy, parent with multiple children, arbitrary branching
+  - stack: stack, LIFO, push operation, pop operation, peek operation, call stack, stack frame, function call stack, undo operation, backtracking, stack overflow, stack underflow, top of stack
+  - queue: queue, FIFO, enqueue, dequeue, front of queue, rear of queue, circular queue, deque, double-ended queue, priority queue operations, message queue, job queue, print queue, BFS queue
+  - graph: graph, vertices, edges, adjacency matrix, adjacency list, directed graph, undirected graph, weighted graph, DFS, BFS, shortest path, Dijkstra, spanning tree, connected components, topological sort, DAG, cycle detection, bipartite graph
 
-  **Flow Diagrams** (select when content describes algorithms, logic, or step-by-step processes):
-  - flowchart: Algorithm flow, decisions, if/else logic, conditionals, sequential steps, procedures, workflows
-  - cycle: Loops, circular processes, repeating patterns
+  **Flow Diagrams** — select when content describes processes, algorithms, or repeating patterns:
+  - flowchart: algorithm steps, if condition, else branch, while loop logic, for loop logic, decision point, yes/no branch, conditional execution, control flow, procedure steps, sequential process with decisions, input validation, error handling flow, recursive call logic, sorting algorithm steps, search algorithm steps
+  - cycle: repeating cycle, circular process, iterative loop, feedback loop, PDCA, software development lifecycle, request-response cycle, event loop, garbage collection cycle, CPU fetch-decode-execute, ping-pong, producer-consumer cycle, retry loop
 
-  **Comparisons** (select when content involves side-by-side analysis or structured data):
-  - comparison: Side-by-side analysis, pros/cons, versus
-  - grid: Tabular data, matrices, lookup tables
+  **Comparison** — select when content places two or more things side by side:
+  - comparison: compared to, versus, unlike, whereas, on the other hand, trade-off, pros and cons, advantages disadvantages, array vs linked list, DFS vs BFS, TCP vs UDP, SQL vs NoSQL, time complexity vs space complexity, static vs dynamic, mutable vs immutable, compiled vs interpreted, synchronous vs asynchronous
 
-  **Quantitative** (select when content contains data points, percentages, or trends to visualize):
-  - bar_chart: Use when comparing different categories, showing quantities across distinct groups, or displaying changes across discrete items. (e.g., comparing revenue of Team A vs Team B, tracking user growth over quarters).
-  - pie_chart: Use strictly when showing parts of a whole, percentages that add up to 100%, or proportional distribution of a single metric. (e.g., market share distribution, budget breakdown, demographic makeup).
+  **Quantitative** — select when content contains explicit numerical data worth visualizing:
+  - bar_chart: numerical comparison, benchmark results, performance comparison, runtime in seconds, memory usage in MB, percentage improvement, N times faster, growth over time, frequency count, histogram data, explicit numbers being compared across categories
 
-  **Conceptual** (select when content explains concepts, definitions, or general information):
-  - concept_box: General concepts, abstract ideas, summaries, definitions, term explanations, quick reference
+  **Conceptual** — select when content explains abstract ideas, definitions, or general information with no specific visual structure:
+  - concept_box: abstract concept explanation, general definition, summary of ideas, theoretical background, introductory overview, what something means, why something matters, properties of a concept, characteristics, use cases, advantages, limitations, how something works at a high level
+
+  **Architectural** — select when content describes system architecture, model architecture, or software layers:
+  - layered_stack: OSI model, TCP/IP layers, operating system layers, kernel user space, hardware abstraction layer, software stack, technology stack, abstraction levels, layer N depends on layer N-1, horizontal layers, application transport network data link physical, MVC layers, three-tier architecture, client server database tier
+  - architecture_diagram: neural network architecture, transformer architecture, attention mechanism, encoder decoder, LSTM architecture, GRU, ResNet, CNN architecture, convolutional layer, pooling layer, fully connected layer, model architecture, system architecture, microservices, service mesh, pipeline architecture, compiler architecture, lexer parser AST, database architecture, master slave, pub sub architecture, event driven architecture, component diagram, module dependencies, data flow architecture, feedforward network, backpropagation network, deep learning model, multi-head attention, self-attention, cross-attention, positional encoding, embedding layer
 
   **No Visual:**
-  - none: Content is purely textual, no visual adds value
+  - none: purely narrative text, historical background, motivational text, reading passage, no structural or quantitative content, author commentary, course introduction text
 
   ## SELECTION RULES:
-  1. Choose the MOST SPECIFIC template that matches the content
-  2. Do NOT default to concept_box unless nothing else fits
-  3. "none" should be used for purely theoretical/abstract text with no visual angle
-  4. Your reasoning must justify WHY this template fits the content keywords
-
-  ## OUTPUT FORMAT:
-  {
-    "template_id": "one_of_the_templates_above",
-    "reasoning": "Brief explanation of why this template fits the content"
-  }
+  1. Choose the MOST SPECIFIC template — never default to concept_box if a more specific template fits
+  2. concept_box is the last resort — only use it when no other template captures the content
+  3. architecture_diagram catches ALL model architectures and system designs — neural networks, transformers, attention mechanisms, LSTM, GRU, ResNet, CNN, encoder-decoder, any ML model with named components, any software system describing how modules connect and communicate. When in doubt between architecture_diagram and concept_box for model-related content, always choose architecture_diagram.
+  4. layered_stack is ONLY for clean horizontal abstraction layers with no lateral connections between components. The layers must be stacked vertically with each layer serving the one above it. A neural network is NOT a layered_stack even though it has layers — it has weighted connections between layers making it architecture_diagram.
+  5. Use bar_chart ONLY when explicit numbers or percentages are present in the content — at least two numerical values being compared. A single number mentioned in passing does not qualify. Phrases like "much faster" or "significantly slower" without numbers do not qualify.
+  6. none is for purely narrative text with zero visual angle — historical background, motivational paragraphs, course introductions, author commentary, reading passages. Be very conservative — most educational content has some visual angle. Only use none when you genuinely cannot identify any structural, procedural, comparative, or architectural element.
+  7. flowchart requires decision branching — if the process is strictly linear with no conditions use linear_chain instead
+  8. Use architecture_diagram for ANY content describing how a model or system is structured internally — even if you only see a partial description
+  9. Distinguish general_tree from architecture_diagram: use general_tree when the tree IS the subject being studied as a CS data structure (trie, B-tree, heap, parse tree). Use architecture_diagram when components of a system or model are connected in a tree-like or graph-like topology (HDFS, transformer layers, microservices). Ask yourself: is this about how the data structure works, or about how a system is designed?
+  10. Distinguish linear_chain from flowchart: use linear_chain for strictly linear processes with no conditions (data flows A → B → C). Use flowchart for processes with decision branching and multiple paths (if/else, loops, conditions).
+  11. Distinguish bar_chart from comparison: use bar_chart when showing benchmark results, performance metrics, or quantitative comparisons with explicit numbers. Use comparison for conceptual side-by-side comparisons without explicit numerical data (qualitative trade-offs).
+  12. Self-check before answering: Before outputting template_id ask yourself:
+    - Have I considered architecture_diagram for any content describing model or system internals?
+    - Have I considered layered_stack for any content describing abstraction layers?
+    - Have I considered flowchart for any content describing a process with decisions?
+    - Have I considered linear_chain for any strictly sequential process with no branching?
+    - Have I considered general_tree for any CS tree data structure being studied algorithmically?
+    - Have I considered bar_chart if there are explicit numbers being compared?
+    - Am I choosing concept_box only because nothing else fits, not because it is the best fit?
+    - Am I choosing none only for genuinely narrative content with no structural element whatsoever?
+  13. When content contains Python code examples or code snippets demonstrating a data structure or algorithm, classify based on WHAT IS BEING DEMONSTRATED, not the presence of code. Code showing a stack implementation → stack. Code showing a sorting algorithm with conditions → flowchart. Code showing a neural network forward pass → architecture_diagram. Never classify code-containing chunks as concept_box solely because they contain code.
 
   ## EXAMPLES:
 
   ### Example 1:
-  Bullets: "A stack works like a pile of plates. New items go on top. We always remove from the top first."
-  Output: {"template_id": "stack", "reasoning": "Content describes a stack data structure with push/pop semantics"}
+  Bullets: "A stack works like a pile of plates. New items go on top. We always remove from the top first. This is called LIFO — Last In First Out."
+  Output: {"template_id": "stack", "reasoning": "Content describes stack data structure with LIFO semantics and push/pop operations"}
 
   ### Example 2:
-  Bullets: "First, check if input is valid. If yes, parse the data. If parsing fails, log the error. Otherwise, store the result."
-  Output: {"template_id": "flowchart", "reasoning": "Content describes an algorithm with conditional branching and sequential steps"}
+  Bullets: "First check if input is valid. If yes, parse the data. If parsing fails, log the error and return. Otherwise store the result and return success."
+  Output: {"template_id": "flowchart", "reasoning": "Content describes an algorithm with conditional branching — valid/invalid and success/failure paths"}
 
   ### Example 3:
-  Bullets: "Variables store data in memory. The assignment operator = binds a name to a value. Python uses dynamic typing."
-  Output: {"template_id": "concept_box", "reasoning": "Abstract programming concepts without a specific visual structure"}
+  Bullets: "Variables store data in memory. Python uses dynamic typing. The assignment operator binds a name to a value in the current scope."
+  Output: {"template_id": "concept_box", "reasoning": "Abstract programming concepts with no specific visual structure — no data structure, no process, no comparison"}
 
   ### Example 4:
-  Bullets: "Arrays offer O(1) random access but O(n) insertion. Linked lists offer O(1) insertion but O(n) access."
-  Output: {"template_id": "comparison", "reasoning": "Content compares two data structures side-by-side on performance"}
+  Bullets: "Arrays offer O(1) random access but O(n) insertion at arbitrary positions. Linked lists offer O(1) insertion but O(n) access. Arrays are cache-friendly while linked lists are not."
+  Output: {"template_id": "comparison", "reasoning": "Content compares two data structures side-by-side on multiple performance attributes"}
 
   ### Example 5:
-  Bullets: "Our budget breakdown for Q1 is: 40% marketing, 30% R&D, 20% operations, and 10% administrative."
-  Output: {"template_id": "pie_chart", "reasoning": "Content shows proportional distribution and percentages that add up to 100% (parts of a whole)"}
+  Bullets: "Closed-form summation runs in O(1) time. The iterative approach runs in O(n) time. Benchmarks show closed-form is 10x faster on large inputs."
+  Output: {"template_id": "bar_chart", "reasoning": "Content contains explicit quantitative performance comparison between two approaches with numerical ratio"}
 
   ### Example 6:
-  Bullets: "Revenue grew by 15% in Q1, 20% in Q2, and 25% in Q3. Customer retention sits at 95%."
-  Output: {"template_id": "bar_chart", "reasoning": "Content contains explicit quantitative metrics comparing different discrete quarters, better suited for a bar chart"}
+  Bullets: "The OSI model has 7 layers. Physical layer handles bit transmission. Data link handles framing. Network handles routing. Transport handles end-to-end delivery. Application layer is where user software operates."
+  Output: {"template_id": "layered_stack", "reasoning": "Content describes clean horizontal abstraction layers stacked vertically with no lateral connections"}
+
+  ### Example 7:
+  Bullets: "A transformer consists of an encoder and decoder. The encoder uses multi-head self-attention followed by feed-forward layers. Each sublayer has residual connections and layer normalization. The decoder adds cross-attention over encoder output."
+  Output: {"template_id": "architecture_diagram", "reasoning": "Content describes the internal component architecture of a transformer model with specific modules and connections between them"}
+
+  ### Example 8:
+  Bullets: "A neural network has an input layer, one or more hidden layers, and an output layer. Each neuron receives weighted inputs, applies an activation function, and passes output to the next layer."
+  Output: {"template_id": "architecture_diagram", "reasoning": "Content describes neural network architecture with layers and connections — architecture_diagram handles all model architectures"}
+
+  ### Example 9:
+  Bullets: "Nodes in a linked list contain a value and a pointer to the next node. The head points to the first node. The last node points to null."
+  Output: {"template_id": "linear_chain", "reasoning": "Content describes linked list structure with nodes and next pointers — classic linear chain"}
+
+  ### Example 10:
+  Bullets: "The call stack tracks function execution. Each function call pushes a frame. When a function returns its frame is popped. Recursive calls push multiple frames until the base case is reached."
+  Output: {"template_id": "stack", "reasoning": "Content describes call stack behavior with push/pop semantics during function execution"}
+
+  ### Example 11:
+  Bullets: "A trie stores strings by breaking them into characters. Each node represents one character and can have up to 26 children. All descendants of a node share the same prefix. Searching takes O(m) time where m is the string length."
+  Output: {"template_id": "general_tree", "reasoning": "Content describes a trie which is a CS data structure with arbitrary branching — the tree structure is the subject being studied, not a system architecture"}
+
+  ### Example 12:
+  Bullets: "The NameNode is the master server in HDFS. It manages the file system namespace and metadata. Multiple DataNodes store the actual data blocks. The NameNode tracks which blocks are on which DataNode and coordinates replication."
+  Output: {"template_id": "architecture_diagram", "reasoning": "Content describes system architecture with master and worker components connected by data flow — this is infrastructure design not a CS data structure"}
+
+  ### Example 13:
+  Bullets: "A B-tree node contains between t-1 and 2t-1 keys. Each internal node has between t and 2t children. All leaves are at the same depth. B-trees are used in database indexing and file systems."
+  Output: {"template_id": "general_tree", "reasoning": "Content describes B-tree as a CS data structure with arbitrary branching factor — studying the tree algorithm itself, not a system design"}
+
+  ### Example 14:
+  Bullets: "The encoder stack processes the input sequence through N identical layers. Each layer contains a multi-head self-attention sublayer followed by a position-wise feed-forward sublayer. The decoder stack additionally attends over the encoder output through cross-attention."
+  Output: {"template_id": "architecture_diagram", "reasoning": "Content describes the internal component structure of a transformer model — components with specific connections and data flow, this is model architecture not a data structure"}
 
 classifier_user_template: |
   Classify the following slide content into the best visual template.
@@ -83,13 +129,15 @@ classifier_user_template: |
 
   ## RULES:
   1. Choose from these categories and templates:
-     - Data Structures: linear_chain, binary_tree, stack, queue, graph
+     - Data Structures: linear_chain, binary_tree, general_tree, stack, queue, graph
      - Flow Diagrams: flowchart, cycle
-     - Comparisons: comparison, grid
-     - Quantitative: bar_chart, pie_chart
+     - Comparison: comparison
+     - Quantitative: bar_chart
      - Conceptual: concept_box
+     - Architectural: layered_stack, architecture_diagram (neural networks, transformers, system designs, microservices, compiler pipelines, any model/system with components and connections)
      - No Visual: none
   2. Pick the MOST SPECIFIC template — don't default to concept_box
-  3. Include brief reasoning for your choice
+  3. architecture_diagram catches ALL model and system architectures — when in doubt between concept_box and architecture_diagram for model-related content, choose architecture_diagram
+  4. Include brief reasoning for your choice
 
   Output ONLY the JSON. No explanations outside the JSON.

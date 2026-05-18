@@ -1,11 +1,13 @@
 """
 Hierarchical Visual Classifier Agent — Two-level DistilBERT + Visual Gate.
 
-Level 1: Predicts category (data_structure, flow_diagram, comparison, chart, conceptual, none)
+Level 1: Predicts category (data_structure, flow_diagram, comparison, chart,
+         conceptual, architectural, none)
 Level 2: Predicts specific template within that category
 
 Supports:
 - Hierarchical models (Level 1 + Level 2 sub-models)
+- Single-template categories (skip L2, use full L1 confidence)
 - Fallback for categories without trained Level 2 models
 - Combined confidence scoring (L1 × L2)
 - Confidence-based visual gate by composition mode
@@ -15,8 +17,8 @@ import json
 from pathlib import Path
 import torch
 
-# Auto-detect device: prefer CUDA, fallback to CPU
-_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Auto-detect device: prefer CUDA, fallback to MPS, then CPU
+_device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
 from slide_gen.core.slide_schema import VALID_TEMPLATES
 from slide_gen.core.hierarchy import (
@@ -24,6 +26,7 @@ from slide_gen.core.hierarchy import (
     CATEGORY_HIERARCHY,
     LEVEL2_LABELS,
     TEMPLATE_TO_CATEGORY,
+    SINGLE_TEMPLATE_CATEGORIES,
 )
 
 
@@ -172,6 +175,7 @@ def classify_visual(
 
     Step 1: Predict category (Level 1)
     Step 2: If category ≠ 'none', predict specific template (Level 2)
+            For single-template categories, skip L2 and use full L1 confidence.
     Step 3: Combine confidences
 
     Args:
@@ -204,18 +208,33 @@ def classify_visual(
         if cat == "none":
             all_template_probs["none"] = l1_prob
             continue
-            
+
+        # Single-template categories: skip L2, use full L1 confidence
+        if cat in SINGLE_TEMPLATE_CATEGORIES:
+            tmpl = SINGLE_TEMPLATE_CATEGORIES[cat]
+            # Use max to keep the highest probability if template appears
+            # in multiple categories (e.g. general_tree)
+            all_template_probs[tmpl] = max(
+                all_template_probs.get(tmpl, 0), l1_prob
+            )
+            continue
+
         l2_data = _load_level2(model_base, cat)
         if l2_data is not None:
             l2_model, l2_tokenizer, l2_labels = l2_data
             l2_result = _predict(l2_model, l2_tokenizer, l2_labels, text)
             for tmpl, l2_prob in l2_result["probabilities"].items():
-                all_template_probs[tmpl] = l1_prob * l2_prob
+                combined = l1_prob * l2_prob
+                all_template_probs[tmpl] = max(
+                    all_template_probs.get(tmpl, 0), combined
+                )
         else:
-            # Fallback for categories without Level 2 models (like 'conceptual')
+            # Fallback for categories without Level 2 models
             templates = CATEGORY_HIERARCHY.get(cat, [])
             default_tmpl = templates[0] if templates else "concept_box"
-            all_template_probs[default_tmpl] = l1_prob
+            all_template_probs[default_tmpl] = max(
+                all_template_probs.get(default_tmpl, 0), l1_prob
+            )
 
     # Sort all template probabilities descending
     top_templates = sorted(all_template_probs.items(), key=lambda x: x[1], reverse=True)

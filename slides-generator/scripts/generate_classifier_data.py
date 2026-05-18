@@ -39,6 +39,14 @@ def main():
         "--content-data", type=str, default=None,
         help="Path to content_train.jsonl (only used with --from-content-data)"
     )
+    parser.add_argument(
+        "--append", action="store_true",
+        help="Append to existing data instead of overwriting"
+    )
+    parser.add_argument(
+        "--output", type=str, default="classifier_train.jsonl",
+        help="Output filename in data/agent_training (default: classifier_train.jsonl)"
+    )
     args = parser.parse_args()
 
     load_dotenv(project_root / ".env")
@@ -82,8 +90,9 @@ def main():
 
         total_gen, total_processed = generator.run_from_content_data(
             content_jsonl_path=content_path,
-            output_filename="classifier_train.jsonl",
+            output_filename=args.output,
             resume=True,
+            append=args.append,
         )
     else:
         # Default: From raw PDFs
@@ -109,12 +118,13 @@ def main():
 
         total_gen, total_chunks = generator.run_from_chunks(
             chunks=all_chunks,
-            output_filename="classifier_train.jsonl",
+            output_filename=args.output,
             resume=True,
+            append=args.append,
         )
 
     print(f"\n✅ Done! Generated {total_gen} classifier examples.")
-    print(f"   Output: {output_dir / 'classifier_train.jsonl'}")
+    print(f"   Output: {output_dir / args.output}")
 
 
 if __name__ == "__main__":
