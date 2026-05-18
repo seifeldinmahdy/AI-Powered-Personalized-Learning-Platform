@@ -1,5 +1,5 @@
 """
-Groq-powered coding lab generation.
+OllamaClient-powered coding lab generation.
 
 The generator intentionally runs in two steps:
 1. Build a checklist from session context, tutor transcript, slides, and profile.
@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from groq import Groq
 
 from schemas.coding import (
     CodingLab,
@@ -48,9 +47,26 @@ for _candidate in [
 else:
     load_dotenv()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-LAB_MODEL = os.getenv("GROQ_MODEL_CODING", "qwen/qwen3-32b")
-FALLBACK_MODEL = "llama-3.3-70b-versatile"
+# ── OllamaClient (shared LLM backend) ──
+_pathway_src = str(Path(__file__).resolve().parent.parent.parent / "course_pathway" / "src")
+if _pathway_src not in sys.path:
+    sys.path.insert(0, _pathway_src)
+
+from pathway.llm.naming import OllamaClient  # type: ignore
+
+_ollama_client: OllamaClient | None = None
+
+def _get_ollama_client() -> OllamaClient:
+    global _ollama_client
+    if _ollama_client is None:
+        _ollama_client = OllamaClient(
+            host=os.getenv("OLLAMA_HOST", "https://ollama.com"),
+            model=os.getenv("OLLAMA_MODEL", "gpt-oss:120b"),
+            api_key=os.getenv("OLLAMA_API_KEY", ""),
+            max_retries=3,
+            timeout=120,
+        )
+    return _ollama_client
 
 
 def _clean_json(text: str) -> str:
@@ -66,26 +82,20 @@ def _clean_json(text: str) -> str:
 
 
 def _chat_json(messages: list[dict[str, str]], temperature: float, max_tokens: int) -> dict:
-    if not GROQ_API_KEY:
-        raise RuntimeError("GROQ_API_KEY is not configured")
+    api_key = os.getenv("OLLAMA_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("OLLAMA_API_KEY is not configured")
 
-    client = Groq(api_key=GROQ_API_KEY)
-    last_error: Exception | None = None
-    for model in [LAB_MODEL, FALLBACK_MODEL]:
-        try:
-            completion = client.chat.completions.create(
-                messages=messages,
-                model=model,
-                response_format={"type": "json_object"},
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            text = completion.choices[0].message.content or "{}"
-            return json.loads(_clean_json(text))
-        except Exception as exc:
-            last_error = exc
-            logger.warning("lab_model_failed model=%s error=%s", model, exc)
-    raise last_error or RuntimeError("Lab generation failed")
+    client = _get_ollama_client()
+    try:
+        return client.chat_json(
+            messages=messages,
+            temperature=temperature,
+            timeout_override=180,
+        )
+    except Exception as exc:
+        logger.warning("lab_model_failed error=%s", exc)
+        raise
 
 
 def _session_context(session_id: str | None) -> dict[str, Any]:

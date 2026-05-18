@@ -18,12 +18,10 @@ async def test_update_profile_injects_student_context():
     live = LiveSessionState()
     student_ctx = UnifiedStudentContext(profile=profile, live=live)
     
-    with patch("services.profiler_service._get_groq_client") as mock_get_client:
+    with patch("services.profiler_service._get_ollama_client") as mock_get_client:
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.choices[0].message.content = '{"profile_summary": "Test", "profile_data": {}}'
-        mock_client.chat.completions.create.return_value = mock_response
+        mock_client.chat_json.return_value = {"profile_summary": "Test", "profile_data": {}}
         
         await update_profile(
             student_id=123,
@@ -33,10 +31,10 @@ async def test_update_profile_injects_student_context():
         )
         
         # Verify call was made
-        mock_client.chat.completions.create.assert_called_once()
+        mock_client.chat_json.assert_called_once()
         
         # Extract the prompt sent to the LLM
-        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        call_kwargs = mock_client.chat_json.call_args.kwargs
         messages = call_kwargs["messages"]
         user_prompt = next(m["content"] for m in messages if m["role"] == "user")
         
@@ -47,3 +45,4 @@ async def test_update_profile_injects_student_context():
         assert "Strengths: for loops, variables" in user_prompt
         assert "Weaknesses: classes" in user_prompt
         assert "Incorrectly Answered: q1, q2" in user_prompt
+

@@ -1,30 +1,44 @@
 import os
+import sys
 import json
-from groq import Groq
+import logging
 from dotenv import load_dotenv
+from pathlib import Path
 
 load_dotenv()
 
-_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-CODING_MODEL = os.getenv("GROQ_MODEL_CODING", "qwen/qwen3-32b")
-FALLBACK_MODEL = "llama-3.3-70b-versatile"
+# ── OllamaClient (shared LLM backend) ──
+_pathway_src = str(Path(__file__).resolve().parent.parent.parent / "course_pathway" / "src")
+if _pathway_src not in sys.path:
+    sys.path.insert(0, _pathway_src)
+
+from pathway.llm.naming import OllamaClient  # type: ignore
+
+logger = logging.getLogger(__name__)
+
+_ollama_client: OllamaClient | None = None
+
+def _get_ollama_client() -> OllamaClient:
+    global _ollama_client
+    if _ollama_client is None:
+        _ollama_client = OllamaClient(
+            host=os.getenv("OLLAMA_HOST", "https://ollama.com"),
+            model=os.getenv("OLLAMA_MODEL", "gpt-oss:120b"),
+            api_key=os.getenv("OLLAMA_API_KEY", ""),
+            max_retries=3,
+            timeout=120,
+        )
+    return _ollama_client
 
 
 def _chat_json(messages: list, temperature: float = 0.2) -> dict:
-    """Call Groq with JSON mode, falling back to FALLBACK_MODEL on failure."""
-    for model in [CODING_MODEL, FALLBACK_MODEL]:
-        try:
-            completion = _client.chat.completions.create(
-                messages=messages,
-                model=model,
-                response_format={"type": "json_object"},
-                temperature=temperature,
-            )
-            return json.loads(completion.choices[0].message.content)
-        except Exception as e:
-            if model == FALLBACK_MODEL:
-                raise
-            print(f"Model {model} failed ({e}), retrying with {FALLBACK_MODEL}")
+    """Call OllamaClient with JSON mode."""
+    client = _get_ollama_client()
+    return client.chat_json(
+        messages=messages,
+        temperature=temperature,
+        timeout_override=120,
+    )
 
 
 def _letter_grade(score: int) -> str:
@@ -58,9 +72,9 @@ def evaluate_submission_graded(question: str, user_code: str, rubric: dict | Non
             "hint": str,
         }
     """
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key or api_key == "your_groq_api_key_here":
-        return _error_result("API Key missing. Please update your .env file.")
+    api_key = os.getenv("OLLAMA_API_KEY")
+    if not api_key:
+        return _error_result("OLLAMA_API_KEY missing. Please update your .env file.")
 
     if not user_code or not user_code.strip():
         return {

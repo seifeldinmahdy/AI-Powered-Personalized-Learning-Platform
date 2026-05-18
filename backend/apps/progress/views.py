@@ -116,10 +116,11 @@ class StudentLearningProfileViewSet(viewsets.ModelViewSet):
     """
     Persistent per-student learning profile.
     GET returns the single profile. POST creates or overwrites it.
+    PATCH partially updates profile_data fields (e.g. recurrent_mistakes).
     """
     serializer_class = StudentLearningProfileSerializer
     permission_classes = [permissions.IsAuthenticated]
-    http_method_names = ["get", "post", "head", "options"]
+    http_method_names = ["get", "post", "patch", "head", "options"]
 
     def get_queryset(self):
         return StudentLearningProfile.objects.filter(student=self.request.user)
@@ -160,6 +161,31 @@ class StudentLearningProfileViewSet(viewsets.ModelViewSet):
             serializer.data,
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
+
+    def partial_update(self, request, *args, **kwargs):
+        """
+        PATCH — merge incoming profile_data fields into existing profile_data.
+        Useful for updating recurrent_mistakes without overwriting the full profile.
+        """
+        profile = StudentLearningProfile.objects.filter(student=request.user).first()
+        if not profile:
+            return Response(
+                {"detail": "No learning profile yet."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        incoming_data = request.data.get("profile_data")
+        if incoming_data and isinstance(incoming_data, dict):
+            existing = profile.profile_data or {}
+            existing.update(incoming_data)
+            profile.profile_data = existing
+            profile.save(update_fields=["profile_data"])
+
+        if "profile_summary" in request.data:
+            profile.profile_summary = request.data["profile_summary"]
+            profile.save(update_fields=["profile_summary"])
+
+        return Response(StudentLearningProfileSerializer(profile).data)
 
 
 @api_view(['POST'])

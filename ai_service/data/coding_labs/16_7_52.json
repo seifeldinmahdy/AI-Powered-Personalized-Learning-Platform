@@ -1,0 +1,157 @@
+{
+  "lab_id": "16_7_52",
+  "cached": false,
+  "generated_at": "2026-05-18T20:25:49.862551Z",
+  "checklist": [
+    {
+      "id": "C1",
+      "item": "Recap key concepts: short‑circuit evaluation, guard statements, and debugging techniques (bisection, continue, debug output).",
+      "reason": "Ensures the student reviews the main ideas from the session before applying them."
+    },
+    {
+      "id": "C2",
+      "item": "Syntax practice: write short snippets that demonstrate short‑circuit `and`/`or`, a guard `if` before division, and a `continue` inside a loop.",
+      "reason": "Provides concrete, step‑by‑step tasks matching the student's preference for explicit syntax drills."
+    },
+    {
+      "id": "C3",
+      "item": "Implementation task 1: Refactor a provided function that computes the minimum of a list using guard checks and the built‑in `min()`.",
+      "reason": "Applies concept recap to a real coding problem, reinforcing learning through hands‑on coding."
+    },
+    {
+      "id": "C4",
+      "item": "Implementation task 2: Debug a broken email‑parsing script by adding debug prints, guard statements, and using `continue` to skip malformed lines.",
+      "reason": "Combines multiple debugging strategies from the session in a realistic scenario."
+    },
+    {
+      "id": "C5",
+      "item": "Personalization: Include a visual flowchart that maps the decision process for guard checks and short‑circuit evaluation.",
+      "reason": "Caters to the student's need for clear visual diagrams and concrete steps."
+    },
+    {
+      "id": "C6",
+      "item": "Personalization: Offer optional challenge – replace the manual bisection loop with Python's `bisect` module, but only if the student feels comfortable.",
+      "reason": "Provides an extension for motivated learners while keeping the core tasks simple and explicit."
+    },
+    {
+      "id": "C7",
+      "item": "Tutor tip: Prompt the student to run the program after each small change and observe the output before moving on.",
+      "reason": "Reinforces the step‑by‑step approach and helps the student see immediate cause‑effect, reducing abstract confusion."
+    },
+    {
+      "id": "C8",
+      "item": "Tutor tip: Encourage the student to write a one‑sentence comment next to each guard or debug line explaining its purpose.",
+      "reason": "Supports the student's need for concrete documentation and aids future debugging."
+    }
+  ],
+  "lab": {
+    "title": "Your First Component – Short‑Circuit, Guard Statements & Debugging",
+    "intro": "In this lab you will review short‑circuit evaluation, guard checks, and debugging tricks. You’ll write tiny snippets, refactor a min‑function, and fix a broken email‑parsing script.",
+    "estimated_minutes": 15,
+    "tutor_opening": "Welcome! Let’s walk through the key ideas step by step, run each example, and then try them yourself. Remember to run the code after every change and watch the output.",
+    "cells": [
+      {
+        "id": "cell-1",
+        "cell_type": "explanation",
+        "title": "Recap: Short‑Circuit, Guard, and Debug Techniques",
+        "narrative": "Short‑circuit `and`/`or` stops evaluating as soon as the result is known. Guard statements check a condition before risky code (e.g., division by zero). Debugging tools include `print` statements, `continue` to skip bad data, and bisection – narrowing the problem area by halving it.\n\n**Decision Flowchart (ASCII)**\n```\nStart → Evaluate guard?\n   ├─ Yes → Safe to run code → Continue\n   └─ No  → Skip (continue) or raise error\n       ↓\n   Use short‑circuit to avoid extra work\n   ↓\n   Add debug prints if you hit an error → Bisection if needed\n```",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Here’s a quick visual of how guard checks and short‑circuit work together. Keep this in mind when you write the snippets later.",
+        "tips": []
+      },
+      {
+        "id": "cell-2",
+        "cell_type": "code",
+        "title": "Demo: Short‑Circuit, Guard, and Continue",
+        "narrative": "The following code shows three common patterns you’ll use often.",
+        "code": "def demo():\n    # 1️⃣ Short‑circuit with `and`\n    a = 0\n    if a != 0 and (10 / a) > 1:  # second part never runs because a == 0\n        print('Won\\'t happen')\n    else:\n        print('Short‑circuit saved us')\n\n    # 2️⃣ Guard before division\n    b = 5\n    if b != 0:\n        print('10 / b =', 10 / b)  # safe\n    else:\n        print('Guard prevented ZeroDivisionError')\n\n    # 3️⃣ `continue` to skip malformed lines\n    lines = ['From alice@example.com Sat', 'Bad line', 'From bob@example.com Sun']\n    for line in lines:\n        words = line.split()\n        if not words or words[0] != 'From':\n            continue  # skip non‑\"From\" lines\n        print('Day:', words[2])\n\ndemo()",
+        "expected_output": "Short‑circuit saved us\n10 / b = 2.0\nDay: Sat\nDay: Sun",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Run this cell. Notice how the division never happens when `a` is zero, how the guard protects the second division, and how `continue` skips the bad line.",
+        "tips": []
+      },
+      {
+        "id": "cell-3",
+        "cell_type": "task",
+        "title": "Task 1 – Write Your Own Short‑Circuit & Guard Snippets",
+        "narrative": "Now you will create three tiny functions that each demonstrate one of the ideas above.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "1. Write `safe_div(x, y)` that returns `x / y` only if `y` is not zero, otherwise returns `None`.\n2. Write `short_or(a, b)` that returns `a` if `a` is truthy, otherwise returns `b` – using the `or` operator.\n3. Write a loop over the list `samples = ['OK 1', 'BAD', 'OK 2']` that prints the part after the space only for strings that start with `'OK'`. Use `continue` to skip the bad entry.",
+        "starter_code": "# 1. Guarded division\n\ndef safe_div(x, y):\n    # TODO: add guard\n    pass\n\n# 2. Short‑circuit OR\n\ndef short_or(a, b):\n    # TODO: use `or`\n    pass\n\n# 3. Loop with continue\nsamples = ['OK 1', 'BAD', 'OK 2']\nfor s in samples:\n    # TODO: guard with continue\n    pass",
+        "success_criteria": [
+          "safe_div returns the correct quotient when y != 0 and None otherwise.",
+          "short_or returns the first truthy argument.",
+          "The loop prints \"1\" and \"2\" on separate lines, skipping \"BAD\"."
+        ],
+        "tutor_script": "Give it a try! Write the missing parts, then run the cell to see if the output matches the criteria. Remember the one‑sentence comment tip: add a short comment next to each guard or continue line.",
+        "tips": [
+          "Use `if y == 0: return None` before the division.",
+          "`return a or b` does the short‑circuit for you.",
+          "Check `if not s.startswith('OK'):` then `continue`."
+        ]
+      },
+      {
+        "id": "cell-4",
+        "cell_type": "task",
+        "title": "Task 2 – Refactor a Minimum Function",
+        "narrative": "You have a hand‑written `my_min` that walks a list. Refactor it to use a guard and the built‑in `min`.",
+        "code": "",
+        "expected_output": "2\nNone",
+        "task_prompt": "Complete the function so that:\n- If the input list is empty, it returns `None` (guard).\n- Otherwise it returns the smallest value using Python’s `min`.\n\nAdd a one‑sentence comment explaining each guard.\n\n```python\n\ndef my_min(values):\n    # TODO: guard for empty list\n    pass\n```",
+        "starter_code": "def my_min(values):\n    # Guard: return None if list is empty\n    if not values:\n        return None\n    # Use built‑in min to find the smallest element\n    return min(values)\n\n# Test cases (you can add more)\nprint(my_min([5, 2, 9]))   # Expected: 2\nprint(my_min([]))          # Expected: None",
+        "success_criteria": [
+          "Function returns the correct minimum for non‑empty lists.",
+          "Function returns None for an empty list.",
+          "Guard comment is present."
+        ],
+        "tutor_script": "Replace the placeholder with the guard and the call to `min`. Run the tests – you should see `2` and `None` printed.",
+        "tips": [
+          "Use `if not values:` as the guard condition.",
+          "The built‑in `min(values)` does all the work."
+        ]
+      },
+      {
+        "id": "cell-5",
+        "cell_type": "code",
+        "title": "Demo: Debugging an Email‑Parsing Script",
+        "narrative": "Below is a broken script that tries to print the day of the week from lines that start with `From`. It fails on empty lines. The corrected version adds debug prints, a guard, and `continue`.",
+        "code": "# Broken version (will raise IndexError)\n# for line in open('mbox-short.txt'):\n#     words = line.split()\n#     if words[0] != 'From':\n#         continue\n#     print(words[2])\n\n# Fixed version with debugging\nfor line in open('mbox-short.txt'):\n    words = line.split()\n    print('Debug:', words)          # debug output\n    if not words or words[0] != 'From':\n        continue                    # guard + skip malformed line\n    print('Day:', words[2])\n",
+        "expected_output": "Debug: []\n... (many debug lines) ...\nDay: Sat\nDay: Sun\n(etc.)",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Run this cell with a small sample file (or create one) to see how the debug prints reveal the empty list before the error. Notice the guard `if not words` prevents the IndexError.",
+        "tips": []
+      },
+      {
+        "id": "cell-6",
+        "cell_type": "task",
+        "title": "Task 3 – Fix the Broken Email Parser",
+        "narrative": "Your job is to take the broken script (shown in the previous cell) and add the missing pieces so it runs without error.",
+        "code": "",
+        "expected_output": "Debug: []\n... (debug lines) ...\nDay: Sat\nDay: Sun\n(etc.)",
+        "task_prompt": "Complete the script:\n1. Add a debug `print('Debug:', words)` before any conditional.\n2. Insert a guard that checks `if not words` and uses `continue` to skip the line.\n3. Keep the existing `if words[0] != 'From': continue` check.\n4. Finally, print the day (`words[2]`).\n\nOptional challenge: replace the manual loop with `bisect` to find the first line that starts with `'From'` – only attempt this if you feel comfortable.\n\n```python\nfor line in open('mbox-short.txt'):\n    words = line.split()\n    # TODO: debug print\n    # TODO: guard for empty list\n    if words[0] != 'From':\n        continue\n    print(words[2])\n```",
+        "starter_code": "for line in open('mbox-short.txt'):\n    words = line.split()\n    # Debug output (add here)\n    # Guard for empty list (add here)\n    if words[0] != 'From':\n        continue\n    print(words[2])\n",
+        "success_criteria": [
+          "Script runs without IndexError on the provided file.",
+          "Debug lines are printed for each processed line.",
+          "Only lines starting with `From` produce a `Day:` output."
+        ],
+        "tutor_script": "Edit the placeholders, then run the cell. If you see the debug lines and the days printed, you’ve succeeded. Remember to add a brief comment next to each guard explaining why it’s there.",
+        "tips": [
+          "Use `print('Debug:', words)` right after `words = line.split()`.",
+          "Guard: `if not words: continue` prevents empty‑list errors.",
+          "Optional: `import bisect` and use `bisect_left` on a list of line numbers if you want extra practice."
+        ]
+      }
+    ],
+    "completion_message": "Great work! You’ve practiced short‑circuit logic, guard statements, and debugging techniques. Keep using these patterns in your own projects, and you’ll spend far less time chasing bugs."
+  }
+}

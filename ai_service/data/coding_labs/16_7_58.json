@@ -1,0 +1,129 @@
+{
+  "lab_id": "16_7_58",
+  "cached": false,
+  "generated_at": "2026-05-07T21:53:21.744951Z",
+  "checklist": [
+    {
+      "id": "C1",
+      "item": "Include a concept recap section that defines tuples and dictionaries with clear examples from the slides (e.g., tuple syntax, dictionary key-value pairs).",
+      "reason": "Ensures foundational knowledge is reinforced before coding tasks, aligning with the student's preference for concrete explanations."
+    },
+    {
+      "id": "C2",
+      "item": "Provide syntax practice exercises for tuple creation, dictionary manipulation, and iteration (e.g., tuple assignment, dictionary counters).",
+      "reason": "Reinforces syntax mastery through hands-on coding, addressing the student's need for step-by-step concrete tasks."
+    },
+    {
+      "id": "C3",
+      "item": "Implement a task requiring students to build a program using tuples and dictionaries (e.g., parsing email domains or counting word frequencies).",
+      "reason": "Applies concepts to real-world scenarios, leveraging the student's preference for practical implementation."
+    },
+    {
+      "id": "C4",
+      "item": "Incorporate visual diagrams (e.g., tuple vs. list, dictionary structure) and step-by-step instructions for all tasks.",
+      "reason": "Supports the student's learning style by avoiding abstract explanations and providing structured visual guidance."
+    },
+    {
+      "id": "C5",
+      "item": "Add tutor tips to emphasize maintaining neutral tone, breaking tasks into smaller steps, and using code tracing for debugging.",
+      "reason": "Aligns with the student's profile by ensuring instructions are clear, actionable, and emotionally neutral."
+    }
+  ],
+  "lab": {
+    "title": "Tuples and Dictionaries",
+    "intro": "In this lab, we will explore the basics of tuples and dictionaries in Python. You will learn how to create and manipulate these data structures, and apply them to real-world problems.",
+    "estimated_minutes": 30,
+    "tutor_opening": "Welcome to the Tuples and Dictionaries lab. I'll guide you through the concepts and exercises. Let's get started!",
+    "cells": [
+      {
+        "id": "cell-1",
+        "cell_type": "explanation",
+        "title": "Introduction to Tuples and Dictionaries",
+        "narrative": "Tuples and dictionaries are two fundamental data structures in Python. A tuple is a collection of values that can be of any data type, including strings, integers, and floats. A dictionary is a collection of key-value pairs, where each key is unique and maps to a specific value.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Let's start with the basics. Tuples and dictionaries are essential data structures in Python. Can you think of scenarios where you would use them?",
+        "tips": []
+      },
+      {
+        "id": "cell-2",
+        "cell_type": "code",
+        "title": "Creating Tuples",
+        "narrative": "Here's an example of creating a tuple in Python:",
+        "code": "my_tuple = (1, 2, 3)\nprint(my_tuple)",
+        "expected_output": "(1, 2, 3)",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Notice how we create a tuple using parentheses and commas to separate the values. Now, let's see how to create a dictionary.",
+        "tips": []
+      },
+      {
+        "id": "cell-3",
+        "cell_type": "task",
+        "title": "Creating a Dictionary",
+        "narrative": "Create a dictionary with the following key-value pairs: 'name': 'John', 'age': 30",
+        "code": "",
+        "expected_output": "{'name': 'John', 'age': 30}",
+        "task_prompt": "Create a dictionary with the given key-value pairs",
+        "starter_code": "my_dict = {}",
+        "success_criteria": [
+          "The dictionary should have the correct key-value pairs"
+        ],
+        "tutor_script": "Now it's your turn. Create a dictionary with the given key-value pairs. Remember to use curly brackets and colons to separate the keys and values.",
+        "tips": [
+          "Use the format 'key': 'value' to add key-value pairs to the dictionary"
+        ]
+      },
+      {
+        "id": "cell-4",
+        "cell_type": "code",
+        "title": "Accessing Dictionary Values",
+        "narrative": "Here's an example of accessing a dictionary value in Python:",
+        "code": "my_dict = {'name': 'John', 'age': 30}\nprint(my_dict['name'])",
+        "expected_output": "John",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Notice how we use the key to access the corresponding value in the dictionary. Now, let's practice accessing dictionary values.",
+        "tips": []
+      },
+      {
+        "id": "cell-5",
+        "cell_type": "task",
+        "title": "Accessing Dictionary Values",
+        "narrative": "Create a dictionary with the following key-value pairs: 'city': 'New York', 'country': 'USA'. Then, access the value of the 'city' key",
+        "code": "",
+        "expected_output": "New York",
+        "task_prompt": "Create a dictionary and access the value of the 'city' key",
+        "starter_code": "my_dict = {}",
+        "success_criteria": [
+          "The dictionary should have the correct key-value pairs",
+          "The code should access the value of the 'city' key correctly"
+        ],
+        "tutor_script": "Now it's your turn. Create a dictionary and access the value of the 'city' key. Remember to use the format 'key': 'value' to add key-value pairs to the dictionary.",
+        "tips": [
+          "Use the format 'key': 'value' to add key-value pairs to the dictionary",
+          "Use the syntax my_dict['key'] to access the value of a key"
+        ]
+      },
+      {
+        "id": "cell-6",
+        "cell_type": "explanation",
+        "title": "Conclusion",
+        "narrative": "In this lab, you learned the basics of tuples and dictionaries in Python. You practiced creating and manipulating these data structures, and applied them to real-world problems.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Great job! You now have a solid understanding of tuples and dictionaries in Python. Remember to practice and apply these concepts to your own projects.",
+        "tips": []
+      }
+    ],
+    "completion_message": "Congratulations! You have completed the Tuples and Dictionaries lab. You now have a solid understanding of these fundamental data structures in Python."
+  }
+}

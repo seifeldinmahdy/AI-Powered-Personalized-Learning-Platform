@@ -1,12 +1,13 @@
 """
 Profiler Service — LLM-powered session analysis and emotion fusion.
 
-Uses Groq (openai/gpt-oss-120b) for:
+Uses OllamaClient for:
   • Cross-session profile rewriting (persistent student profile)
   • Real-time emotion fusion when FER and SER conflict
 """
 
 import os
+import sys
 import re
 import json
 import logging
@@ -14,7 +15,6 @@ from typing import Optional
 from pathlib import Path
 from schemas.student_context import UnifiedStudentContext
 from dotenv import load_dotenv
-from groq import Groq
 
 # Search for .env
 _this_dir = Path(__file__).resolve().parent
@@ -31,13 +31,26 @@ else:
 
 logger = logging.getLogger(__name__)
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL = os.getenv("GROQ_PROFILER_MODEL", "openai/gpt-oss-120b")
+# ── OllamaClient (shared LLM backend) ──
+_pathway_src = str(Path(__file__).resolve().parent.parent.parent / "course_pathway" / "src")
+if _pathway_src not in sys.path:
+    sys.path.insert(0, _pathway_src)
 
+from pathway.llm.naming import OllamaClient  # type: ignore
 
-def _get_groq_client() -> Groq:
-    """Create a Groq client (reuses the same API key as coding/evaluator)."""
-    return Groq(api_key=GROQ_API_KEY)
+_ollama_client: OllamaClient | None = None
+
+def _get_ollama_client() -> OllamaClient:
+    global _ollama_client
+    if _ollama_client is None:
+        _ollama_client = OllamaClient(
+            host=os.getenv("OLLAMA_HOST", "https://ollama.com"),
+            model=os.getenv("OLLAMA_MODEL", "gpt-oss:120b"),
+            api_key=os.getenv("OLLAMA_API_KEY", ""),
+            max_retries=3,
+            timeout=120,
+        )
+    return _ollama_client
 
 
 def _clean_llm_json(text: str) -> str:
@@ -126,8 +139,9 @@ async def update_profile(
 
     Returns { profile_summary: str, profile_data: dict }.
     """
-    if not GROQ_API_KEY:
-        logger.warning("GROQ_API_KEY not set — returning empty profile update")
+    api_key = os.getenv("OLLAMA_API_KEY", "")
+    if not api_key:
+        logger.warning("OLLAMA_API_KEY not set — returning empty profile update")
         return {
             "profile_summary": existing_profile_summary or "No profile yet.",
             "profile_data": existing_profile_data or _empty_profile_data(),
@@ -159,19 +173,15 @@ async def update_profile(
     )
 
     try:
-        client = _get_groq_client()
-        response = client.chat.completions.create(
-            model=GROQ_MODEL,
+        client = _get_ollama_client()
+        result = client.chat_json(
             messages=[
                 {"role": "system", "content": PROFILE_REWRITER_SYSTEM},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.4,
-            max_tokens=1024,
-            response_format={"type": "json_object"},
+            timeout_override=120,
         )
-        text = response.choices[0].message.content.strip()
-        result = _parse_llm_json(text, context="ProfileRewriter")
 
         # Validate expected keys
         if "profile_summary" not in result:
@@ -223,10 +233,11 @@ async def fuse_emotions(
     subtopic: str = "",
 ) -> dict:
     """
-    Use Groq LLM to resolve conflicting FER and SER emotions.
+    Use OllamaClient LLM to resolve conflicting FER and SER emotions.
     Returns { fused_emotion, reasoning }.
     """
-    if not GROQ_API_KEY:
+    api_key = os.getenv("OLLAMA_API_KEY", "")
+    if not api_key:
         # Fallback: higher confidence wins
         if fer_confidence >= ser_confidence:
             return {"fused_emotion": fer_emotion, "reasoning": "No API key — used FER (higher confidence)"}
@@ -244,19 +255,16 @@ async def fuse_emotions(
     user_prompt += ".\nWhich emotion better represents the student's true state?"
 
     try:
-        client = _get_groq_client()
-        response = client.chat.completions.create(
-            model=GROQ_MODEL,
+        client = _get_ollama_client()
+        result = client.chat_json(
             messages=[
                 {"role": "system", "content": FUSION_SYSTEM},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.1,
-            max_tokens=128,
-            response_format={"type": "json_object"},
+            timeout_override=30,
         )
-        text = response.choices[0].message.content.strip()
-        return _parse_llm_json(text, context="EmotionFusion")
+        return result
     except json.JSONDecodeError:
         logger.warning("Emotion fusion: JSON parse failed, falling back to confidence")
         if fer_confidence >= ser_confidence:

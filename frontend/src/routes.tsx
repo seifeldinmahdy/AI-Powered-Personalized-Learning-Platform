@@ -4,7 +4,6 @@ import Dashboard from "./pages/student/Dashboard";
 import LiveSession from "./pages/student/LiveSession";
 import CodingLab from "./pages/student/CodingLab";
 import PracticeArea from "./pages/student/PracticeArea";
-import LessonPractice from "./pages/student/LessonPractice";
 import Leaderboard from "./pages/student/Leaderboard";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import AdminStudents from "./pages/admin/AdminStudents";
@@ -51,11 +50,14 @@ export const router = createBrowserRouter([
             { path: "practice", Component: PracticeArea },
             { path: "practice/:topic", Component: PracticeArea },
             { path: "course/:courseId/lesson/:lessonId/lab", Component: CodingLab },
-            { path: "course/:courseId/lesson/:lessonId/practice", Component: LessonPractice },
+            {
+                path: "course/:courseId/lesson/:lessonId/problem-set",
+                lazy: () => import("./pages/student/ProblemSet").then(m => ({ Component: m.default })),
+            },
             { path: "leaderboard", Component: Leaderboard },
             { path: "profile", Component: Profile },
-            { 
-                path: "course/:courseId/lesson/:lessonId", 
+            {
+                path: "course/:courseId/lesson/:lessonId",
                 element: (
                     <RequirePathway>
                         <LiveSession />

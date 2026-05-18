@@ -1,0 +1,165 @@
+{
+  "lab_id": "16_3_2",
+  "cached": false,
+  "generated_at": "2026-05-07T21:37:43.853689Z",
+  "checklist": [
+    {
+      "id": "C1",
+      "item": "Review Python reserved words and their significance in variable naming",
+      "reason": "Slides 2-4 emphasize reserved words as foundational for avoiding syntax errors and proper Python syntax"
+    },
+    {
+      "id": "C2",
+      "item": "Practice using Python print() syntax with string literals",
+      "reason": "Slide 4 demonstrates print statement syntax and Slide 5 shows Python prompt interaction patterns"
+    },
+    {
+      "id": "C3",
+      "item": "Implement a working Python installation verification script",
+      "reason": "Aligns with lesson_title's installation focus and Slide 8's interpreter execution concepts"
+    },
+    {
+      "id": "C4",
+      "item": "Create step-by-step visual guide for VS Code setup",
+      "reason": "Student_profile_summary indicates preference for visual diagrams and concrete instructions"
+    },
+    {
+      "id": "C5",
+      "item": "Troubleshoot common interpreter syntax errors",
+      "reason": "Slide 6-7 covers syntax error handling and error message interpretation"
+    },
+    {
+      "id": "C6",
+      "item": "Compare interpreter vs compiler execution flow",
+      "reason": "Slide 8-9 explains interpreter mechanics crucial for understanding Python execution"
+    },
+    {
+      "id": "C7",
+      "item": "Document environment setup process with screenshots",
+      "reason": "Student_profile_summary highlights hands-on learning and visual reinforcement needs"
+    }
+  ],
+  "lab": {
+    "title": "Python Environment Setup & Syntax Fundamentals",
+    "intro": "This lab will guide you through Python installation verification, syntax basics, and environment setup. We'll focus on hands-on practice with clear step-by-step instructions.",
+    "estimated_minutes": 20,
+    "tutor_opening": "Let's start by verifying your Python installation and practicing basic syntax. Follow each step carefully—we'll check your work as we go.",
+    "cells": [
+      {
+        "id": "cell-1",
+        "cell_type": "explanation",
+        "title": "Python Reserved Words",
+        "narrative": "Python has 33 reserved words (like 'if', 'else', 'while') that cannot be used as variable names. These keywords have special meanings in the language.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Notice how 'if' and 'else' are highlighted differently in code editors—this is syntax highlighting showing reserved words.",
+        "tips": []
+      },
+      {
+        "id": "cell-2",
+        "cell_type": "code",
+        "title": "Valid vs Invalid Variable Names",
+        "narrative": "Valid variable names follow these rules:\n1. Start with a letter or underscore\n2. No special characters\n3. No spaces\n4. Not a reserved word",
+        "code": "valid_name = 42\n_valid_name = 'Hello'\n# Invalid examples:\n# 2invalid = 5\n# if = 100  # 'if' is a reserved word",
+        "expected_output": "",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "The commented lines show common mistakes. Try running this code to see what happens when you break these rules.",
+        "tips": []
+      },
+      {
+        "id": "cell-3",
+        "cell_type": "task",
+        "title": "Fix Invalid Variable Names",
+        "narrative": "",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "Correct the invalid variable names in the starter code. Use underscores instead of spaces and avoid reserved words.",
+        "starter_code": "# Fix these variables:\ninvalid variable = 'Hello'\nfor = 42\nmy-variable = 100",
+        "success_criteria": [
+          "All variable names follow Python syntax rules",
+          "No reserved words are used as variable names"
+        ],
+        "tutor_script": "",
+        "tips": [
+          "Replace spaces with underscores",
+          "Check the full list of Python keywords",
+          "Add numbers to differentiate similar names"
+        ]
+      },
+      {
+        "id": "cell-4",
+        "cell_type": "code",
+        "title": "Print Statement Syntax",
+        "narrative": "The print() function outputs text to the console. String literals must be enclosed in matching quotes.",
+        "code": "print('Hello, World!')\nprint(\"Python is fun!\")\nprint('You can use', 'multiple', 'arguments')",
+        "expected_output": "Hello, World!\nPython is fun!\nYou can use multiple arguments",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Notice how different quote types and commas affect the output format. This is fundamental for debugging.",
+        "tips": []
+      },
+      {
+        "id": "cell-5",
+        "cell_type": "task",
+        "title": "Personalized Print Statement",
+        "narrative": "",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "Write a print statement that outputs your name and today's date. Use string concatenation or multiple arguments.",
+        "starter_code": "# Your code here:\nprint()",
+        "success_criteria": [
+          "Prints your name and date in one line",
+          "Uses valid string syntax",
+          "No syntax errors"
+        ],
+        "tutor_script": "",
+        "tips": [
+          "Use 'today = '2023-11-15'' to store the date",
+          "Try both 'print('Name: ', name)' and 'print(f'Name: {name}')'",
+          "Check quote matching carefully"
+        ]
+      },
+      {
+        "id": "cell-6",
+        "cell_type": "code",
+        "title": "Python Installation Verification",
+        "narrative": "This script checks your Python environment. Run it to confirm your installation works correctly.",
+        "code": "import sys\nprint('Python version:', sys.version)\nprint('Interpreter path:', sys.executable)",
+        "expected_output": "Python version: 3.x.x\nInterpreter path: /usr/bin/python3",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "The output shows where Python is installed and its version number. This confirms your PATH is set correctly.",
+        "tips": []
+      },
+      {
+        "id": "cell-7",
+        "cell_type": "task",
+        "title": "VS Code Setup Documentation",
+        "narrative": "",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "Document your VS Code setup process by:\n1. Creating a new Python file\n2. Writing a 'Hello World' script\n3. Taking a screenshot of the output",
+        "starter_code": "# Create a new file named 'hello.py' and add:\nprint('Hello from VS Code!')",
+        "success_criteria": [
+          "VS Code is installed and running",
+          "Python file created with correct syntax",
+          "Screenshot shows successful execution"
+        ],
+        "tutor_script": "",
+        "tips": [
+          "Use Ctrl+Shift+P (Cmd+Shift+P on Mac) to open the command palette",
+          "Install the Python extension for syntax highlighting",
+          "Run scripts using the terminal or Run button"
+        ]
+      }
+    ],
+    "completion_message": "You've successfully verified your Python installation, practiced basic syntax, and documented your development environment. These skills form the foundation for all Python programming."
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "lab_id": "16_3_6",
+  "cached": false,
+  "generated_at": "2026-05-08T10:47:40.247104Z",
+  "checklist": [
+    {
+      "id": "C1",
+      "item": "Concept recap of conditional statements basics",
+      "reason": "To ensure the student understands the fundamental concepts of conditional statements before proceeding to practice and implementation tasks."
+    },
+    {
+      "id": "C2",
+      "item": "Syntax practice for if statements and conditional execution",
+      "reason": "To help the student become familiar with the syntax and structure of conditional statements in Python."
+    },
+    {
+      "id": "C3",
+      "item": "Implementation tasks for conditional statements and nested conditionals",
+      "reason": "To provide the student with hands-on experience in applying conditional statements to real-world problems and scenarios."
+    },
+    {
+      "id": "C4",
+      "item": "Personalization of lab content based on student profile summary",
+      "reason": "To cater to the student's learning style and preferences, as mentioned in the student profile summary, and provide a more effective learning experience."
+    },
+    {
+      "id": "C5",
+      "item": "Inclusion of tutor tips and guidance for conditional statements",
+      "reason": "To offer additional support and guidance to the student as they work through the lab, and to help them overcome any challenges or difficulties they may encounter."
+    }
+  ],
+  "lab": {
+    "title": "Conditional Statements Practice Lab",
+    "intro": "This lab will help you practice writing and understanding conditional statements in Python. We'll start with basic if statements and progress to nested conditionals.",
+    "estimated_minutes": 15,
+    "tutor_opening": "Let's practice conditionals using real-world examples. I'll show you a concept, then you'll try it yourself. Let's begin!",
+    "cells": [
+      {
+        "id": "cell-1",
+        "cell_type": "explanation",
+        "title": "Conditional Statements Overview",
+        "narrative": "Conditionals let programs make decisions. The basic structure is: if [condition]: [code to execute]. Add else: for alternative paths.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Conditionals execute code only when specific conditions are met. Let's see a simple example.",
+        "tips": []
+      },
+      {
+        "id": "cell-2",
+        "cell_type": "code",
+        "title": "Basic If Statement",
+        "narrative": "",
+        "code": "temperature = 25\nif temperature > 30:\n    print(\"It's a hot day!\")\nelse:\n    print(\"Weather is pleasant.\")",
+        "expected_output": "Weather is pleasant.\n",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "This code checks temperature and prints different messages. Try modifying the temperature value to see how the output changes.",
+        "tips": []
+      },
+      {
+        "id": "cell-3",
+        "cell_type": "task",
+        "title": "Number Comparison Task",
+        "narrative": "",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "Write a program that checks if a number is positive, negative, or zero. Use if-elif-else structure.",
+        "starter_code": "num = -5\n\n# Your code here\nif num > 0:\n    print(\"Positive\")\n# Add elif and else conditions",
+        "success_criteria": [
+          "Uses if-elif-else structure",
+          "Correctly identifies positive/negative/zero"
+        ],
+        "tutor_script": "",
+        "tips": [
+          "Start with if for the first condition",
+          "Use elif for the second condition",
+          "End with else for the default case"
+        ]
+      },
+      {
+        "id": "cell-4",
+        "cell_type": "code",
+        "title": "Nested Conditionals Example",
+        "narrative": "",
+        "code": "age = 25\nhas_subscription = True\n\nif age >= 18:\n    if has_subscription:\n        print(\"Access granted to premium content\")\n    else:\n        print(\"Upgrade to get full access\")\nelse:\n    print(\"You must be 18+\")",
+        "expected_output": "Access granted to premium content\n",
+        "task_prompt": "",
+        "starter_code": "",
+        "success_criteria": [],
+        "tutor_script": "Nested conditionals let us check multiple requirements. The program verifies age AND subscription status.",
+        "tips": []
+      },
+      {
+        "id": "cell-5",
+        "cell_type": "task",
+        "title": "Order Validation Challenge",
+        "narrative": "",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "Create a program that validates an order: check if stock is available and if the customer has sufficient points.",
+        "starter_code": "stock = 10\npoints = 500\n\nif stock > 0:\n    # Add condition to check points\n    \nelse:\n    print(\"Item unavailable\")",
+        "success_criteria": [
+          "Checks both stock and points conditions",
+          "Uses logical operator when appropriate"
+        ],
+        "tutor_script": "",
+        "tips": [
+          "Use 'and' to combine conditions",
+          "Print different messages for stock vs points issues",
+          "Test edge cases like zero values"
+        ]
+      }
+    ],
+    "completion_message": "Great work! You've practiced basic conditionals, if-elif-else chains, and nested conditionals. Try experimenting with different values to see how the logic behaves."
+  }
+}

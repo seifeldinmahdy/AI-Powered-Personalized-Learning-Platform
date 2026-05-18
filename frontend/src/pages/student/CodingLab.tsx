@@ -1214,12 +1214,27 @@ export default function CodingLab() {
     setShowCompletion(true);
   }
 
-  function continueToPractice() {
-    navigate(`/course/${resolvedCourseId}/lesson/${resolvedLessonId}/practice`, {
+  function continueToProblemSet() {
+    // Pass slides and lab cells so the problem set has full context
+    const labCells = lab?.cells?.map(c => ({
+      id: c.id,
+      cell_type: c.cell_type,
+      title: c.title,
+      narrative: c.narrative || '',
+      code: c.code || '',
+      starter_code: c.starter_code || '',
+      task_prompt: c.task_prompt || '',
+    })) || [];
+
+    navigate(`/course/${resolvedCourseId}/lesson/${resolvedLessonId}/problem-set`, {
       state: {
         nextLessonId: state.nextLessonId ?? null,
         courseId: resolvedCourseId,
         lessonTitle: state.lessonTitle || lab?.title || 'this lesson',
+        sessionId: state.sessionId,
+        studentProfileSummary: state.studentProfileSummary || '',
+        slides: state.slides || [],
+        labCells,
       },
     });
   }
@@ -1454,8 +1469,8 @@ export default function CodingLab() {
 
           <div className="lab-finish-panel">
             <div>
-              <h2>Ready for the coding question?</h2>
-              <p>{allTasksDone ? lab.completion_message : 'Complete the lab tasks first to get ready for the coding question  '}</p>
+              <h2>Ready for the problem set?</h2>
+              <p>{allTasksDone ? lab.completion_message : 'Complete the lab tasks first to get ready for the problem set.'}</p>
             </div>
             <button onClick={finishLab} disabled={!allTasksDone}>
               Finish Lab
@@ -1472,10 +1487,10 @@ export default function CodingLab() {
               <CheckCircle2 size={64} />
             </div>
             <h2>Session Lab Complete</h2>
-            <p>You practiced the concepts and syntax. Now finish the implementation check.</p>
-            <button onClick={continueToPractice}>
+            <p>You practiced the concepts and syntax. Now tackle the problem set!</p>
+            <button onClick={continueToProblemSet}>
               <Code2 size={18} />
-              Continue to Coding Question
+              Continue to Problem Set
             </button>
           </div>
         </div>

@@ -1,0 +1,274 @@
+{
+  "profile": {
+    "student_id": "16",
+    "course_id": "9",
+    "mastery_level": "Novice",
+    "composition_mode": "balanced",
+    "language_proficiency": "Intermediate",
+    "strengths": [],
+    "weaknesses": [
+      "function definition",
+      "function parameters",
+      "functions",
+      "recursion",
+      "Tuples",
+      "dictionary usage",
+      "index",
+      "class diagram",
+      "inheritance",
+      "debugging",
+      "Runtime errors"
+    ],
+    "topic_performance": {
+      "function definition": 0.33,
+      "function parameters": 0.0,
+      "functions": 0.0,
+      "recursion": 0.1,
+      "Tuples": 0.33,
+      "dictionary usage": 0.0,
+      "index": 0.0,
+      "class diagram": 0.4,
+      "inheritance": 0.2,
+      "debugging": 0.2,
+      "Runtime errors": 0.0
+    },
+    "incorrectly_answered": [
+      {
+        "question": "In Python, which keyword is used to define a function?",
+        "chosen_option": "lambda",
+        "correct_option": "def"
+      },
+      {
+        "question": "What is the purpose of a function's parameter list?",
+        "chosen_option": "To list all the functions that can be called inside the function",
+        "correct_option": "To define the variables that the function can accept when called"
+      },
+      {
+        "question": "Consider the following function definition:\n\n```python\ndef add(x, y=10):\n    return x + y\n```\nIf the call is `add(5)`, what value is returned?",
+        "chosen_option": "5",
+        "correct_option": "15"
+      },
+      {
+        "question": "Which of the following statements about functions is FALSE?",
+        "chosen_option": "Functions help avoid code duplication.",
+        "correct_option": "A function must always return a value."
+      },
+      {
+        "question": "What is the term for a function that does not modify any external state and returns the same output for the same input?",
+        "chosen_option": "Higher-order function",
+        "correct_option": "Pure function"
+      },
+      {
+        "question": "Given the definition:\n\n```java\nint multiply(int a, int b) {\n    return a * b;\n}\n```\nWhich of the following calls will cause a compilation error?",
+        "chosen_option": "multiply(3, 4)",
+        "correct_option": "multiply(5)"
+      },
+      {
+        "question": "In the context of function scope, which variable can be accessed both inside and outside a function?",
+        "chosen_option": "Parameter variable",
+        "correct_option": "Global variable"
+      },
+      {
+        "question": "What does the term 'higher-order function' refer to?",
+        "chosen_option": "A function that executes in parallel threads",
+        "correct_option": "A function that takes another function as an argument or returns a function"
+      },
+      {
+        "question": "If a function is defined as `def greet(name, greeting='Hello'):` and called with `greet('Alice', 'Hi')`, what will be the value of `greeting` inside the function?",
+        "chosen_option": "None",
+        "correct_option": "Hi"
+      },
+      {
+        "question": "What is the base case in a recursive function?",
+        "chosen_option": "A variable that stores intermediate results",
+        "correct_option": "A condition that stops further recursive calls"
+      },
+      {
+        "question": "Which of the following correctly describes the call stack behavior during recursion?",
+        "chosen_option": "All recursive calls share a single stack frame",
+        "correct_option": "Each recursive call pushes a new frame onto the stack and pops it when the call returns"
+      },
+      {
+        "question": "Consider the function f(n) = f(n‑1) + f(n‑2) with base cases f(0)=0, f(1)=1. What is the time complexity of the naive recursive implementation?",
+        "chosen_option": "O(n^2)",
+        "correct_option": "O(2^n)"
+      },
+      {
+        "question": "Which technique can be used to transform a recursive algorithm into an iterative one without changing its asymptotic complexity?",
+        "chosen_option": "Binary search",
+        "correct_option": "Dynamic programming with a loop"
+      },
+      {
+        "question": "In the context of recursion, what does ‘tail recursion’ mean?",
+        "chosen_option": "The recursion depth is limited to a fixed number of levels",
+        "correct_option": "The recursive call is the last operation performed in the function"
+      },
+      {
+        "question": "What is the main drawback of using plain recursion for computing the n‑th Fibonacci number?",
+        "chosen_option": "It requires extra data structures like queues",
+        "correct_option": "Exponential number of repeated sub‑problems leading to poor performance"
+      },
+      {
+        "question": "Which of the following problems is *not* naturally solved by recursion?",
+        "chosen_option": "Generating permutations of a set",
+        "correct_option": "Finding the maximum element in an unsorted array"
+      },
+      {
+        "question": "If a recursive function has a depth of recursion equal to n and each call uses O(1) extra space, what is the overall auxiliary space complexity?",
+        "chosen_option": "O(1)",
+        "correct_option": "O(n)"
+      },
+      {
+        "question": "Which of the following statements about memoization in recursive algorithms is true?",
+        "chosen_option": "It increases the recursion depth",
+        "correct_option": "It stores results of sub‑problems to avoid recomputation, reducing time complexity"
+      },
+      {
+        "question": "Which of the following statements about Python tuples is true?",
+        "chosen_option": "Tuples support item assignment using indexing.",
+        "correct_option": "Tuples can contain duplicate elements."
+      },
+      {
+        "question": "What is the result of executing the code: `t = (1, 2, 3); t += (4,)`?",
+        "chosen_option": "A TypeError is raised because tuples are immutable.",
+        "correct_option": "The tuple t becomes (1, 2, 3, 4)."
+      },
+      {
+        "question": "Which method would you use to safely retrieve a value from a dictionary without risking a KeyError?",
+        "chosen_option": "dict.pop(key)",
+        "correct_option": "dict.get(key)"
+      },
+      {
+        "question": "What does the following code do?\n`my_dict = {'a': 1, 'b': 2}; my_dict.setdefault('c', 3)`",
+        "chosen_option": "Updates the value of key 'c' to 3, regardless of its prior existence.",
+        "correct_option": "Adds key 'c' with value 3 only if 'c' is not already in the dictionary."
+      },
+      {
+        "question": "Which of the following dictionary comprehensions creates a mapping of numbers to their squares for numbers 0 through 4?",
+        "chosen_option": "{x for x in range(5)}",
+        "correct_option": "{x: x**2 for x in range(5)}"
+      },
+      {
+        "question": "If `d = {'apple': 2, 'banana': 3}`, what will be the result of `d.pop('apple')`?",
+        "chosen_option": "It returns the entire dictionary `{'apple': 2, 'banana': 3}`.",
+        "correct_option": "It returns 2 and removes the key 'apple' from the dictionary."
+      },
+      {
+        "question": "Given a list `lst = ['a', 'b', 'c', 'd']`, what is the index of element `'c'`?",
+        "chosen_option": "-1",
+        "correct_option": "2"
+      },
+      {
+        "question": "What will `my_string = 'hello'; my_string[1:4]` return?",
+        "chosen_option": "'hell'",
+        "correct_option": "'ell'"
+      },
+      {
+        "question": "If `seq = (10, 20, 30, 40)` and you attempt `seq[4]`, what happens?",
+        "chosen_option": "None is returned.",
+        "correct_option": "An IndexError is raised because the index is out of range."
+      },
+      {
+        "question": "In a UML class diagram, which symbol is used to denote an abstract class?",
+        "chosen_option": "The class name is surrounded by double brackets",
+        "correct_option": "The class name is italicized"
+      },
+      {
+        "question": "When modeling inheritance in a class diagram, which visibility is typically used for inherited methods that are meant to be overridden by subclasses?",
+        "chosen_option": "package",
+        "correct_option": "protected"
+      },
+      {
+        "question": "Consider the following class hierarchy: class Animal → class Mammal → class Dog. Which statement about method resolution is correct in most object‑oriented languages?",
+        "chosen_option": "Mammal cannot add new methods that are not present in Animal",
+        "correct_option": "Mammal’s implementation overrides Animal’s, and Dog’s overrides Mammal’s if it provides one"
+      },
+      {
+        "question": "In a class diagram, how would you indicate that a class implements an interface?",
+        "chosen_option": "A solid line with a hollow diamond arrowhead",
+        "correct_option": "A dashed line with a hollow triangle arrowhead"
+      },
+      {
+        "question": "What is the effect of declaring a method in a base class as \"final\" in languages like Java?",
+        "chosen_option": "The method is abstract",
+        "correct_option": "The method cannot be overridden in any subclass"
+      },
+      {
+        "question": "In a UML class diagram, which compartment(s) are optional?",
+        "chosen_option": "All compartments are mandatory",
+        "correct_option": "Both attribute and operation compartments"
+      },
+      {
+        "question": "A subclass inherits a protected field from its superclass. Which of the following statements is true regarding access to that field?",
+        "chosen_option": "The subclass and any class in the same package can access it",
+        "correct_option": "Only the subclass can access it, not other classes in the same package"
+      },
+      {
+        "question": "Which of the following tools is primarily used to step through code line by line and inspect variable values?",
+        "chosen_option": "Linter",
+        "correct_option": "Debugger"
+      },
+      {
+        "question": "When a Python program raises a `ZeroDivisionError`, what is the most direct cause?",
+        "chosen_option": "Infinite recursion",
+        "correct_option": "Attempting to divide by zero"
+      },
+      {
+        "question": "What is the main advantage of using assertions in code during debugging?",
+        "chosen_option": "They replace unit tests",
+        "correct_option": "They document expected conditions and halt execution when violated"
+      },
+      {
+        "question": "A program crashes with a segmentation fault on a Linux system. Which of the following is the most likely cause?",
+        "chosen_option": "Using an outdated interpreter",
+        "correct_option": "Dereferencing a null or invalid pointer"
+      },
+      {
+        "question": "In Java, what exception is thrown when an array is accessed with an index outside its bounds?",
+        "chosen_option": "ClassCastException",
+        "correct_option": "IndexOutOfBoundsException"
+      },
+      {
+        "question": "Which of the following statements about breakpoints is FALSE?",
+        "chosen_option": "They allow inspection of the call stack",
+        "correct_option": "They modify the source code permanently"
+      },
+      {
+        "question": "A `MemoryError` in Python typically indicates which condition?",
+        "chosen_option": "Invalid function arguments",
+        "correct_option": "Insufficient memory to allocate objects"
+      },
+      {
+        "question": "When using a debugger, what does the 'step over' command do?",
+        "chosen_option": "Restarts the program from the beginning",
+        "correct_option": "Executes the current line and stops at the next line, skipping into function calls"
+      },
+      {
+        "question": "Which of the following is NOT a common cause of a `StackOverflowError` in Java?",
+        "chosen_option": "Excessive use of recursion in a single thread",
+        "correct_option": "Creating an excessively large array on the heap"
+      }
+    ],
+    "use_synthetic_context": false,
+    "course_intent": "dsai",
+    "student_profile_summary": "Novice learner in dsai. Strong in: no topics yet. Needs work on: function definition, function parameters, functions, recursion, Tuples, dictionary usage, index, class diagram, inheritance, debugging, Runtime errors."
+  },
+  "live": {
+    "session_id": "",
+    "current_slide_index": 0,
+    "current_slide_title": "",
+    "current_slide_content": "",
+    "current_topic": "",
+    "current_subtopic": "",
+    "running_summary": "",
+    "tutor_transcript": [],
+    "visited_slides": [],
+    "time_spent_per_slide": {},
+    "tutor_events": [],
+    "emotion_signals": [],
+    "fused_emotion": "",
+    "fused_emotion_confidence": 0.0,
+    "pace_modifier": 0,
+    "last_updated_at": 1779128866.219886
+  }
+}

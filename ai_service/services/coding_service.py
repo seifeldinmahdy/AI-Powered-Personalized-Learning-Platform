@@ -1,16 +1,36 @@
 import os
-from groq import Groq
+import sys
+import logging
 from dotenv import load_dotenv
+from pathlib import Path
 
 load_dotenv()
 
-_groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# ── OllamaClient (shared LLM backend) ──
+_pathway_src = str(Path(__file__).resolve().parent.parent.parent / "course_pathway" / "src")
+if _pathway_src not in sys.path:
+    sys.path.insert(0, _pathway_src)
+
+from pathway.llm.naming import OllamaClient  # type: ignore
+
+_ollama_client: OllamaClient | None = None
+
+def _get_ollama_client() -> OllamaClient:
+    global _ollama_client
+    if _ollama_client is None:
+        _ollama_client = OllamaClient(
+            host=os.getenv("OLLAMA_HOST", "https://ollama.com"),
+            model=os.getenv("OLLAMA_MODEL", "gpt-oss:120b"),
+            api_key=os.getenv("OLLAMA_API_KEY", ""),
+            max_retries=3,
+            timeout=120,
+        )
+    return _ollama_client
+
+logger = logging.getLogger(__name__)
 
 # Feature flag: set CODING_USE_T5=true to fall back to T5 + llama starter code
 USE_T5_FALLBACK = os.getenv("CODING_USE_T5", "false").lower() == "true"
-
-CODING_MODEL = os.getenv("GROQ_MODEL_CODING", "qwen/qwen3-32b")
-FALLBACK_MODEL = "llama-3.3-70b-versatile"
 
 # In-process history: topic -> list of recently generated question summaries (max 10)
 from collections import defaultdict
@@ -19,20 +39,12 @@ _HISTORY_MAX = 10
 
 
 def _chat_json(messages: list, temperature: float = 0.7) -> dict:
-    import json
-    for model in [CODING_MODEL, FALLBACK_MODEL]:
-        try:
-            completion = _groq_client.chat.completions.create(
-                messages=messages,
-                model=model,
-                response_format={"type": "json_object"},
-                temperature=temperature,
-            )
-            return json.loads(completion.choices[0].message.content)
-        except Exception as e:
-            if model == FALLBACK_MODEL:
-                raise
-            print(f"Model {model} failed ({e}), retrying with {FALLBACK_MODEL}")
+    client = _get_ollama_client()
+    return client.chat_json(
+        messages=messages,
+        temperature=temperature,
+        timeout_override=120,
+    )
 
 # ── T5 lazy load (only when flag is enabled) ────────────────────────────────
 _tokenizer = None
@@ -171,14 +183,15 @@ def function_name(parameters):
     pass"""
 
     try:
-        completion = _groq_client.chat.completions.create(
+        client = _get_ollama_client()
+        result = client.chat_json(
             messages=[{"role": "user", "content": starter_code_prompt}],
-            model="llama-3.1-8b-instant",
-            temperature=0.1
+            temperature=0.1,
+            timeout_override=60,
         )
-        starter_code = completion.choices[0].message.content.strip()
+        starter_code = result.get("starter_code", "def solution():\n    # TODO: Write your code here\n    pass")
     except Exception as e:
-        print(f"Groq Error: {e}")
+        print(f"OllamaClient Error: {e}")
         starter_code = "def solution():\n    # TODO: Write your code here\n    pass"
 
     return {"question": question, "starter_code": starter_code}
