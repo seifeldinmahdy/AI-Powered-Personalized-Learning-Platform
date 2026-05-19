@@ -5,7 +5,13 @@ flow between all downstream consumers (Content Specialist, MCQ service).
 Page ranges are display metadata only.
 """
 
-from __future__ import annotations
+# NOTE: Do NOT add `from __future__ import annotations` here.
+# Pydantic v2 resolves type annotations at class-definition time.  The
+# future import makes all annotations lazy strings, which breaks model
+# identity checks when Streamlit (or any hot-reloader) reimports the
+# module — `Session` from the cached import and `Session` from the fresh
+# import become different Python objects, causing ValidationError even
+# though they are structurally identical.
 
 import hashlib
 import json

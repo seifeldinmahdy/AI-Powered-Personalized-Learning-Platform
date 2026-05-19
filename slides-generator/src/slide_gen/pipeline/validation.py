@@ -94,13 +94,19 @@ def _validate_visual(slide: SlideInstruction) -> SlideInstruction:
     Validate that visual template + params are coherent.
 
     If the visual template is invalid or params are missing,
-    strip the visual and revert to List_View layout.
+    strip the visual and revert layout:
+      - If equations are present → Equation_Focus
+      - Otherwise              → List_View
     """
     if slide.visual is None:
         return slide
 
     template = slide.visual.template
     params = slide.visual.params
+
+    # Determine the correct fallback layout
+    has_math = bool(slide.equation_block)
+    fallback_layout = Layout.EQUATION_FOCUS if has_math else Layout.LIST_VIEW
 
     # Check template ID is valid
     if template not in VALID_TEMPLATES and template not in (
@@ -109,14 +115,14 @@ def _validate_visual(slide: SlideInstruction) -> SlideInstruction:
     ):
         print(f"    ⚠ Invalid template '{template}' — stripping visual")
         slide.visual = None
-        slide.layout = Layout.LIST_VIEW
+        slide.layout = fallback_layout
         return slide
 
     # Check params is a non-empty dict
     if not params or not isinstance(params, dict):
         print(f"    ⚠ Empty params for '{template}' — stripping visual")
         slide.visual = None
-        slide.layout = Layout.LIST_VIEW
+        slide.layout = fallback_layout
         return slide
 
     return slide

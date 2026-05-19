@@ -294,6 +294,9 @@ class ContentDataGenerator:
         self.model = model or os.getenv("OLLAMA_MODEL", "llama3")
         self.max_retries = max_retries if max_retries is not None else int(os.getenv("MAX_RETRIES", "3"))
         self.api_key = api_key or os.getenv("OLLAMA_API_KEY")
+        self.fallback_api_key = os.getenv("OLLAMA_API_KEY_FALLBACK")
+        if self.fallback_api_key:
+            print(f"   Fallback API key: Set (will switch automatically on rate limit)")
 
         # Load focused content prompts
         prompts = self._load_prompts(prompts_path)
@@ -315,17 +318,17 @@ class ContentDataGenerator:
 
     def _call_ollama(self, prompt: str) -> str | None:
         """Call Ollama API (local or cloud) and return response text.
-        
+
+        If the primary key is rate-limited (HTTP 429), automatically retries
+        once with the fallback key (OLLAMA_API_KEY_FALLBACK from .env).
+        Only returns ``"RATE_LIMITED"`` if both keys are exhausted.
+
         Returns:
             Response text string on success.
-            "RATE_LIMITED" sentinel string if the API returns HTTP 429.
+            "RATE_LIMITED" sentinel string if all keys are rate-limited.
             None on any other error.
         """
         url = f"{self.ollama_host}/api/generate"
-
-        headers = {}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
 
         payload = {
             "model": self.model,
@@ -338,23 +341,55 @@ class ContentDataGenerator:
             },
         }
 
-        try:
-            response = requests.post(url, json=payload, headers=headers, timeout=180)
-            if response.status_code == 429:
-                print(f"\n\n🚫 Rate limit hit (HTTP 429) — triggering graceful shutdown.")
-                return "RATE_LIMITED"
-            response.raise_for_status()
-            result = response.json()
-            return result.get("response", "")
-        except requests.HTTPError as e:
-            if e.response is not None and e.response.status_code == 429:
-                print(f"\n\n🚫 Rate limit hit (HTTP 429) — triggering graceful shutdown.")
-                return "RATE_LIMITED"
-            print(f"    Ollama API error: {e}")
-            return None
-        except requests.RequestException as e:
-            print(f"    Ollama API error: {e}")
-            return None
+        # Keys to try: primary first, then fallback (if set)
+        keys_to_try = [self.api_key]
+        if self.fallback_api_key and self.fallback_api_key != self.api_key:
+            keys_to_try.append(self.fallback_api_key)
+
+        for attempt_key in keys_to_try:
+            headers = {}
+            if attempt_key:
+                headers["Authorization"] = f"Bearer {attempt_key}"
+
+            is_fallback = attempt_key != self.api_key
+            key_label = "fallback key" if is_fallback else "primary key"
+
+            try:
+                response = requests.post(url, json=payload, headers=headers, timeout=180)
+                if response.status_code == 429:
+                    if is_fallback:
+                        print(f"\n\n🚫 Rate limit hit on {key_label} — no more keys to try. Triggering graceful shutdown.")
+                    else:
+                        if self.fallback_api_key and self.fallback_api_key != self.api_key:
+                            print(f"\n    ⚠ Rate limit hit on primary key — switching to fallback key...")
+                        else:
+                            print(f"\n\n🚫 Rate limit hit (HTTP 429) — triggering graceful shutdown.")
+                    continue  # Try next key, or fall through to return RATE_LIMITED
+                response.raise_for_status()
+                if is_fallback:
+                    # Promote fallback to primary so subsequent calls use it automatically
+                    self.api_key, self.fallback_api_key = self.fallback_api_key, None
+                    print(f"    ✅ Switched to fallback API key — continuing generation.")
+                result = response.json()
+                return result.get("response", "")
+            except requests.HTTPError as e:
+                if e.response is not None and e.response.status_code == 429:
+                    if is_fallback:
+                        print(f"\n\n🚫 Rate limit hit on {key_label} — no more keys to try. Triggering graceful shutdown.")
+                    else:
+                        if self.fallback_api_key and self.fallback_api_key != self.api_key:
+                            print(f"\n    ⚠ Rate limit hit on primary key — switching to fallback key...")
+                        else:
+                            print(f"\n\n🚫 Rate limit hit (HTTP 429) — triggering graceful shutdown.")
+                    continue  # Try next key
+                print(f"    Ollama API error: {e}")
+                return None
+            except requests.RequestException as e:
+                print(f"    Ollama API error: {e}")
+                return None
+
+        # All keys exhausted due to rate limiting
+        return "RATE_LIMITED"
 
     def _format_prompt(self, chunk: str, profile: StudentProfile) -> str:
         """Format the user prompt with chunk and profile."""
