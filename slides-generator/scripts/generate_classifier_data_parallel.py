@@ -57,6 +57,7 @@ CONFIG = {
         os.getenv("OLLAMA_API_KEY_2", "41b275bb75b94608b0b2282017007a20.3-B2BlRstnRgISP3o031hC_y"),
         os.getenv("OLLAMA_API_KEY_3", "4de258e1b9f74e18aa87bf851ec04509.S6em4rsHYaW2AuHKdjkquutt"),
         os.getenv("OLLAMA_API_KEY_4", "0f109a4a8f3d4e82ba1989088d44b634.KOrFmimtJol5WpYEu5ixbuki"),
+        os.getenv("OLLAMA_API_KEY_5", "ea17157f34474347bdc8b250133cf210.52w4zyYC7b8X2gvNkH-YPYMm"),
     ],
     "ollama_host": os.getenv("OLLAMA_HOST", "http://localhost:11434"),
     "model": os.getenv("OLLAMA_MODEL", "gpt-oss-120b"),
@@ -67,7 +68,7 @@ CONFIG = {
     "chunk_overlap": 100,
     "max_retries": 3,
     "retry_delay": 2,
-    "num_workers": 4,
+    "num_workers": 5,
 }
 
 
