@@ -30,9 +30,8 @@ classifier_system_prompt: |
   **Conceptual** — select when content explains abstract ideas, definitions, or general information with no specific visual structure:
   - concept_box: abstract concept explanation, general definition, summary of ideas, theoretical background, introductory overview, what something means, why something matters, properties of a concept, characteristics, use cases, advantages, limitations, how something works at a high level
 
-  **Architectural** — select when content describes system architecture, model architecture, or software layers:
-  - layered_stack: OSI model, TCP/IP layers, operating system layers, kernel user space, hardware abstraction layer, software stack, technology stack, abstraction levels, layer N depends on layer N-1, horizontal layers, application transport network data link physical, MVC layers, three-tier architecture, client server database tier
-  - architecture_diagram: neural network architecture, transformer architecture, attention mechanism, encoder decoder, LSTM architecture, GRU, ResNet, CNN architecture, convolutional layer, pooling layer, fully connected layer, model architecture, system architecture, microservices, service mesh, pipeline architecture, compiler architecture, lexer parser AST, database architecture, master slave, pub sub architecture, event driven architecture, component diagram, module dependencies, data flow architecture, feedforward network, backpropagation network, deep learning model, multi-head attention, self-attention, cross-attention, positional encoding, embedding layer
+  **Architectural** — select when content describes system architecture, model architecture, software layers, or abstraction stacks:
+  - architecture_diagram: neural network architecture, transformer architecture, attention mechanism, encoder decoder, LSTM, GRU, ResNet, CNN, convolutional layer, pooling layer, fully connected layer, model architecture, system architecture, microservices, service mesh, pipeline architecture, compiler architecture, database architecture, master slave, pub sub, event driven architecture, component diagram, module dependencies, data flow, feedforward network, backpropagation network, deep learning model, multi-head attention, self-attention, positional encoding, embedding layer, OSI model, TCP/IP layers, operating system layers, kernel user space, hardware abstraction layer, software stack, technology stack, abstraction levels, layer N depends on layer N-1, horizontal layers, application transport network data link physical, MVC layers, three-tier architecture, client server database tier, sits above, built on, abstraction
 
   **No Visual:**
   - none: purely narrative text, historical background, motivational text, reading passage, no structural or quantitative content, author commentary, course introduction text
@@ -41,7 +40,7 @@ classifier_system_prompt: |
   1. Choose the MOST SPECIFIC template — never default to concept_box if a more specific template fits
   2. concept_box is the last resort — only use it when no other template captures the content
   3. architecture_diagram catches ALL model architectures and system designs — neural networks, transformers, attention mechanisms, LSTM, GRU, ResNet, CNN, encoder-decoder, any ML model with named components, any software system describing how modules connect and communicate. When in doubt between architecture_diagram and concept_box for model-related content, always choose architecture_diagram.
-  4. layered_stack is ONLY for clean horizontal abstraction layers with no lateral connections between components. The layers must be stacked vertically with each layer serving the one above it. A neural network is NOT a layered_stack even though it has layers — it has weighted connections between layers making it architecture_diagram.
+  4. architecture_diagram catches ALL layered abstractions as well — OSI model, OS architecture, software layers, technology stacks, abstraction levels. If content describes components connecting to each other OR layers stacking on top of each other, use architecture_diagram.
   5. Use bar_chart ONLY when explicit numbers or percentages are present in the content — at least two numerical values being compared. A single number mentioned in passing does not qualify. Phrases like "much faster" or "significantly slower" without numbers do not qualify.
   6. none is for purely narrative text with zero visual angle — historical background, motivational paragraphs, course introductions, author commentary, reading passages. Be very conservative — most educational content has some visual angle. Only use none when you genuinely cannot identify any structural, procedural, comparative, or architectural element.
   7. flowchart requires decision branching — if the process is strictly linear with no conditions use linear_chain instead
@@ -51,7 +50,7 @@ classifier_system_prompt: |
   11. Distinguish bar_chart from comparison: use bar_chart when showing benchmark results, performance metrics, or quantitative comparisons with explicit numbers. Use comparison for conceptual side-by-side comparisons without explicit numerical data (qualitative trade-offs).
   12. Self-check before answering: Before outputting template_id ask yourself:
     - Have I considered architecture_diagram for any content describing model or system internals?
-    - Have I considered layered_stack for any content describing abstraction layers?
+    - Have I considered architecture_diagram for any content describing abstraction layers or software stacks?
     - Have I considered flowchart for any content describing a process with decisions?
     - Have I considered linear_chain for any strictly sequential process with no branching?
     - Have I considered general_tree for any CS tree data structure being studied algorithmically?
@@ -84,7 +83,7 @@ classifier_system_prompt: |
 
   ### Example 6:
   Bullets: "The OSI model has 7 layers. Physical layer handles bit transmission. Data link handles framing. Network handles routing. Transport handles end-to-end delivery. Application layer is where user software operates."
-  Output: {"template_id": "layered_stack", "reasoning": "Content describes clean horizontal abstraction layers stacked vertically with no lateral connections"}
+  Output: {"template_id": "architecture_diagram", "reasoning": "Content describes clean horizontal abstraction layers stacked vertically — architecture_diagram handles both component diagrams and layered stacks"}
 
   ### Example 7:
   Bullets: "A transformer consists of an encoder and decoder. The encoder uses multi-head self-attention followed by feed-forward layers. Each sublayer has residual connections and layer normalization. The decoder adds cross-attention over encoder output."
@@ -134,10 +133,10 @@ classifier_user_template: |
      - Comparison: comparison
      - Quantitative: bar_chart
      - Conceptual: concept_box
-     - Architectural: layered_stack, architecture_diagram (neural networks, transformers, system designs, microservices, compiler pipelines, any model/system with components and connections)
+     - Architectural: architecture_diagram (neural networks, transformers, system designs, microservices, compiler pipelines, any model/system with components and connections, OSI model, OS architecture, software layers, technology stacks)
      - No Visual: none
   2. Pick the MOST SPECIFIC template — don't default to concept_box
-  3. architecture_diagram catches ALL model and system architectures — when in doubt between concept_box and architecture_diagram for model-related content, choose architecture_diagram
+  3. architecture_diagram catches ALL model and system architectures AND all layered abstractions (OSI, OS stack, software layers) — when in doubt between concept_box and architecture_diagram for model or layer-related content, choose architecture_diagram
   4. Include brief reasoning for your choice
 
   Output ONLY the JSON. No explanations outside the JSON.

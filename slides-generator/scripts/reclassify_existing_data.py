@@ -50,13 +50,15 @@ from slide_gen.data_engine.utils import extract_json_from_response
 # =========================================================================
 
 # Default mode: Labels that require LLM reclassification
-LABELS_REQUIRING_LLM = {"grid", "binary_tree", "concept_box"}
+# layered_stack is added here because it was merged into architecture_diagram
+LABELS_REQUIRING_LLM = {"grid", "binary_tree", "concept_box", "layered_stack"}
 
 # Default mode: Labels that are kept as-is (valid in new hierarchy and unchanged)
 LABELS_KEEP_AS_IS = {
     "linear_chain", "stack", "queue", "graph",
     "flowchart", "cycle", "comparison",
     "bar_chart", "none",
+    "architecture_diagram",
 }
 
 # Targeted mode: Labels that need rechecking for architecture_diagram + cleanup
@@ -81,7 +83,7 @@ class Reclassifier:
         max_retries: int = 3,
         api_key: str | None = None,
     ):
-        # Load the updated prompts (already has general_tree, layered_stack, no grid)
+        # Load the updated prompts (architecture_diagram covers all architectural templates)
         with open(prompts_path, "r") as f:
             prompts = yaml.safe_load(f)
 

@@ -167,7 +167,7 @@ VALID_TEMPLATES = [
     "bar_chart",
     # Conceptual
     "concept_box",
-    # Architectural
-    "layered_stack", "architecture_diagram",
+    # Architectural — layered_stack merged into architecture_diagram (style='layered')
+    "architecture_diagram",
 ]
 

@@ -1,0 +1,116 @@
+{
+  "total_samples": 3668,
+  "kept_unchanged": 2976,
+  "updated": 610,
+  "llm_failures": 82,
+  "invalid_llm_responses": 0,
+  "label_distribution_before": {
+    "concept_box": 1647,
+    "flowchart": 641,
+    "comparison": 364,
+    "grid": 268,
+    "binary_tree": 176,
+    "none": 133,
+    "bar_chart": 127,
+    "linear_chain": 99,
+    "graph": 70,
+    "stack": 65,
+    "cycle": 42,
+    "queue": 31,
+    "pie_chart": 5
+  },
+  "label_distribution_after": {
+    "concept_box": 1437,
+    "flowchart": 746,
+    "comparison": 492,
+    "bar_chart": 220,
+    "none": 216,
+    "binary_tree": 138,
+    "linear_chain": 115,
+    "graph": 79,
+    "stack": 66,
+    "general_tree": 45,
+    "cycle": 42,
+    "layered_stack": 34,
+    "queue": 31,
+    "pie_chart": 7
+  },
+  "transitions": {
+    "binary_tree \u2192 general_tree": 31,
+    "binary_tree \u2192 bar_chart": 6,
+    "binary_tree \u2192 flowchart": 3,
+    "binary_tree \u2192 comparison": 1,
+    "concept_box \u2192 flowchart": 91,
+    "concept_box \u2192 comparison": 81,
+    "concept_box \u2192 none": 56,
+    "concept_box \u2192 layered_stack": 27,
+    "concept_box \u2192 bar_chart": 19,
+    "concept_box \u2192 linear_chain": 14,
+    "concept_box \u2192 general_tree": 14,
+    "concept_box \u2192 graph": 7,
+    "concept_box \u2192 binary_tree": 3,
+    "concept_box \u2192 pie_chart": 1,
+    "concept_box \u2192 stack": 1,
+    "grid \u2192 concept_box": 91,
+    "grid \u2192 bar_chart": 68,
+    "grid \u2192 comparison": 46,
+    "grid \u2192 none": 27,
+    "grid \u2192 flowchart": 11,
+    "grid \u2192 layered_stack": 7,
+    "grid \u2192 graph": 2,
+    "grid \u2192 linear_chain": 2,
+    "grid \u2192 pie_chart": 1
+  },
+  "updated_samples_preview": [
+    {
+      "original_label": "concept_box",
+      "new_label": "comparison",
+      "text_preview": "purpose. Y ou get in, insert the key, start the car, shift, brake, accelerate, and steer in order to"
+    },
+    {
+      "original_label": "concept_box",
+      "new_label": "layered_stack",
+      "text_preview": "The same thing happens when we use computers. Most people use computers to write docu-\nments, send a"
+    },
+    {
+      "original_label": "concept_box",
+      "new_label": "layered_stack",
+      "text_preview": "Figure1.2shows a picture of what an abstract data type is and how it operates. The user\ninteracts wi"
+    },
+    {
+      "original_label": "grid",
+      "new_label": "concept_box",
+      "text_preview": "numeric classes that implement the integer and \ufb02oating point data types. These Python classes\nare ca"
+    },
+    {
+      "original_label": "grid",
+      "new_label": "concept_box",
+      "text_preview": "not equal =! Not equal operator\nlogical and and Both operands True for result to be True\nlogical or "
+    },
+    {
+      "original_label": "grid",
+      "new_label": "concept_box",
+      "text_preview": "(the_sumis now of the type boolean). The assignment statement changes the reference being\nheld by th"
+    },
+    {
+      "original_label": "grid",
+      "new_label": "concept_box",
+      "text_preview": "Method Name Use Explanation\nappend a_list.append(item)Adds a new item to the end of a list\ninsert a_"
+    },
+    {
+      "original_label": "grid",
+      "new_label": "concept_box",
+      "text_preview": ">>>\"David\"\n'David'\n>>> my_name =\"David\"\n>>> my_name[3]\n1.4. Review of Basic Python 13\nProblem Solvin"
+    },
+    {
+      "original_label": "grid",
+      "new_label": "concept_box",
+      "text_preview": ">>> my_set = {3,6,\"cat\",4.5,False}\n>>> my_set\n{False, 3, 4.5, 6, 'cat'}\n>>>\nEven though sets are not"
+    },
+    {
+      "original_label": "grid",
+      "new_label": "concept_box",
+      "text_preview": "intersectionset1.intersection(set2)Returns a new set with only the elements\ncommon to both sets\ndiff"
+    }
+  ]
+}

@@ -34,7 +34,7 @@ CATEGORY_HIERARCHY: dict[str, list[str]] = {
         "concept_box",
     ],
     "architectural": [
-        "layered_stack", "architecture_diagram",
+        "architecture_diagram",
     ],
     "none": [],
 }
@@ -72,6 +72,7 @@ LEVEL2_ID_TO_LABEL: dict[str, dict[int, str]] = {
 
 # Categories that have only one template — skip Level 2 model loading
 # and return the template directly with full L1 confidence.
+# This applies to: comparison, chart, conceptual, architectural
 SINGLE_TEMPLATE_CATEGORIES: dict[str, str] = {
     cat: templates[0]
     for cat, templates in CATEGORY_HIERARCHY.items()

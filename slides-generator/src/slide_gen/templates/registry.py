@@ -1,5 +1,6 @@
 """Template registry and rendering system."""
 
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Callable
 from enum import Enum
@@ -639,27 +640,126 @@ TEMPLATE_REGISTRY.register(Template(
     render_func=_render_layers,
 ))
 
-TEMPLATE_REGISTRY.register(Template(
-    id="layered_stack",
-    name="Layered Stack Architecture",
-    description="Stacked horizontal layers with optional descriptions",
-    renderer=Renderer.GRAPHVIZ,
-    keywords=["layer", "stack", "OSI", "architecture", "abstraction", "tier"],
-    required_params=["layers"],
-    optional_params=["title", "arrows", "descriptions"],
-    render_func=_render_layers,
-))
+def _render_architecture_diagram(params: dict | str) -> str:
+    """Render architecture_diagram from XML string (new) or legacy dict (old).
 
+    Accepts:
+      - str: Raw XML produced by _generate_architecture_xml (new path)
+      - dict: Legacy JSON params from old architecture_diagram format
 
-def _render_architecture_diagram(params: dict) -> str:
-    """Render a free-form architecture diagram using Graphviz DOT.
-
-    Supports layered grouping via the 'layer' field on each node,
-    and flexible edge connections between any nodes.
+    Returns Graphviz DOT source string, or empty string on unrecoverable failure.
     """
-    nodes = params.get("nodes", [])
-    edges = params.get("edges", [])
-    title = params.get("title", "")
+    # ── Format detection ──
+    if isinstance(params, str):
+        return _render_architecture_from_xml(params)
+    elif isinstance(params, dict):
+        # Legacy JSON fallback — handles old-format params gracefully
+        return _render_architecture_from_dict(params)
+    return ""
+
+
+def _render_architecture_from_xml(xml_str: str) -> str:
+    """Parse XML and produce Graphviz DOT source."""
+    ENGINE_MAP = {
+        "hierarchical": "dot",
+        "pipeline":     "dot",
+        "network":      "neato",
+    }
+    ROLE_SHAPE_MAP = {
+        "master":    "doublecircle",
+        "worker":    "box",
+        "processor": "hexagon",
+        "storage":   "cylinder",
+        "input":     "parallelogram",
+        "output":    "parallelogram",
+        "layer":     "box",
+    }
+    ROLE_COLOR_MAP = {
+        "master":    "#BBDEFB",
+        "worker":    "#E3F2FD",
+        "processor": "#FFF9C4",
+        "storage":   "#DCEDC8",
+        "input":     "#F8BBD9",
+        "output":    "#FFE0B2",
+        "layer":     "#B3E5FC",
+    }
+
+    try:
+        root = ET.fromstring(xml_str)
+    except ET.ParseError as e:
+        print(f"    architecture_diagram XML parse error: {e}")
+        return ""
+
+    layout = root.get("layout", "hierarchical")
+    style  = root.get("style", "component")
+    title  = root.get("title", "")
+
+    # layout="none" means nothing to render
+    if layout == "none":
+        return ""
+
+    is_layered = (style == "layered")
+    rankdir = "TB" if layout in ("hierarchical", "network") else "LR"
+
+    lines = [
+        "digraph {",
+        f'    rankdir={rankdir};',
+        '    node [fontname="Helvetica" fontsize=11];',
+        '    edge [arrowhead=vee color="#666666"];',
+    ]
+
+    if title:
+        safe_title = title.replace('"', "'")
+        lines += [
+            '    labelloc="t";',
+            f'    label="{safe_title}";',
+            '    fontsize=15;',
+        ]
+
+    components = root.findall("component")
+
+    for comp in components:
+        cid   = comp.get("id", "")
+        label = comp.get("label", cid).replace('"', "'")
+        role  = comp.get("role", "worker")
+
+        if is_layered:
+            shape = "box"
+            color = "#B3E5FC"
+            lines.append(
+                f'    {cid} [label="{label}" shape={shape} style="filled" '
+                f'fillcolor="{color}" width=3.0 fixedsize=false];'
+            )
+        else:
+            shape = ROLE_SHAPE_MAP.get(role, "box")
+            color = ROLE_COLOR_MAP.get(role, "#E3F2FD")
+            lines.append(
+                f'    {cid} [label="{label}" shape={shape} style="filled" '
+                f'fillcolor="{color}"];'
+            )
+
+    # Edges from <connects> children
+    for comp in components:
+        src = comp.get("id", "")
+        for conn in comp.findall("connects"):
+            dst   = conn.get("to", "")
+            elabel = conn.get("label", "")
+            if src and dst:
+                if elabel and not is_layered:
+                    safe_el = elabel.replace('"', "'")
+                    lines.append(f'    {src} -> {dst} [label="{safe_el}"];')
+                else:
+                    lines.append(f'    {src} -> {dst};')
+
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _render_architecture_from_dict(params: dict) -> str:
+    """Legacy JSON-based renderer (kept for backward compatibility)."""
+    nodes  = params.get("nodes", [])
+    edges  = params.get("edges", [])
+    title  = params.get("title", "")
     layout = params.get("layout", "LR")
 
     rankdir = "TB" if layout == "layered" else "LR"
@@ -672,11 +772,13 @@ def _render_architecture_diagram(params: dict) -> str:
     ]
 
     if title:
-        lines.append(f'    labelloc="t";')
-        lines.append(f'    label="{title}";')
-        lines.append(f'    fontsize=16;')
+        safe_title = title.replace('"', "'")
+        lines += [
+            '    labelloc="t";',
+            f'    label="{safe_title}";',
+            '    fontsize=16;',
+        ]
 
-    # Group nodes by layer using subgraphs with rank=same
     layer_groups: dict[int, list[dict]] = {}
     for node in nodes:
         layer = node.get("layer", 0)
@@ -685,18 +787,17 @@ def _render_architecture_diagram(params: dict) -> str:
     for layer_idx in sorted(layer_groups.keys()):
         group_nodes = layer_groups[layer_idx]
         lines.append(f"    subgraph cluster_layer{layer_idx} {{")
-        lines.append(f"        rank=same;")
-        lines.append(f'        style=invis;')
+        lines.append("        rank=same;")
+        lines.append("        style=invis;")
         for n in group_nodes:
-            nid = n.get("id", f"n{layer_idx}")
-            label = n.get("label", nid)
+            nid   = n.get("id", f"n{layer_idx}")
+            label = n.get("label", nid).replace('"', "'")
             lines.append(f'        {nid} [label="{label}"];')
         lines.append("    }")
 
-    # Edges
     for edge in edges:
-        src = edge.get("from", "")
-        dst = edge.get("to", "")
+        src    = edge.get("from", "")
+        dst    = edge.get("to", "")
         elabel = edge.get("label", "")
         if src and dst:
             if elabel:
