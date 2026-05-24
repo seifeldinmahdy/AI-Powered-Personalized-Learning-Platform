@@ -72,6 +72,13 @@ CONFIG = {
 
 
 # =============================================================================
+# EXCLUDED LABELS — handled by LLM enrichment layer, never valid classifier outputs
+# =============================================================================
+
+EXCLUDED_LABELS = {"concept_box", "comparison", "analogy_diagram"}
+
+
+# =============================================================================
 # SHARED STATE
 # =============================================================================
 
@@ -342,6 +349,49 @@ def worker(
 
 
 # =============================================================================
+# POST-PROCESSING FILTER
+# =============================================================================
+
+def filter_excluded_labels(output_path: Path) -> dict:
+    """
+    Remove any samples labeled with EXCLUDED_LABELS from the output file.
+
+    Rewrites the file in-place. Returns a summary dict with counts.
+    Called once after all workers finish, before the final report.
+    """
+    with open(output_path, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip()]
+
+    parsed = []
+    for line in lines:
+        try:
+            parsed.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+
+    original_count = len(parsed)
+    filtered = [s for s in parsed if s.get("label") not in EXCLUDED_LABELS]
+    removed_count = original_count - len(filtered)
+
+    removed_by_label: dict[str, int] = {}
+    for s in parsed:
+        label = s.get("label")
+        if label in EXCLUDED_LABELS:
+            removed_by_label[label] = removed_by_label.get(label, 0) + 1
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        for sample in filtered:
+            f.write(json.dumps(sample) + "\n")
+
+    return {
+        "original_count": original_count,
+        "filtered_count": len(filtered),
+        "removed_count": removed_count,
+        "removed_by_label": removed_by_label,
+    }
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -500,6 +550,18 @@ def main():
     state.pbar.close()
 
     elapsed = time.time() - start_time
+
+    # ── Filter excluded labels ──
+    print("\n🔎 Filtering excluded labels...")
+    filter_results: dict = {}
+    if output_path.exists():
+        filter_results = filter_excluded_labels(output_path)
+        removed_by_label = filter_results.get("removed_by_label", {})
+        for label in sorted(EXCLUDED_LABELS):
+            n = removed_by_label.get(label, 0)
+            print(f"   Removed {label:25s}: {n} samples")
+        print(f"   Total removed:              {filter_results.get('removed_count', 0)} samples")
+        print(f"   Final sample count:         {filter_results.get('filtered_count', 0)} samples")
 
     # ── Count final output lines ──
     final_line_count = 0
