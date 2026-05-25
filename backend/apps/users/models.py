@@ -14,7 +14,6 @@ class User(AbstractUser):
     ROLE_CHOICES = [
         ("student", "Student"),
         ("admin", "Admin"),
-        ("instructor", "Instructor"),
     ]
 
     role = models.CharField(

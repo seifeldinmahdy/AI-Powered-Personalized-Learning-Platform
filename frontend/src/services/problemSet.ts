@@ -55,6 +55,7 @@ export interface EvaluationResult {
     passed: boolean;
     feedback: string;
     rubric_scores: RubricScore[];
+    evaluated_rubric?: RubricCriterion[];
     mistake_tags: string[];
     hint_to_show: string | null;
     example_solution: string;

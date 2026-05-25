@@ -58,10 +58,7 @@ class CourseViewSet(viewsets.ModelViewSet):
         return response
 
     def perform_create(self, serializer):
-        if self.request.user.is_authenticated:
-            serializer.save(instructor=self.request.user)
-        else:
-            serializer.save()
+        serializer.save()
         cache.delete_pattern("course_list_*") if hasattr(cache, 'delete_pattern') else cache.clear()
 
     def perform_update(self, serializer):
@@ -241,40 +238,7 @@ def admin_stats(request):
     })
 
 
-@api_view(["GET"])
-@permission_classes([permissions.IsAuthenticated])
-def my_courses(request):
-    """Returns courses where instructor = request.user (instructor role)."""
-    if request.user.role not in ("instructor", "admin"):
-        return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
-    courses = Course.objects.filter(instructor=request.user).order_by("-created_at")
-    serializer = CourseSerializer(courses, many=True)
-    return Response(serializer.data)
 
-
-@api_view(["GET"])
-@permission_classes([permissions.IsAuthenticated])
-def my_course_students(request, course_id):
-    """Returns enrollments for a course taught by the requesting instructor."""
-    if request.user.role not in ("instructor", "admin"):
-        return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
-    try:
-        course = Course.objects.get(pk=course_id, instructor=request.user)
-    except Course.DoesNotExist:
-        return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
-    enrollments = Enrollment.objects.filter(course=course).select_related("student")
-    data = [
-        {
-            "id": e.id,
-            "student_id": e.student.id,
-            "username": e.student.username,
-            "progress_percentage": e.progress_percentage,
-            "current_score": e.current_score,
-            "enrolled_at": e.enrolled_at,
-        }
-        for e in enrollments
-    ]
-    return Response(data)
 
 
 @api_view(['POST'])

@@ -268,12 +268,6 @@ export default function CourseDetail() {
                                         {course.avg_rating}
                                     </span>
                                 )}
-                                {course.instructor_name && (
-                                    <span className="flex items-center gap-1.5">
-                                        <Users size={15} />
-                                        {course.instructor_name}
-                                    </span>
-                                )}
                             </div>
                         </div>
 

@@ -38,7 +38,7 @@ class CourseAdmin(admin.ModelAdmin):
     """Admin configuration for the Course model."""
 
     form = CourseAdminForm
-    list_display = ("title", "instructor", "difficulty", "status", "is_published", "price", "created_at")
+    list_display = ("title", "difficulty", "status", "is_published", "price", "created_at")
     list_filter = ("difficulty", "status", "is_published")
     search_fields = ("title", "description")
 

@@ -11,6 +11,7 @@ import {
     type ProblemSetQuestion,
     type EvaluationResult,
     type RubricScore,
+    type RubricCriterion,
     type RubricCheck,
 } from '../../services/problemSet';
 import {
@@ -522,7 +523,7 @@ export default function ProblemSet() {
                                             const pct = rs.max > 0 ? Math.round((rs.earned / rs.max) * 100) : 0;
                                             const passed = rs.earned >= rs.max;
                                             const isExpanded = expandedCriterion === `${rs.criterion}-${rsIdx}`;
-                                            const matchingCrit = current!.rubric.find(c => c.name === rs.criterion);
+                                            const matchingCrit = (result.evaluated_rubric ?? current!.rubric).find(c => c.name === rs.criterion);
                                             const categoryColors: Record<string, string> = {
                                                 correctness: '#10b981',
                                                 logic: '#6366f1',
@@ -548,7 +549,7 @@ export default function ProblemSet() {
                                                             {rs.category.replace('_', ' ')}
                                                         </span>
                                                         <span className="text-xs font-medium flex-1 truncate">{rs.criterion}</span>
-                                                        <span className="text-xs font-bold flex-shrink-0" style={{ color: scoreColor(pct) }}>
+                                                        <span className="text-xs font-bold flex-shrink-0" style={{ color: rs.earned >= rs.max ? '#4ade80' : rs.earned === 0 ? '#f87171' : '#facc15' }}>
                                                             {rs.earned}/{rs.max}
                                                         </span>
                                                         {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
@@ -563,9 +564,9 @@ export default function ProblemSet() {
                                                                             ? <span className="text-green-500 mt-0.5 flex-shrink-0">✓</span>
                                                                             : <span className="text-red-400 mt-0.5 flex-shrink-0">✗</span>}
                                                                         <div className="flex-1 min-w-0">
-                                                                            <p className="font-medium">{check.question}</p>
+                                                                            <p className="font-medium" style={{ color: checkResult ? '#4ade80' : '#f87171' }}>{check.question}</p>
                                                                             {check.evidence && (
-                                                                                <p className={`mt-0.5 ${checkResult ? 'text-muted-foreground' : 'text-red-400 dark:text-red-300'}`}>
+                                                                                <p className="mt-0.5" style={{ color: 'rgba(255,255,255,0.8)' }}>
                                                                                     {check.evidence}
                                                                                 </p>
                                                                             )}
@@ -573,9 +574,6 @@ export default function ProblemSet() {
                                                                     </div>
                                                                 );
                                                             })}
-                                                            {rs.comment && rs.comment !== 'All checks passed' && (
-                                                                <p className="text-xs text-muted-foreground italic pt-1 border-t border-border/50">{rs.comment}</p>
-                                                            )}
                                                         </div>
                                                     )}
                                                 </div>

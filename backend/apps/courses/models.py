@@ -25,13 +25,6 @@ class Course(models.Model):
 
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True, default="")
-    instructor = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="courses_taught",
-        null=True,
-        blank=True,
-    )
     syllabus = models.JSONField(
         default=list,
         blank=True,

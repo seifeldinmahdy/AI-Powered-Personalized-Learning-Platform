@@ -34,7 +34,6 @@ export interface AdminCourse {
     total_lessons_count: number;
     avg_rating: number;
     created_at: string;
-    instructor_name: string;
 }
 
 export async function getAdminStats(): Promise<AdminStats> {

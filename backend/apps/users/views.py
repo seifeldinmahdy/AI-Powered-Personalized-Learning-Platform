@@ -106,7 +106,7 @@ class UserViewSet(viewsets.ModelViewSet):
             return Response({'error': 'An account with this email already exists'},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        # Prevent non-admins from creating admin/instructor accounts
+        # Prevent non-admins from creating admin accounts
         if role not in ('student',):
             role = 'student'
 

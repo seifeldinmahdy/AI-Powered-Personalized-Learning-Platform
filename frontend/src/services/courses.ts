@@ -4,8 +4,6 @@ export interface Course {
     id: number;
     title: string;
     description: string;
-    instructor: number | null;
-    instructor_name: string | null;
     difficulty: string;
     status: string;
     tags: string[];

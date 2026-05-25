@@ -107,6 +107,7 @@ class EvaluationResult(BaseModel):
     passed: bool = False
     feedback: str = ""
     rubric_scores: list[RubricScore] = Field(default_factory=list)
+    evaluated_rubric: list[RubricCriterion] = Field(default_factory=list)
     mistake_tags: list[str] = Field(default_factory=list)
     hint_to_show: Optional[str] = None
     example_solution: str = ""  # possible reference answer for student comparison

@@ -3,7 +3,6 @@ from .models import Course, Module, Lesson, Slide, CodeChallenge, Enrollment, Co
 
 
 class CourseSerializer(serializers.ModelSerializer):
-    instructor_name = serializers.ReadOnlyField(source="instructor.username")
     total_lessons_count = serializers.SerializerMethodField()
 
     def get_total_lessons_count(self, obj):
@@ -13,7 +12,7 @@ class CourseSerializer(serializers.ModelSerializer):
     class Meta:
         model = Course
         fields = [
-            "id", "title", "description", "instructor", "instructor_name",
+            "id", "title", "description",
             "difficulty", "status", "tags", "is_published", "price",
             "total_lessons_count", "avg_rating", "created_at", "syllabus",
         ]
@@ -42,7 +41,7 @@ class SlideSerializer(serializers.ModelSerializer):
 
 
 class CodeChallengeSerializer(serializers.ModelSerializer):
-    """Full serializer for admin/instructor use."""
+    """Full serializer for admin use."""
     class Meta:
         model = CodeChallenge
         fields = ["id", "lesson", "problem_text", "starter_code", "solution_code", "test_cases_json", "hint_text"]

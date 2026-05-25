@@ -16,7 +16,7 @@ export default function Login() {
 
   // If already authenticated, redirect away from login page
   if (isAuthenticated && user) {
-    const defaultRoute = user.role === "admin" ? "/admin" : user.role === "instructor" ? "/instructor" : "/dashboard";
+    const defaultRoute = user.role === "admin" ? "/admin" : "/dashboard";
     return <Navigate to={defaultRoute} replace />;
   }
 
@@ -45,7 +45,7 @@ export default function Login() {
       if (state?.from) {
         navigate(state.from.pathname);
       } else {
-        navigate(data.role === "admin" ? "/admin" : data.role === "instructor" ? "/instructor" : "/dashboard");
+        navigate(data.role === "admin" ? "/admin" : "/dashboard");
       }
     } catch (err: unknown) {
       if (err && typeof err === "object" && "response" in err) {

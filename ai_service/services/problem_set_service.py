@@ -36,6 +36,7 @@ from schemas.problem_set import (
     ProblemSetQuestion,
     ProblemSetData,
     EvaluationResult,
+    RubricCriterion,
     RubricScore,
     SubmissionData,
 )
@@ -619,6 +620,9 @@ RUBRIC — fill in result and evidence for every check:
         passed=final_score >= 65,
         feedback=feedback,
         rubric_scores=rubric_scores,
+        evaluated_rubric=[
+            RubricCriterion.model_validate(c) for c in evaluated_criteria
+        ],
         mistake_tags=mistake_tags,
         hint_to_show=None,
         example_solution=question.example_solution,
