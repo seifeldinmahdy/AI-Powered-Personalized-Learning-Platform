@@ -53,11 +53,10 @@ load_dotenv(project_root / ".env")
 
 CONFIG = {
     "api_keys": [
-        os.getenv("OLLAMA_API_KEY_1", "bcf07a378dfb44da818ad681b764218c.Cj45gsSIZV1b6mGBydzcxV1w"),
-        os.getenv("OLLAMA_API_KEY_2", "41b275bb75b94608b0b2282017007a20.3-B2BlRstnRgISP3o031hC_y"),
-        os.getenv("OLLAMA_API_KEY_3", "4de258e1b9f74e18aa87bf851ec04509.S6em4rsHYaW2AuHKdjkquutt"),
-        os.getenv("OLLAMA_API_KEY_4", "0f109a4a8f3d4e82ba1989088d44b634.KOrFmimtJol5WpYEu5ixbuki"),
-        os.getenv("OLLAMA_API_KEY_5", "ea17157f34474347bdc8b250133cf210.52w4zyYC7b8X2gvNkH-YPYMm"),
+        os.getenv("OLLAMA_API_KEY_1", "07074b75609f49428c580370c5561ec7.Ikximyax3tcT7DKktYijVY5g"),
+        os.getenv("OLLAMA_API_KEY_2", "f5df6a4660204d44a593d249887ec50c.QJMhuvA4LHYvGy0sRNGrHuOY"),
+        os.getenv("OLLAMA_API_KEY_3", "6b3ace2d68494c8bb1a32cb0176bbd5b.nnj9wxGXUtDKrjQTYUQc8NSU"),
+        os.getenv("OLLAMA_API_KEY_4", "ca867af3701043ef91dedf92836857fe.opnk-CEAzK899oW3KK3VYJrz"),
     ],
     "ollama_host": os.getenv("OLLAMA_HOST", "http://localhost:11434"),
     "model": os.getenv("OLLAMA_MODEL", "gpt-oss-120b"),
@@ -68,15 +67,16 @@ CONFIG = {
     "chunk_overlap": 100,
     "max_retries": 3,
     "retry_delay": 2,
-    "num_workers": 5,
+    "num_workers": 4,
 }
 
 
 # =============================================================================
-# EXCLUDED LABELS — handled by LLM enrichment layer, never valid classifier outputs
+# RELABELING — normalize legacy sub-type labels produced before prompt fix
 # =============================================================================
 
-EXCLUDED_LABELS = {"concept_box", "comparison", "analogy_diagram"}
+RELABEL_TO_CONCEPTUAL = {"concept_box", "comparison", "analogy_diagram"}
+NONE_CAP = 300  # max none samples in final output
 
 
 # =============================================================================
@@ -350,16 +350,24 @@ def worker(
 
 
 # =============================================================================
-# POST-PROCESSING FILTER
+# POST-PROCESSING
 # =============================================================================
 
-def filter_excluded_labels(output_path: Path) -> dict:
+def postprocess_output(output_path: Path) -> dict:
     """
-    Remove any samples labeled with EXCLUDED_LABELS from the output file.
+    Two-step post-processor applied once after all workers finish:
 
-    Rewrites the file in-place. Returns a summary dict with counts.
-    Called once after all workers finish, before the final report.
+    Step 1 — Relabeling: any sample labeled concept_box, comparison, or
+      analogy_diagram gets relabeled to conceptual. These labels were produced
+      before the prompt was updated and should be normalized.
+
+    Step 2 — none cap: randomly retain at most NONE_CAP=300 none samples.
+      Excess none samples are removed to reduce class imbalance.
+
+    Rewrites the file in-place. Returns a summary dict.
     """
+    import random as _random
+
     with open(output_path, "r", encoding="utf-8") as f:
         lines = [line.strip() for line in f if line.strip()]
 
@@ -371,24 +379,32 @@ def filter_excluded_labels(output_path: Path) -> dict:
             continue
 
     original_count = len(parsed)
-    filtered = [s for s in parsed if s.get("label") not in EXCLUDED_LABELS]
-    removed_count = original_count - len(filtered)
 
-    removed_by_label: dict[str, int] = {}
-    for s in parsed:
-        label = s.get("label")
-        if label in EXCLUDED_LABELS:
-            removed_by_label[label] = removed_by_label.get(label, 0) + 1
+    # ── Step 1: Relabel ──
+    relabeled_count = 0
+    for sample in parsed:
+        if sample.get("label") in RELABEL_TO_CONCEPTUAL:
+            sample["label"] = "conceptual"
+            relabeled_count += 1
+
+    # ── Step 2: Cap none ──
+    none_samples = [s for s in parsed if s.get("label") == "none"]
+    other_samples = [s for s in parsed if s.get("label") != "none"]
+    none_removed = max(0, len(none_samples) - NONE_CAP)
+    _random.seed(42)
+    none_kept = _random.sample(none_samples, min(NONE_CAP, len(none_samples)))
+    final = other_samples + none_kept
+    _random.shuffle(final)
 
     with open(output_path, "w", encoding="utf-8") as f:
-        for sample in filtered:
+        for sample in final:
             f.write(json.dumps(sample) + "\n")
 
     return {
         "original_count": original_count,
-        "filtered_count": len(filtered),
-        "removed_count": removed_count,
-        "removed_by_label": removed_by_label,
+        "relabeled_count": relabeled_count,
+        "none_removed": none_removed,
+        "final_count": len(final),
     }
 
 
@@ -552,17 +568,14 @@ def main():
 
     elapsed = time.time() - start_time
 
-    # ── Filter excluded labels ──
-    print("\n🔎 Filtering excluded labels...")
-    filter_results: dict = {}
+    # ── Post-processing: relabel + cap none ──
+    print("\n🔎 Post-processing output...")
+    pp_results: dict = {}
     if output_path.exists():
-        filter_results = filter_excluded_labels(output_path)
-        removed_by_label = filter_results.get("removed_by_label", {})
-        for label in sorted(EXCLUDED_LABELS):
-            n = removed_by_label.get(label, 0)
-            print(f"   Removed {label:25s}: {n} samples")
-        print(f"   Total removed:              {filter_results.get('removed_count', 0)} samples")
-        print(f"   Final sample count:         {filter_results.get('filtered_count', 0)} samples")
+        pp_results = postprocess_output(output_path)
+        print(f"   Relabeled to conceptual:    {pp_results.get('relabeled_count', 0)} samples")
+        print(f"   none samples removed (cap): {pp_results.get('none_removed', 0)} samples")
+        print(f"   Final sample count:         {pp_results.get('final_count', 0)} samples")
 
     # ── Count final output lines ──
     final_line_count = 0

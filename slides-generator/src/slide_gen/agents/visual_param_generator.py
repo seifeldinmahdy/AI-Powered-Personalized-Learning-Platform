@@ -316,6 +316,7 @@ _TEMPLATE_DESCRIPTIONS = {
     "cycle": "Circular processes, repeating loops",
     "comparison": "Side-by-side analysis, attribute-by-attribute differences, pros/cons",
     "bar_chart": "Comparing quantities across discrete categories",
+    "conceptual": "Conceptual explanations, definitions, summaries, analogies, or comparisons between two things — LLM enrichment picks the final layout",
     "concept_box": "General concepts, definitions, abstract ideas",
     "architecture_diagram": (
         "System or model architecture: neural networks, transformers, microservices, compiler pipelines, "
@@ -450,6 +451,112 @@ Output ONLY valid JSON:
 If use_venn is false, the other fields can be empty strings/lists."""
 
 
+# =============================================================================
+# CONCEPTUAL ENRICHMENT — LLM picks concept_box / comparison / analogy_diagram
+# =============================================================================
+
+_CONCEPTUAL_ENRICHMENT_PROMPT = """You are selecting a text layout enrichment for an educational slide.
+
+Slide Title: {title}
+Slide Bullets:
+{bullets}
+Original Chunk:
+{chunk}
+
+Select the most appropriate text layout from exactly these three options:
+
+concept_box — the content defines or summarizes one central concept. There is one main idea being explained.
+Signals: "is a", "is defined as", "refers to", "consists of", "is used for", single-subject explanation.
+
+comparison — the content explicitly contrasts two distinct things. Both things are named and their differences are described.
+Signals: "versus", "unlike", "whereas", "compared to", "on the other hand", "difference between", two named subjects.
+
+analogy_diagram — the content explains a technical concept by mapping it to a familiar real-world scenario. The analogy must be explicit, not implied.
+Signals: "like a", "similar to", "think of", "just as", "works like", "analogous to", "imagine", "picture a".
+
+Return ONLY valid JSON:
+{{"layout": "concept_box|comparison|analogy_diagram", "reasoning": "one sentence"}}
+
+If none of the three clearly fits, return:
+{{"layout": "concept_box", "reasoning": "default fallback"}}"""
+
+
+def _enrich_conceptual(
+    raw_chunk: str,
+    bullets: list[str],
+    title: str,
+    host: str,
+    model: str,
+    api_key: str | None,
+) -> dict:
+    """
+    LLM enrichment step for conceptual template.
+
+    Calls the LLM to choose between concept_box, comparison, and analogy_diagram,
+    then generates complete params for the chosen sub-type.
+
+    Returns a params dict with _enriched_template set to the chosen layout.
+    Falls back to concept_box silently on any error.
+    """
+    chosen_layout = "concept_box"
+    try:
+        bullets_text = "\n".join(f"- {b}" for b in bullets)
+        chunk_preview = raw_chunk[:600] if raw_chunk else bullets_text
+        prompt = _CONCEPTUAL_ENRICHMENT_PROMPT.format(
+            title=title,
+            bullets=bullets_text,
+            chunk=chunk_preview,
+        )
+        result = _call_ollama(host, model, api_key, prompt)
+        if result and result.get("layout") in ("concept_box", "comparison", "analogy_diagram"):
+            chosen_layout = result["layout"]
+    except Exception:
+        pass  # Silent fallback — enrichment is optional
+
+    # Now generate full params for the chosen sub-type
+    try:
+        if chosen_layout == "comparison":
+            params = _generate_conceptual_subtype_params("comparison", bullets, title, host, model, api_key)
+        elif chosen_layout == "analogy_diagram":
+            params = _generate_conceptual_subtype_params("analogy_diagram", bullets, title, host, model, api_key)
+        else:
+            params = _generate_conceptual_subtype_params("concept_box", bullets, title, host, model, api_key)
+    except Exception:
+        params = {"title": title, "points": bullets}
+        chosen_layout = "concept_box"
+
+    params["_enriched_template"] = chosen_layout
+    return params
+
+
+def _generate_conceptual_subtype_params(
+    sub_template: str,
+    bullets: list[str],
+    title: str,
+    host: str,
+    model: str,
+    api_key: str | None,
+) -> dict:
+    """
+    Generate params for a conceptual sub-type (concept_box / comparison / analogy_diagram)
+    using the existing schema machinery.
+    """
+    schema_info = TEMPLATE_PARAM_SCHEMAS.get(sub_template)
+    if not schema_info:
+        return {"title": title, "points": bullets}
+
+    prompt = _build_prompt(sub_template, schema_info, bullets, title)
+    result = _call_ollama(host, model, api_key, prompt)
+
+    if result:
+        validated = _validate_params(result, sub_template, schema_info)
+        if validated:
+            return validated
+
+    # Deterministic fallback per sub-type
+    return _deterministic_fallback(sub_template, bullets, title)
+
+
 def _llm_enrich_template(
     template_id: str,
     raw_chunk: str,
@@ -536,10 +643,12 @@ def generate_visual_params(
     Generate structured visual parameters using LLM.
 
     For architecture_diagram: returns raw XML string (renderer handles parsing).
+    For conceptual: calls LLM enrichment to choose and generate concept_box /
+      comparison / analogy_diagram params with _enriched_template key set.
     For all other templates: returns a dict of JSON params as before.
 
     Args:
-        template_id: The chosen template (e.g., 'flowchart', 'stack')
+        template_id: The chosen template (e.g., 'flowchart', 'stack', 'conceptual')
         bullets: The bullet points from the slide
         title: The slide title
         ollama_host: Ollama API host
@@ -550,6 +659,7 @@ def generate_visual_params(
 
     Returns:
         - str (XML) for architecture_diagram
+        - dict (with _enriched_template key) for conceptual
         - dict for all other templates
         - None if generation fails irrecoverably
     """
@@ -561,7 +671,11 @@ def generate_visual_params(
     if template_id == "architecture_diagram":
         return _generate_architecture_xml(bullets, title, host, model, key)
 
-    # ── LLM Enrichment: try upgrading concept_box/comparison ──
+    # ── Conceptual path: LLM enrichment picks the sub-type ──
+    if template_id == "conceptual":
+        return _enrich_conceptual(raw_chunk, bullets, title, host, model, key)
+
+    # ── Legacy LLM Enrichment: try upgrading concept_box/comparison ──
     enriched_template, enriched_params = _llm_enrich_template(
         template_id, raw_chunk, bullets, title, host, model, key
     )
@@ -855,6 +969,13 @@ def _deterministic_fallback(
             "technical_label": technical_label,
             "mappings": mappings if mappings else [{"familiar": "Example", "technical": "Concept"}],
             "title": title,
+        }
+    elif template_id == "conceptual":
+        # Deterministic fallback: produce concept_box-style params with _enriched_template
+        return {
+            "_enriched_template": "concept_box",
+            "title": title,
+            "points": bullets,
         }
     elif template_id in ("stack", "queue"):
         return {"items": bullets}

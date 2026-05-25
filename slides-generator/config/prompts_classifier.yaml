@@ -32,10 +32,13 @@ classifier_system_prompt: |
   - architecture_diagram: neural network architecture, transformer architecture, attention mechanism, encoder decoder, LSTM, GRU, ResNet, CNN, convolutional layer, pooling layer, fully connected layer, model architecture, system architecture, microservices, service mesh, pipeline architecture, compiler architecture, database architecture, master slave, pub sub, event driven architecture, component diagram, module dependencies, data flow, feedforward network, backpropagation network, deep learning model, multi-head attention, self-attention, positional encoding, embedding layer, OSI model, TCP/IP layers, operating system layers, kernel user space, hardware abstraction layer, software stack, technology stack, abstraction levels, layer N depends on layer N-1, horizontal layers, application transport network data link physical, MVC layers, three-tier architecture, client server database tier, sits above, built on, abstraction
 
   **No Visual:**
-  - none: purely narrative text, historical background, motivational text, reading passage, no structural or quantitative content, author commentary, course introduction text, abstract concept explanation with no structural angle, general definitions, summaries with no data structure or process, theoretical background, introductory overview, what something means
+  - none: ONLY for purely narrative text with zero explanatory or definitional content — chapter introductions, historical background, motivational paragraphs, author commentary, reading passages, transitional sentences, biographical text. If content explains ANYTHING about how something works or what something is, use conceptual instead.
+
+  **Conceptual** — select when content explains, defines, summarizes, or contrasts concepts without describing a specific data structure, process, or system architecture:
+  - conceptual: definitions of terms or ideas, concept explanations, summaries of what something is or does, comparisons between two things (pros/cons, versus, trade-offs), analogies mapping technical concepts to real-world scenarios, property descriptions, use case explanations, advantage/disadvantage lists, theoretical background with explanatory intent
 
   ## SELECTION RULES:
-  1. Choose the MOST SPECIFIC template from the list above — the valid labels are: linear_chain, binary_tree, general_tree, stack, queue, graph, flowchart, cycle, bar_chart, architecture_diagram, none
+  1. Choose the MOST SPECIFIC template from the list above — the valid labels are: linear_chain, binary_tree, general_tree, stack, queue, graph, flowchart, cycle, bar_chart, architecture_diagram, conceptual, none
   2. Do not output concept_box, comparison, or analogy_diagram — these are not classifier labels
   3. architecture_diagram catches ALL model architectures and system designs — neural networks, transformers, attention mechanisms, LSTM, GRU, ResNet, CNN, encoder-decoder, any ML model with named components, any software system describing how modules connect and communicate. When in doubt between none and architecture_diagram for model-related content, always choose architecture_diagram.
   4. architecture_diagram catches ALL layered abstractions as well — OSI model, OS architecture, software layers, technology stacks, abstraction levels. If content describes components connecting to each other OR layers stacking on top of each other, use architecture_diagram.
@@ -52,9 +55,12 @@ classifier_system_prompt: |
     - Have I considered linear_chain for any strictly sequential process with no branching?
     - Have I considered general_tree for any CS tree data structure being studied algorithmically?
     - Have I considered bar_chart if there are explicit numbers being compared?
-    - Am I choosing none only for genuinely narrative content with no structural element whatsoever?
+    - Have I considered conceptual for content that defines, explains, summarizes, or contrasts any concept?
+    - Am I choosing none only for genuinely narrative content with no explanatory element whatsoever?
     - Am I accidentally outputting concept_box, comparison, or analogy_diagram? If yes, reclassify — these are forbidden outputs.
   12. When content contains Python code examples or code snippets demonstrating a data structure or algorithm, classify based on WHAT IS BEING DEMONSTRATED, not the presence of code. Code showing a stack implementation → stack. Code showing a sorting algorithm with conditions → flowchart. Code showing a neural network forward pass → architecture_diagram. Content that is purely code explanation with no demonstrable structure → none.
+  13. Use conceptual for ANY content that explains what something is, defines a term, summarizes a concept, contrasts two things, or maps a technical idea to a familiar scenario. When in doubt between conceptual and none, choose conceptual — none is reserved exclusively for narrative text with no educational explanatory content.
+  14. Use none ONLY when the content is purely narrative — it tells a story, provides background, introduces a chapter, or provides context without explaining any concept. A single sentence that defines or explains something makes the entire chunk conceptual, not none.
 
   ## EXAMPLES:
 
@@ -106,6 +112,14 @@ classifier_system_prompt: |
   Bullets: "Machine learning is a branch of artificial intelligence. Models learn from data without being explicitly programmed. Supervised, unsupervised, and reinforcement learning are the three main paradigms."
   Output: {"template_id": "none", "reasoning": "Introductory overview with no specific data structure, process, or architectural content — purely conceptual narrative"}
 
+  ### Example 13 (conceptual — definition):
+  Bullets: "A queue is a linear data structure that follows the FIFO principle. Elements are added at the rear and removed from the front. Common applications include print queues and process scheduling."
+  Output: {"template_id": "conceptual", "reasoning": "Content defines a concept and explains its properties and applications — text layout enrichment is appropriate, not none"}
+
+  ### Example 14 (none — pure narrative):
+  Bullets: "In this chapter we explore several important algorithms. The study of algorithms has a long history dating back to the early days of computer science. Understanding these concepts will prepare you for more advanced topics."
+  Output: {"template_id": "none", "reasoning": "Pure introductory narrative with no concept definition or explanation — no visual or text layout adds value"}
+
 classifier_user_template: |
   Classify the following slide content into the best visual template.
 
@@ -121,10 +135,12 @@ classifier_user_template: |
      - Flow Diagrams: flowchart, cycle
      - Quantitative: bar_chart
      - Architectural: architecture_diagram (neural networks, transformers, system designs, microservices, compiler pipelines, any model/system with components and connections, OSI model, OS architecture, software layers, technology stacks)
-     - No Visual: none (purely narrative text, abstract concepts with no structural element, general definitions)
+     - Conceptual: conceptual (definitions, concept explanations, summaries, comparisons, analogies, property descriptions, use case explanations, advantage/disadvantage lists, theoretical background with explanatory intent)
+     - No Visual: none (ONLY purely narrative text — chapter introductions, historical background, motivational text, author commentary, reading passages with no explanatory content)
   2. Do NOT output concept_box, comparison, or analogy_diagram — these are forbidden labels
   3. architecture_diagram covers ALL model and system architectures AND all layered abstractions (OSI, OS stack, software layers)
-  4. none covers all abstract conceptual content with no data structure, process, or architecture angle
-  5. Include brief reasoning for your choice
+  4. conceptual covers all content that defines, explains, summarizes, contrasts, or analogizes — when in doubt between conceptual and none, choose conceptual
+  5. none covers ONLY purely narrative text with zero explanatory or definitional content
+  6. Include brief reasoning for your choice
 
   Output ONLY the JSON. No explanations outside the JSON.

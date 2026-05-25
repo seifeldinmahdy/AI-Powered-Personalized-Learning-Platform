@@ -567,6 +567,124 @@ def _render_definition_box(params: dict) -> str:
     return "\n".join(lines)
 
 
+def _render_comparison(params: dict) -> str:
+    """Render a side-by-side comparison of two categories."""
+    left_title = params.get("left_title", "Option A")
+    right_title = params.get("right_title", "Option B")
+    left_items = params.get("left_items", [])
+    right_items = params.get("right_items", [])
+
+    max_items = max(len(left_items), len(right_items), 1)
+    left_color = "#E3F2FD"
+    right_color = "#F3E5F5"
+
+    lines = [
+        "digraph {",
+        "    rankdir=LR;",
+        '    node [shape=none];',
+        '    graph [splines=false];',
+        # Left column header
+        f'    L0 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="4" BGCOLOR="#1565C0">'
+        f'<TR><TD><FONT COLOR="white"><B>{left_title}</B></FONT></TD></TR></TABLE>>];',
+        # Right column header
+        f'    R0 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="4" BGCOLOR="#6A1B9A">'
+        f'<TR><TD><FONT COLOR="white"><B>{right_title}</B></FONT></TD></TR></TABLE>>];',
+        '    L0 -> R0 [style=invis];',
+    ]
+
+    for i, item in enumerate(left_items, 1):
+        safe = item.replace('"', "'").replace("<", "&lt;").replace(">", "&gt;")
+        lines.append(
+            f'    L{i} [label=<<TABLE BORDER="1" CELLBORDER="0" BGCOLOR="{left_color}">'
+            f'<TR><TD>{safe}</TD></TR></TABLE>>];'
+        )
+        lines.append(f"    L{i-1} -> L{i} [style=invis];")
+
+    for i, item in enumerate(right_items, 1):
+        safe = item.replace('"', "'").replace("<", "&lt;").replace(">", "&gt;")
+        lines.append(
+            f'    R{i} [label=<<TABLE BORDER="1" CELLBORDER="0" BGCOLOR="{right_color}">'
+            f'<TR><TD>{safe}</TD></TR></TABLE>>];'
+        )
+        lines.append(f"    R{i-1} -> R{i} [style=invis];")
+
+    # Rank alignment
+    for i in range(max_items + 1):
+        li = f"L{i}" if i <= len(left_items) else ""
+        ri = f"R{i}" if i <= len(right_items) else ""
+        if li and ri:
+            lines.append(f"    {{rank=same; {li}; {ri}}}")
+
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _render_analogy_diagram(params: dict) -> str:
+    """Render a two-panel analogy mapping familiar ↔ technical concepts."""
+    familiar_label = params.get("familiar_label", "Familiar")
+    technical_label = params.get("technical_label", "Technical")
+    mappings = params.get("mappings", [])
+    title = params.get("title", "")
+
+    lines = [
+        "digraph {",
+        "    rankdir=LR;",
+        '    node [shape=none fontsize=13];',
+        '    graph [splines=false];',
+    ]
+
+    if title:
+        safe_title = title.replace('"', "'")
+        lines.append(
+            f'    title [label="{safe_title}" fontsize=15 fontcolor="#333333" shape=plaintext];'
+        )
+
+    # Left panel header
+    lines.append(
+        f'    fam_h [label=<<TABLE BORDER="1" CELLBORDER="0" BGCOLOR="#E8F5E9">'
+        f'<TR><TD><B>{familiar_label}</B></TD></TR></TABLE>>];'
+    )
+    # Right panel header
+    lines.append(
+        f'    tech_h [label=<<TABLE BORDER="1" CELLBORDER="0" BGCOLOR="#FFF8E1">'
+        f'<TR><TD><B>{technical_label}</B></TD></TR></TABLE>>];'
+    )
+    lines.append("    {rank=same; fam_h; tech_h}")
+
+    for i, m in enumerate(mappings[:6]):
+        fam = str(m.get("familiar", "")).replace('"', "'").replace("<", "&lt;").replace(">", "&gt;")
+        tech = str(m.get("technical", "")).replace('"', "'").replace("<", "&lt;").replace(">", "&gt;")
+        lines.append(
+            f'    f{i} [label=<<TABLE BORDER="1" CELLBORDER="0" BGCOLOR="#F1F8E9">'
+            f'<TR><TD>{fam}</TD></TR></TABLE>>];'
+        )
+        lines.append(
+            f'    t{i} [label=<<TABLE BORDER="1" CELLBORDER="0" BGCOLOR="#FFFDE7">'
+            f'<TR><TD>{tech}</TD></TR></TABLE>>];'
+        )
+        lines.append(f'    f{i} -> t{i} [label="≡" fontsize=16 arrowhead=none color="#888888"];')
+        lines.append(f"    {{rank=same; f{i}; t{i}}}")
+
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _render_conceptual(params: dict) -> str:
+    """
+    Dispatcher for the conceptual template.
+
+    Reads _enriched_template from params and delegates to the
+    appropriate sub-renderer. Falls back to _render_concept_box.
+    """
+    enriched = params.get("_enriched_template", "concept_box")
+    if enriched == "comparison":
+        return _render_comparison(params)
+    elif enriched == "analogy_diagram":
+        return _render_analogy_diagram(params)
+    else:
+        return _render_concept_box(params)
+
+
 # =============================================================================
 # TEMPLATE REGISTRY INITIALIZATION
 # =============================================================================
@@ -955,6 +1073,40 @@ TEMPLATE_REGISTRY.register(Template(
     optional_params=["points", "color"],
     render_func=_render_concept_box,
 ))
+
+TEMPLATE_REGISTRY.register(Template(
+    id="comparison",
+    name="Side-by-Side Comparison",
+    description="Two-column comparison of two concepts, showing attributes for each",
+    renderer=Renderer.GRAPHVIZ,
+    keywords=["versus", "vs", "compare", "difference", "pros cons", "trade-off", "unlike", "whereas"],
+    required_params=["left_title", "right_title"],
+    optional_params=["left_items", "right_items"],
+    render_func=_render_comparison,
+))
+
+TEMPLATE_REGISTRY.register(Template(
+    id="analogy_diagram",
+    name="Analogy Diagram",
+    description="Two-panel mapping from a familiar real-world concept to a technical concept",
+    renderer=Renderer.GRAPHVIZ,
+    keywords=["like a", "similar to", "think of", "works like", "analogous", "imagine", "picture a"],
+    required_params=["familiar_label", "technical_label"],
+    optional_params=["mappings", "title"],
+    render_func=_render_analogy_diagram,
+))
+
+TEMPLATE_REGISTRY.register(Template(
+    id="conceptual",
+    name="Conceptual (Enriched)",
+    description="Dispatches to concept_box, comparison, or analogy_diagram based on LLM enrichment",
+    renderer=Renderer.GRAPHVIZ,
+    keywords=["concept", "definition", "explain", "describes", "summarizes", "contrast", "analogy"],
+    required_params=[],
+    optional_params=["_enriched_template", "title", "points"],
+    render_func=_render_conceptual,
+))
+
 
 TEMPLATE_REGISTRY.register(Template(
     id="info_card",

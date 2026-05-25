@@ -279,8 +279,13 @@ def should_render_visual(
     # If classifier says "none", only override for Visual_Heavy
     if template_id == "none":
         if composition_mode == "Visual_Heavy":
-            return {"template_id": "concept_box", "confidence": confidence}
+            # Route through conceptual → LLM enrichment will pick the best layout
+            return {"template_id": "conceptual", "confidence": confidence}
         return None
+
+    # "conceptual" always passes through — LLM enrichment fires in generate_visual_params
+    if template_id == "conceptual":
+        return {"template_id": "conceptual", "confidence": confidence}
 
     # Decision thresholds based on composition mode
     if composition_mode == "Visual_Heavy":
@@ -294,9 +299,9 @@ def should_render_visual(
         # (Random chance would be ~0.16 × 0.20 = ~0.03)
         if confidence >= 0.15:
             return {"template_id": template_id, "confidence": confidence}
-        # Only use concept_box as a mild fallback for borderline cases
+        # Only use conceptual as a mild fallback for borderline cases
         if confidence >= 0.05:
-            return {"template_id": "concept_box", "confidence": confidence}
+            return {"template_id": "conceptual", "confidence": confidence}
         return None
 
     else:  # Text_Heavy

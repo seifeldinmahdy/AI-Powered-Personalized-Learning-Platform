@@ -165,7 +165,9 @@ VALID_TEMPLATES = [
     "comparison",
     # Quantitative
     "bar_chart",
-    # Conceptual
+    # Conceptual (LLM enrichment dispatches to concept_box/comparison/analogy_diagram)
+    "conceptual",
+    # Conceptual sub-types (rendered via _enriched_template key in params)
     "concept_box",
     # Architectural — layered_stack merged into architecture_diagram (style='layered')
     "architecture_diagram",
