@@ -108,18 +108,15 @@ _ALT_TEXT_GENERATORS = {
         f"{p.get('definition', 'No definition provided')}"
     ),
 
-    # Architectural
-    "layered_stack": lambda p: (
-        f"A layered architecture diagram"
-        f"{' titled ' + chr(39) + p.get('title', '') + chr(39) if p.get('title') else ''}"
-        f" with {len(p.get('layers', []))} layers from top to bottom: "
-        f"{', '.join(str(l) for l in p.get('layers', []))}"
-    ),
+    # Architectural — architecture_diagram handles both XML string (new) and dict (legacy)
     "architecture_diagram": lambda p: (
-        f"An architecture diagram"
-        f"{' titled ' + chr(39) + p.get('title', '') + chr(39) if p.get('title') else ''}"
-        f" with {len(p.get('nodes', []))} components and "
-        f"{len(p.get('edges', []))} connections"
+        f"An architecture diagram with components and connections"
+        if isinstance(p, str)
+        else (
+            f"An architecture diagram"
+            f"{' titled ' + chr(39) + p.get('title', '') + chr(39) if p.get('title') else ''}"
+            f" with {len(p.get('nodes', p.get('components', [])))} components"
+        )
     ),
 }
 

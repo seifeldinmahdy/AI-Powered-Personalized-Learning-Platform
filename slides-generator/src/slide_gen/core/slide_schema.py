@@ -8,10 +8,21 @@ from pydantic import BaseModel, Field
 
 
 class Layout(str, Enum):
-    """Slide layout type."""
-    CONTENT_VISUAL = "Content_Visual"
-    LIST_VIEW = "List_View"
-    CODE_MAIN = "Code_Main"
+    """Slide layout type.
+
+    Content_Visual   — text bullets alongside a diagram/chart
+    List_View        — text-only bullets, no visual element
+    Code_Main        — code block is the primary element
+    Equation_Focus   — text bullets first, then equations rendered below (KaTeX);
+                       used when math is present but text context comes first
+    Equation_Visual  — equations alongside a diagram (e.g. a flowchart annotated with
+                       formulas); used when both math AND a visual template are present
+    """
+    CONTENT_VISUAL   = "Content_Visual"
+    LIST_VIEW        = "List_View"
+    CODE_MAIN        = "Code_Main"
+    EQUATION_FOCUS   = "Equation_Focus"
+    EQUATION_VISUAL  = "Equation_Visual"
 
 
 class SlideType(str, Enum):
@@ -154,9 +165,11 @@ VALID_TEMPLATES = [
     "comparison",
     # Quantitative
     "bar_chart",
-    # Conceptual
+    # Conceptual (LLM enrichment dispatches to concept_box/comparison/analogy_diagram)
+    "conceptual",
+    # Conceptual sub-types (rendered via _enriched_template key in params)
     "concept_box",
-    # Architectural
-    "layered_stack", "architecture_diagram",
+    # Architectural — layered_stack merged into architecture_diagram (style='layered')
+    "architecture_diagram",
 ]
 

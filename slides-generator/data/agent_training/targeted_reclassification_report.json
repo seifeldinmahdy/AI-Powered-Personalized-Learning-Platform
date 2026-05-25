@@ -1,0 +1,110 @@
+{
+  "total_samples": 3668,
+  "kept_unchanged": 3368,
+  "updated": 300,
+  "llm_failures": 0,
+  "invalid_llm_responses": 0,
+  "label_distribution_before": {
+    "concept_box": 1372,
+    "flowchart": 776,
+    "comparison": 453,
+    "none": 260,
+    "bar_chart": 238,
+    "binary_tree": 138,
+    "linear_chain": 117,
+    "graph": 81,
+    "stack": 67,
+    "general_tree": 50,
+    "cycle": 43,
+    "layered_stack": 34,
+    "queue": 31,
+    "analogy_diagram": 6,
+    "venn_diagram": 2
+  },
+  "label_distribution_after": {
+    "concept_box": 1332,
+    "flowchart": 794,
+    "comparison": 351,
+    "bar_chart": 278,
+    "none": 265,
+    "binary_tree": 139,
+    "linear_chain": 131,
+    "graph": 81,
+    "architecture_diagram": 70,
+    "stack": 67,
+    "general_tree": 50,
+    "cycle": 45,
+    "layered_stack": 34,
+    "queue": 31
+  },
+  "transitions": {
+    "analogy_diagram \u2192 concept_box": 6,
+    "comparison \u2192 concept_box": 95,
+    "comparison \u2192 bar_chart": 34,
+    "comparison \u2192 architecture_diagram": 12,
+    "comparison \u2192 linear_chain": 3,
+    "comparison \u2192 flowchart": 3,
+    "comparison \u2192 cycle": 2,
+    "comparison \u2192 binary_tree": 1,
+    "concept_box \u2192 architecture_diagram": 58,
+    "concept_box \u2192 comparison": 47,
+    "concept_box \u2192 flowchart": 15,
+    "concept_box \u2192 linear_chain": 11,
+    "concept_box \u2192 bar_chart": 6,
+    "concept_box \u2192 none": 5,
+    "venn_diagram \u2192 concept_box": 1,
+    "venn_diagram \u2192 comparison": 1
+  },
+  "updated_samples_preview": [
+    {
+      "original_label": "comparison",
+      "new_label": "concept_box",
+      "text_preview": "mates that results from fitting each of the models in (c) using\nleast squares. Do these results agre"
+    },
+    {
+      "original_label": "comparison",
+      "new_label": "concept_box",
+      "text_preview": "\u2022 Shrinkage. This approach involves fitting a model involving all p pre-\ndictors. However, the estim"
+    },
+    {
+      "original_label": "comparison",
+      "new_label": "flowchart",
+      "text_preview": "stepwise\nselection\nsubset selection. While the best subset selection procedure considers all\n2p poss"
+    },
+    {
+      "original_label": "comparison",
+      "new_label": "bar_chart",
+      "text_preview": "# Variables Best subset Forward stepwise\nOne rating rating\nTwo rating, income rating, income\nThree r"
+    },
+    {
+      "original_label": "concept_box",
+      "new_label": "comparison",
+      "text_preview": "a set of models that contain different numbers of variables. Recall from\nChapter 3 that the usual R2"
+    },
+    {
+      "original_label": "concept_box",
+      "new_label": "comparison",
+      "text_preview": "variables have been included in the model, adding additional noise variables\nwill lead to only a ver"
+    },
+    {
+      "original_label": "concept_box",
+      "new_label": "comparison",
+      "text_preview": "to the validation set or cross-validation approach leads to selection of the\nthree-variable model.\n6"
+    },
+    {
+      "original_label": "concept_box",
+      "new_label": "comparison",
+      "text_preview": "\u03b20, \u03b21,..., \u03b2p using the values that minimize\nRSS =\nn\u2211\ni=1\n\uf8eb\n\uf8edyi \u2212 \u03b20 \u2212\np\u2211\nj=1\n\u03b2j xij\n\uf8f6\n\uf8f8\n2\n.\nRidge "
+    },
+    {
+      "original_label": "comparison",
+      "new_label": "concept_box",
+      "text_preview": "measured. In Figure 6.4, the y-axis displays the standardized ridge regres-\nsion coefficient estimat"
+    },
+    {
+      "original_label": "comparison",
+      "new_label": "concept_box",
+      "text_preview": "ably as \u03bb increases from 0 to 10. Beyond this point, the decrease in variance\ndue to increasing \u03bb sl"
+    }
+  ]
+}

@@ -45,7 +45,7 @@ TEMPLATE_KEYWORDS = {
     "stack": ["stack", "lifo", "push", "pop"],
     "queue": ["queue", "fifo", "enqueue", "dequeue", "front", "rear"],
     "graph": ["graph", "vertex", "edge", "adjacen", "network", "path", "shortest"],
-    "layered_stack": ["layer", "architecture", "abstraction", "tier", "level", "osi", "stack", "software layer"],
+    # architecture_diagram covers former layered_stack domain (osi, software layers, abstraction)
     "layers": ["layer", "architecture", "abstraction", "tier", "level"],
     "flowchart": ["if", "else", "condition", "decision", "branch", "algorithm"],
     "process_flow": ["step", "process", "procedure", "workflow", "sequence"],
@@ -53,7 +53,12 @@ TEMPLATE_KEYWORDS = {
     "cycle": ["cycle", "loop", "circular", "repeat", "iterate"],
     "timeline": ["timeline", "history", "year", "version", "evolution", "released"],
     "bar_chart": ["percentage", "frequency", "count", "categories"],
-    "architecture_diagram": ["neural network", "transformer", "encoder", "decoder", "attention", "LSTM", "CNN", "ResNet", "microservices", "pipeline", "compiler", "model architecture", "system architecture"],
+    "architecture_diagram": [
+        "neural network", "transformer", "encoder", "decoder", "attention", "LSTM", "CNN", "ResNet",
+        "microservices", "pipeline", "compiler", "model architecture", "system architecture",
+        "layer", "abstraction", "osi", "software layer", "software stack", "technology stack",
+        "tier", "abstraction level", "operating system", "kernel",
+    ],
     "sequence": ["message", "request", "response", "actor", "api", "call"],
 }
 

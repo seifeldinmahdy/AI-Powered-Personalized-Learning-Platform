@@ -93,18 +93,25 @@ def _assign_highlight_types_heuristic(bullets: list[str]) -> list[ContentItem]:
 def _choose_layout(
     has_visual: bool,
     has_code: bool,
+    has_math: bool,
     composition_mode: str,
 ) -> Layout:
     """
     Choose slide layout based on content and preference.
 
-    Component 4 (Layout Selector) — deterministic rules:
-    - Code present → Code_Main
-    - Visual present → Content_Visual
-    - Text only → List_View
+    Priority (highest → lowest):
+      1. Code present                → Code_Main
+      2. Math + visual present       → Equation_Visual
+      3. Math only (no visual)       → Equation_Focus  (text first, equations below)
+      4. Visual only (no math)       → Content_Visual
+      5. Text only                   → List_View
     """
     if has_code:
         return Layout.CODE_MAIN
+    if has_math and has_visual:
+        return Layout.EQUATION_VISUAL
+    if has_math:
+        return Layout.EQUATION_FOCUS
     if has_visual:
         return Layout.CONTENT_VISUAL
     return Layout.LIST_VIEW
@@ -205,6 +212,7 @@ def process_chunk(
     layout = _choose_layout(
         has_visual=visual is not None,
         has_code=code_block is not None,
+        has_math=has_math,
         composition_mode=profile.composition_mode.value,
     )
 

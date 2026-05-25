@@ -214,36 +214,146 @@ function SummarySlide({ slide }: { slide: GeneratedSlide }) {
   );
 }
 
+// ── Slide header shared by all content layouts ─────────────────
+
+function SlideHeader({ title }: { title: string }) {
+  if (!title) return null;
+  return (
+    <div className="mb-6">
+      <div className="w-20 h-1.5 bg-gradient-to-r from-secondary to-accent rounded-full mb-4" />
+      <h1 className="text-2xl font-bold">{title}</h1>
+    </div>
+  );
+}
+
+function BulletList({ items }: { items: GeneratedSlide['body_content'] }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="space-y-3">
+      {items.map((item, i) => (
+        <ContentItemRenderer key={i} item={item} />
+      ))}
+    </div>
+  );
+}
+
+// ── Layout-aware content slide ─────────────────────────────────
+
 function ContentSlide({ slide }: { slide: GeneratedSlide }) {
+  const layout = slide.layout ?? 'List_View';
+  const hasEquations = slide.equation_block && slide.equation_block.length > 0;
+
+  // ── Equation_Focus: bullets first, equations below ────────────
+  if (layout === 'Equation_Focus') {
+    return (
+      <>
+        <SlideHeader title={slide.title} />
+
+        {/* Text content first */}
+        {slide.body_content.length > 0 && (
+          <div className="mb-6">
+            <BulletList items={slide.body_content} />
+          </div>
+        )}
+
+        {/* Equations below the text */}
+        {hasEquations && (
+          <div className="p-5 rounded-2xl border border-indigo-400/20 bg-gradient-to-br from-indigo-500/5 to-purple-500/5">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-1.5 h-4 rounded-full bg-gradient-to-b from-indigo-400 to-purple-500" />
+              <span className="text-xs font-semibold tracking-widest uppercase text-indigo-400/80">
+                Key Equations
+              </span>
+            </div>
+            <EquationRenderer equations={slide.equation_block!} />
+          </div>
+        )}
+      </>
+    );
+  }
+
+  // ── Equation_Visual: equations left, diagram right ─────────────
+  if (layout === 'Equation_Visual') {
+    return (
+      <>
+        <SlideHeader title={slide.title} />
+
+        <div className="grid grid-cols-2 gap-6 items-start">
+          {/* Left column: equations + bullets */}
+          <div className="space-y-4">
+            {hasEquations && (
+              <div className="p-4 rounded-xl border border-indigo-400/20 bg-gradient-to-br from-indigo-500/5 to-purple-500/5">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-1.5 h-4 rounded-full bg-gradient-to-b from-indigo-400 to-purple-500" />
+                  <span className="text-xs font-semibold tracking-widest uppercase text-indigo-400/80">
+                    Equations
+                  </span>
+                </div>
+                <EquationRenderer equations={slide.equation_block!} />
+              </div>
+            )}
+            {slide.body_content.length > 0 && (
+              <BulletList items={slide.body_content} />
+            )}
+          </div>
+
+          {/* Right column: diagram */}
+          <div className="flex items-start justify-center">
+            {slide.visual && <VisualRenderer visual={slide.visual} />}
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // ── Code_Main: code is primary ─────────────────────────────────
+  if (layout === 'Code_Main') {
+    return (
+      <>
+        <SlideHeader title={slide.title} />
+        {slide.code_block && <CodeBlockRenderer code={slide.code_block} />}
+        {slide.body_content.length > 0 && (
+          <div className="mt-6">
+            <BulletList items={slide.body_content} />
+          </div>
+        )}
+        {hasEquations && <EquationRenderer equations={slide.equation_block!} />}
+      </>
+    );
+  }
+
+  // ── Content_Visual: bullets + diagram ─────────────────────────
+  if (layout === 'Content_Visual') {
+    return (
+      <>
+        <SlideHeader title={slide.title} />
+        <div className="grid grid-cols-2 gap-6 items-start">
+          <BulletList items={slide.body_content} />
+          <div className="flex items-start justify-center">
+            {slide.visual && <VisualRenderer visual={slide.visual} />}
+          </div>
+        </div>
+        {hasEquations && (
+          <div className="mt-6">
+            <EquationRenderer equations={slide.equation_block!} />
+          </div>
+        )}
+      </>
+    );
+  }
+
+  // ── List_View (default): plain text ───────────────────────────
   return (
     <>
-      {/* Title */}
-      {slide.title && (
-        <div className="mb-8">
-          <div className="w-20 h-1.5 bg-gradient-to-r from-secondary to-accent rounded-full mb-6" />
-          <h1 className="mb-4 text-2xl font-bold">{slide.title}</h1>
-        </div>
-      )}
-
-      {/* Body content items */}
+      <SlideHeader title={slide.title} />
       {slide.body_content.length > 0 && (
-        <div className="mb-8 space-y-3">
-          {slide.body_content.map((item, i) => (
-            <ContentItemRenderer key={i} item={item} />
-          ))}
+        <div className="mb-8">
+          <BulletList items={slide.body_content} />
         </div>
       )}
-
-      {/* Code block */}
       {slide.code_block && <CodeBlockRenderer code={slide.code_block} />}
-
-      {/* Visual indicator */}
       {slide.visual && <VisualRenderer visual={slide.visual} />}
-
-      {/* Equation block — bottom zone, full width */}
-      {slide.equation_block && slide.equation_block.length > 0 && (
-        <EquationRenderer equations={slide.equation_block} />
-      )}
+      {hasEquations && <EquationRenderer equations={slide.equation_block!} />}
     </>
   );
 }

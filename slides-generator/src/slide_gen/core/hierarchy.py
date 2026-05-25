@@ -2,8 +2,8 @@
 Hierarchical Visual Template Classification — Category Definitions.
 
 Two-level hierarchy:
-  Level 1 (Category): data_structure, flow_diagram, comparison, chart,
-                       conceptual, architectural, none
+  Level 1 (Category): data_structure, flow_diagram, chart,
+                       architectural, conceptual, none
   Level 2 (Template): specific template_id within each category
 
 Used by both training (train_classifier.py) and inference (visual_classifier.py).
@@ -24,17 +24,14 @@ CATEGORY_HIERARCHY: dict[str, list[str]] = {
     "flow_diagram": [
         "flowchart", "cycle",
     ],
-    "comparison": [
-        "comparison",
-    ],
     "chart": [
         "bar_chart",
     ],
-    "conceptual": [
-        "concept_box",
-    ],
     "architectural": [
-        "layered_stack", "architecture_diagram",
+        "architecture_diagram",
+    ],
+    "conceptual": [
+        "conceptual",
     ],
     "none": [],
 }
@@ -50,8 +47,9 @@ for _cat, _templates in CATEGORY_HIERARCHY.items():
     for _tmpl in _templates:
         if _tmpl not in TEMPLATE_TO_CATEGORY:
             TEMPLATE_TO_CATEGORY[_tmpl] = _cat
-# "none" maps to itself
+# "none" and "conceptual" map to themselves
 TEMPLATE_TO_CATEGORY["none"] = "none"
+TEMPLATE_TO_CATEGORY["conceptual"] = "conceptual"
 
 # Per-category Level 2 label lists
 LEVEL2_LABELS: dict[str, list[str]] = {
@@ -72,6 +70,7 @@ LEVEL2_ID_TO_LABEL: dict[str, dict[int, str]] = {
 
 # Categories that have only one template — skip Level 2 model loading
 # and return the template directly with full L1 confidence.
+# This applies to: comparison, chart, conceptual, architectural
 SINGLE_TEMPLATE_CATEGORIES: dict[str, str] = {
     cat: templates[0]
     for cat, templates in CATEGORY_HIERARCHY.items()
@@ -84,7 +83,7 @@ ALL_TEMPLATE_IDS: set[str] = set(TEMPLATE_TO_CATEGORY.keys())
 
 def get_category(template_id: str) -> str:
     """Map a template_id to its Level 1 category."""
-    return TEMPLATE_TO_CATEGORY.get(template_id, "conceptual")
+    return TEMPLATE_TO_CATEGORY.get(template_id, "none")
 
 
 def get_level2_labels(category: str) -> list[str]:

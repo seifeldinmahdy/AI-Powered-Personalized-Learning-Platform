@@ -282,7 +282,7 @@ VALID_LABELS = {
     "comparison",
     "bar_chart",
     "concept_box",
-    "layered_stack", "architecture_diagram",
+    "architecture_diagram",  # layered_stack merged into architecture_diagram
     "none",
 }
 

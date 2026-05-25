@@ -1,5 +1,6 @@
 """Template registry and rendering system."""
 
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Callable
 from enum import Enum
@@ -566,6 +567,124 @@ def _render_definition_box(params: dict) -> str:
     return "\n".join(lines)
 
 
+def _render_comparison(params: dict) -> str:
+    """Render a side-by-side comparison of two categories."""
+    left_title = params.get("left_title", "Option A")
+    right_title = params.get("right_title", "Option B")
+    left_items = params.get("left_items", [])
+    right_items = params.get("right_items", [])
+
+    max_items = max(len(left_items), len(right_items), 1)
+    left_color = "#E3F2FD"
+    right_color = "#F3E5F5"
+
+    lines = [
+        "digraph {",
+        "    rankdir=LR;",
+        '    node [shape=none];',
+        '    graph [splines=false];',
+        # Left column header
+        f'    L0 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="4" BGCOLOR="#1565C0">'
+        f'<TR><TD><FONT COLOR="white"><B>{left_title}</B></FONT></TD></TR></TABLE>>];',
+        # Right column header
+        f'    R0 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="4" BGCOLOR="#6A1B9A">'
+        f'<TR><TD><FONT COLOR="white"><B>{right_title}</B></FONT></TD></TR></TABLE>>];',
+        '    L0 -> R0 [style=invis];',
+    ]
+
+    for i, item in enumerate(left_items, 1):
+        safe = item.replace('"', "'").replace("<", "&lt;").replace(">", "&gt;")
+        lines.append(
+            f'    L{i} [label=<<TABLE BORDER="1" CELLBORDER="0" BGCOLOR="{left_color}">'
+            f'<TR><TD>{safe}</TD></TR></TABLE>>];'
+        )
+        lines.append(f"    L{i-1} -> L{i} [style=invis];")
+
+    for i, item in enumerate(right_items, 1):
+        safe = item.replace('"', "'").replace("<", "&lt;").replace(">", "&gt;")
+        lines.append(
+            f'    R{i} [label=<<TABLE BORDER="1" CELLBORDER="0" BGCOLOR="{right_color}">'
+            f'<TR><TD>{safe}</TD></TR></TABLE>>];'
+        )
+        lines.append(f"    R{i-1} -> R{i} [style=invis];")
+
+    # Rank alignment
+    for i in range(max_items + 1):
+        li = f"L{i}" if i <= len(left_items) else ""
+        ri = f"R{i}" if i <= len(right_items) else ""
+        if li and ri:
+            lines.append(f"    {{rank=same; {li}; {ri}}}")
+
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _render_analogy_diagram(params: dict) -> str:
+    """Render a two-panel analogy mapping familiar ↔ technical concepts."""
+    familiar_label = params.get("familiar_label", "Familiar")
+    technical_label = params.get("technical_label", "Technical")
+    mappings = params.get("mappings", [])
+    title = params.get("title", "")
+
+    lines = [
+        "digraph {",
+        "    rankdir=LR;",
+        '    node [shape=none fontsize=13];',
+        '    graph [splines=false];',
+    ]
+
+    if title:
+        safe_title = title.replace('"', "'")
+        lines.append(
+            f'    title [label="{safe_title}" fontsize=15 fontcolor="#333333" shape=plaintext];'
+        )
+
+    # Left panel header
+    lines.append(
+        f'    fam_h [label=<<TABLE BORDER="1" CELLBORDER="0" BGCOLOR="#E8F5E9">'
+        f'<TR><TD><B>{familiar_label}</B></TD></TR></TABLE>>];'
+    )
+    # Right panel header
+    lines.append(
+        f'    tech_h [label=<<TABLE BORDER="1" CELLBORDER="0" BGCOLOR="#FFF8E1">'
+        f'<TR><TD><B>{technical_label}</B></TD></TR></TABLE>>];'
+    )
+    lines.append("    {rank=same; fam_h; tech_h}")
+
+    for i, m in enumerate(mappings[:6]):
+        fam = str(m.get("familiar", "")).replace('"', "'").replace("<", "&lt;").replace(">", "&gt;")
+        tech = str(m.get("technical", "")).replace('"', "'").replace("<", "&lt;").replace(">", "&gt;")
+        lines.append(
+            f'    f{i} [label=<<TABLE BORDER="1" CELLBORDER="0" BGCOLOR="#F1F8E9">'
+            f'<TR><TD>{fam}</TD></TR></TABLE>>];'
+        )
+        lines.append(
+            f'    t{i} [label=<<TABLE BORDER="1" CELLBORDER="0" BGCOLOR="#FFFDE7">'
+            f'<TR><TD>{tech}</TD></TR></TABLE>>];'
+        )
+        lines.append(f'    f{i} -> t{i} [label="≡" fontsize=16 arrowhead=none color="#888888"];')
+        lines.append(f"    {{rank=same; f{i}; t{i}}}")
+
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _render_conceptual(params: dict) -> str:
+    """
+    Dispatcher for the conceptual template.
+
+    Reads _enriched_template from params and delegates to the
+    appropriate sub-renderer. Falls back to _render_concept_box.
+    """
+    enriched = params.get("_enriched_template", "concept_box")
+    if enriched == "comparison":
+        return _render_comparison(params)
+    elif enriched == "analogy_diagram":
+        return _render_analogy_diagram(params)
+    else:
+        return _render_concept_box(params)
+
+
 # =============================================================================
 # TEMPLATE REGISTRY INITIALIZATION
 # =============================================================================
@@ -639,27 +758,126 @@ TEMPLATE_REGISTRY.register(Template(
     render_func=_render_layers,
 ))
 
-TEMPLATE_REGISTRY.register(Template(
-    id="layered_stack",
-    name="Layered Stack Architecture",
-    description="Stacked horizontal layers with optional descriptions",
-    renderer=Renderer.GRAPHVIZ,
-    keywords=["layer", "stack", "OSI", "architecture", "abstraction", "tier"],
-    required_params=["layers"],
-    optional_params=["title", "arrows", "descriptions"],
-    render_func=_render_layers,
-))
+def _render_architecture_diagram(params: dict | str) -> str:
+    """Render architecture_diagram from XML string (new) or legacy dict (old).
 
+    Accepts:
+      - str: Raw XML produced by _generate_architecture_xml (new path)
+      - dict: Legacy JSON params from old architecture_diagram format
 
-def _render_architecture_diagram(params: dict) -> str:
-    """Render a free-form architecture diagram using Graphviz DOT.
-
-    Supports layered grouping via the 'layer' field on each node,
-    and flexible edge connections between any nodes.
+    Returns Graphviz DOT source string, or empty string on unrecoverable failure.
     """
-    nodes = params.get("nodes", [])
-    edges = params.get("edges", [])
-    title = params.get("title", "")
+    # ── Format detection ──
+    if isinstance(params, str):
+        return _render_architecture_from_xml(params)
+    elif isinstance(params, dict):
+        # Legacy JSON fallback — handles old-format params gracefully
+        return _render_architecture_from_dict(params)
+    return ""
+
+
+def _render_architecture_from_xml(xml_str: str) -> str:
+    """Parse XML and produce Graphviz DOT source."""
+    ENGINE_MAP = {
+        "hierarchical": "dot",
+        "pipeline":     "dot",
+        "network":      "neato",
+    }
+    ROLE_SHAPE_MAP = {
+        "master":    "doublecircle",
+        "worker":    "box",
+        "processor": "hexagon",
+        "storage":   "cylinder",
+        "input":     "parallelogram",
+        "output":    "parallelogram",
+        "layer":     "box",
+    }
+    ROLE_COLOR_MAP = {
+        "master":    "#BBDEFB",
+        "worker":    "#E3F2FD",
+        "processor": "#FFF9C4",
+        "storage":   "#DCEDC8",
+        "input":     "#F8BBD9",
+        "output":    "#FFE0B2",
+        "layer":     "#B3E5FC",
+    }
+
+    try:
+        root = ET.fromstring(xml_str)
+    except ET.ParseError as e:
+        print(f"    architecture_diagram XML parse error: {e}")
+        return ""
+
+    layout = root.get("layout", "hierarchical")
+    style  = root.get("style", "component")
+    title  = root.get("title", "")
+
+    # layout="none" means nothing to render
+    if layout == "none":
+        return ""
+
+    is_layered = (style == "layered")
+    rankdir = "TB" if layout in ("hierarchical", "network") else "LR"
+
+    lines = [
+        "digraph {",
+        f'    rankdir={rankdir};',
+        '    node [fontname="Helvetica" fontsize=11];',
+        '    edge [arrowhead=vee color="#666666"];',
+    ]
+
+    if title:
+        safe_title = title.replace('"', "'")
+        lines += [
+            '    labelloc="t";',
+            f'    label="{safe_title}";',
+            '    fontsize=15;',
+        ]
+
+    components = root.findall("component")
+
+    for comp in components:
+        cid   = comp.get("id", "")
+        label = comp.get("label", cid).replace('"', "'")
+        role  = comp.get("role", "worker")
+
+        if is_layered:
+            shape = "box"
+            color = "#B3E5FC"
+            lines.append(
+                f'    {cid} [label="{label}" shape={shape} style="filled" '
+                f'fillcolor="{color}" width=3.0 fixedsize=false];'
+            )
+        else:
+            shape = ROLE_SHAPE_MAP.get(role, "box")
+            color = ROLE_COLOR_MAP.get(role, "#E3F2FD")
+            lines.append(
+                f'    {cid} [label="{label}" shape={shape} style="filled" '
+                f'fillcolor="{color}"];'
+            )
+
+    # Edges from <connects> children
+    for comp in components:
+        src = comp.get("id", "")
+        for conn in comp.findall("connects"):
+            dst   = conn.get("to", "")
+            elabel = conn.get("label", "")
+            if src and dst:
+                if elabel and not is_layered:
+                    safe_el = elabel.replace('"', "'")
+                    lines.append(f'    {src} -> {dst} [label="{safe_el}"];')
+                else:
+                    lines.append(f'    {src} -> {dst};')
+
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _render_architecture_from_dict(params: dict) -> str:
+    """Legacy JSON-based renderer (kept for backward compatibility)."""
+    nodes  = params.get("nodes", [])
+    edges  = params.get("edges", [])
+    title  = params.get("title", "")
     layout = params.get("layout", "LR")
 
     rankdir = "TB" if layout == "layered" else "LR"
@@ -672,11 +890,13 @@ def _render_architecture_diagram(params: dict) -> str:
     ]
 
     if title:
-        lines.append(f'    labelloc="t";')
-        lines.append(f'    label="{title}";')
-        lines.append(f'    fontsize=16;')
+        safe_title = title.replace('"', "'")
+        lines += [
+            '    labelloc="t";',
+            f'    label="{safe_title}";',
+            '    fontsize=16;',
+        ]
 
-    # Group nodes by layer using subgraphs with rank=same
     layer_groups: dict[int, list[dict]] = {}
     for node in nodes:
         layer = node.get("layer", 0)
@@ -685,18 +905,17 @@ def _render_architecture_diagram(params: dict) -> str:
     for layer_idx in sorted(layer_groups.keys()):
         group_nodes = layer_groups[layer_idx]
         lines.append(f"    subgraph cluster_layer{layer_idx} {{")
-        lines.append(f"        rank=same;")
-        lines.append(f'        style=invis;')
+        lines.append("        rank=same;")
+        lines.append("        style=invis;")
         for n in group_nodes:
-            nid = n.get("id", f"n{layer_idx}")
-            label = n.get("label", nid)
+            nid   = n.get("id", f"n{layer_idx}")
+            label = n.get("label", nid).replace('"', "'")
             lines.append(f'        {nid} [label="{label}"];')
         lines.append("    }")
 
-    # Edges
     for edge in edges:
-        src = edge.get("from", "")
-        dst = edge.get("to", "")
+        src    = edge.get("from", "")
+        dst    = edge.get("to", "")
         elabel = edge.get("label", "")
         if src and dst:
             if elabel:
@@ -854,6 +1073,40 @@ TEMPLATE_REGISTRY.register(Template(
     optional_params=["points", "color"],
     render_func=_render_concept_box,
 ))
+
+TEMPLATE_REGISTRY.register(Template(
+    id="comparison",
+    name="Side-by-Side Comparison",
+    description="Two-column comparison of two concepts, showing attributes for each",
+    renderer=Renderer.GRAPHVIZ,
+    keywords=["versus", "vs", "compare", "difference", "pros cons", "trade-off", "unlike", "whereas"],
+    required_params=["left_title", "right_title"],
+    optional_params=["left_items", "right_items"],
+    render_func=_render_comparison,
+))
+
+TEMPLATE_REGISTRY.register(Template(
+    id="analogy_diagram",
+    name="Analogy Diagram",
+    description="Two-panel mapping from a familiar real-world concept to a technical concept",
+    renderer=Renderer.GRAPHVIZ,
+    keywords=["like a", "similar to", "think of", "works like", "analogous", "imagine", "picture a"],
+    required_params=["familiar_label", "technical_label"],
+    optional_params=["mappings", "title"],
+    render_func=_render_analogy_diagram,
+))
+
+TEMPLATE_REGISTRY.register(Template(
+    id="conceptual",
+    name="Conceptual (Enriched)",
+    description="Dispatches to concept_box, comparison, or analogy_diagram based on LLM enrichment",
+    renderer=Renderer.GRAPHVIZ,
+    keywords=["concept", "definition", "explain", "describes", "summarizes", "contrast", "analogy"],
+    required_params=[],
+    optional_params=["_enriched_template", "title", "points"],
+    render_func=_render_conceptual,
+))
+
 
 TEMPLATE_REGISTRY.register(Template(
     id="info_card",

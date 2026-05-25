@@ -200,54 +200,82 @@ TEMPLATE_PARAM_SCHEMAS: dict[str, dict[str, Any]] = {
     },
 
     # --- Architectural ---
-    "layered_stack": {
-        "description": "A layered architecture diagram showing horizontal layers stacked vertically, each labeled, with optional arrows showing interaction between adjacent layers. Used for OSI model, OS architecture, software stacks, neural network layer descriptions.",
-        "schema": {
-            "layers": "list of strings — layer names from top to bottom",
-            "title": "string — optional title",
-            "arrows": "boolean — whether to show bidirectional arrows between adjacent layers, default true",
-            "descriptions": "dict mapping layer name to short description string, optional",
-        },
-        "example": {
-            "layers": ["Application", "Transport", "Network", "Data Link", "Physical"],
-            "title": "OSI Model",
-            "arrows": True,
-            "descriptions": {
-                "Application": "HTTP, FTP, DNS",
-                "Transport": "TCP, UDP",
-                "Network": "IP, Routing",
-            }
-        }
-    },
     "architecture_diagram": {
-        "description": "A flexible free-form architecture diagram for any system, model, or component architecture. Used for neural networks, transformers, attention mechanisms, LSTM, ResNet, microservices, compiler pipelines, database architectures, or any content describing components with connections and data flow.",
-        "schema": {
-            "title": "string — diagram title",
-            "nodes": "list of dicts with {id: string, label: string, layer: int} — layer controls vertical position, nodes with same layer value are grouped side by side",
-            "edges": "list of dicts with {from: string, to: string, label: string (optional)} — from/to must match node ids",
-            "layout": "string — 'layered' for top-to-bottom flow, 'LR' for left-to-right flow, default 'LR'",
-        },
-        "example": {
-            "title": "Transformer Encoder Block",
-            "nodes": [
-                {"id": "input", "label": "Input Embedding", "layer": 0},
-                {"id": "pos", "label": "Positional Encoding", "layer": 0},
-                {"id": "mha", "label": "Multi-Head Attention", "layer": 1},
-                {"id": "norm1", "label": "Add & Norm", "layer": 2},
-                {"id": "ffn", "label": "Feed Forward", "layer": 3},
-                {"id": "norm2", "label": "Add & Norm", "layer": 4},
-                {"id": "output", "label": "Output", "layer": 5},
-            ],
-            "edges": [
-                {"from": "input", "to": "mha"},
-                {"from": "pos", "to": "mha"},
-                {"from": "mha", "to": "norm1"},
-                {"from": "norm1", "to": "ffn"},
-                {"from": "ffn", "to": "norm2"},
-                {"from": "norm2", "to": "output"},
-            ],
-            "layout": "LR",
-        },
+        "description": (
+            "A flexible architecture diagram for any system, model, or component architecture. "
+            "Covers neural networks, transformers, attention mechanisms, LSTM, ResNet, CNN, "
+            "encoder-decoder, microservices, compiler pipelines, database architectures, "
+            "OS stacks, OSI model, software abstraction layers, master-slave architectures, "
+            "and any content describing components with connections and data flow. "
+            "Previously also covered layered_stack — use style='layered' for clean horizontal "
+            "abstraction layers, style='component' for component diagrams with connections."
+        ),
+        "output_format": "xml",
+        "schema_description": """
+Return ONLY valid XML conforming to this schema:
+
+<architecture title="..." layout="hierarchical|pipeline|network" style="layered|component">
+  <component id="unique_id" label="Display Name" role="master|worker|processor|storage|input|output|layer">
+    <connects to="other_id" label="optional relationship label"/>
+  </component>
+  ...
+</architecture>
+
+layout values:
+  hierarchical → top-down flow, use for master-slave, trees, OS stacks, OSI model
+  pipeline     → left-to-right flow, use for sequential processing, neural network layers
+  network      → force-directed, use for peer-to-peer, mesh, graph-like architectures
+
+style values:
+  layered   → uniform full-width horizontal bands, use for OSI, OS stack, software layers
+  component → individual variable-size boxes with connections, use for neural nets, microservices
+
+role values:
+  master    → rendered as double circle
+  worker    → rendered as box
+  processor → rendered as hexagon
+  storage   → rendered as cylinder
+  input     → rendered as parallelogram (left-leaning)
+  output    → rendered as parallelogram (right-leaning)
+  layer     → rendered as full-width band (only used when style=layered)
+
+Rules:
+  1. Only include components explicitly mentioned or clearly implied in the content
+  2. Every component must have a unique id and a concise label under 25 characters
+  3. Connections must reference valid component ids
+  4. Maximum 8 components, maximum 12 connections
+  5. If content describes clean abstraction layers with no lateral connections: use style=layered, layout=hierarchical, role=layer for all components
+  6. If content does not describe a clear architecture with named components: return <architecture title="" layout="none"/>
+""",
+        "example_component": """
+<architecture title="HDFS Architecture" layout="hierarchical" style="component">
+  <component id="nn" label="NameNode" role="master">
+    <connects to="dn1" label="manages"/>
+    <connects to="dn2" label="manages"/>
+    <connects to="dn3" label="manages"/>
+  </component>
+  <component id="dn1" label="DataNode 1" role="worker"/>
+  <component id="dn2" label="DataNode 2" role="worker"/>
+  <component id="dn3" label="DataNode 3" role="worker"/>
+</architecture>
+""",
+        "example_layered": """
+<architecture title="OSI Model" layout="hierarchical" style="layered">
+  <component id="app" label="Application" role="layer">
+    <connects to="trans" label=""/>
+  </component>
+  <component id="trans" label="Transport" role="layer">
+    <connects to="net" label=""/>
+  </component>
+  <component id="net" label="Network" role="layer">
+    <connects to="dl" label=""/>
+  </component>
+  <component id="dl" label="Data Link" role="layer">
+    <connects to="phys" label=""/>
+  </component>
+  <component id="phys" label="Physical" role="layer"/>
+</architecture>
+""",
     },
 }
 
@@ -288,9 +316,12 @@ _TEMPLATE_DESCRIPTIONS = {
     "cycle": "Circular processes, repeating loops",
     "comparison": "Side-by-side analysis, attribute-by-attribute differences, pros/cons",
     "bar_chart": "Comparing quantities across discrete categories",
+    "conceptual": "Conceptual explanations, definitions, summaries, analogies, or comparisons between two things — LLM enrichment picks the final layout",
     "concept_box": "General concepts, definitions, abstract ideas",
-    "layered_stack": "Layered architectures (OSI, OS layers, software stacks), horizontal layers stacked vertically",
-    "architecture_diagram": "System or model architecture: neural networks, transformers, microservices, compiler pipelines, any component-connection diagram",
+    "architecture_diagram": (
+        "System or model architecture: neural networks, transformers, microservices, compiler pipelines, "
+        "any component-connection diagram, OSI model, OS architecture, software layers, technology stacks."
+    ),
 }
 
 _VALIDATION_SYSTEM_PROMPT = """You are a visual template classifier for educational slides.
@@ -420,6 +451,112 @@ Output ONLY valid JSON:
 If use_venn is false, the other fields can be empty strings/lists."""
 
 
+# =============================================================================
+# CONCEPTUAL ENRICHMENT — LLM picks concept_box / comparison / analogy_diagram
+# =============================================================================
+
+_CONCEPTUAL_ENRICHMENT_PROMPT = """You are selecting a text layout enrichment for an educational slide.
+
+Slide Title: {title}
+Slide Bullets:
+{bullets}
+Original Chunk:
+{chunk}
+
+Select the most appropriate text layout from exactly these three options:
+
+concept_box — the content defines or summarizes one central concept. There is one main idea being explained.
+Signals: "is a", "is defined as", "refers to", "consists of", "is used for", single-subject explanation.
+
+comparison — the content explicitly contrasts two distinct things. Both things are named and their differences are described.
+Signals: "versus", "unlike", "whereas", "compared to", "on the other hand", "difference between", two named subjects.
+
+analogy_diagram — the content explains a technical concept by mapping it to a familiar real-world scenario. The analogy must be explicit, not implied.
+Signals: "like a", "similar to", "think of", "just as", "works like", "analogous to", "imagine", "picture a".
+
+Return ONLY valid JSON:
+{{"layout": "concept_box|comparison|analogy_diagram", "reasoning": "one sentence"}}
+
+If none of the three clearly fits, return:
+{{"layout": "concept_box", "reasoning": "default fallback"}}"""
+
+
+def _enrich_conceptual(
+    raw_chunk: str,
+    bullets: list[str],
+    title: str,
+    host: str,
+    model: str,
+    api_key: str | None,
+) -> dict:
+    """
+    LLM enrichment step for conceptual template.
+
+    Calls the LLM to choose between concept_box, comparison, and analogy_diagram,
+    then generates complete params for the chosen sub-type.
+
+    Returns a params dict with _enriched_template set to the chosen layout.
+    Falls back to concept_box silently on any error.
+    """
+    chosen_layout = "concept_box"
+    try:
+        bullets_text = "\n".join(f"- {b}" for b in bullets)
+        chunk_preview = raw_chunk[:600] if raw_chunk else bullets_text
+        prompt = _CONCEPTUAL_ENRICHMENT_PROMPT.format(
+            title=title,
+            bullets=bullets_text,
+            chunk=chunk_preview,
+        )
+        result = _call_ollama(host, model, api_key, prompt)
+        if result and result.get("layout") in ("concept_box", "comparison", "analogy_diagram"):
+            chosen_layout = result["layout"]
+    except Exception:
+        pass  # Silent fallback — enrichment is optional
+
+    # Now generate full params for the chosen sub-type
+    try:
+        if chosen_layout == "comparison":
+            params = _generate_conceptual_subtype_params("comparison", bullets, title, host, model, api_key)
+        elif chosen_layout == "analogy_diagram":
+            params = _generate_conceptual_subtype_params("analogy_diagram", bullets, title, host, model, api_key)
+        else:
+            params = _generate_conceptual_subtype_params("concept_box", bullets, title, host, model, api_key)
+    except Exception:
+        params = {"title": title, "points": bullets}
+        chosen_layout = "concept_box"
+
+    params["_enriched_template"] = chosen_layout
+    return params
+
+
+def _generate_conceptual_subtype_params(
+    sub_template: str,
+    bullets: list[str],
+    title: str,
+    host: str,
+    model: str,
+    api_key: str | None,
+) -> dict:
+    """
+    Generate params for a conceptual sub-type (concept_box / comparison / analogy_diagram)
+    using the existing schema machinery.
+    """
+    schema_info = TEMPLATE_PARAM_SCHEMAS.get(sub_template)
+    if not schema_info:
+        return {"title": title, "points": bullets}
+
+    prompt = _build_prompt(sub_template, schema_info, bullets, title)
+    result = _call_ollama(host, model, api_key, prompt)
+
+    if result:
+        validated = _validate_params(result, sub_template, schema_info)
+        if validated:
+            return validated
+
+    # Deterministic fallback per sub-type
+    return _deterministic_fallback(sub_template, bullets, title)
+
+
 def _llm_enrich_template(
     template_id: str,
     raw_chunk: str,
@@ -501,12 +638,17 @@ def generate_visual_params(
     api_key: str | None = None,
     classifier_confidence: float = 1.0,
     raw_chunk: str = "",
-) -> dict:
+) -> dict | str | None:
     """
     Generate structured visual parameters using LLM.
 
+    For architecture_diagram: returns raw XML string (renderer handles parsing).
+    For conceptual: calls LLM enrichment to choose and generate concept_box /
+      comparison / analogy_diagram params with _enriched_template key set.
+    For all other templates: returns a dict of JSON params as before.
+
     Args:
-        template_id: The chosen template (e.g., 'flowchart', 'stack')
+        template_id: The chosen template (e.g., 'flowchart', 'stack', 'conceptual')
         bullets: The bullet points from the slide
         title: The slide title
         ollama_host: Ollama API host
@@ -516,13 +658,24 @@ def generate_visual_params(
         raw_chunk: Raw source text chunk for LLM validation
 
     Returns:
-        Dict of structured parameters for the template renderer
+        - str (XML) for architecture_diagram
+        - dict (with _enriched_template key) for conceptual
+        - dict for all other templates
+        - None if generation fails irrecoverably
     """
     host = ollama_host or os.getenv("OLLAMA_HOST", "http://localhost:11434")
     model = ollama_model or os.getenv("OLLAMA_MODEL", "llama3")
     key = api_key or os.getenv("OLLAMA_API_KEY")
 
-    # ── LLM Enrichment: try upgrading concept_box/comparison ──
+    # ── Special XML path for architecture_diagram ──
+    if template_id == "architecture_diagram":
+        return _generate_architecture_xml(bullets, title, host, model, key)
+
+    # ── Conceptual path: LLM enrichment picks the sub-type ──
+    if template_id == "conceptual":
+        return _enrich_conceptual(raw_chunk, bullets, title, host, model, key)
+
+    # ── Legacy LLM Enrichment: try upgrading concept_box/comparison ──
     enriched_template, enriched_params = _llm_enrich_template(
         template_id, raw_chunk, bullets, title, host, model, key
     )
@@ -571,6 +724,106 @@ def generate_visual_params(
 
     # Fallback: generate basic params deterministically for text-based diagrams
     return _deterministic_fallback(template_id, bullets, title)
+
+
+def _generate_architecture_xml(
+    bullets: list[str],
+    title: str,
+    host: str,
+    model: str,
+    api_key: str | None,
+) -> str:
+    """
+    Generate XML params for architecture_diagram using the LLM.
+
+    Returns a raw XML string. The renderer parses it directly.
+    Falls back deterministically if the LLM call fails.
+    """
+    schema_info = TEMPLATE_PARAM_SCHEMAS["architecture_diagram"]
+    bullets_text = "\n".join(f"- {b}" for b in bullets)
+
+    prompt = (
+        f"Generate an architecture diagram XML for this educational slide.\n\n"
+        f"## SLIDE CONTENT:\n"
+        f"Title: {title}\n"
+        f"Bullets:\n{bullets_text}\n\n"
+        f"## DESCRIPTION:\n{schema_info['description']}\n\n"
+        f"## XML SCHEMA:\n{schema_info['schema_description']}\n\n"
+        f"## EXAMPLE (component style):\n{schema_info['example_component']}\n\n"
+        f"## EXAMPLE (layered style):\n{schema_info['example_layered']}\n\n"
+        f"## YOUR TASK:\n"
+        f"Output ONLY valid XML. No markdown code fences, no explanation, "
+        f"no text before or after the XML. Start directly with <architecture."
+    )
+
+    url = f"{host.rstrip('/')}/api/chat"
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are an XML generator for architecture diagrams. Output only valid XML, nothing else."},
+            {"role": "user", "content": prompt},
+        ],
+        "stream": False,
+        "options": {"temperature": 0.2, "top_p": 0.9},
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=60)
+        response.raise_for_status()
+        result = response.json()
+        raw = result.get("message", {}).get("content", "").strip()
+
+        # Strip any accidental markdown fences
+        if raw.startswith("```"):
+            raw = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
+            raw = re.sub(r"```$", "", raw).strip()
+
+        # Quick sanity check: must start with <architecture
+        if raw.startswith("<architecture"):
+            return raw
+
+        # If there's a <architecture block buried in the response, extract it
+        match = re.search(r"(<architecture[\s\S]*?</architecture>|<architecture[^/]*/>", raw)
+        if match:
+            return match.group(0)
+
+    except Exception as e:
+        print(f"    Architecture XML generation failed: {e}")
+
+    # Deterministic fallback: build minimal XML from bullets
+    return _architecture_xml_fallback(bullets, title)
+
+
+def _architecture_xml_fallback(bullets: list[str], title: str) -> str:
+    """Deterministic XML fallback when LLM call fails entirely."""
+    import xml.etree.ElementTree as ET
+
+    root = ET.Element("architecture")
+    root.set("title", title[:50] if title else "Architecture")
+    root.set("layout", "hierarchical")
+    root.set("style", "component")
+
+    # Title node + first bullet as child
+    top_label = (title[:20] if title else "System").replace('"', "'")
+    top = ET.SubElement(root, "component")
+    top.set("id", "top")
+    top.set("label", top_label)
+    top.set("role", "master")
+
+    for i, b in enumerate(bullets[:6]):
+        child = ET.SubElement(root, "component")
+        child.set("id", f"c{i}")
+        child.set("label", b[:24].strip())
+        child.set("role", "worker")
+        conn = ET.SubElement(top, "connects")
+        conn.set("to", f"c{i}")
+        conn.set("label", "")
+
+    return ET.tostring(root, encoding="unicode")
 
 
 def _build_prompt(
@@ -717,6 +970,13 @@ def _deterministic_fallback(
             "mappings": mappings if mappings else [{"familiar": "Example", "technical": "Concept"}],
             "title": title,
         }
+    elif template_id == "conceptual":
+        # Deterministic fallback: produce concept_box-style params with _enriched_template
+        return {
+            "_enriched_template": "concept_box",
+            "title": title,
+            "points": bullets,
+        }
     elif template_id in ("stack", "queue"):
         return {"items": bullets}
     elif template_id in ("linear_chain", "cycle"):
@@ -729,18 +989,9 @@ def _deterministic_fallback(
         root = bullets[0] if bullets else title
         children = {root: bullets[1:]} if len(bullets) > 1 else {}
         return {"root": root, "children": children, "title": title, "relationship_label": ""}
-    elif template_id == "layered_stack":
-        return {"layers": bullets, "title": title, "arrows": True, "descriptions": {}}
     elif template_id == "architecture_diagram":
-        nodes = [
-            {"id": f"n{i}", "label": b[:30], "layer": i}
-            for i, b in enumerate(bullets)
-        ]
-        edges = [
-            {"from": f"n{i}", "to": f"n{i+1}"}
-            for i in range(len(bullets) - 1)
-        ]
-        return {"title": title, "nodes": nodes, "edges": edges, "layout": "LR"}
+        # For XML path: return fallback XML string
+        return _architecture_xml_fallback(bullets, title)
     else:
         return {"title": title, "points": bullets}
 
