@@ -290,10 +290,10 @@ export default function LiveSession() {
 
         // Load student learning profile for Dr. Nova personalization (B4)
         try {
-          const token = localStorage.getItem('token');
+          const token = localStorage.getItem('access_token');
           if (token) {
             const profileRes = await fetch(`${API_URL}/progress/learning-profile/`, {
-              headers: { Authorization: `Token ${token}` },
+              headers: { Authorization: `Bearer ${token}` },
             });
             if (profileRes.ok) {
               const profileData = await profileRes.json();
@@ -438,7 +438,7 @@ export default function LiveSession() {
 
   const fireAndForgetProfiler = useCallback(async () => {
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('access_token');
       const authUser = localStorage.getItem('auth_user');
       const studentId = authUser ? JSON.parse(authUser).id : 0;
 
@@ -449,7 +449,7 @@ export default function LiveSession() {
       if (token) {
         try {
           const existingRes = await fetch(`${API_URL}/progress/learning-profile/`, {
-            headers: { Authorization: `Token ${token}` },
+            headers: { Authorization: `Bearer ${token}` },
           });
           if (existingRes.ok) {
             const existing = await existingRes.json();
@@ -484,7 +484,7 @@ export default function LiveSession() {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              Authorization: `Token ${token}`,
+              Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify({
               sessions_count: existingSessionsCount + 1,

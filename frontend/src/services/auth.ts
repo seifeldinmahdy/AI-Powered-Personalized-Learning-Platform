@@ -6,7 +6,8 @@ export interface AuthResponse {
     username: string;
     email: string;
     role: string;
-    token: string;
+    access: string;
+    refresh: string;
 }
 
 export interface AuthError {
@@ -35,5 +36,8 @@ export async function signupUser(
 }
 
 export async function logoutUser(): Promise<void> {
-    await api.post('/users/logout/');
+    const refreshToken = localStorage.getItem('refresh_token');
+    if (refreshToken) {
+        await api.post('/users/logout/', { refresh: refreshToken });
+    }
 }

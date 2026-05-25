@@ -173,7 +173,6 @@ CRITICAL RULES:
 - Every question MUST be directly grounded in the slides and lab content provided. No generic textbook or LeetCode-style problems.
 - If the student has known weaknesses, create questions that specifically target those areas.
 - If the student has strengths, include at least one question that pushes them to a harder level on those topics.
-- Each question must include exactly 3 progressive hints (vague → specific → near-solution).
 - Include an analogy_explanation per question that explains the core concept in a way that matches the student's profile.
 - Include an example_solution: ONE possible correct implementation. This is for student reference only — evaluation is rubric-based, not diffing against this solution.
 - DO NOT rely on the example_solution for grading. The rubric is the sole basis for evaluation.
@@ -186,9 +185,28 @@ Each question object must have these exact fields:
   - scenario_framing: the story/analogy/context introduction
   - problem_statement: the actual coding task description
   - starter_code: Python starter code with function signature and TODO
-  - rubric: array of 3-5 objects, each with {"name": "...", "description": "...", "weight": N} where weights sum to 100
+  - rubric: array of 3-5 RubricCriterion objects. Each criterion has:
+      - id: "r1", "r2", "r3" etc.
+      - category: exactly one of: "correctness", "logic", "edge_cases", "syntax_style", "requirements"
+      - name: human-readable criterion name
+      - weight: integer, all criteria weights must sum to exactly 100
+      - checks: array of 2 to 4 RubricCheck objects. Each check has:
+          - id: "r1c1", "r1c2" etc.
+          - question: a yes/no question answerable by reading the source code text alone — no question may require executing the code.
+            BAD: "Does the function return 5 when called with (2,3)?"
+            GOOD: "Does the function return the result of adding a and b rather than a hardcoded value?"
+            BAD: "Is the code correct?"
+            GOOD: "Does the function use a return statement rather than only printing the result?"
+          - weight: float, all check weights within one criterion must sum to exactly 1.0
+      - result and evidence fields must NOT appear in generated output — they are added only at evaluation time
+    All criterion weights must sum to exactly 100.
+    All check weights within each criterion must sum to exactly 1.0.
+    Always include at least "correctness" and "requirements" categories.
   - example_solution: one possible correct Python implementation (for student reference)
-  - hints: array of exactly 3 strings [vague_hint, specific_hint, near_solution_hint]
+  - static_hint: exactly one string. A conceptual nudge only — no specific variable names, no implementation details, no code. Points toward the right thinking pattern without revealing approach or solution.
+    BAD: "Use the + operator to add a and b then call print()"
+    GOOD: "Think about what the function needs to communicate to the caller versus what it needs to show the user — these may require two separate actions"
+    Maximum 2 sentences.
   - analogy_explanation: concept explained via an analogy suited to the student
   - difficulty: "easy" or "medium" or "hard"
   - target_weakness: which weakness from the profile this targets, or null
@@ -346,17 +364,35 @@ Based on the breadth and depth of the material above, decide how many questions 
                         # Ensure id
                         if "id" not in q or not q["id"]:
                             q["id"] = str(uuid.uuid4())
-                        # Ensure hints length
-                        hints = q.get("hints", [])
-                        while len(hints) < 3:
-                            hints.append("Think about the problem structure.")
-                        q["hints"] = hints[:3]
-                        # Ensure rubric exists
+                        # Ensure static_hint exists
+                        if not q.get("static_hint"):
+                            q["static_hint"] = (
+                                "Think carefully about what the problem is asking you to return "
+                                "versus what it asks you to display."
+                            )
+                        # Remove legacy hints list if present
+                        q.pop("hints", None)
+                        # Ensure rubric exists with new structure
                         if "rubric" not in q or not q["rubric"]:
                             q["rubric"] = [
-                                {"name": "Correctness", "description": "Code produces correct output", "weight": 50},
-                                {"name": "Code Quality", "description": "Clean, readable code", "weight": 30},
-                                {"name": "Edge Cases", "description": "Handles edge cases", "weight": 20},
+                                {
+                                    "id": "r1",
+                                    "category": "correctness",
+                                    "name": "Correct output",
+                                    "weight": 50,
+                                    "checks": [
+                                        {"id": "r1c1", "question": "Does the function produce the expected output?", "weight": 1.0}
+                                    ]
+                                },
+                                {
+                                    "id": "r2",
+                                    "category": "requirements",
+                                    "name": "Satisfies requirements",
+                                    "weight": 50,
+                                    "checks": [
+                                        {"id": "r2c1", "question": "Does the function satisfy all stated requirements?", "weight": 1.0}
+                                    ]
+                                }
                             ]
                         questions.append(ProblemSetQuestion.model_validate(q))
                     except Exception as parse_err:
@@ -395,6 +431,43 @@ Based on the breadth and depth of the material above, decide how many questions 
 
 # ── Evaluation ───────────────────────────────────────────────────
 
+
+def _calculate_score(
+    evaluated_criteria: list,
+    hint_deductions: dict[str, float] | None = None,
+) -> tuple[int, list[str]]:
+    """
+    evaluated_criteria: RubricCriterion objects/dicts with result+evidence
+                        filled in per check
+    hint_deductions: check_id -> total points already deducted from
+                     dynamic hints. Pass None or {} if no hints used.
+    Returns: (final_score_0_to_100, failed_evidence_strings)
+    """
+    if hint_deductions is None:
+        hint_deductions = {}
+
+    total = 0.0
+    failed_evidence = []
+
+    for criterion in evaluated_criteria:
+        # handle both Pydantic model and dict
+        crit = criterion if isinstance(criterion, dict) else criterion.model_dump()
+        for check in crit.get("checks", []):
+            check_contribution = crit["weight"] * check["weight"]
+            if check.get("result") is True:
+                earned = check_contribution
+                earned -= hint_deductions.get(check["id"], 0.0)
+                total += max(earned, 0.0)
+            else:
+                ev = check.get("evidence", "")
+                if ev:
+                    failed_evidence.append(
+                        f"[{crit['category']} / {crit['name']}] {ev}"
+                    )
+
+    return (round(total), failed_evidence)
+
+
 async def evaluate_submission(
     problem_set_id: str,
     question_id: str,
@@ -415,94 +488,139 @@ async def evaluate_submission(
     if not question:
         raise ValueError(f"Question {question_id} not found in problem set")
 
-    # Build rubric text for the evaluator
-    rubric_lines = []
-    for rc in question.rubric:
-        rubric_lines.append(f"- {rc.name} (weight: {rc.weight}%): {rc.description}")
-    rubric_text = "\n".join(rubric_lines) or "No rubric available — score holistically."
+    # Build binary-check evaluation prompts
+    eval_system = """You are a code reviewer. You will be given a coding problem, the student's submitted code, and a rubric containing criteria with binary checks.
 
-    # Call evaluator LLM (stronger model for robust grading)
-    client = _get_eval_client()
-    eval_prompt = f"""You are a strict, objective code grader. Evaluate the student's submission ONLY against the rubric criteria below.
+For each check in every criterion, you must fill in:
+- result: true if the student's code satisfies this check when read as source text, false if it does not. You cannot execute the code — answer only from reading the source.
+- evidence: if result is true, quote the exact line(s) from the submitted code that satisfy the check. If result is false, write one sentence naming the specific construct, statement, or logic that is absent or wrong — reference the actual submitted code where possible, not a generic statement.
 
-IMPORTANT RULES:
-- Score EACH criterion independently on a 0-100 scale
-- Base your scores ONLY on the rubric criteria descriptions — not on any other subjective measure
-- A criterion scores 0 if the code does not address it at all
-- A criterion scores 100 if it fully satisfies the description
-- Be fair: there are many valid approaches. Do not penalize correct alternative implementations.
+Hard rules:
+- Answer EVERY check in EVERY criterion without exception
+- result must be exactly the boolean true or false — not a string, not null
+- evidence must always be specific to this submission
+- Do not add an overall score, grade, or any commentary outside the schema
+- Return only the criteria array as JSON with result and evidence filled in on every check"""
 
-PROBLEM STATEMENT:
+    eval_user = f"""PROBLEM:
 {question.problem_statement}
-
-RUBRIC CRITERIA (evaluate each independently):
-{rubric_text}
 
 STUDENT CODE:
 {code}
 
-Return a JSON object with:
-- criteria: array of objects, one per rubric criterion, each with:
-    - criterion: the criterion name (must EXACTLY match rubric names)
-    - score: integer 0-100 for this criterion
-    - comment: one sentence explaining the score
-- feedback: overall constructive explanation (2-3 sentences)
-- mistake_tags: array of short labels for mistakes found (e.g. "off-by-one", "wrong base case", "missing edge case"), empty array if none
-- hint_to_show: one relevant hint if the code has issues, or null if correct
+RUBRIC — fill in result and evidence for every check:
+{json.dumps([c.model_dump() for c in question.rubric], indent=2)}"""
 
-Return ONLY valid JSON. No markdown fences."""
-
+    # Call evaluator LLM (stronger model for robust grading)
+    client = _get_eval_client()
     try:
         result = client.chat_json(
-            messages=[{"role": "user", "content": eval_prompt}],
-            temperature=0.1,  # lower temp for consistent grading
+            messages=[
+                {"role": "system", "content": eval_system},
+                {"role": "user", "content": eval_user},
+            ],
+            temperature=0.1,  # low temp for consistent binary grading
             timeout_override=120,
         )
     except Exception as e:
         logger.error("Evaluation LLM failed: %s", e)
-        result = {
-            "criteria": [],
-            "feedback": f"Evaluation failed: {e}",
-            "mistake_tags": [],
-            "hint_to_show": None,
-        }
+        result = []
 
-    # Parse per-criterion scores
-    rubric_scores: list[RubricScore] = []
-    raw_criteria = result.get("criteria", [])
-    for rc_data in raw_criteria:
-        if isinstance(rc_data, dict):
-            rubric_scores.append(RubricScore(
-                criterion=rc_data.get("criterion", "Unknown"),
-                score=max(0, min(100, int(rc_data.get("score", 0)))),
-                comment=rc_data.get("comment", ""),
-            ))
+    # Parse the evaluated rubric returned by the LLM
+    # LLM returns the criteria array with result+evidence filled in
+    evaluated_criteria_raw = result if isinstance(result, list) else result.get("criteria", result.get("rubric", []))
 
-    # Compute weighted score from rubric
-    if rubric_scores and question.rubric:
-        weight_map = {rc.name: rc.weight for rc in question.rubric}
-        total_weight = sum(weight_map.values()) or 100
-        weighted_sum = 0
-        for rs in rubric_scores:
-            w = weight_map.get(rs.criterion, 0)
-            weighted_sum += rs.score * w
-        raw_score = round(weighted_sum / total_weight)
+    # Reconstruct RubricCriterion objects with result+evidence applied
+    evaluated_criteria = []
+    for idx, orig_criterion in enumerate(question.rubric):
+        crit_dict = orig_criterion.model_dump()
+        llm_criterion = evaluated_criteria_raw[idx] if idx < len(evaluated_criteria_raw) else {}
+        llm_checks = llm_criterion.get("checks", []) if isinstance(llm_criterion, dict) else []
+        llm_check_map = {c["id"]: c for c in llm_checks if isinstance(c, dict)}
+
+        for check in crit_dict["checks"]:
+            llm_check = llm_check_map.get(check["id"], {})
+            check["result"] = llm_check.get("result", False)
+            check["evidence"] = llm_check.get("evidence", "")
+
+        evaluated_criteria.append(crit_dict)
+
+    # Load hint deductions from store for this question
+    submission_record = store.load_submission_record(
+        student_id, lesson_id, problem_set_id, question_id
+    )
+    hint_deductions = {}
+    if submission_record:
+        hint_deductions = submission_record.get("hint_deductions", {})
+
+    # Score deterministically
+    raw_score, failed_evidence = _calculate_score(evaluated_criteria, hint_deductions)
+
+    # hint_penalty is now the sum of all check-level deductions already
+    # applied inside _calculate_score — compute for reporting only
+    hint_penalty = round(sum(hint_deductions.values()))
+    final_score = raw_score  # deductions already applied inside _calculate_score
+
+    # Build rubric breakdown from evaluated criteria — no LLM involvement
+    rubric_scores = [
+        RubricScore(
+            criterion=crit["name"],
+            category=crit["category"],
+            earned=round(sum(
+                crit["weight"] * check["weight"]
+                for check in crit["checks"]
+                if check.get("result") is True
+            )),
+            max=round(crit["weight"]),
+            comment=(
+                "; ".join(
+                    check["evidence"]
+                    for check in crit["checks"]
+                    if check.get("result") is False and check.get("evidence")
+                ) or "All checks passed"
+            ),
+        )
+        for crit in evaluated_criteria
+    ]
+
+    # mistake_tags — deterministic from failed criterion categories
+    mistake_tags = list(set(
+        crit["category"]
+        for crit in evaluated_criteria
+        for check in crit["checks"]
+        if check.get("result") is False
+    ))
+
+    # Feedback paragraph — one remaining LLM call
+    if failed_evidence:
+        feedback_prompt = (
+            "A student submitted code with these specific issues:\n"
+            + "\n".join(f"- {e}" for e in failed_evidence)
+            + "\n\nWrite a 2-3 sentence constructive feedback paragraph "
+            "summarizing what to focus on improving. Do not repeat the "
+            "issues verbatim. Do not mention scores or grades. "
+            "Return only the paragraph text, no JSON."
+        )
+        try:
+            feedback = _get_eval_client().chat(
+                messages=[{"role": "user", "content": feedback_prompt}],
+                temperature=0.3,
+                timeout_override=60,
+            )
+        except Exception:
+            feedback = " ".join(failed_evidence[:2])  # fallback
     else:
-        # Fallback: use raw_score if LLM returned it
-        raw_score = max(0, min(100, int(result.get("raw_score", 50))))
-
-    hint_penalty = min(hints_used, 3) * 5
-    final_score = max(0, raw_score - hint_penalty)
+        feedback = "Great work — all rubric checks passed."
 
     eval_result = EvaluationResult(
         raw_score=raw_score,
         hint_penalty=hint_penalty,
         final_score=final_score,
         passed=final_score >= 65,
-        feedback=result.get("feedback", ""),
+        feedback=feedback,
         rubric_scores=rubric_scores,
-        mistake_tags=result.get("mistake_tags", []),
-        hint_to_show=result.get("hint_to_show"),
+        mistake_tags=mistake_tags,
+        hint_to_show=None,
         example_solution=question.example_solution,
     )
 
@@ -529,6 +647,11 @@ Return ONLY valid JSON. No markdown fences."""
 
 # ── Recurrent mistake detection ──────────────────────────────────
 
+STANDARD_CATEGORIES = {
+    "correctness", "logic", "edge_cases", "syntax_style", "requirements"
+}
+
+
 async def _detect_recurrent_mistakes(
     student_id: str,
     lesson_id: str,
@@ -553,13 +676,29 @@ async def _detect_recurrent_mistakes(
     # Find tags that appear 2+ times
     from collections import Counter
     counts = Counter(all_mistakes)
-    recurrent = [tag for tag, count in counts.items() if count >= 2 and tag in new_mistake_tags]
 
+    # Direct category match first — no LLM needed
+    recurrent = [
+        tag for tag, count in counts.items()
+        if count >= 2 and tag in new_mistake_tags
+    ]
+
+    # Also check if any standard category tag appears in profile weaknesses
+    # by direct string match
     if not recurrent:
-        # Try semantic matching with profile weaknesses
         profile_data = await _fetch_student_profile(student_id)
-        weaknesses = profile_data.get("weaknesses", profile_data.get("topics_of_difficulty", []))
-        if weaknesses and new_mistake_tags:
+        weaknesses = profile_data.get("weaknesses",
+                     profile_data.get("topics_of_difficulty", []))
+        weakness_text = " ".join(str(w) for w in weaknesses).lower()
+        recurrent = [
+            tag for tag in new_mistake_tags
+            if tag.replace("_", " ") in weakness_text
+            and counts.get(tag, 0) >= 2
+        ]
+
+        # Only use LLM semantic matching as last resort if still nothing found
+        if not recurrent and weaknesses and new_mistake_tags:
+            # existing semantic matching LLM call — kept as-is
             try:
                 client = _get_ollama_client()
                 match_result = client.chat_json(
@@ -579,3 +718,204 @@ async def _detect_recurrent_mistakes(
 
     if recurrent:
         await _patch_recurrent_mistakes(student_id, recurrent)
+
+
+# ── Dynamic hint generation ──────────────────────────────────────
+
+HINT_PENALTY_PCT = 0.10  # hardcoded, never configurable
+
+
+async def generate_dynamic_hint(
+    problem_set_id: str,
+    question_id: str,
+    student_id: str,
+    lesson_id: str,
+    current_code: str,
+    hint_number: int,
+    evaluated_rubric: list | None,
+) -> dict:
+    """Generate a context-aware dynamic hint for hint_number 2 or 3."""
+    store = get_problem_set_store()
+    problem_set = store.load(student_id, lesson_id, problem_set_id)
+    if not problem_set:
+        raise ValueError(f"Problem set {problem_set_id} not found")
+
+    question = next((q for q in problem_set.questions if q.id == question_id), None)
+    if not question:
+        raise ValueError(f"Question {question_id} not found in problem set")
+
+    # Load existing hint deductions from store
+    submission_record = store.load_submission_record(
+        student_id, lesson_id, problem_set_id, question_id
+    )
+    existing_deductions: dict[str, float] = {}
+    if submission_record:
+        existing_deductions = submission_record.get("hint_deductions", {})
+    already_targeted = set(existing_deductions.keys())
+
+    # Determine evaluated rubric for finding failing checks
+    eval_criteria = None
+    if evaluated_rubric is not None:
+        # Use the provided evaluated rubric directly
+        eval_criteria = evaluated_rubric
+    else:
+        # DO NOT SAVE — read-only hint evaluation
+        # Run lightweight binary check eval to find failing checks
+        eval_system = """You are a code reviewer. You will be given a coding problem, the student's submitted code, and a rubric containing criteria with binary checks.
+
+For each check in every criterion, you must fill in:
+- result: true if the student's code satisfies this check when read as source text, false if it does not.
+- evidence: if result is true, quote the exact line(s). If result is false, write one sentence naming what is absent or wrong.
+
+Return only the criteria array as JSON with result and evidence filled in on every check."""
+
+        eval_user = f"""PROBLEM:
+{question.problem_statement}
+
+STUDENT CODE:
+{current_code if current_code.strip() else "[No code written yet]"}
+
+RUBRIC — fill in result and evidence for every check:
+{json.dumps([c.model_dump() for c in question.rubric], indent=2)}"""
+
+        try:
+            client = _get_eval_client()
+            lightweight_result = client.chat_json(
+                messages=[
+                    {"role": "system", "content": eval_system},
+                    {"role": "user", "content": eval_user},
+                ],
+                temperature=0.1,
+                timeout_override=120,
+            )
+        except Exception as e:
+            logger.warning("Lightweight hint eval failed: %s", e)
+            lightweight_result = []
+
+        # Parse into criteria dicts — DO NOT SAVE to store
+        lightweight_raw = lightweight_result if isinstance(lightweight_result, list) else lightweight_result.get("criteria", lightweight_result.get("rubric", []))
+        eval_criteria = []
+        for idx, orig_criterion in enumerate(question.rubric):
+            crit_dict = orig_criterion.model_dump()
+            llm_criterion = lightweight_raw[idx] if idx < len(lightweight_raw) else {}
+            llm_checks = llm_criterion.get("checks", []) if isinstance(llm_criterion, dict) else []
+            llm_check_map = {c["id"]: c for c in llm_checks if isinstance(c, dict)}
+            for check in crit_dict["checks"]:
+                llm_check = llm_check_map.get(check["id"], {})
+                check["result"] = llm_check.get("result", False)
+                check["evidence"] = llm_check.get("evidence", "")
+            eval_criteria.append(crit_dict)
+
+    # Find target check — highest-impact failing check not already targeted
+    target = None
+    target_criterion = None
+    target_check = None
+    try:
+        target = max(
+            (
+                (crit, check)
+                for crit in eval_criteria
+                for check in (crit.get("checks", []) if isinstance(crit, dict) else crit.checks)
+                if (check.get("result") if isinstance(check, dict) else check.result) is False
+                and (check.get("id") if isinstance(check, dict) else check.id) not in already_targeted
+            ),
+            key=lambda x: (
+                (x[0].get("weight") if isinstance(x[0], dict) else x[0].weight)
+                * (x[1].get("weight") if isinstance(x[1], dict) else x[1].weight)
+            ),
+            default=None,
+        )
+    except (ValueError, StopIteration):
+        target = None
+
+    if target is not None:
+        tc, tk = target
+        target_criterion = tc if isinstance(tc, dict) else tc.model_dump()
+        target_check = tk if isinstance(tk, dict) else tk.model_dump() if hasattr(tk, "model_dump") else tk
+    else:
+        # No failing check found — return static hint
+        return {
+            "hint_content": question.static_hint,
+            "targets_criterion_id": None,
+            "targets_check_id": None,
+            "penalty_applied": 0.0,
+            "hint_deductions": existing_deductions,
+        }
+
+    # Generate hint text using generation client
+    gen_client = _get_ollama_client()
+
+    if hint_number == 2:
+        # Hint 2 — indirect, temperature=0.3
+        hint_prompt = f"""The student is working on this problem:
+{question.problem_statement}
+
+Their current code:
+{current_code if current_code.strip() else "[No code written yet]"}
+
+They are struggling with the {target_criterion["category"]} aspect of the solution.
+
+Write a maximum 2-sentence hint that steers them toward fixing it without naming the solution, showing code, or quoting the rubric.
+Return only the hint text."""
+
+        try:
+            hint_content = gen_client.chat(
+                messages=[{"role": "user", "content": hint_prompt}],
+                temperature=0.3,
+                timeout_override=60,
+            )
+        except Exception:
+            hint_content = question.static_hint
+    else:
+        # Hint 3 — direct, temperature=0.0
+        evidence_line = f"\nEvidence: {target_check['evidence']}" if target_check.get("evidence") else ""
+        hint_prompt = f"""The student is working on this problem:
+{question.problem_statement}
+
+Their current code:
+{current_code if current_code.strip() else "[No code written yet]"}
+
+They are failing this specific check:
+{target_check["question"]}
+{evidence_line}
+
+Write a direct 2-3 sentence hint naming exactly what is wrong and what specific change to make. Reference their code if possible. Do not show the complete solution or corrected code blocks.
+Return only the hint text."""
+
+        try:
+            hint_content = gen_client.chat(
+                messages=[{"role": "user", "content": hint_prompt}],
+                temperature=0.0,
+                timeout_override=60,
+            )
+        except Exception:
+            hint_content = f"Check your code for: {target_check['question']}"
+
+    # Penalty calculation — FIXED values
+    check_contribution = target_criterion["weight"] * target_check["weight"]
+    penalty = check_contribution * HINT_PENALTY_PCT
+    if hint_number == 3:
+        penalty *= 2  # hint 3 = 20% of check contribution
+
+    check_id = target_check["id"]
+    existing_deductions[check_id] = existing_deductions.get(check_id, 0.0) + penalty
+
+    # Persist hint deduction immediately
+    store.save_hint_deduction(
+        student_id=student_id,
+        lesson_id=lesson_id,
+        problem_set_id=problem_set_id,
+        question_id=question_id,
+        check_id=check_id,
+        deduction=penalty,
+        hint_number=hint_number,
+        hint_content=hint_content,
+    )
+
+    return {
+        "hint_content": hint_content,
+        "targets_criterion_id": target_criterion.get("id"),
+        "targets_check_id": check_id,
+        "penalty_applied": round(penalty, 2),
+        "hint_deductions": existing_deductions,
+    }

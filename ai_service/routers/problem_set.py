@@ -4,6 +4,7 @@ Problem Set router — post-session multi-question coding assessment.
 Endpoints:
   POST /problem-set/generate
   POST /problem-set/submit
+  POST /problem-set/hint
   GET  /problem-set/{problem_set_id}
   GET  /problem-set/student/{student_id}/lesson/{lesson_id}
 """
@@ -20,7 +21,7 @@ from schemas.problem_set import (
     ProblemSetData,
     EvaluationResult,
 )
-from services.problem_set_service import generate, evaluate_submission
+from services.problem_set_service import generate, evaluate_submission, generate_dynamic_hint
 from services.problem_set_store import get_problem_set_store
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,66 @@ async def submit_answer(request: ProblemSetSubmitRequest):
     except Exception as e:
         logger.error("Submission evaluation failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Evaluation failed: {e}")
+
+
+class HintRequest(BaseModel):
+    problem_set_id: str
+    question_id: str
+    student_id: str
+    lesson_id: str
+    current_code: str = ""
+    hint_number: int  # 2 = first dynamic hint, 3 = second
+    evaluated_rubric: list | None = None
+
+
+@router.post("/hint")
+async def get_hint(request: HintRequest):
+    """Generate a context-aware dynamic hint."""
+    # Validate hint_number
+    if request.hint_number not in (2, 3):
+        raise HTTPException(status_code=400, detail="hint_number must be 2 or 3")
+
+    # hint_number=2 requires non-empty code or evaluated_rubric
+    if request.hint_number == 2:
+        has_code = bool(request.current_code and request.current_code.strip())
+        has_rubric = request.evaluated_rubric is not None
+        if not has_code and not has_rubric:
+            raise HTTPException(
+                status_code=400,
+                detail="Hint 2 requires either non-empty code or evaluated_rubric",
+            )
+
+    # hint_number=3 requires hint 2 to have been revealed already
+    if request.hint_number == 3:
+        store = get_problem_set_store()
+        record = store.load_submission_record(
+            request.student_id, request.lesson_id,
+            request.problem_set_id, request.question_id,
+        )
+        hints_revealed = record.get("dynamic_hints_revealed", []) if record else []
+        has_hint_2 = any(h.get("hint_number") == 2 for h in hints_revealed)
+        if not has_hint_2:
+            raise HTTPException(
+                status_code=400,
+                detail="Hint 3 requires hint 2 to be revealed first",
+            )
+
+    try:
+        result = await generate_dynamic_hint(
+            problem_set_id=request.problem_set_id,
+            question_id=request.question_id,
+            student_id=request.student_id,
+            lesson_id=request.lesson_id,
+            current_code=request.current_code,
+            hint_number=request.hint_number,
+            evaluated_rubric=request.evaluated_rubric,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("Hint generation failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Hint generation failed: {e}")
 
 
 @router.get("/{problem_set_id}")

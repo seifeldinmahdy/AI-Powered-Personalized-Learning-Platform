@@ -108,11 +108,11 @@ export interface ChatLogEntry {
 }
 
 export async function getChatHistory(lessonId: number): Promise<ChatLogEntry[]> {
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem('access_token');
   if (!token) return [];
   try {
     const res = await fetch(`${API_URL}/progress/chat-logs/?lesson_id=${lessonId}`, {
-      headers: { Authorization: `Token ${token}` },
+      headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) return [];
     const data = await res.json();
@@ -123,11 +123,11 @@ export async function getChatHistory(lessonId: number): Promise<ChatLogEntry[]> 
 }
 
 export function persistChatLog(lessonId: number, transcriptText: string, aiResponseText: string): void {
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem('access_token');
   if (!token || !lessonId) return;
   fetch(`${API_URL}/progress/chat-logs/`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Token ${token}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ lesson: lessonId, transcript_text: transcriptText, ai_response_text: aiResponseText }),
   }).catch(() => {/* fire-and-forget */});
 }

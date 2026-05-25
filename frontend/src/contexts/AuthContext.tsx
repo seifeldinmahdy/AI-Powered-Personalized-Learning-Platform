@@ -66,7 +66,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
             full_name: data.username,
             role: (data.role as UserRole) || "student",
         };
-        localStorage.setItem("token", data.token);
+        // Store JWT tokens
+        localStorage.setItem("access_token", data.access);
+        localStorage.setItem("refresh_token", data.refresh);
         setUser(loggedInUser);
         return data;
     }, []);
@@ -80,7 +82,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
             full_name: name,
             role: (data.role as UserRole) || "student",
         };
-        localStorage.setItem("token", data.token);
+        // Store JWT tokens
+        localStorage.setItem("access_token", data.access);
+        localStorage.setItem("refresh_token", data.refresh);
         setUser(newUser);
         return data;
     }, []);
@@ -92,6 +96,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
             // Token may already be invalid — proceed with local cleanup
         }
         localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("refresh_token");
+        // Clean up legacy token key if it exists
         localStorage.removeItem("token");
         setUser(null);
     }, []);

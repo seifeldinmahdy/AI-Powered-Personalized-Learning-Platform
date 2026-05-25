@@ -5,6 +5,7 @@ Pydantic v2 schemas for the post-session Problem Set feature.
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field
 import uuid
@@ -50,14 +51,35 @@ class ProblemSetSubmitRequest(BaseModel):
 
 # ── Core data models ───────────────────────────────────────────
 
+class RubricCategory(str, Enum):
+    CORRECTNESS = "correctness"
+    LOGIC = "logic"
+    EDGE_CASES = "edge_cases"
+    SYNTAX_STYLE = "syntax_style"
+    REQUIREMENTS = "requirements"
+
+
+class RubricCheck(BaseModel):
+    id: str           # pattern: r1c1, r1c2, r2c1, etc.
+    question: str     # unambiguous yes/no question answerable by reading source text
+    weight: float     # fraction of this criterion's score. all checks in one criterion must sum to 1.0
+    result: bool | None = None    # None at generation, filled by evaluator
+    evidence: str | None = None   # None at generation, filled by evaluator
+
+
 class RubricCriterion(BaseModel):
-    name: str
-    description: str
-    weight: int = Field(default=20, ge=0, le=100)  # percentage weight
+    id: str                    # pattern: r1, r2, r3, etc.
+    category: RubricCategory   # exactly one of the 5 standard categories
+    name: str                  # human-readable name
+    weight: float              # percentage of total score. all criteria sum to 100
+    checks: list[RubricCheck]  # 2 to 4 checks per criterion
 
 
 class RubricScore(BaseModel):
     criterion: str
+    category: str = ""
+    earned: int = 0
+    max: int = 0
     score: int = Field(default=0, ge=0, le=100)
     comment: str = ""
 
@@ -71,7 +93,7 @@ class ProblemSetQuestion(BaseModel):
     starter_code: str
     rubric: list[RubricCriterion] = Field(default_factory=list)
     example_solution: str = ""  # possible reference answer (not the only correct one)
-    hints: list[str] = Field(default_factory=list, min_length=0, max_length=3)
+    static_hint: str = "Think carefully about what the problem requires."
     analogy_explanation: str
     difficulty: str = "medium"
     target_weakness: Optional[str] = None

@@ -2,14 +2,37 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.authtoken.models import Token
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError
 from django.contrib.auth import authenticate
 from .models import User, StudentProfile, UserPreferences
 from .serializers import UserSerializer, StudentProfileSerializer, UserPreferencesSerializer
 
+
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
+
+    def get_permissions(self):
+        """
+        Lock down the default ModelViewSet CRUD actions.
+        Only admins can list/retrieve/create/update/destroy users directly.
+        Custom actions define their own permissions.
+        """
+        if self.action in ('list', 'retrieve', 'create', 'update', 'partial_update', 'destroy'):
+            return [permissions.IsAdminUser()]
+        return super().get_permissions()
+
+    # ---------------------------------------------------------
+    # Helper: build JWT token pair for a user
+    # ---------------------------------------------------------
+    @staticmethod
+    def _get_tokens_for_user(user):
+        refresh = RefreshToken.for_user(user)
+        return {
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+        }
 
     # ---------------------------------------------------------
     # 1. Login Action
@@ -28,20 +51,25 @@ class UserViewSet(viewsets.ModelViewSet):
             try:
                 login_id = User.objects.get(email=login_id).username
             except User.DoesNotExist:
-                return Response({'error': 'No account found with that email'},
+                return Response({'error': 'Invalid credentials'},
                                 status=status.HTTP_401_UNAUTHORIZED)
 
         user = authenticate(username=login_id, password=password)
 
         if user is not None:
-            token, _ = Token.objects.get_or_create(user=user)
+            if not user.is_active:
+                return Response({'error': 'Account is disabled'},
+                                status=status.HTTP_403_FORBIDDEN)
+
+            tokens = self._get_tokens_for_user(user)
             return Response({
                 'status': 'success',
                 'id': user.id,
                 'username': user.username,
                 'email': user.email,
                 'role': user.role,
-                'token': token.key,
+                'access': tokens['access'],
+                'refresh': tokens['refresh'],
             })
         else:
             return Response({'error': 'Invalid credentials'},
@@ -53,29 +81,51 @@ class UserViewSet(viewsets.ModelViewSet):
     # ---------------------------------------------------------
     @action(detail=False, methods=['post'], permission_classes=[AllowAny], authentication_classes=[])
     def signup(self, request):
-        username = request.data.get('username')
-        email = request.data.get('email')
-        password = request.data.get('password')
-        role = request.data.get('role', 'student') # Default to 'student' if not sent
+        username = request.data.get('username', '').strip()
+        email = request.data.get('email', '').strip()
+        password = request.data.get('password', '')
+        role = request.data.get('role', 'student')  # Default to 'student' if not sent
+
+        # Validate required fields
+        if not username or not email or not password:
+            return Response({'error': 'Username, email, and password are required'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate password length
+        if len(password) < 8:
+            return Response({'error': 'Password must be at least 8 characters long'},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         # Check if username exists
         if User.objects.filter(username=username).exists():
-            return Response({'error': 'Username already taken'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Username already taken'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Check if email exists
+        if User.objects.filter(email=email).exists():
+            return Response({'error': 'An account with this email already exists'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Prevent non-admins from creating admin/instructor accounts
+        if role not in ('student',):
+            role = 'student'
 
         # Create the user securely (hashes password)
         try:
             user = User.objects.create_user(username=username, email=email, password=password, role=role)
-            token, _ = Token.objects.get_or_create(user=user)
+            tokens = self._get_tokens_for_user(user)
             return Response({
                 'status': 'success',
                 'id': user.id,
                 'username': user.username,
                 'email': user.email,
                 'role': user.role,
-                'token': token.key,
+                'access': tokens['access'],
+                'refresh': tokens['refresh'],
             }, status=status.HTTP_201_CREATED)
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            return Response({'error': 'Could not create account. Please try again.'},
+                            status=status.HTTP_400_BAD_REQUEST)
 
     # ---------------------------------------------------------
     # 3. Profile Action (GET / PATCH)
@@ -136,19 +186,44 @@ class UserViewSet(viewsets.ModelViewSet):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     # ---------------------------------------------------------
-    # 6. Logout Action
+    # 6. Logout Action — blacklists the refresh token
     # Endpoint: POST /api/users/logout/
     # ---------------------------------------------------------
     @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def logout(self, request):
+        refresh_token = request.data.get('refresh')
+        if not refresh_token:
+            return Response({'error': 'Refresh token is required'},
+                            status=status.HTTP_400_BAD_REQUEST)
         try:
-            request.user.auth_token.delete()
-        except Token.DoesNotExist:
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+        except TokenError:
+            # Token is already blacklisted or invalid — that's fine
             pass
         return Response({'status': 'logged out'}, status=status.HTTP_200_OK)
 
     # ---------------------------------------------------------
-    # 7. Admin: List all students with profiles
+    # 7. Token Refresh
+    # Endpoint: POST /api/users/refresh/
+    # ---------------------------------------------------------
+    @action(detail=False, methods=['post'], permission_classes=[AllowAny], authentication_classes=[])
+    def refresh(self, request):
+        refresh_token = request.data.get('refresh')
+        if not refresh_token:
+            return Response({'error': 'Refresh token is required'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+            serializer = TokenRefreshSerializer(data={'refresh': refresh_token})
+            serializer.is_valid(raise_exception=True)
+            return Response(serializer.validated_data)
+        except (TokenError, Exception):
+            return Response({'error': 'Invalid or expired refresh token'},
+                            status=status.HTTP_401_UNAUTHORIZED)
+
+    # ---------------------------------------------------------
+    # 8. Admin: List all students with profiles
     # Endpoint: GET /api/users/admin-students/
     # ---------------------------------------------------------
     @action(detail=False, methods=['get'], url_path='admin-students',
@@ -184,7 +259,7 @@ class UserViewSet(viewsets.ModelViewSet):
         return Response(result)
 
     # ---------------------------------------------------------
-    # 8. Leaderboard
+    # 9. Leaderboard
     # Endpoint: GET /api/users/leaderboard/
     # ---------------------------------------------------------
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])

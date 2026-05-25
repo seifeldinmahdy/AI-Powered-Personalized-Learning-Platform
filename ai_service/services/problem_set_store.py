@@ -85,6 +85,92 @@ class ProblemSetStore:
         self.save(data)
         return data
 
+    def save_hint_deduction(
+        self,
+        student_id: str,
+        lesson_id: str,
+        problem_set_id: str,
+        question_id: str,
+        check_id: str,
+        deduction: float,
+        hint_number: int,
+        hint_content: str,
+    ) -> None:
+        """Record a hint deduction immediately when a hint is revealed."""
+        path = self._path(student_id, lesson_id, problem_set_id)
+        if not path.exists():
+            logger.warning("save_hint_deduction: problem set file not found %s", path)
+            return
+
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.error("save_hint_deduction: failed to read %s: %s", path, exc)
+            return
+
+        # Ensure hint tracking structures exist per question
+        if "hint_tracking" not in raw:
+            raw["hint_tracking"] = {}
+        if question_id not in raw["hint_tracking"]:
+            raw["hint_tracking"][question_id] = {
+                "hint_deductions": {},
+                "dynamic_hints_revealed": [],
+            }
+
+        tracking = raw["hint_tracking"][question_id]
+
+        # Accumulate deduction for the check
+        existing = tracking["hint_deductions"].get(check_id, 0.0)
+        tracking["hint_deductions"][check_id] = existing + deduction
+
+        # Record the hint reveal
+        tracking["dynamic_hints_revealed"].append({
+            "hint_number": hint_number,
+            "content": hint_content,
+            "targets_check_id": check_id,
+            "penalty_applied": deduction,
+        })
+
+        path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+        logger.info(
+            "hint_deduction_saved question=%s check=%s deduction=%.2f",
+            question_id, check_id, deduction,
+        )
+
+    def load_submission_record(
+        self,
+        student_id: str,
+        lesson_id: str,
+        problem_set_id: str,
+        question_id: str,
+    ) -> dict | None:
+        """Load raw submission dict for a question including hint_deductions."""
+        path = self._path(student_id, lesson_id, problem_set_id)
+        if not path.exists():
+            return None
+
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.error("load_submission_record: failed to read %s: %s", path, exc)
+            return None
+
+        # Merge hint tracking data into the submission record
+        result: dict = {}
+
+        # Get submission data if it exists
+        submissions = raw.get("submissions", {})
+        if question_id in submissions:
+            sub = submissions[question_id]
+            result.update(sub if isinstance(sub, dict) else {})
+
+        # Get hint tracking data
+        hint_tracking = raw.get("hint_tracking", {}).get(question_id, {})
+        result["hint_deductions"] = hint_tracking.get("hint_deductions", {})
+        result["dynamic_hints_revealed"] = hint_tracking.get("dynamic_hints_revealed", [])
+
+        return result
+
 
 # ── Module-level singleton ──────────────────────────────────────
 
@@ -96,3 +182,4 @@ def get_problem_set_store() -> ProblemSetStore:
     if _store is None:
         _store = ProblemSetStore()
     return _store
+

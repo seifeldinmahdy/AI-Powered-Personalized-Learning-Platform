@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useLocation } from "react-router";
+import { useNavigate, useLocation, Navigate } from "react-router";
 import { Mail, Lock, ArrowRight, Sparkles, Shield } from "lucide-react";
 import { TypewriterEffect } from "../../components/TypewriterEffect";
 import { FloatingParticles } from "../../components/FloatingParticles";
@@ -12,7 +12,13 @@ interface LocationState {
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, signup } = useAuth();
+  const { login, signup, isAuthenticated, user } = useAuth();
+
+  // If already authenticated, redirect away from login page
+  if (isAuthenticated && user) {
+    const defaultRoute = user.role === "admin" ? "/admin" : user.role === "instructor" ? "/instructor" : "/dashboard";
+    return <Navigate to={defaultRoute} replace />;
+  }
 
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
