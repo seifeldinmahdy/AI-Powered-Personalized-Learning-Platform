@@ -71,7 +71,7 @@ class IntentService:
         student_input: str,
         session_context: str = "",
         split_compound: bool = True,
-        confidence_threshold: float = 0.55,
+        confidence_threshold: float = 0.65,
     ) -> Tuple[List[Dict], float]:
         """Classify the given student input into pedagogical intents.
 
@@ -135,7 +135,7 @@ class IntentService:
                 if max_confidence < confidence_threshold:
                     results.append({
                         "text": segments[i],
-                        "intent_name": "Low Confidence",
+                        "intent_name": "Unknown",
                         "label_id": int(pred_id),
                         "confidence": max_confidence,
                         "probabilities": prob_dict,

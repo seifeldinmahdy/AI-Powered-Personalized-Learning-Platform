@@ -17,12 +17,18 @@ from sklearn.metrics import (
     classification_report, confusion_matrix,
     accuracy_score, precision_recall_fscore_support
 )
+import os
 import warnings
 warnings.filterwarnings('ignore')
+from pathlib import Path
+import wandb
 
 from TinyBert import IntentClassifier, IntentDataset
 
 INTENT_NAMES = ['On-Topic Question', 'Off-Topic Question', 'Emotional-State', 'Pace-Related', 'Repeat/clarification']
+DEFAULT_CONFIDENCE_THRESHOLD = 0.65
+BASE_DIR = Path(__file__).resolve().parent
+REAL_UTTERANCE_PATH = str(BASE_DIR / 'data' / 'real_utterances.csv')
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -161,6 +167,22 @@ def main():
 
     # ── Data ────────────────────────────────────────────────────────
     train_df, val_df, test_df = load_data(TRAIN_PATH, VAL_PATH, TEST_PATH)
+    
+    # ── Mix real utterances into training ───────────────────────────
+    if os.path.exists(REAL_UTTERANCE_PATH):
+        real_df = pd.read_csv(REAL_UTTERANCE_PATH)
+        real_df = real_df.sample(frac=1, random_state=42).reset_index(drop=True)
+        split_idx = int(len(real_df) * 0.70)
+        real_train_df = real_df.iloc[:split_idx]
+        real_eval_df  = real_df.iloc[split_idx:]
+        # Oversample real training data 8x so model learns from it
+        real_train_oversampled = pd.concat([real_train_df] * 8, ignore_index=True)
+        train_df = pd.concat([train_df, real_train_oversampled], ignore_index=True)
+        train_df = train_df.sample(frac=1, random_state=42).reset_index(drop=True)
+        print(f"[+] Mixed {len(real_train_oversampled)} real utterance rows into training. Train total: {len(train_df)}")
+    else:
+        real_eval_df = None
+
     num_classes = train_df['label'].nunique()
     print(f"Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)} | Classes: {num_classes}")
 
@@ -202,6 +224,23 @@ def main():
         'val_f1': []
     }
 
+    # ── wandb experiment tracking ────────────────────────────────────
+    wandb.init(
+        project="intent-classifier",
+        name=f"tinybert-cnn-{int(time.time())}",
+        config={
+            **hyperparams,
+            'model_name': 'TinyBert-CNN',
+            'num_classes': num_classes,
+            'train_rows': len(train_df),
+            'val_rows': len(val_df),
+            'test_rows': len(test_df),
+            'total_steps': total_steps,
+            'warmup_steps': warmup_steps,
+            'confidence_threshold': DEFAULT_CONFIDENCE_THRESHOLD,
+        },
+    )
+
     # ── Training loop ──────────────────────────────────────────────
     for epoch in range(EPOCHS):
         classifier.model.train()
@@ -224,6 +263,28 @@ def main():
         history['val_f1'].append(round(val_f1, 4))
 
         print(f"Epoch {epoch+1}: Train Loss: {avg_train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f} | Val F1: {val_f1:.4f}")
+
+        # ── wandb per-epoch logging ──────────────────────────────────
+        metrics_to_log = {
+            'epoch': epoch + 1,
+            'train_loss': float(avg_train_loss),
+            'val_loss': float(val_loss),
+            'val_accuracy': float(val_acc),
+            'val_precision': float(val_prec),
+            'val_recall': float(val_rec),
+            'val_f1': float(val_f1),
+        }
+        
+        # Compute per-class F1
+        _, _, per_class_f1, _ = precision_recall_fscore_support(
+            all_labels, all_preds, average=None, zero_division=0
+        )
+        for i, name in enumerate(INTENT_NAMES):
+            if i < len(per_class_f1):
+                safe_name = name.replace(" ", "_").replace("/", "_")
+                metrics_to_log[f'val_f1_{safe_name}'] = float(per_class_f1[i])
+
+        wandb.log(metrics_to_log)
 
         if val_f1 > best_val_f1:
             best_val_f1 = val_f1
@@ -279,8 +340,79 @@ def main():
         'classification_report': cls_report
     }
 
+    # ── Real-utterance evaluation split ─────────────────────────────
+    if os.path.exists(REAL_UTTERANCE_PATH):
+        print(f"\n{'='*60}")
+        print("REAL-UTTERANCE EVALUATION")
+        print(f"{'='*60}")
+        try:
+            if real_eval_df is None or len(real_eval_df) == 0:
+                print("[!] No real eval split available — skipping.")
+                raise ValueError("Skip")
+            real_df = real_eval_df
+            real_dataset = IntentDataset(
+                real_df.to_dict('records'), classifier.tokenizer, max_length=MAX_LENGTH
+            )
+            real_loader = DataLoader(real_dataset, batch_size=BATCH_SIZE, shuffle=False)
+            (
+                real_loss, real_acc, real_prec, real_rec, real_f1,
+                real_preds, real_labels,
+            ) = evaluate_model_full(classifier, real_loader)
+
+            real_per_class_p, real_per_class_r, real_per_class_f1, real_support = (
+                precision_recall_fscore_support(
+                    real_labels, real_preds, average=None, zero_division=0
+                )
+            )
+            real_per_class = {}
+            for i, name in enumerate(INTENT_NAMES):
+                if i < len(real_per_class_f1):
+                    real_per_class[name] = {
+                        'precision': round(float(real_per_class_p[i]), 4),
+                        'recall': round(float(real_per_class_r[i]), 4),
+                        'f1_score': round(float(real_per_class_f1[i]), 4),
+                        'support': int(real_support[i]),
+                    }
+
+            real_cls_report = classification_report(
+                real_labels, real_preds, target_names=INTENT_NAMES, zero_division=0
+            )
+
+            results['real_utterance_metrics'] = {
+                'accuracy': round(real_acc, 4),
+                'f1_score': round(real_f1, 4),
+                'precision': round(real_prec, 4),
+                'recall': round(real_rec, 4),
+                'test_loss': round(real_loss, 4),
+            }
+            results['real_utterance_per_class'] = real_per_class
+            results['real_utterance_report'] = real_cls_report
+
+            print(f"Real Acc: {real_acc:.4f} | Real F1: {real_f1:.4f}")
+            print(f"\nPer-class (real utterances):")
+            print(real_cls_report)
+        except Exception as e:
+            print(f"[!] Real-utterance eval failed: {e}")
+    else:
+        print(f"\n[!] No real utterance file at {REAL_UTTERANCE_PATH} — skipping.")
+
     with open('training_results.json', 'w') as f:
         json.dump(results, f, indent=4)
+
+    # ── wandb final logging ──────────────────────────────────────────
+    wandb.log({
+        'test_loss': float(test_loss),
+        'test_accuracy': float(test_acc),
+        'test_precision': float(test_prec),
+        'test_recall': float(test_rec),
+        'test_f1': float(test_f1),
+        'training_duration_seconds': float(training_duration),
+        'epochs_trained': float(len(history['train_loss'])),
+    })
+    wandb.save('training_results.json')
+    if os.path.exists(best_model_path):
+        wandb.save(best_model_path)
+    wandb.finish()
 
     print(f"\n{'='*60}")
     print(f"TRAINING COMPLETE  ({training_duration:.1f}s)")

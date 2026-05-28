@@ -41,6 +41,15 @@ LABEL_MAP = {
 EMOTIONS = ["neutral", "engaged", "focused", "frustrated", "confused", "bored", "tired", "anxious", "excited", "overwhelmed"]
 PACES = ["normal", "fast", "slow", "rushed", "dragging", "moderate", "steady"]
 
+# Class-aware context dropout — lower rate for classes that rely on context fields
+CONTEXT_DROPOUT_BY_CLASS = {
+    'On-Topic Question':    0.20,
+    'Off-Topic Question':   0.20,
+    'Emotional-State':      0.05,   # emotion: field is highly informative
+    'Pace-Related':         0.05,   # pace: field is highly informative
+    'Repeat/clarification': 0.15,
+}
+
 # ─────────────────────────────────────────────────────────────────────
 # CONTEXT GENERATION (Compact key-value format)
 # ─────────────────────────────────────────────────────────────────────
@@ -79,6 +88,13 @@ def generate_session_context(current_topic_idx):
     return context, current_topic, prev_topics
 
 
+# ── Template authoring rule ──────────────────────────────────────────
+# On-Topic Question = student wants information or explanation about the material.
+#   Signal words: "how", "why", "what", "show me", "explain", "example", "difference"
+# Emotional-State  = student expresses a feeling or internal state.
+#   Signal words: "frustrated", "confused", "stuck", "bored", "tired", "lost", "scared"
+# A template that could plausibly fit EITHER class must go to Emotional-State or be removed.
+
 # ─────────────────────────────────────────────────────────────────────
 # EXPANDED TEMPLATE BANKS (40+ per class)
 # ─────────────────────────────────────────────────────────────────────
@@ -91,7 +107,7 @@ ON_TOPIC_TEMPLATES = [
     "Can you show me an example of {topic}?",
     "Why is {topic} giving me a syntax error?",
     "Is there a different way to write {topic}?",
-    "I don't get the part about {topic}.",
+    # REMOVED: "I don't get the part about {topic}." → Emotional-State (expresses confusion)
     "Can we do another exercise for {topic}?",
     "What happens if I forget to close the bracket in {topic}?",
     "How is {topic} different from the previous topic?",
@@ -103,7 +119,7 @@ ON_TOPIC_TEMPLATES = [
     "Can you give me a real-world example of {topic}?",
     "Does {topic} work the same way in other languages?",
     # Problem-solving
-    "I'm stuck on this challenge about {topic}.",
+    # REMOVED: "I'm stuck on this challenge about {topic}." → Emotional-State (expresses being stuck)
     "My code for {topic} isn't working, can you help?",
     "I keep getting an error with {topic}.",
     "Why does my {topic} code print the wrong output?",
@@ -125,11 +141,13 @@ ON_TOPIC_TEMPLATES = [
     # Short/informal
     "Tell me more about {topic}",
     "What's {topic} again?",
-    "{topic} is confusing",
-    "Help me with {topic}",
-    "I need help understanding {topic}",
+    # REMOVED: "{topic} is confusing" → Emotional-State
+    # REMOVED: "Help me with {topic}" → Emotional-State (ambiguous plea)
+    # REMOVED: "I need help understanding {topic}" → Emotional-State (ambiguous plea)
     "So how does {topic} actually work?",
     "Wait, explain {topic} one more time",
+    # MOVED from OFF_TOPIC_FUTURE_TOPIC_TEMPLATES → On-Topic (asks about Python concept)
+    "How does {topic} work in Python?",
 ]
 
 # Context-aware on-topic templates (reference ability scores, prev topics)
@@ -169,8 +187,8 @@ OFF_TOPIC_FUTURE_TOPIC_TEMPLATES = [
     "Are we going to learn about {topic} soon?",
     "What is {topic} exactly?",
     "I heard about {topic}, can you explain it to me?",
-    "How does {topic} work in Python?",
-    "Can we skip ahead to {topic}?",
+    # MOVED to ON_TOPIC_TEMPLATES: "How does {topic} work in Python?" (asks about concept)
+    # MOVED to PACE_TEMPLATES: "Can we skip ahead to {topic}?" (pace control)
     "Is {topic} hard to learn?",
     "I saw someone using {topic}, what does it do?",
     "Do we need to know about {topic}?",
@@ -178,7 +196,7 @@ OFF_TOPIC_FUTURE_TOPIC_TEMPLATES = [
     "My friend told me {topic} is important, is that true?",
     "Will {topic} be on the exam?",
     "Can you give me a sneak peek of {topic}?",
-    "I already know a bit about {topic}, can we jump to it?",
+    # MOVED to PACE_TEMPLATES: "I already know a bit about {topic}, can we jump to it?" (pace control)
     "How long until we get to {topic}?",
     "Is {topic} related to what we are doing now?",
 ]
@@ -230,6 +248,10 @@ EMOTIONAL_TEMPLATES = [
     "I'm frustrated because this used to make sense.",
     "I feel overwhelmed by all this new stuff.",
     "I just feel really down today.",
+    # Topic-aware emotional expressions (moved from On-Topic)
+    "I'm stuck on {topic} and I don't know where to start.",
+    "I find {topic} really confusing.",
+    "I feel lost when it comes to {topic}.",
 ]
 
 PACE_TEMPLATES = [
@@ -271,6 +293,9 @@ PACE_TEMPLATES = [
     "I think the pacing is off.",
     "Are we on schedule?",
     "How many more slides do we have?",
+    # MOVED from OFF_TOPIC_FUTURE_TOPIC_TEMPLATES → Pace (requesting to skip/jump ahead)
+    "Can we skip ahead to {topic}?",
+    "I already know a bit about {topic}, can we jump to it?",
 ]
 
 REPEAT_TEMPLATES = [
@@ -432,14 +457,26 @@ def get_off_topic_question(current_topic_idx):
         return template.replace("{topic}", future_topic)
     return random.choice(OFF_TOPIC_GENERAL)
 
-def get_emotional_state():
-    return random.choice(EMOTIONAL_TEMPLATES)
+def get_emotional_state(current_topic=None):
+    template = random.choice(EMOTIONAL_TEMPLATES)
+    # Fill {topic} slot if present and a topic is available
+    if '{topic}' in template and current_topic:
+        template = template.replace('{topic}', current_topic)
+    elif '{topic}' in template:
+        template = template.replace('{topic}', 'this')
+    return template
 
 def get_pace_related():
     return random.choice(PACE_TEMPLATES)
 
-def get_repeat_clarification():
-    return random.choice(REPEAT_TEMPLATES)
+def get_repeat_clarification(current_topic=None):
+    template = random.choice(REPEAT_TEMPLATES)
+    # Fill {topic} slot if present
+    if '{topic}' in template and current_topic:
+        template = template.replace('{topic}', current_topic)
+    elif '{topic}' in template:
+        template = template.replace('{topic}', 'that last concept')
+    return template
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -456,16 +493,21 @@ def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, 
             topic_idx = random.randint(0, len(PYTHON_TOPICS) - 1)
             context_str, current_topic, prev_topics = generate_session_context(topic_idx)
 
+            # Class-aware context dropout — lower rate for classes that rely on context fields
+            dropout_rate = CONTEXT_DROPOUT_BY_CLASS.get(intent, 0.15)
+            if random.random() < dropout_rate:
+                context_str = ""
+
             if intent == 'On-Topic Question':
                 student_input = get_on_topic_question(current_topic, prev_topics)
             elif intent == 'Off-Topic Question':
                 student_input = get_off_topic_question(topic_idx)
             elif intent == 'Emotional-State':
-                student_input = get_emotional_state()
+                student_input = get_emotional_state(current_topic=current_topic)
             elif intent == 'Pace-Related':
                 student_input = get_pace_related()
             elif intent == 'Repeat/clarification':
-                student_input = get_repeat_clarification()
+                student_input = get_repeat_clarification(current_topic=current_topic)
             else:
                 student_input = get_off_topic_question(topic_idx)
 

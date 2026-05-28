@@ -102,6 +102,36 @@ RULES:
 - End with ONE open-ended question to verify the new explanation landed.
 """
 
+EMOTIONAL_SYSTEM_PROMPT = f"""\
+You are Dr. Nova, an expert AI tutor. A student is expressing an emotional state during your session.
+
+{_TTS_AWARENESS}
+
+TURN LENGTH: Keep your response to 30 to 50 words. Brevity is kindness here.
+
+RULES:
+- Acknowledge the emotion first. Do not skip over it.
+- Do NOT ask a Socratic or comprehension question. This is not a teaching moment, it is a human moment.
+- Do NOT introduce new material.
+- End with one gentle offer: ask if they want to continue, slow down, or take a short break.
+- Stay warm, grounded, and specific to what the student actually said.
+"""
+
+PACE_SYSTEM_PROMPT = f"""\
+You are Dr. Nova, an expert AI tutor. A student has asked you to change the pace of the session.
+
+{_TTS_AWARENESS}
+
+TURN LENGTH: One sentence only. 10 to 20 words maximum.
+
+RULES:
+- Confirm the pace change in one natural sentence.
+- Do not explain, justify, or ask a question.
+- Do not repeat prior material.
+- Example for slowing down: "Sure, I will slow things down a bit from here."
+- Example for speeding up: "Got it, let me pick up the pace."
+"""
+
 
 # ── Modular Skills System (Anthropic-inspired composable prompt fragments) ──
 # Each skill is a standalone prompt paragraph activated by runtime session state.
@@ -147,6 +177,45 @@ TUTOR_SKILLS = {
         "If they ask 'what is X?', respond with something like 'What do you think X might mean based on what we discussed?' "
         "Only after two failed attempts should you provide a partial answer."
     ),
+
+    # Activated when intent is Emotional-State — replaces Socratic approach entirely
+    "EMOTIONAL_ACKNOWLEDGEMENT": (
+        "SKILL — EMOTIONAL ACKNOWLEDGEMENT: The student is expressing a feeling or emotional state, "
+        "not asking a content question. Your ONLY job right now is to acknowledge their emotion warmly "
+        "and briefly. Do NOT pivot to Socratic questioning. Do NOT explain new material. "
+        "Validate what they said in one sentence, then gently ask if they are ready to continue "
+        "or if they need a moment. Example: 'It sounds like you are feeling a bit overwhelmed — that is "
+        "completely normal when things start moving fast. Do you want to take a breath and try again, "
+        "or would it help to slow down a little?'"
+    ),
+
+    # Activated when intent is Pace-Related
+    "PACE_ACKNOWLEDGEMENT": (
+        "SKILL — PACE ACKNOWLEDGEMENT: The student has signalled they want to change the pace. "
+        "Acknowledge the request in one short sentence and confirm the adjustment. "
+        "Do not re-explain prior material. Do not ask a question. "
+        "Example for slow-down: 'Got it, I will take it a bit slower from here.' "
+        "Example for speed-up: 'Sure, I will pick up the pace.' "
+        "Then continue naturally into the current subtopic at the new pace."
+    ),
+
+    # Activated when handling a student response to BACKGROUND_PROBE or TEACH_BACK
+    "PROBE_RESPONSE_HANDLER": (
+        "SKILL — PROBE RESPONSE: The student has just responded to a question you asked "
+        "(either a background knowledge probe or a teach-back request). "
+        "Do NOT treat their message as a new question. "
+        "Acknowledge what they said briefly — affirm what is correct, gently correct what is wrong — "
+        "and then transition naturally into the lecture material. "
+        "Do NOT ask another open-ended question immediately."
+    ),
+
+    # Activated when the student has failed the same Socratic question twice
+    "SOCRATIC_SCAFFOLD": (
+        "SKILL — SCAFFOLDED HINT: The student has attempted this question at least twice without success. "
+        "Stop asking them to guess. Give them a concrete partial answer — enough to move forward — "
+        "and ask them to complete or apply the remaining part. "
+        "Example: 'A loop keeps running as long as a condition is true. So what do you think happens if that condition never becomes false?'"
+    ),
 }
 
 
@@ -190,6 +259,25 @@ class TutorSession:
 
     # ── Engagement personalization data from profiler ─────────────────
     student_profile_data: Optional[dict] = None
+
+    # ── Socratic attempt tracking ─────────────────────────────────────
+    # Tracks how many times the student has attempted to answer the
+    # current Socratic question. Resets when the topic advances or when
+    # the tutor moves on from a Q&A exchange.
+    socratic_attempt_count: int = 0
+
+    # ── Last intent routed to this session ───────────────────────────
+    # Written by the router on every student turn so internal handlers
+    # can adapt their behaviour (e.g. skip SOCRATIC_GUARD for emotional
+    # inputs, track consecutive failures, etc.).
+    last_intent: Optional[str] = None
+    last_intent_confidence: float = 0.0
+
+    # ── Awaiting student response flag ───────────────────────────────
+    # Set True after BACKGROUND_PROBE or TEACH_BACK so the next student
+    # message is treated as a probe/teach-back response, not a question.
+    awaiting_student_response: bool = False
+    awaiting_response_type: Optional[str] = None  # "background_probe" | "teach_back"
 
     @property
     def current_topic(self) -> Optional[str]:
@@ -240,19 +328,47 @@ class TutorSession:
 _sessions: Dict[str, TutorSession] = {}
 
 
-async def _call_ollama(system_prompt: str, user_prompt: str) -> str:
-    """Call Ollama Cloud chat API and return the text response."""
+async def _call_ollama(
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.7,
+    num_predict: int = 180,
+    conversation_history: Optional[List[dict]] = None,
+) -> str:
+    """Call Ollama Cloud chat API and return the text response.
+
+    Parameters
+    ----------
+    system_prompt:
+        The system-role prompt for the model.
+    user_prompt:
+        The user-role prompt (current turn context).
+    temperature:
+        Sampling temperature. Use lower values for factual/compressed tasks
+        (summarisation → 0.2, relevance → 0.0) and higher for generative
+        tasks (lecture → 0.7, emotion handling → 0.6).
+    num_predict:
+        Max tokens to generate. 180 covers ~50-80 spoken words with margin.
+        Summarisation tasks should pass 400.
+    conversation_history:
+        Optional list of prior turns in ``[{"role": ..., "content": ...}]``
+        format. When provided, these are injected between the system prompt
+        and the current user prompt so the model has multi-turn context.
+    """
     url = f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat"
+
+    messages = [{"role": "system", "content": system_prompt}]
+    if conversation_history:
+        messages.extend(conversation_history)
+    messages.append({"role": "user", "content": user_prompt})
+
     payload = {
         "model": OLLAMA_MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
+        "messages": messages,
         "stream": False,
         "options": {
-            "temperature": 0.7,
-            "num_predict": 512,
+            "temperature": temperature,
+            "num_predict": num_predict,
         },
     }
 
@@ -267,46 +383,69 @@ async def _call_ollama(system_prompt: str, user_prompt: str) -> str:
         return data["message"]["content"].strip()
 
 
+def _build_conversation_history(session: TutorSession, max_turns: int = 4) -> List[dict]:
+    """
+    Convert the last N transcript entries into the ``messages`` format
+    expected by Ollama's chat endpoint.
+
+    This gives the model genuine multi-turn context so it can see what
+    the student just said before generating the next response, rather than
+    relying solely on the compressed running summary.
+
+    Only the last ``max_turns`` exchanges are included to stay within the
+    context budget. Each exchange = 1 student message + 1 tutor message.
+    """
+    history = []
+    # Transcript entries: [{role: "tutor"|"student", text: str, ...}]
+    # We want the last max_turns * 2 entries (alternating student/tutor)
+    recent = session.transcript[-(max_turns * 2):]
+    for entry in recent:
+        role = "assistant" if entry["role"] == "tutor" else "user"
+        history.append({"role": role, "content": entry["text"]})
+    return history
+
+
+def _build_profile_context(session: TutorSession) -> Optional[str]:
+    """
+    Build the engagement profile context string for injection into prompts.
+
+    Extracted as a helper so this can be injected on every call, not just
+    the first chunk. The profile is small enough that it fits comfortably
+    in every prompt without bloating it.
+    """
+    parts = []
+    if session.student_profile_summary:
+        parts.append(
+            f"STUDENT LEARNER PROFILE (use to personalise, do NOT mention to student):\n"
+            f"{session.student_profile_summary}"
+        )
+    if session.student_profile_data:
+        engagement = session.student_profile_data.get("engagement_patterns", {})
+        approaches = session.student_profile_data.get("recommended_approaches", [])
+        if engagement or approaches:
+            profile_context = "ENGAGEMENT PATTERNS FROM PROFILER:\n"
+            if engagement.get("high"):
+                profile_context += f"Student engages most when: {', '.join(engagement['high'])}\n"
+            if engagement.get("low"):
+                profile_context += f"Student disengages when: {', '.join(engagement['low'])}\n"
+            if approaches:
+                profile_context += f"Recommended approaches: {', '.join(approaches)}\n"
+            parts.append(profile_context)
+    return "\n".join(parts) if parts else None
+
+
 # ── Relevance check ──
 
 async def check_relevance(question: str, lesson_title: str) -> bool:
-    """Return True if the question is relevant to the lesson or educational in general.
-
-    This is deliberately permissive — we only reject clearly non-educational
-    queries (celebrity gossip, sports scores, etc.). Student responses to
-    tutor-initiated questions (background probes, teach-back explanations,
-    emotional check-ins) must always pass.
     """
-    # Short responses (< 12 words) are almost always answers to tutor questions
-    # (teach-back, background probe, clarification). Always allow them.
-    if len(question.split()) < 12:
-        return True
+    Deprecated. Off-topic detection is now the responsibility of the intent
+    classifier (Off-Topic Question class). This stub always returns True so
+    existing call sites do not break while they are migrated to read the
+    classifier's intent label directly.
 
-    system = (
-        "You are a relevance classifier for an AI tutoring platform. "
-        "Your only job is to decide if a student's message is acceptable in a tutoring context. "
-        "The student may be: answering a question the tutor asked, explaining a concept back, "
-        "sharing their background knowledge, expressing emotions, or asking a question. "
-        "All of these are acceptable. "
-        "Reply with exactly one word: YES or NO. Nothing else."
-    )
-    user = (
-        f"Lesson topic: {lesson_title}\n"
-        f"Student message: {question}\n\n"
-        "Is this message acceptable in a tutoring session? "
-        "Answer YES if it is ANY of: a question about the lesson, a response to the tutor's question, "
-        "an explanation of a concept, sharing background knowledge, expressing confusion or emotions, "
-        "or anything related to education, learning, programming, science, or math. "
-        "Answer NO ONLY if it is completely unrelated to education AND is clearly not a response "
-        "to something the tutor asked (e.g. sports results, celebrity gossip, ordering food). "
-        "When in doubt, answer YES. "
-        "Reply with exactly one word: YES or NO."
-    )
-    try:
-        answer = await _call_ollama(system, user)
-        return answer.strip().upper().startswith("YES")
-    except Exception:
-        return True  # Default to allowing the question if the check fails
+    See fix guide Fix 4 for the replacement routing pattern.
+    """
+    return True
 
 
 # ── Shared-store helper ──────────────────────────────────────────
@@ -401,16 +540,31 @@ def get_session(session_id: str) -> Optional[TutorSession]:
     return _sessions.get(session_id)
 
 
-async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str] = None) -> dict:
+async def generate_lecture_chunk(
+    session_id: str,
+    student_emotion: Optional[str] = None,
+    intent: Optional[str] = None,
+    intent_confidence: float = 0.0,
+) -> dict:
     """
     Generate the next lecture chunk for the session.
 
     This is the core "self-reprompting" mechanism:
     1. Build a prompt with running summary + current topic/subtopic
-    2. Call Gemini to generate lecture content
+    2. Call the LLM to generate lecture content
     3. Recursively update the running summary
     4. Advance to the next subtopic/topic
     5. Return the lecture text + metadata
+
+    Parameters
+    ----------
+    intent:
+        The intent label from the classifier for the student's last message,
+        if the chunk is being generated after a student turn. Used to choose
+        which skills to activate.
+    intent_confidence:
+        Classifier confidence for ``intent``. Stored on the session for
+        downstream logging and threshold decisions.
     """
     session = _sessions.get(session_id)
     if not session:
@@ -426,6 +580,11 @@ async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str]
             "status": "finished",
         }
 
+    # Record intent for session-level awareness
+    if intent:
+        session.last_intent = intent
+        session.last_intent_confidence = intent_confidence
+
     session.status = "lecturing"
 
     # ── Determine which skills to activate ──
@@ -433,6 +592,15 @@ async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str]
 
     if session.is_first_chunk:
         active_skills.append("BACKGROUND_PROBE")
+        session.awaiting_student_response = True
+        session.awaiting_response_type = "background_probe"
+
+    # If the student just responded to a background probe or teach-back,
+    # acknowledge their response before moving into lecture content.
+    elif session.awaiting_student_response:
+        active_skills.append("PROBE_RESPONSE_HANDLER")
+        session.awaiting_student_response = False
+        session.awaiting_response_type = None
 
     # Confusion diagnosis: if the student looks confused, ask what's unclear
     if student_emotion and student_emotion.lower() in ("confused", "surprise", "fear"):
@@ -442,16 +610,17 @@ async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str]
     session.teach_back_counter += 1
     if session.teach_back_counter >= session.teach_back_interval:
         active_skills.append("TEACH_BACK")
-        session.teach_back_counter = 0  # reset
+        session.teach_back_counter = 0
+        session.awaiting_student_response = True
+        session.awaiting_response_type = "teach_back"
 
-    # Engagement personalization: if profiler data is available
+    # Engagement personalisation: inject on every call, not just the first
     if session.student_profile_data or session.student_profile_summary:
         active_skills.append("ENGAGEMENT_ADAPT")
 
     # Build the composed system prompt
     system_prompt = _build_system_prompt(LECTURE_SYSTEM_PROMPT, active_skills)
 
-    # Build the lecture prompt
     topic_name = session.current_topic or "General Review"
     subtopic_name = session.current_subtopic
 
@@ -459,20 +628,24 @@ async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str]
     if session.running_summary:
         context_parts.append(f"SUMMARY OF WHAT YOU'VE COVERED SO FAR:\n{session.running_summary}")
 
+    # ── Persistent profile injection (every chunk, not just the first) ──
+    profile_context = _build_profile_context(session)
+    if profile_context:
+        context_parts.append(profile_context)
+
     context_parts.append(f"CURRENT MAIN TOPIC: {topic_name}")
     if subtopic_name:
         context_parts.append(f"CURRENT SUBTOPIC TO EXPLAIN NOW: {subtopic_name}")
     else:
-        context_parts.append(f"Explain this topic as a whole.")
+        context_parts.append("Explain this topic as a whole.")
 
     # ── Inject current slide content from SharedSessionStore ──
-    # This grounds the tutor in the actual slide material, not just topic names.
     try:
         from services.session_store import get_session_store
         store = get_session_store()
         ctx = store.get_session(session.session_id)
         if ctx and ctx.live.current_slide_content:
-            slide_info = f"CURRENT SLIDE CONTENT (base your explanation on this material):\n"
+            slide_info = "CURRENT SLIDE CONTENT (base your explanation on this material):\n"
             if ctx.live.current_slide_title:
                 slide_info += f"Slide title: {ctx.live.current_slide_title}\n"
             slide_info += ctx.live.current_slide_content
@@ -482,29 +655,6 @@ async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str]
 
     if session.is_first_chunk:
         context_parts.append("This is the BEGINNING of the session. Start with a brief warm greeting.")
-
-        # Inject student profile for personalization from the first chunk
-        if session.student_profile_summary:
-            context_parts.append(
-                f"STUDENT LEARNER PROFILE (use to personalize, do NOT mention to student):\n"
-                f"{session.student_profile_summary}"
-            )
-
-        # Inject detailed engagement patterns from profiler if available
-        if session.student_profile_data:
-            import json as _json
-            engagement = session.student_profile_data.get("engagement_patterns", {})
-            approaches = session.student_profile_data.get("recommended_approaches", [])
-            if engagement or approaches:
-                profile_context = "ENGAGEMENT PATTERNS FROM PROFILER:\n"
-                if engagement.get("high"):
-                    profile_context += f"Student engages most when: {', '.join(engagement['high'])}\n"
-                if engagement.get("low"):
-                    profile_context += f"Student disengages when: {', '.join(engagement['low'])}\n"
-                if approaches:
-                    profile_context += f"Recommended approaches: {', '.join(approaches)}\n"
-                context_parts.append(profile_context)
-
         session.is_first_chunk = False
 
     # Look ahead to tell the model what's next
@@ -523,20 +673,24 @@ async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str]
             "Do NOT skip planned material. Only adapt tone and pacing."
         )
 
-    # Log active skills for debugging
     if active_skills:
         logger.info(f"Active skills for this chunk: {active_skills}")
 
     user_prompt = "\n\n".join(context_parts)
 
-    # Call Ollama with reduced token budget for shorter turns
+    # ── Build multi-turn conversation history ──
+    conversation_history = _build_conversation_history(session, max_turns=3)
+
     start = time.time()
-    lecture_text = await _call_ollama(system_prompt, user_prompt)
+    lecture_text = await _call_ollama(
+        system_prompt, user_prompt,
+        temperature=0.7,
+        conversation_history=conversation_history,
+    )
     elapsed = round(time.time() - start, 2)
 
     logger.info(f"Lecture chunk generated in {elapsed}s for [{topic_name} > {subtopic_name}]")
 
-    # Add to transcript
     session.transcript.append({
         "role": "tutor",
         "text": lecture_text,
@@ -544,22 +698,16 @@ async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str]
         "subtopic": subtopic_name,
         "timestamp": time.time(),
     })
-
-    # Keep transcript sliding window (last 10 entries max)
     if len(session.transcript) > 10:
         session.transcript = session.transcript[-10:]
 
-    # ── Remember last spoken chunk for Repeat/clarification (ISSUE-006) ──
     session.last_chunk_text = lecture_text
     session.last_chunk_subtopic = subtopic_name
 
-    # Recursively update running summary
     await _update_summary(session, lecture_text)
 
-    # Advance to next subtopic/topic
     is_finished = _advance(session)
 
-    # ── Sync state to SharedSessionStore ──
     _sync_to_shared_store(session)
 
     return {
@@ -574,21 +722,116 @@ async def generate_lecture_chunk(session_id: str, student_emotion: Optional[str]
     }
 
 
-async def answer_question(session_id: str, question: str, student_emotion: Optional[str] = None) -> dict:
+async def answer_question(
+    session_id: str,
+    question: str,
+    student_emotion: Optional[str] = None,
+    intent: Optional[str] = None,
+    intent_confidence: float = 0.0,
+) -> dict:
     """
     Handle a student question mid-lecture.
-    Injects the question + full context, generates an answer.
-    Adapts tone based on student_emotion when available.
+
+    Behaviour varies by intent:
+    - ``On-Topic Question``: Socratic method. Track attempt count; scaffold
+      after two failed attempts.
+    - ``Emotional-State``: Acknowledge emotion only. No Socratic questions.
+    - ``Off-Topic Question``: Decline gracefully; return to lecture.
+    - ``Unknown`` / no intent: Default to Socratic Q&A.
+
+    Parameters
+    ----------
+    intent:
+        Intent label from the classifier. Drives which skills are activated
+        and which system prompt is used.
+    intent_confidence:
+        Classifier confidence. Stored on session for logging.
     """
     session = _sessions.get(session_id)
     if not session:
         raise ValueError(f"Session {session_id} not found")
 
+    # Record intent
+    if intent:
+        session.last_intent = intent
+        session.last_intent_confidence = intent_confidence
+
+    # ── If the student is responding to a probe/teach-back, route to lecture ──
+    # The student message is a response, not a question — hand off to the
+    # lecture chunk generator which activates PROBE_RESPONSE_HANDLER.
+    if session.awaiting_student_response:
+        session.transcript.append({
+            "role": "student",
+            "text": question,
+            "timestamp": time.time(),
+            "is_probe_response": True,
+            "probe_type": session.awaiting_response_type,
+        })
+        if len(session.transcript) > 10:
+            session.transcript = session.transcript[-10:]
+        return await generate_lecture_chunk(
+            session_id,
+            student_emotion=student_emotion,
+            intent=intent,
+            intent_confidence=intent_confidence,
+        )
+
     prev_status = session.status
+
+    # ── Route by intent ──────────────────────────────────────────────
+    effective_intent = intent or "On-Topic Question"
+
+    if effective_intent == "Emotional-State":
+        return await handle_emotional_state(
+            session_id,
+            student_message=question,
+            student_emotion=student_emotion,
+        )
+
+    if effective_intent == "Pace-Related":
+        return await handle_pace_change(session_id, student_message=question)
+
+    if effective_intent == "Off-Topic Question" and intent_confidence >= 0.65:
+        off_topic_text = (
+            f"That is a bit outside what we are covering right now. "
+            f"Let us stay focused on {session.current_topic or 'the current topic'} — "
+            f"feel free to ask me that after the session."
+        )
+        session.transcript.append({
+            "role": "student", "text": question, "timestamp": time.time(),
+        })
+        session.transcript.append({
+            "role": "tutor", "text": off_topic_text, "timestamp": time.time(),
+            "is_off_topic_redirect": True,
+        })
+        if len(session.transcript) > 10:
+            session.transcript = session.transcript[-10:]
+        _sync_to_shared_store(session)
+        return {
+            "answer": off_topic_text,
+            "intent": "Off-Topic Question",
+            "topic": session.current_topic,
+            "subtopic": session.current_subtopic,
+            "progress": session.progress,
+            "is_finished": session.status == "finished",
+            "status": session.status,
+            "inference_time": 0.0,
+        }
+
+    # ── On-Topic Question (default path) ────────────────────────────
     session.status = "answering"
 
-    # ── Determine active skills for Q&A ──
-    qa_skills: list[str] = ["SOCRATIC_GUARD"]  # always active during Q&A
+    # Determine active skills based on attempt count and emotion
+    qa_skills: list[str] = []
+
+    if session.socratic_attempt_count >= 2:
+        # Student has failed twice — scaffold instead of pure Socratic
+        qa_skills.append("SOCRATIC_SCAFFOLD")
+        session.socratic_attempt_count = 0  # reset after scaffolding
+    else:
+        qa_skills.append("SOCRATIC_GUARD")
+        session.socratic_attempt_count += 1
+
     if student_emotion and student_emotion.lower() in ("confused", "surprise", "fear"):
         qa_skills.append("CONFUSION_DIAGNOSIS")
 
@@ -597,17 +840,23 @@ async def answer_question(session_id: str, question: str, student_emotion: Optio
     context_parts = []
     if session.running_summary:
         context_parts.append(f"CONTEXT (what we've covered so far):\n{session.running_summary}")
+
+    # Persistent profile injection
+    profile_context = _build_profile_context(session)
+    if profile_context:
+        context_parts.append(profile_context)
+
     context_parts.append(f"CURRENT TOPIC: {session.current_topic or 'N/A'}")
     if session.current_subtopic:
         context_parts.append(f"CURRENT SUBTOPIC: {session.current_subtopic}")
 
-    # Inject current slide content so answers are grounded in slide material
+    # Inject current slide content
     try:
         from services.session_store import get_session_store
         store = get_session_store()
         ctx = store.get_session(session.session_id)
         if ctx and ctx.live.current_slide_content:
-            slide_info = f"CURRENT SLIDE CONTENT (use this to inform your answer):\n"
+            slide_info = "CURRENT SLIDE CONTENT (use this to inform your answer):\n"
             if ctx.live.current_slide_title:
                 slide_info += f"Slide title: {ctx.live.current_slide_title}\n"
             slide_info += ctx.live.current_slide_content
@@ -615,57 +864,234 @@ async def answer_question(session_id: str, question: str, student_emotion: Optio
     except Exception:
         pass
 
-    # Inject emotion-aware tone adaptation
+    # Inject attempt count so the model knows how stuck the student is
+    if session.socratic_attempt_count > 1:
+        context_parts.append(
+            f"NOTE: The student has attempted to answer this type of question "
+            f"{session.socratic_attempt_count} time(s) without success. "
+            f"Increase your scaffolding accordingly."
+        )
+
+    # Emotion-aware tone adaptation
     if student_emotion and student_emotion.lower() not in ("neutral", "unknown"):
         emotion_guidance = {
-            "happy": "The student sounds engaged and positive. Match their energy with an enthusiastic, encouraging answer.",
-            "sad": "The student seems down. Be warm, supportive, and extra patient. Reassure them that struggling is normal.",
-            "angry": "The student sounds frustrated. Stay calm, validate their frustration, and provide a clear, structured answer.",
-            "fear": "The student seems anxious or worried. Be reassuring and break your answer into small, manageable steps.",
-            "surprise": "The student seems surprised or confused. Acknowledge what might be unexpected and explain clearly.",
-            "disgust": "The student seems displeased. Be empathetic and try a different angle in your explanation.",
+            "happy": "The student sounds engaged and positive. Match their energy.",
+            "sad": "The student seems down. Be warm, supportive, and extra patient.",
+            "angry": "The student sounds frustrated. Stay calm and validate their frustration.",
+            "fear": "The student seems anxious. Be reassuring and break things into small steps.",
+            "surprise": "The student seems surprised or confused. Acknowledge it and explain clearly.",
+            "disgust": "The student seems displeased. Be empathetic and try a different angle.",
         }
         guidance = emotion_guidance.get(
             student_emotion.lower(),
-            f"The student's emotional state is '{student_emotion}'. Adapt your tone to be supportive and appropriate."
+            f"The student's emotional state is '{student_emotion}'. Adapt your tone to be supportive.",
         )
         context_parts.append(f"EMOTIONAL CONTEXT: {guidance}")
 
     context_parts.append(f"STUDENT'S QUESTION: {question}")
 
     user_prompt = "\n\n".join(context_parts)
+    conversation_history = _build_conversation_history(session, max_turns=3)
 
     start = time.time()
-    answer_text = await _call_ollama(system_prompt, user_prompt)
+    answer_text = await _call_ollama(
+        system_prompt, user_prompt,
+        temperature=0.65,
+        conversation_history=conversation_history,
+    )
     elapsed = round(time.time() - start, 2)
 
-    # Add to transcript
+    session.transcript.append({"role": "student", "text": question, "timestamp": time.time()})
     session.transcript.append({
-        "role": "student",
-        "text": question,
-        "timestamp": time.time(),
+        "role": "tutor", "text": answer_text,
+        "topic": session.current_topic, "subtopic": session.current_subtopic,
+        "timestamp": time.time(), "is_answer": True,
     })
-    session.transcript.append({
-        "role": "tutor",
-        "text": answer_text,
-        "topic": session.current_topic,
-        "subtopic": session.current_subtopic,
-        "timestamp": time.time(),
-        "is_answer": True,
-    })
+    if len(session.transcript) > 10:
+        session.transcript = session.transcript[-10:]
 
-    # Update summary with the Q&A
     qa_text = f"Student asked: {question}\nTutor answered: {answer_text}"
     await _update_summary(session, qa_text)
 
-    # Restore status (back to lecturing or finished)
     session.status = prev_status if prev_status != "answering" else "lecturing"
-
-    # ── Sync state to SharedSessionStore ──
     _sync_to_shared_store(session)
 
     return {
         "answer": answer_text,
+        "intent": effective_intent,
+        "topic": session.current_topic,
+        "subtopic": session.current_subtopic,
+        "progress": session.progress,
+        "is_finished": session.status == "finished",
+        "status": session.status,
+        "inference_time": elapsed,
+        "active_skills": qa_skills,
+    }
+
+
+async def handle_emotional_state(
+    session_id: str,
+    student_message: str,
+    student_emotion: Optional[str] = None,
+) -> dict:
+    """
+    Respond to a student expressing an emotional state.
+
+    Does NOT do Socratic questioning. Does NOT advance the topic pointer.
+    Acknowledges the feeling, then asks if the student wants to continue,
+    slow down, or take a break.
+
+    Parameters
+    ----------
+    student_message:
+        The raw student utterance classified as Emotional-State.
+    student_emotion:
+        Fused emotion label from FER/SER (optional). Used to make the
+        acknowledgement more specific if available.
+    """
+    session = _sessions.get(session_id)
+    if not session:
+        raise ValueError(f"Session {session_id} not found")
+
+    prev_status = session.status
+    session.status = "answering"
+
+    system_prompt = _build_system_prompt(EMOTIONAL_SYSTEM_PROMPT, ["EMOTIONAL_ACKNOWLEDGEMENT"])
+
+    context_parts = [
+        f"CURRENT TOPIC: {session.current_topic or 'N/A'}",
+        f"STUDENT'S MESSAGE: {student_message}",
+    ]
+    if student_emotion and student_emotion.lower() not in ("neutral", "unknown"):
+        context_parts.append(
+            f"DETECTED EMOTION (from facial/voice analysis): {student_emotion}. "
+            "Reference this naturally if it matches what the student said."
+        )
+
+    user_prompt = "\n\n".join(context_parts)
+
+    start = time.time()
+    response_text = await _call_ollama(
+        system_prompt, user_prompt, temperature=0.6
+    )
+    elapsed = round(time.time() - start, 2)
+
+    session.transcript.append({"role": "student", "text": student_message, "timestamp": time.time()})
+    session.transcript.append({
+        "role": "tutor", "text": response_text,
+        "topic": session.current_topic, "subtopic": session.current_subtopic,
+        "timestamp": time.time(), "is_emotional_response": True,
+    })
+    if len(session.transcript) > 10:
+        session.transcript = session.transcript[-10:]
+
+    # Reset Socratic counter — emotional exchanges are not failed attempts
+    session.socratic_attempt_count = 0
+
+    session.status = prev_status if prev_status != "answering" else "lecturing"
+    _sync_to_shared_store(session)
+
+    return {
+        "answer": response_text,
+        "intent": "Emotional-State",
+        "topic": session.current_topic,
+        "subtopic": session.current_subtopic,
+        "progress": session.progress,
+        "is_finished": session.status == "finished",
+        "status": session.status,
+        "inference_time": elapsed,
+    }
+
+
+async def handle_pace_change(
+    session_id: str,
+    student_message: str,
+    direction: Optional[str] = None,
+) -> dict:
+    """
+    Respond to a student requesting a pace change and apply it to the session.
+
+    Infers ``direction`` (``"slower"`` / ``"faster"``) from the student's
+    message if not provided explicitly. Updates ``session.pace_modifier``
+    so the SharedSessionStore reflects the new pace for other subsystems.
+
+    Parameters
+    ----------
+    student_message:
+        The raw student utterance classified as Pace-Related.
+    direction:
+        Optional explicit direction. If ``None``, the function infers it
+        from keywords in ``student_message``.
+    """
+    session = _sessions.get(session_id)
+    if not session:
+        raise ValueError(f"Session {session_id} not found")
+
+    # ── Infer direction if not provided ──────────────────────────────
+    if direction is None:
+        lower = student_message.lower()
+        slower_keywords = {"slow", "slower", "slow down", "too fast", "wait", "hold on", "again", "repeat"}
+        faster_keywords = {"faster", "speed up", "hurry", "quick", "quicker", "move on", "skip", "next"}
+        if any(k in lower for k in slower_keywords):
+            direction = "slower"
+        elif any(k in lower for k in faster_keywords):
+            direction = "faster"
+        else:
+            direction = "slower"  # default: assume slow-down when ambiguous
+
+    # ── Apply pace modifier ───────────────────────────────────────────
+    if direction == "slower":
+        session.pace_modifier = max(session.pace_modifier - 1, -3)
+    else:
+        session.pace_modifier = min(session.pace_modifier + 1, 3)
+
+    prev_status = session.status
+    session.status = "answering"
+
+    # Build a direction-aware pace instruction for the prompt
+    direction_instruction = (
+        "The student wants to slow down. Acknowledge this and confirm you will take it slower."
+        if direction == "slower"
+        else "The student wants to speed up. Acknowledge this and confirm you will move faster."
+    )
+
+    context_parts = [
+        f"CURRENT TOPIC: {session.current_topic or 'N/A'}",
+        f"PACE DIRECTION: {direction_instruction}",
+        f"STUDENT'S MESSAGE: {student_message}",
+    ]
+    user_prompt = "\n\n".join(context_parts)
+
+    start = time.time()
+    response_text = await _call_ollama(
+        _build_system_prompt(PACE_SYSTEM_PROMPT, ["PACE_ACKNOWLEDGEMENT"]),
+        user_prompt,
+        temperature=0.4,
+    )
+    elapsed = round(time.time() - start, 2)
+
+    session.transcript.append({"role": "student", "text": student_message, "timestamp": time.time()})
+    session.transcript.append({
+        "role": "tutor", "text": response_text,
+        "topic": session.current_topic, "subtopic": session.current_subtopic,
+        "timestamp": time.time(), "is_pace_response": True, "pace_direction": direction,
+    })
+    if len(session.transcript) > 10:
+        session.transcript = session.transcript[-10:]
+
+    session.status = prev_status if prev_status != "answering" else "lecturing"
+    _sync_to_shared_store(session)
+
+    logger.info(
+        "Pace change applied for session %s: direction=%s modifier=%d",
+        session_id, direction, session.pace_modifier,
+    )
+
+    return {
+        "answer": response_text,
+        "intent": "Pace-Related",
+        "pace_direction": direction,
+        "pace_modifier": session.pace_modifier,
         "topic": session.current_topic,
         "subtopic": session.current_subtopic,
         "progress": session.progress,
@@ -741,8 +1167,13 @@ async def repeat_lecture_chunk(session_id: str, mode: str = "rephrase") -> dict:
         )
 
         user_prompt = "\n\n".join(context_parts)
+        conversation_history = _build_conversation_history(session, max_turns=2)
         start = time.time()
-        response_text = await _call_ollama(REPHRASE_SYSTEM_PROMPT, user_prompt)
+        response_text = await _call_ollama(
+            REPHRASE_SYSTEM_PROMPT, user_prompt,
+            temperature=0.65,
+            conversation_history=conversation_history,
+        )
         elapsed = round(time.time() - start, 2)
 
         logger.info(
@@ -827,10 +1258,13 @@ async def _update_summary(session: TutorSession, new_content: str):
         f"Produce the merged, compressed summary:"
     )
     try:
-        session.running_summary = await _call_ollama(SUMMARIZE_SYSTEM_PROMPT, prompt)
+        # Low temperature: this is factual compression, not generation.
+        # Higher token budget: the summary itself can be up to 300 words.
+        session.running_summary = await _call_ollama(
+            SUMMARIZE_SYSTEM_PROMPT, prompt, temperature=0.2, num_predict=400
+        )
     except Exception as e:
         logger.warning(f"Summary compression failed, appending raw: {e}")
-        # Fallback: just append truncated content
         session.running_summary += f"\n{new_content[:500]}"
 
 

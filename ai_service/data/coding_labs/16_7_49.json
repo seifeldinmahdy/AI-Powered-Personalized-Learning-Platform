@@ -185,7 +185,7 @@
           },
           {
             "question": "If the text file I’m analyzing is completely empty, how should my program handle the “count words” step?",
-            "was_asked": false
+            "was_asked": true
           },
           {
             "question": "How do I decide whether to store intermediate results in separate variables versus re‑using the same one?",
@@ -276,5 +276,5 @@
     "completion_message": "Great work! You’ve practiced variable basics, built a small data‑processing script, personalized an automation idea, and tried a new data type. Keep experimenting, and you’ll soon feel comfortable turning everyday tasks into code.",
     "general_notes": []
   },
-  "completed_at": ""
+  "completed_at": "2026-05-28T21:45:28.948317Z"
 }
