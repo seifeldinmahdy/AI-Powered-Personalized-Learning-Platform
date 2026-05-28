@@ -23,6 +23,15 @@ export interface LabChecklistItem {
   reason: string;
 }
 
+export interface SuggestedQuestion {
+  question: string;
+  was_asked: boolean;
+}
+
+export interface StudentNote {
+  content: string;
+}
+
 export interface LabCell {
   id: string;
   cell_type: 'explanation' | 'code' | 'task';
@@ -35,6 +44,8 @@ export interface LabCell {
   success_criteria?: string[];
   tutor_script?: string;
   tips?: string[];
+  student_notes?: { content: string; timestamp?: string }[];
+  suggested_questions?: SuggestedQuestion[];
 }
 
 export interface CodingLab {
@@ -44,6 +55,7 @@ export interface CodingLab {
   tutor_opening: string;
   cells: LabCell[];
   completion_message: string;
+  general_notes?: { content: string; timestamp?: string }[];
 }
 
 export interface CodingLabGenerateResponse {
@@ -52,6 +64,7 @@ export interface CodingLabGenerateResponse {
   generated_at: string;
   checklist: LabChecklistItem[];
   lab: CodingLab;
+  completed_at?: string;
 }
 
 export interface LabExplainResponse {
@@ -114,3 +127,51 @@ export async function runLabCode(code: string): Promise<LabRunResponse> {
   }
   return res.json();
 }
+
+// ── Notes, questions, completion ────────────────────────────────
+
+export async function saveCellNote(
+  labId: string, cellId: string, content: string, studentId: string,
+): Promise<void> {
+  await fetch(`${AI_URL}/api/coding/labs/${labId}/note/cell`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cell_id: cellId, content, student_id: studentId }),
+  });
+}
+
+export async function saveGeneralNote(
+  labId: string, content: string, studentId: string,
+): Promise<void> {
+  await fetch(`${AI_URL}/api/coding/labs/${labId}/note/general`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, student_id: studentId }),
+  });
+}
+
+export async function markQuestionAsked(
+  labId: string, cellId: string, questionText: string, studentId: string,
+): Promise<void> {
+  await fetch(`${AI_URL}/api/coding/labs/${labId}/question/asked`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cell_id: cellId, question_text: questionText, student_id: studentId }),
+  });
+}
+
+export async function completeLab(params: {
+  labId: string; studentId: string; courseId: string; lessonId: string;
+}): Promise<void> {
+  await fetch(`${AI_URL}/api/coding/labs/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      lab_id: params.labId,
+      student_id: params.studentId,
+      course_id: params.courseId,
+      lesson_id: params.lessonId,
+    }),
+  });
+}
+

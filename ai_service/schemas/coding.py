@@ -94,6 +94,10 @@ class LabCell(BaseModel):
     success_criteria: list[str] = Field(default_factory=list)
     tutor_script: str = ""
     tips: list[str] = Field(default_factory=list)
+    student_notes: list[dict] = Field(default_factory=list)
+    # Each note: {"content": str, "timestamp": str}  # ISO UTC
+    suggested_questions: list[dict] = Field(default_factory=list)
+    # Each question: {"question": str, "was_asked": bool}
 
 
 class CodingLab(BaseModel):
@@ -103,6 +107,8 @@ class CodingLab(BaseModel):
     tutor_opening: str = ""
     cells: list[LabCell]
     completion_message: str = "Lab complete. You are ready for the coding question."
+    general_notes: list[dict] = Field(default_factory=list)
+    # Each note: {"content": str, "timestamp": str}  # ISO UTC
 
 
 class CodingLabGenerateResponse(BaseModel):
@@ -111,6 +117,7 @@ class CodingLabGenerateResponse(BaseModel):
     generated_at: str
     checklist: list[LabChecklistItem]
     lab: CodingLab
+    completed_at: str = ""
 
 
 class CodingLabExplainRequest(BaseModel):

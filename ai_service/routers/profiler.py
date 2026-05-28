@@ -227,3 +227,21 @@ async def fuse(request: FuseEmotionsRequest):
     except Exception as e:
         logger.error(f"Emotion fusion error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/evidence-ledger/{student_id}")
+async def get_evidence_ledger(student_id: str):
+    """
+    Return the full evidence ledger for a student.
+    For debugging and auditing only — shows why the profiler
+    concluded what it did. Intended for instructor/admin use.
+    """
+    try:
+        from services.evidence_ledger_store import get_evidence_ledger_store
+        ledger_store = get_evidence_ledger_store()
+        ledger = ledger_store.load(student_id)
+        return {"success": True, "ledger": ledger}
+    except Exception as e:
+        logger.error(f"Evidence ledger fetch error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+

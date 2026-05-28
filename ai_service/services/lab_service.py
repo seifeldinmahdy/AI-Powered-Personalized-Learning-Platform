@@ -20,6 +20,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from dotenv import load_dotenv
 
 from schemas.coding import (
@@ -69,6 +71,9 @@ def _get_ollama_client() -> OllamaClient:
     return _ollama_client
 
 
+DJANGO_API_URL = os.getenv("DJANGO_API_URL", "http://localhost:8000/api")
+
+
 def _clean_json(text: str) -> str:
     text = text.strip()
     text = re.sub(r"^```(?:json)?\s*\n?", "", text)
@@ -96,6 +101,173 @@ def _chat_json(messages: list[dict[str, str]], temperature: float, max_tokens: i
     except Exception as exc:
         logger.warning("lab_model_failed error=%s", exc)
         raise
+
+
+async def _fetch_student_profile(student_id: str) -> dict:
+    """Fetch the student's learning profile from Django."""
+    service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{DJANGO_API_URL}/progress/learning-profile/",
+                headers={
+                    "X-Student-ID": student_id,
+                    "X-Service-Key": service_key,
+                },
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("profile_data", {})
+    except Exception as e:
+        logger.warning("lab_service: could not fetch student profile: %s", e)
+    return {}
+
+
+def _extract_relevant_profile_context(
+    profile_data: dict,
+    topic: str = "",
+) -> str:
+    """
+    Extract a compact, prompt-ready profile summary.
+    Always includes: learning_style_signals, recommended_approaches
+    Conditionally includes: topics_of_difficulty, topics_of_strength,
+                            unresolved_questions (if non-empty)
+    Never includes: emotional_tendencies, engagement_patterns
+    """
+    if not profile_data:
+        return "No profile available"
+
+    parts = []
+
+    learning_signals = profile_data.get("learning_style_signals", [])
+    if learning_signals:
+        parts.append(f"Learning style: {', '.join(str(s) for s in learning_signals)}")
+
+    approaches = profile_data.get("recommended_approaches", [])
+    if approaches:
+        parts.append(f"Effective approaches: {', '.join(str(a) for a in approaches)}")
+
+    difficulties = profile_data.get("topics_of_difficulty", [])
+    if difficulties:
+        if topic:
+            difficulties = [
+                d for d in difficulties
+                if topic.lower() in str(d).lower()
+                or any(word in str(d).lower() for word in topic.lower().split())
+            ]
+        if difficulties:
+            parts.append(f"Struggles with: {', '.join(str(d) for d in difficulties)}")
+
+    strengths = profile_data.get("topics_of_strength", [])
+    if strengths:
+        if topic:
+            strengths = [
+                s for s in strengths
+                if topic.lower() in str(s).lower()
+                or any(word in str(s).lower() for word in topic.lower().split())
+            ]
+        if strengths:
+            parts.append(f"Strong in: {', '.join(str(s) for s in strengths)}")
+
+    unresolved = profile_data.get("unresolved_questions", [])
+    if unresolved:
+        parts.append(
+            f"Unresolved questions from previous sessions: "
+            f"{', '.join(str(q) for q in unresolved[:5])}"
+        )
+
+    return "\n".join(parts) if parts else "No relevant profile data available"
+
+
+def _generate_suggested_questions(
+    cells: list,
+    topic: str,
+    profile_context: str,
+) -> list:
+    """
+    For each cell, generate up to 3 relevant questions a student might have.
+    Returns the cells list with suggested_questions populated.
+    """
+    system = (
+        "You are an expert CS instructor anticipating student questions.\n"
+        "For each lab cell provided, generate exactly 3 questions that a student "
+        "working through this material would likely want to ask.\n\n"
+        "Question types to include per cell (mix them):\n"
+        "- Conceptual: \"Why does X work this way?\"\n"
+        "- Practical: \"When would I actually use this in real code?\"\n"
+        "- Clarifying: \"What happens if I do Y instead of Z?\"\n"
+        "- Edge case: \"What if the input is empty/zero/negative?\"\n"
+        "- Connection: \"How does this relate to [concept from earlier cell]?\"\n\n"
+        "Rules:\n"
+        "- Questions must be specific to THIS cell's content — not generic\n"
+        "- Do not generate questions that are already answered by the cell text\n"
+        "- If the student profile shows difficulty with certain topics, include "
+        "questions that directly address those confusion points for relevant cells\n"
+        "- Return ONLY valid JSON — no markdown fences, no preamble\n\n"
+        'Output format:\n'
+        '[\n  {"cell_id": "the cell id", "questions": ["question 1", ...]},\n  ...\n]'
+    )
+    cells_summary = []
+    for cell in cells:
+        cell_dict = cell.model_dump() if hasattr(cell, "model_dump") else cell
+        cells_summary.append({
+            "cell_id": cell_dict.get("id", ""),
+            "cell_type": cell_dict.get("cell_type", ""),
+            "title": cell_dict.get("title", ""),
+            "content_summary": (cell_dict.get("narrative") or "")[:200],
+        })
+
+    user = (
+        f"TOPIC: {topic}\n\n"
+        f"STUDENT PROFILE CONTEXT:\n{profile_context}\n\n"
+        f"CELLS:\n{json.dumps(cells_summary, indent=2)}"
+    )
+
+    try:
+        client = _get_ollama_client()
+        raw = client.chat_json(
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.4,
+            timeout_override=120,
+        )
+        # raw could be a list directly or wrapped
+        if isinstance(raw, dict) and not isinstance(raw, list):
+            # Try to find the list in the dict
+            for key, val in raw.items():
+                if isinstance(val, list):
+                    raw = val
+                    break
+            else:
+                raw = []
+        if not isinstance(raw, list):
+            raw = []
+
+        # Match by cell_id and populate
+        q_map: dict[str, list[str]] = {}
+        for entry in raw:
+            if isinstance(entry, dict):
+                cid = entry.get("cell_id", "")
+                qs = entry.get("questions", [])
+                if cid and isinstance(qs, list):
+                    q_map[cid] = [str(q) for q in qs[:3]]
+
+        for cell in cells:
+            cell_id = cell.id if hasattr(cell, "id") else cell.get("id", "")
+            questions = q_map.get(cell_id, [])
+            sq = [{"question": q, "was_asked": False} for q in questions]
+            if hasattr(cell, "suggested_questions"):
+                cell.suggested_questions = sq
+            elif isinstance(cell, dict):
+                cell["suggested_questions"] = sq
+
+        logger.info("suggested_questions_generated cells=%d questions_mapped=%d", len(cells), len(q_map))
+    except Exception as exc:
+        logger.warning("suggested_questions_failed: %s — continuing with empty questions", exc)
+
+    return cells
 
 
 def _session_context(session_id: str | None) -> dict[str, Any]:
@@ -247,6 +419,7 @@ def _generate_lab(
     request: CodingLabGenerateRequest,
     session: dict[str, Any],
     checklist: list[LabChecklistItem],
+    profile_context: str = "",
 ) -> CodingLab:
     system = (
         "You generate notebook-style Python coding labs for beginners. "
@@ -276,6 +449,21 @@ def _generate_lab(
         ],
         "completion_message": "string",
     }
+
+    # Profile injection block
+    profile_block = ""
+    if profile_context and profile_context != "No profile available":
+        profile_block = (
+            f"\n\nSTUDENT PROFILE:\n{profile_context}\n\n"
+            "Use this profile to:\n"
+            "- Adapt explanation cell language to match the student's learning style signals\n"
+            "- Add more detailed explanation for topics listed in topics_of_difficulty\n"
+            "- Use faster pacing and more challenging tasks for topics in topics_of_strength\n"
+            "- Apply the recommended_approaches when deciding how to structure explanations\n"
+            "- If unresolved_questions is non-empty and relevant to this lab topic, "
+            "address them explicitly in explanation cells"
+        )
+
     user = (
         "Generate the highly polished, premium coding lab now.\n\n"
         "Rules:\n"
@@ -287,7 +475,8 @@ def _generate_lab(
         "- Personalize difficulty and wording using the student profile.\n"
         "- The tutor_script should explain each cell dynamically. For 'code' cells, explain the demonstration. For 'task' cells, nudge the student to attempt the exercise.\n\n"
         f"Checklist:\n{json.dumps([item.model_dump() for item in checklist], indent=2)}\n\n"
-        f"Session data:\n{json.dumps(_build_payload(request, session), indent=2)}\n\n"
+        f"Session data:\n{json.dumps(_build_payload(request, session), indent=2)}"
+        f"{profile_block}\n\n"
         f"Return exactly this JSON shape:\n{json.dumps(schema, indent=2)}"
     )
     data = _chat_json(
@@ -298,7 +487,7 @@ def _generate_lab(
     return CodingLab.model_validate(data)
 
 
-def generate_coding_lab(request: CodingLabGenerateRequest) -> CodingLabGenerateResponse:
+async def generate_coding_lab(request: CodingLabGenerateRequest) -> CodingLabGenerateResponse:
     store = get_coding_lab_store()
     lab_id = store.lab_id(request.student_id, request.course_id, request.lesson_id)
 
@@ -310,6 +499,15 @@ def generate_coding_lab(request: CodingLabGenerateRequest) -> CodingLabGenerateR
 
     session = _session_context(request.session_id)
 
+    # Fetch student profile for personalization
+    profile_context = ""
+    try:
+        profile_data = await _fetch_student_profile(request.student_id)
+        topic = request.lesson_title or session.get("current_topic", "")
+        profile_context = _extract_relevant_profile_context(profile_data, topic=topic)
+    except Exception as exc:
+        logger.warning("lab_profile_fetch_failed: %s — continuing without profile", exc)
+
     try:
         checklist = _generate_checklist(request, session)
     except Exception as exc:
@@ -317,10 +515,14 @@ def generate_coding_lab(request: CodingLabGenerateRequest) -> CodingLabGenerateR
         checklist = _fallback_checklist(request, session)
 
     try:
-        lab = _generate_lab(request, session, checklist)
+        lab = _generate_lab(request, session, checklist, profile_context=profile_context)
     except Exception as exc:
         logger.warning("lab_generation_fallback lab_id=%s error=%s", lab_id, exc)
         lab = _fallback_lab(request, checklist)
+
+    # Generate suggested questions per cell (separate LLM pass)
+    topic = request.lesson_title or session.get("current_topic", "the lesson")
+    _generate_suggested_questions(lab.cells, topic, profile_context)
 
     response = CodingLabGenerateResponse(
         lab_id=lab_id,

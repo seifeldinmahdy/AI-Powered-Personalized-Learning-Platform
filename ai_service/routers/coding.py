@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from schemas.coding import (
     TopicRequest, SubmitRequest,
     RubricRequest, RubricModel,
@@ -70,8 +71,7 @@ async def hint_endpoint(req: HintRequest):
 async def generate_lab_endpoint(req: CodingLabGenerateRequest):
     """Generate or load a local notebook-style coding lab for a completed session."""
     try:
-        import asyncio
-        return await asyncio.to_thread(generate_coding_lab, req)
+        return await generate_coding_lab(req)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -99,3 +99,91 @@ async def run_lab_code_endpoint(req: CodingLabRunRequest):
         return await asyncio.to_thread(run_lab_code, req.code, req.timeout_seconds)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Notes, questions, completion ────────────────────────────────
+
+class CellNoteRequest(BaseModel):
+    cell_id: str
+    content: str
+    student_id: str
+
+class GeneralNoteRequest(BaseModel):
+    content: str
+    student_id: str
+
+class QuestionAskedRequest(BaseModel):
+    cell_id: str
+    question_text: str
+    student_id: str
+
+class LabCompleteRequest(BaseModel):
+    lab_id: str
+    student_id: str
+    course_id: str
+    lesson_id: str
+
+
+@router.post("/labs/{lab_id}/note/cell")
+async def save_cell_note_endpoint(lab_id: str, req: CellNoteRequest):
+    """Save a student note on a specific cell."""
+    from datetime import datetime
+    from services.lab_store import get_coding_lab_store
+    store = get_coding_lab_store()
+    store.save_cell_note(
+        lab_id=lab_id,
+        cell_id=req.cell_id,
+        content=req.content,
+        timestamp=datetime.utcnow().isoformat() + "Z",
+    )
+    return {"status": "ok"}
+
+
+@router.post("/labs/{lab_id}/note/general")
+async def save_general_note_endpoint(lab_id: str, req: GeneralNoteRequest):
+    """Save a general lab note."""
+    from datetime import datetime
+    from services.lab_store import get_coding_lab_store
+    store = get_coding_lab_store()
+    store.save_general_note(
+        lab_id=lab_id,
+        content=req.content,
+        timestamp=datetime.utcnow().isoformat() + "Z",
+    )
+    return {"status": "ok"}
+
+
+@router.post("/labs/{lab_id}/question/asked")
+async def mark_question_asked_endpoint(lab_id: str, req: QuestionAskedRequest):
+    """Mark a suggested question as asked."""
+    from services.lab_store import get_coding_lab_store
+    store = get_coding_lab_store()
+    store.mark_question_asked(
+        lab_id=lab_id,
+        cell_id=req.cell_id,
+        question_text=req.question_text,
+    )
+    return {"status": "ok"}
+
+
+@router.post("/labs/complete")
+async def complete_lab_endpoint(req: LabCompleteRequest):
+    """Mark the lab as completed and trigger the lab profiler asynchronously."""
+    import asyncio
+    from services.lab_store import get_coding_lab_store
+    from services.profiler_service import run_lab_profiler
+
+    store = get_coding_lab_store()
+    store.mark_completed(req.lab_id)
+
+    # Fire lab profiler as background task — student does not wait
+    asyncio.create_task(
+        run_lab_profiler(
+            student_id=req.student_id,
+            lab_id=req.lab_id,
+            course_id=req.course_id,
+            lesson_id=req.lesson_id,
+        )
+    )
+    return {"status": "ok", "profile_updated": True}
+

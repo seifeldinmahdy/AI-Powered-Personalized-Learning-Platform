@@ -1,133 +1,280 @@
 {
   "lab_id": "16_7_49",
   "cached": false,
-  "generated_at": "2026-05-07T16:37:59.312272Z",
+  "generated_at": "2026-05-25T19:42:30.383913Z",
   "checklist": [
     {
       "id": "C1",
-      "item": "Include a visual diagram explaining variables and types with step-by-step annotations",
-      "reason": "Student profile indicates preference for concrete explanations and visual supports to avoid disengagement from abstract concepts"
+      "item": "Concept Recap of Variables & Types",
+      "reason": "Ensures the lab starts with a concise, step‑by‑step review of what a variable is, data types, and why they matter, matching the student’s need for concrete summaries."
     },
     {
       "id": "C2",
-      "item": "Provide syntax practice exercises with variable declaration examples (int, float, string) and operator usage (e.g., modulus %)",
-      "reason": "Session data shows focus on variables, operators, and statements; aligns with 'Understanding Variables, Operators, and Statements' slide content"
+      "item": "Explicit Syntax Practice for Variable Declaration and Assignment",
+      "reason": "Provides hands‑on coding blocks that let the student type, run, and see immediate feedback on Python variable syntax, supporting their preference for direct manipulation."
     },
     {
       "id": "C3",
-      "item": "Implement a task where students create a simple program using variables to solve a relatable real-world scenario (e.g., calculating expenses)",
-      "reason": "Student profile emphasizes hands-on activities; matches 'Programming Basics' and 'Why Learning Programming Matters' session topics"
+      "item": "Implementation Task: Build a Simple Data‑Processing Script",
+      "reason": "Applies the concepts to a real‑world automation example (e.g., cleaning a list of numbers), reinforcing motivation and giving a concrete outcome."
     },
     {
       "id": "C4",
-      "item": "Offer personalized scenario choices for implementation tasks (e.g., gaming stats tracker vs. recipe ingredient calculator)",
-      "reason": "Student profile shows need for personalization to maintain engagement and connect to individual interests"
+      "item": "Personalization Prompt: Choose Your Own Everyday Task to Automate",
+      "reason": "Allows the student to select a task they care about, keeping the lab relevant and engaging while adhering to the tutor’s strategy of brief comprehension checks."
     },
     {
       "id": "C5",
-      "item": "Include a tutor tip to demonstrate each coding step with live annotations while solving sample problems",
-      "reason": "Student profile recommends step-by-step demonstrations to reinforce learning and maintain focus"
+      "item": "Visual Diagram Integration",
+      "reason": "Includes a clear diagram linking variables, memory, and the CPU, satisfying the student’s preference for visual‑tactile sequences."
     },
     {
       "id": "C6",
-      "item": "Add a debugging exercise with common variable type errors (e.g., integer vs string concatenation issues)",
-      "reason": "Session transcript emphasizes foundations as 'building blocks'; helps solidify understanding of type systems"
+      "item": "Step‑by‑Step Feedback Mechanism",
+      "reason": "Provides targeted, incremental feedback after each code block execution, maintaining a steady supportive pace and neutral affect."
     },
     {
       "id": "C7",
-      "item": "Provide a visual memory map comparing CPU/main memory/secondary memory roles during variable storage",
-      "reason": "Slide content covers computer architecture; aligns with 'Computer Hardware Architecture' and 'Core Computer Components' materials"
+      "item": "Tutor Tips Section: Common Pitfalls and Quick Checks",
+      "reason": "Equips the student with concise reminders (e.g., type errors, forgetting quotes) and short comprehension questions to confirm understanding without abstract explanations."
     },
     {
       "id": "C8",
-      "item": "Include a 'Check Your Understanding' section with multiple-choice questions about variable scope and data types",
-      "reason": "Session data includes exercises on secondary memory and program concepts; ensures foundational knowledge retention"
+      "item": "Extension Challenge: Introduce a New Data Type",
+      "reason": "Encourages deeper exploration once core tasks are mastered, while still offering concrete steps and optionality to keep the workload manageable."
     }
   ],
   "lab": {
     "title": "Variables & Types",
-    "intro": "In this lab, we will explore the basics of variables and types in Python. You will learn how to declare variables, use different data types, and practice with various operators.",
-    "estimated_minutes": 20,
-    "tutor_opening": "Hello, let's get started with variables and types in Python. This lab is designed to help you understand the basics of variables, data types, and operators. You will have hands-on practice with various examples and tasks.",
+    "intro": "In this lab you will review what variables are, see how to create them, and write a tiny program that cleans a list of numbers. You will also choose a personal automation idea and explore a new data type.",
+    "estimated_minutes": 15,
+    "tutor_opening": "Welcome! Let’s dive into variables step‑by‑step, using clear visuals and hands‑on code so you can see exactly how data moves inside a program.",
     "cells": [
       {
         "id": "cell-1",
         "cell_type": "explanation",
-        "title": "Introduction to Variables",
-        "narrative": "A variable is a named box that holds a value. You can think of it as a labeled box where you can store a value. In Python, you can declare a variable using the assignment operator (=). For example: x = 5",
-        "code": "x = 5\nprint(x)",
-        "expected_output": "5",
+        "title": "Concept Recap: Variables & Types",
+        "narrative": "A **variable** is like a labeled box that stores a value you can use later. Python automatically tracks the **type** of the value (e.g., int, float, str). Types matter because they determine which operations are allowed.\n\n**Visual Diagram**: Imagine the CPU as a chef, main memory as the kitchen counter, and variables as containers on the counter. The chef (CPU) grabs a container (variable) to read or update the ingredient (value). This simple flow helps you picture how data travels from memory to the processor.",
+        "code": "",
+        "expected_output": "",
         "task_prompt": "",
         "starter_code": "",
         "success_criteria": [],
-        "tutor_script": "Let's start with the basics. A variable is a named box that holds a value. You can declare a variable using the assignment operator (=). Try running this code to see how it works.",
-        "tips": []
+        "tutor_script": "Here’s a quick recap: each variable gets a name, an equals sign, and a value. The type is decided by the value you assign. Think of the diagram as a tactile sequence – the CPU reaches into memory, picks up the box, and works with its contents.",
+        "tips": [
+          "Remember: variable names are case‑sensitive.",
+          "Use meaningful names (e.g., `age` instead of `a`)."
+        ],
+        "student_notes": [],
+        "suggested_questions": [
+          {
+            "question": "Why does Python need to keep track of a variable’s type if the value can be changed later?",
+            "was_asked": true
+          },
+          {
+            "question": "What would happen if I assign a string to a variable that previously held an integer—does the “box” change size or shape?",
+            "was_asked": true
+          },
+          {
+            "question": "Can you give a concrete visual analogy (like a labeled drawer) that shows how Python stores different types side by side?",
+            "was_asked": false
+          },
+          {
+            "question": "How does the idea of a variable as a “labeled box” connect to the later task where we clean a list of numbers?",
+            "was_asked": false
+          }
+        ]
       },
       {
         "id": "cell-2",
         "cell_type": "code",
-        "title": "Data Types",
-        "narrative": "Python has several built-in data types, including integers, floats, and strings. You can use the type() function to check the data type of a variable.",
-        "code": "x = 5\ny = 3.14\nz = 'hello'\nprint(type(x))\nprint(type(y))\nprint(type(z))",
-        "expected_output": "<class 'int'>\n<class 'float'>\n<class 'str'>",
+        "title": "Demo: Declaring and Assigning Variables",
+        "narrative": "Watch how Python creates variables of different types. You cannot edit this cell; just run it to see the result.",
+        "code": "# Integer variable\ncount = 10\n# Float variable\nprice = 4.99\n# String variable\ngreeting = \"Hello, world!\"\n\nprint(\"count (int):\", count)\nprint(\"price (float):\", price)\nprint(\"greeting (str):\", greeting)",
+        "expected_output": "count (int): 10\nprice (float): 4.99\ngreeting (str): Hello, world!",
         "task_prompt": "",
         "starter_code": "",
         "success_criteria": [],
-        "tutor_script": "Now, let's explore the different data types in Python. You can use the type() function to check the data type of a variable. Try running this code to see how it works.",
-        "tips": []
+        "tutor_script": "The code creates three variables, each with a different type, and prints them. Notice how the output shows the value and the type you chose. Try to spot the quotes around the string – that’s what tells Python it’s text.",
+        "tips": [],
+        "student_notes": [],
+        "suggested_questions": [
+          {
+            "question": "What would the output look like if I re‑assign one of the shown variables to a different type after it’s created?",
+            "was_asked": false
+          },
+          {
+            "question": "Why does the demo use separate statements for each type instead of creating them all in one line—does that affect readability or memory?",
+            "was_asked": false
+          },
+          {
+            "question": "If I tried to print the type of each variable using `type()`, what would I see and why is that useful?",
+            "was_asked": false
+          },
+          {
+            "question": "What happens if I replace a numeric literal with `None` in the demo—does Python still consider it a valid variable?",
+            "was_asked": false
+          }
+        ]
       },
       {
         "id": "cell-3",
         "cell_type": "task",
-        "title": "Variable Declaration",
-        "narrative": "Declare three variables: x, y, and z. Assign x an integer value, y a float value, and z a string value.",
+        "title": "Task 1: Simple Data‑Processing Script",
+        "narrative": "Now you will write a short program that cleans a list of numbers by removing any negative values and rounding the rest to the nearest integer.",
         "code": "",
         "expected_output": "",
-        "task_prompt": "Declare three variables: x, y, and z. Assign x an integer value, y a float value, and z a string value.",
-        "starter_code": "x = \ny = \nz = ",
+        "task_prompt": "1. Create a list called `raw_numbers` containing a mix of positive, negative, and decimal values.\n2. Write a loop that builds a new list `clean_numbers`:\n   • Skip any negative numbers.\n   • Round the remaining numbers using `round()`.\n3. Print `clean_numbers`.\n\nExample input: `[3.7, -2, 5.2, -0.5, 8]`\nExpected output: `[4, 5, 8]`",
+        "starter_code": "# Define the raw list\nraw_numbers = [3.7, -2, 5.2, -0.5, 8]\n\n# Your code starts here\nclean_numbers = []\nfor num in raw_numbers:\n    # TODO: filter negatives and round positives\n    pass\n\nprint(clean_numbers)  # Should show the cleaned list",
         "success_criteria": [
-          "x is an integer",
-          "y is a float",
-          "z is a string"
+          "Negative numbers are omitted from `clean_numbers`.",
+          "All remaining numbers are rounded to the nearest integer.",
+          "The final list is printed exactly once."
         ],
-        "tutor_script": "Now it's your turn to practice. Declare three variables: x, y, and z. Assign x an integer value, y a float value, and z a string value. Use the type() function to check the data type of each variable.",
+        "tutor_script": "Give this a try! Use an `if` statement inside the loop to check whether a number is negative. If it isn’t, apply `round()` and append the result to `clean_numbers`. Run the cell to see if the output matches the example.",
         "tips": [
-          "Use the assignment operator (=) to assign a value to a variable.",
-          "Use the type() function to check the data type of a variable."
+          "Tip 1: `if num >= 0:` will let you keep zero and positive values.",
+          "Tip 2: `clean_numbers.append(round(num))` adds the processed value.",
+          "Tip 3: Test with a different list to be sure your logic works."
+        ],
+        "student_notes": [],
+        "suggested_questions": [
+          {
+            "question": "Why do we remove negative numbers before rounding—could rounding first change which values are considered negative?",
+            "was_asked": false
+          },
+          {
+            "question": "What should the script do if the input list is empty? Should it return an empty list or raise an error?",
+            "was_asked": false
+          },
+          {
+            "question": "If the list contains a non‑numeric element (e.g., a string), how can I guard against a crash?",
+            "was_asked": false
+          },
+          {
+            "question": "How does this cleaning task illustrate the difference between `int` and `float` types that we just reviewed?",
+            "was_asked": false
+          }
         ]
       },
       {
         "id": "cell-4",
         "cell_type": "task",
-        "title": "Operator Practice",
-        "narrative": "Use the modulus operator (%) to find the remainder of 17 divided by 5.",
+        "title": "Task 2: Personal Automation Idea",
+        "narrative": "Pick an everyday task you’d like to automate (e.g., counting how many times a word appears in a text file, tracking weekly study hours, etc.). Write a tiny script that uses variables to store inputs and prints a helpful summary.",
         "code": "",
-        "expected_output": "2",
-        "task_prompt": "Use the modulus operator (%) to find the remainder of 17 divided by 5.",
-        "starter_code": "result = 17 % 5",
+        "expected_output": "",
+        "task_prompt": "1. Describe your chosen task in a comment.\n2. Create variables to hold the necessary data (e.g., a list of words, a number of hours).\n3. Perform a simple calculation or transformation.\n4. Print a clear result.\n\n**Example**: Counting how many times the word \"python\" appears in a list of sentences.",
+        "starter_code": "# My automation: <describe your task here>\n\n# Example data – replace with your own\nitems = [\"I love python\", \"Python is great\", \"I code daily\"]\nsearch_word = \"python\"\n\n# Your code starts here\ncount = 0\nfor sentence in items:\n    # TODO: increment count when search_word appears (case‑insensitive)\n    pass\n\nprint(f\"The word '{search_word}' appears {count} times.\")",
         "success_criteria": [
-          "result is equal to 2"
+          "The script defines at least two variables relevant to the task.",
+          "A simple loop or calculation processes the data.",
+          "The final `print` statement outputs a readable summary."
         ],
-        "tutor_script": "Now, let's practice using the modulus operator (%). Use the modulus operator (%) to find the remainder of 17 divided by 5.",
+        "tutor_script": "Think of a small, concrete problem you face daily. Replace the placeholder data with your own, then write the loop that does the work. When you run the cell, you should see a friendly message that tells you the result.",
         "tips": [
-          "The modulus operator (%) returns the remainder of the division.",
-          "Use the print() function to print the result."
+          "Tip 1: Use `lower()` to make the search case‑insensitive.",
+          "Tip 2: `if search_word in sentence.lower():` can detect the word.",
+          "Tip 3: Start with the example, then swap in your own variables."
+        ],
+        "student_notes": [],
+        "suggested_questions": [
+          {
+            "question": "What kinds of everyday tasks are best suited for a simple script that only uses basic variables?",
+            "was_asked": false
+          },
+          {
+            "question": "If the text file I’m analyzing is completely empty, how should my program handle the “count words” step?",
+            "was_asked": false
+          },
+          {
+            "question": "How do I decide whether to store intermediate results in separate variables versus re‑using the same one?",
+            "was_asked": false
+          },
+          {
+            "question": "In what way does this automation idea build on the variable‑type concepts from the earlier cleaning‑list task?",
+            "was_asked": false
+          }
         ]
       },
       {
         "id": "cell-5",
         "cell_type": "explanation",
-        "title": "Conclusion",
-        "narrative": "In this lab, you learned about variables and data types in Python. You practiced declaring variables, using different data types, and working with operators.",
+        "title": "Tutor Tips: Common Pitfalls & Quick Checks",
+        "narrative": "Before you move on, review these frequent mistakes and a short comprehension quiz.\n\n**Pitfalls**\n- Forgetting quotes around strings (`name = John` → error).\n- Mixing types in arithmetic (`'5' + 2` raises a TypeError).\n- Overwriting a variable unintentionally.\n\n**Quick Checks**\n1. What type is the value `3.0`? *(Answer: float)*\n2. Which line will cause an error?\n   ```python\n   a = 5\n   b = \"10\"\n   c = a + b\n   ```\n   *(Answer: the addition line because int + str is invalid.)*",
         "code": "",
         "expected_output": "",
         "task_prompt": "",
         "starter_code": "",
         "success_criteria": [],
-        "tutor_script": "Congratulations! You have completed the lab. You now have a good understanding of variables and data types in Python. Keep practicing and you will become proficient in no time.",
-        "tips": []
+        "tutor_script": "Read the pitfalls and answer the two questions in your head. If anything feels unclear, re‑run the earlier demo cells to see how types behave.",
+        "tips": [
+          "Remember: always match types before combining values.",
+          "Use `type(variable)` to check a variable’s type while debugging."
+        ],
+        "student_notes": [],
+        "suggested_questions": [
+          {
+            "question": "Why does forgetting quotes around a string cause a `NameError` instead of a different kind of error?",
+            "was_asked": false
+          },
+          {
+            "question": "What exactly happens when I try to add a string and an integer—does Python attempt an implicit conversion?",
+            "was_asked": false
+          },
+          {
+            "question": "If I accidentally mix types in a larger expression, how can I quickly locate the offending line using the tips provided?",
+            "was_asked": false
+          },
+          {
+            "question": "How does the pitfall of mixing types relate to the rounding step in Task 1, where we move from `float` to `int`?",
+            "was_asked": false
+          }
+        ]
+      },
+      {
+        "id": "cell-6",
+        "cell_type": "task",
+        "title": "Extension Challenge: Introduce a New Data Type",
+        "narrative": "Explore a data type you haven’t used yet – for example, a **boolean** or a **list of dictionaries**. Write a short snippet that creates the new type, manipulates it, and prints the result.",
+        "code": "",
+        "expected_output": "",
+        "task_prompt": "1. Choose a new data type (boolean, list, tuple, dict, etc.).\n2. Create a variable of that type with at least two elements.\n3. Perform one operation that changes or queries the data.\n4. Print the final state.\n\n**Example**: Using a dictionary to map a student’s name to their score and updating the score.",
+        "starter_code": "# Example using a dictionary\nstudent_scores = {\"Alice\": 85, \"Bob\": 92}\n\n# Your code starts here\n# TODO: Add a new student or modify an existing score\n\nprint(student_scores)",
+        "success_criteria": [
+          "A variable of the chosen new type is defined.",
+          "At least one operation (e.g., add, update, query) is performed.",
+          "The final `print` shows the updated data structure."
+        ],
+        "tutor_script": "Pick a type that interests you. If you choose a list, try appending a value; if you pick a boolean, toggle it with `not`. Run the cell to see the effect. This challenge reinforces that Python can store many kinds of information.",
+        "tips": [
+          "Tip 1: For a list, `my_list.append(item)` adds an element.",
+          "Tip 2: For a dict, `my_dict[key] = value` creates or updates an entry.",
+          "Tip 3: Booleans are simply `True` or `False` – you can flip them with `my_bool = not my_bool`."
+        ],
+        "student_notes": [],
+        "suggested_questions": [
+          {
+            "question": "How can I visualize a boolean value as a tiny switch—does that help when I need to combine several booleans with `and`/`or`?",
+            "was_asked": false
+          },
+          {
+            "question": "What happens if I treat a boolean as an integer in arithmetic (e.g., `True + 2`)?",
+            "was_asked": false
+          },
+          {
+            "question": "When creating a list of dictionaries, what edge case should I watch out for if the list is empty and I try to access a key?",
+            "was_asked": false
+          },
+          {
+            "question": "How does introducing a new data type expand on the “variable as a labeled box” metaphor from the first explanation cell?",
+            "was_asked": false
+          }
+        ]
       }
     ],
-    "completion_message": "Congratulations! You have completed the Variables & Types lab. You now have a good understanding of variables and data types in Python. Keep practicing and you will become proficient in no time."
-  }
+    "completion_message": "Great work! You’ve practiced variable basics, built a small data‑processing script, personalized an automation idea, and tried a new data type. Keep experimenting, and you’ll soon feel comfortable turning everyday tasks into code.",
+    "general_notes": []
+  },
+  "completed_at": ""
 }

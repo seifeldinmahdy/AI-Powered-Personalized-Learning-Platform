@@ -1,20 +1,26 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { CSSProperties } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import {
   ArrowLeft,
   BookOpen,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Code2,
+  HelpCircle,
   Lightbulb,
   ListChecks,
   Loader2,
+  MessageSquare,
   Pause,
   Play,
   RefreshCw,
+  Save,
   Sparkles,
+  StickyNote,
   Volume2,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Nova3DAvatar } from '../../components/Nova3DAvatar';
@@ -23,10 +29,15 @@ import {
   generateCodingLab,
   explainLabCell,
   runLabCode,
+  saveCellNote,
+  saveGeneralNote,
+  markQuestionAsked,
+  completeLab,
   type CodingLabGenerateResponse,
   type LabCell,
   type LabSlideContext,
   type LabRunResponse,
+  type SuggestedQuestion,
 } from '../../services/codingLabs';
 import type { BlendshapeData } from '../../services/tutor';
 
@@ -129,15 +140,15 @@ const LAB_STYLES = `.coding-lab-page {
 
 .lab-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 330px;
-  gap: 24px;
-  max-width: 1450px;
+  justify-content: center;
+  width: 100%;
+  max-width: 1540px;
   margin: 0 auto;
   padding: 24px 24px 56px;
 }
 
 .lab-main {
-  min-width: 0;
+  width: 100%;
 }
 
 .lab-intro {
@@ -860,7 +871,379 @@ button:disabled {
     align-items: stretch;
     flex-direction: column;
   }
+}
+
+/* ── Cell notes ────────────────────────────────────────────────── */
+
+.cell-notes {
+  margin-top: 12px;
+  border: 1px solid var(--lab-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.cell-notes-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: var(--lab-softer);
+  color: var(--lab-muted-text);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.cell-notes-toggle:hover {
+  background: var(--lab-soft);
+}
+
+.cell-notes-toggle svg:last-child {
+  margin-left: auto;
+  transition: transform 200ms ease;
+}
+
+.cell-notes-toggle.open svg:last-child {
+  transform: rotate(180deg);
+}
+
+.cell-notes-body {
+  padding: 12px;
+  border-top: 1px solid var(--lab-border);
+  background: var(--lab-surface);
+}
+
+.cell-notes-saved {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  color: var(--lab-success);
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+.cell-notes-saved.visible {
+  opacity: 1;
+}
+
+.cell-notes-list {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.cell-notes-list li {
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+  background: var(--lab-softer);
+  color: var(--lab-text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.cell-notes textarea {
+  width: 100%;
+  min-height: 60px;
+  padding: 10px;
+  border: 1px solid var(--lab-border);
+  border-radius: 6px;
+  background: var(--lab-code-bg);
+  color: var(--lab-code-text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+
+.cell-notes textarea:focus {
+  border-color: var(--lab-primary);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--lab-primary) 18%, transparent);
+}
+
+/* ── Cell row layout (cell + questions side by side) ──────────── */
+
+.cell-row {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 800px) 340px;
+  justify-content: center;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.cell-row > .notebook-cell {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+}
+
+.sq-box {
+  width: 240px;
+  height: max-content;
+  border: 1px solid var(--lab-border);
+  border-radius: 10px;
+  background: var(--lab-surface);
+  overflow: hidden;
+  z-index: 10;
+  grid-row: 1;
+}
+
+/* When tutor is on the right, sq-box is on the left (col 1) */
+.cell-row.tutor-right .sq-box {
+  grid-column: 1;
+  justify-self: end;
+}
+
+/* When tutor is on the left, sq-box is on the right (col 3) */
+.cell-row.tutor-left .sq-box {
+  grid-column: 3;
+  justify-self: start;
+}
+
+.sq-box-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--lab-border);
+  background: var(--lab-soft);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--lab-muted-text);
+  letter-spacing: 0.4px;
+}
+
+.sq-box-header svg {
+  color: var(--lab-primary);
+}
+
+.sq-box-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+}
+
+.sq-chip {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in oklab, var(--lab-primary) 25%, var(--lab-border));
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--lab-primary) 5%, var(--lab-surface));
+  color: var(--lab-text);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  transition: all 160ms ease;
+}
+
+.sq-chip:hover {
+  border-color: var(--lab-primary);
+  background: color-mix(in oklab, var(--lab-primary) 14%, var(--lab-surface));
+  box-shadow: 0 2px 8px color-mix(in oklab, var(--lab-primary) 12%, transparent);
+}
+
+.sq-chip.asked {
+  opacity: 0.5;
+  border-color: var(--lab-border);
+  background: var(--lab-softer);
+  cursor: default;
+  text-decoration: line-through;
+}
+
+.sq-chip.asked:hover {
+  box-shadow: none;
+}
+
+.sq-chip svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--lab-primary);
+}
+
+.sq-chip.asked svg {
+  color: var(--lab-muted-text);
+}
+
+@media (max-width: 1200px) {
+  .cell-row, .cell-row.tutor-right, .cell-row.tutor-left {
+    display: flex;
+    flex-direction: column;
+  }
+  .cell-row > .notebook-cell {
+    width: 100%;
+  }
+  .sq-box {
+    width: 100%;
+    margin-top: 16px;
+  }
+}
+
+/* ── Global notepad ────────────────────────────────────────────── */
+
+.notepad-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 50;
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border: 2px solid var(--lab-primary);
+  border-radius: 999px;
+  background: var(--lab-primary);
+  color: var(--secondary-foreground);
+  cursor: pointer;
+  box-shadow: 0 8px 28px color-mix(in oklab, var(--lab-primary) 35%, transparent);
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.notepad-fab:hover {
+  transform: scale(1.08);
+  box-shadow: 0 12px 36px color-mix(in oklab, var(--lab-primary) 45%, transparent);
+}
+
+.notepad-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--destructive);
+  color: white;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 18px;
+  text-align: center;
+}
+
+.notepad-panel {
+  z-index: 50;
+  width: 340px;
+  max-height: 420px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--lab-border);
+  border-radius: 12px;
+  background: var(--lab-surface);
+  box-shadow: 0 20px 60px color-mix(in oklab, var(--foreground) 22%, transparent);
+  animation: lab-pop 280ms ease both;
+  user-select: none;
+}
+
+.notepad-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--lab-border);
+  background: var(--lab-soft);
+  border-radius: 12px 12px 0 0;
+}
+
+.notepad-header h3 {
+  margin: 0;
+  flex: 1;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.notepad-header button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--lab-border);
+  border-radius: 6px;
+  background: var(--lab-surface);
+  color: var(--lab-muted-text);
+  cursor: pointer;
+}
+
+.notepad-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.notepad-body textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 10px;
+  border: 1px solid var(--lab-border);
+  border-radius: 8px;
+  background: var(--lab-code-bg);
+  color: var(--lab-code-text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+
+.notepad-body textarea:focus {
+  border-color: var(--lab-primary);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--lab-primary) 18%, transparent);
+}
+
+.notepad-notes-list {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.notepad-notes-list li {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border-radius: 6px;
+  background: var(--lab-softer);
+  color: var(--lab-text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.notepad-saved {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  color: var(--lab-success);
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+.notepad-saved.visible {
+  opacity: 1;
+}
+
+@media (max-width: 760px) {
+  .notepad-panel {
+    width: calc(100vw - 24px) !important;
+    max-height: 360px;
+  }
+  .notepad-fab {
+    right: 12px;
+    bottom: 12px;
+  }
 }`;
+
 interface LocationState {
   nextLessonId?: number | string | null;
   courseId?: string;
@@ -948,11 +1331,95 @@ export default function CodingLab() {
   const [runResults, setRunResults] = useState<Record<string, LabRunResponse>>({});
   const [runningCellId, setRunningCellId] = useState<string | null>(null);
 
+  // Notes, questions, notepad
+  const [cellNoteText, setCellNoteText] = useState<Record<string, string>>({});
+  const [cellNoteOpen, setCellNoteOpen] = useState<Record<string, boolean>>({});
+  const [cellNoteSaved, setCellNoteSaved] = useState<Record<string, boolean>>({});
+  const [generalNoteText, setGeneralNoteText] = useState('');
+  const [generalNoteSaved, setGeneralNoteSaved] = useState(false);
+  const [notepadOpen, setNotepadOpen] = useState(false);
+  const [askedQuestions, setAskedQuestions] = useState<Set<string>>(new Set());
+  const [sqBoxOpen, setSqBoxOpen] = useState<Record<string, boolean>>({});
+  const [fabPos, setFabPos] = useState({ x: -1, y: -1 });
+
   const cellRefs = useRef<Array<HTMLDivElement | null>>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const narrationTokenRef = useRef(0);
   const isPausedRef = useRef(false);
   const hasSwappedRef = useRef(false);
+  const notepadRef = useRef<HTMLDivElement | null>(null);
+  const fabRef = useRef<HTMLDivElement | null>(null);
+  const dragFabRef = useRef<{ dragging: boolean; offsetX: number; offsetY: number }>({ dragging: false, offsetX: 0, offsetY: 0 });
+  const dragMovedRef = useRef(false);
+
+  // Initialize widget position on first render
+  useEffect(() => {
+    if (fabPos.x === -1) {
+      setFabPos({ x: window.innerWidth - 76, y: window.innerHeight - 76 });
+    }
+  }, []);
+
+  // When opening notepad, check bounds so the panel doesn't render off-screen
+  useEffect(() => {
+    if (notepadOpen && fabRef.current && notepadRef.current) {
+      const fabRect = fabRef.current.getBoundingClientRect();
+      const panelRect = notepadRef.current.getBoundingClientRect();
+      let { x, y } = fabPos;
+      let changed = false;
+
+      // The panel extends above the FAB by panelRect.height + 16px
+      if (y - panelRect.height - 16 < 60) {
+        y = 60 + panelRect.height + 16;
+        changed = true;
+      }
+      // The panel extends to the left of the FAB by panelRect.width - fabRect.width
+      if (x - (panelRect.width - fabRect.width) < 16) {
+        x = panelRect.width - fabRect.width + 16;
+        changed = true;
+      }
+
+      if (changed) {
+        setFabPos({ x, y });
+      }
+    }
+  }, [notepadOpen, fabPos.x, fabPos.y]);
+
+  // Drag handler for the unified widget
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (dragFabRef.current.dragging && fabRef.current) {
+        e.preventDefault();
+        dragMovedRef.current = true; // flag that we actually moved, so click won't trigger open
+        const fabW = fabRef.current.offsetWidth;
+        const fabH = fabRef.current.offsetHeight;
+        const headerH = 60;
+        let newX = e.clientX - dragFabRef.current.offsetX;
+        let newY = e.clientY - dragFabRef.current.offsetY;
+
+        let boundsTopOffset = 0;
+        let boundsLeftOffset = 0;
+        if (notepadOpen && notepadRef.current) {
+          const panelRect = notepadRef.current.getBoundingClientRect();
+          boundsTopOffset = panelRect.height + 16;
+          boundsLeftOffset = panelRect.width - fabW;
+        }
+
+        newX = Math.max(boundsLeftOffset, Math.min(newX, window.innerWidth - fabW - 16));
+        newY = Math.max(headerH + boundsTopOffset, Math.min(newY, window.innerHeight - fabH - 16));
+
+        setFabPos({ x: newX, y: newY });
+      }
+    };
+    const handleMouseUp = () => {
+      dragFabRef.current.dragging = false;
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [notepadOpen]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -1039,20 +1506,16 @@ export default function CodingLab() {
       if (!node) return;
       const rect = node.getBoundingClientRect();
       const bubbleWidth = 340;
-      const gap = 16;
+      const gap = 24;
       const top = Math.max(96, Math.min(window.innerHeight - 280, rect.top + 12));
 
-      let left = narrationSide === 'right' ? rect.right + gap : rect.left - bubbleWidth - gap;
+      // The grid layout ensures there is a wide empty column precisely where the tutor goes
+      let left = narrationSide === 'right'
+        ? rect.right + gap
+        : rect.left - bubbleWidth - gap;
 
-      if (left + bubbleWidth > window.innerWidth - 16) {
-        left = rect.left - bubbleWidth - gap;
-      }
-      if (left < 16) {
-        left = rect.right + gap;
-      }
-      if (left < 16 || left + bubbleWidth > window.innerWidth - 16) {
-        left = Math.max(16, window.innerWidth - bubbleWidth - 16);
-      }
+      // Keep it on-screen if the viewport is narrow
+      left = Math.max(16, Math.min(left, window.innerWidth - bubbleWidth - 16));
 
       setBubblePosition({ top, left });
 
@@ -1214,7 +1677,50 @@ export default function CodingLab() {
     setShowCompletion(true);
   }
 
+  // ── Notes & questions handlers ────────────────────────────────
+
+  const handleCellNoteBlur = useCallback((cellId: string) => {
+    const text = (cellNoteText[cellId] || '').trim();
+    if (!text || !labResponse) return;
+    saveCellNote(labResponse.lab_id, cellId, text, getStudentId()).catch(() => { });
+    setCellNoteSaved((prev) => ({ ...prev, [cellId]: true }));
+    setTimeout(() => setCellNoteSaved((prev) => ({ ...prev, [cellId]: false })), 2000);
+    setCellNoteText((prev) => ({ ...prev, [cellId]: '' }));
+  }, [cellNoteText, labResponse]);
+
+  const handleGeneralNoteBlur = useCallback(() => {
+    const text = generalNoteText.trim();
+    if (!text || !labResponse) return;
+    saveGeneralNote(labResponse.lab_id, text, getStudentId()).catch(() => { });
+    setGeneralNoteSaved(true);
+    setTimeout(() => setGeneralNoteSaved(false), 2000);
+    setGeneralNoteText('');
+  }, [generalNoteText, labResponse]);
+
+  function handleAskQuestion(cell: LabCell, question: SuggestedQuestion, cellIndex: number) {
+    if (askedQuestions.has(question.question)) return;
+    setAskedQuestions((prev) => new Set([...prev, question.question]));
+    if (labResponse) {
+      markQuestionAsked(labResponse.lab_id, cell.id, question.question, getStudentId()).catch(() => { });
+    }
+    // Prefill bubble with the question and trigger narration
+    setBubbleText(`You asked: "${question.question}" — Let me explain...`);
+    explainCell(cellIndex, 'explain', true);
+  }
+
+  // ────────────────────────────────────────────────────────────
+
   function continueToProblemSet() {
+    // Fire lab completion + profiler as background (no await)
+    if (labResponse) {
+      completeLab({
+        labId: labResponse.lab_id,
+        studentId: getStudentId(),
+        courseId: resolvedCourseId,
+        lessonId: resolvedLessonId,
+      }).catch(() => { });
+    }
+
     // Pass slides and lab cells so the problem set has full context
     const labCells = lab?.cells?.map(c => ({
       id: c.id,
@@ -1352,7 +1858,7 @@ export default function CodingLab() {
         </div>
       </aside>
 
-      <main className="lab-shell">
+      <main className={`lab-shell tutor-side-${narrationSide}`}>
         <section className="lab-main">
           <div className="lab-intro">
             <BookOpen size={18} />
@@ -1368,100 +1874,183 @@ export default function CodingLab() {
               const active = index === activeCell;
               const done = completedTasks.has(cell.id);
               const visibleTips = (cell.tips || []).slice(0, tipIndex[cell.id] ?? 0);
+              const hasQuestions = cell.suggested_questions && cell.suggested_questions.length > 0;
 
               return (
-                <div
-                  key={cell.id}
-                  ref={(node) => { cellRefs.current[index] = node; }}
-                  className={`notebook-cell ${active ? 'active' : ''} ${cell.cell_type}`}
-                  onFocus={() => setActiveCell(index)}
-                >
-                  <div className="cell-gutter">
-                    <button onClick={() => goToCell(index)}>
-                      {cell.cell_type === 'task' && done ? <CheckCircle2 size={16} /> : <Play size={14} />}
-                    </button>
-                    <span>[{index + 1}]</span>
-                  </div>
-
-                  <div className="cell-body">
-                    <div className="cell-heading">
-                      <span className="cell-type">{cell.cell_type}</span>
-                      <h2>{cell.title}</h2>
+                <div key={cell.id} className={`cell-row ${narrationSide === 'right' ? 'tutor-right' : 'tutor-left'}`}>
+                  <div
+                    ref={(node) => { cellRefs.current[index] = node; }}
+                    className={`notebook-cell ${active ? 'active' : ''} ${cell.cell_type}`}
+                    onFocus={() => setActiveCell(index)}
+                  >
+                    <div className="cell-gutter">
+                      <button onClick={() => goToCell(index)}>
+                        {cell.cell_type === 'task' && done ? <CheckCircle2 size={16} /> : <Play size={14} />}
+                      </button>
+                      <span>[{index + 1}]</span>
                     </div>
 
-                    {cell.narrative && <p className="cell-narrative">{cell.narrative}</p>}
-
-                    {cell.cell_type === 'code' && cell.code && (
-                      <>
-                        <pre className="code-block"><code>{cell.code}</code></pre>
-                        {cell.expected_output && (
-                          <div className="cell-output">
-                            <span>Output</span>
-                            <pre>{cell.expected_output}</pre>
-                          </div>
-                        )}
-                        <div className="task-actions code-actions">
-                          <button onClick={() => runCell(cell)} disabled={runningCellId === cell.id}>
-                            {runningCellId === cell.id ? <Loader2 size={15} className="lab-spin" /> : <Code2 size={15} />}
-                            Run cell
-                          </button>
-                        </div>
-                      </>
-                    )}
-
-                    {cell.cell_type === 'task' && (
-                      <div className="task-cell">
-                        <p className="task-prompt">{cell.task_prompt}</p>
-                        <textarea
-                          value={taskCode[cell.id] ?? codeFor(cell)}
-                          onChange={(event) => setTaskCode((prev) => ({ ...prev, [cell.id]: event.target.value }))}
-                          spellCheck={false}
-                        />
-
-                        {cell.success_criteria && cell.success_criteria.length > 0 && (
-                          <div className="criteria">
-                            <h3>Success criteria</h3>
-                            {cell.success_criteria.map((criterion) => (
-                              <div key={criterion} className="criterion">
-                                <CheckCircle2 size={13} />
-                                <span>{criterion}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {visibleTips.length > 0 && (
-                          <div className="tips">
-                            {visibleTips.map((tip, tipNumber) => (
-                              <p key={`${cell.id}-${tip}`}>Tip {tipNumber + 1}: {tip}</p>
-                            ))}
-                          </div>
-                        )}
-
-                        <div className="task-actions">
-                          <button onClick={() => showNextTip(cell, index)} disabled={(tipIndex[cell.id] ?? 0) >= (cell.tips?.length ?? 0)}>
-                            <Lightbulb size={15} />
-                            Say tip
-                          </button>
-                          <button onClick={() => runCell(cell)} disabled={runningCellId === cell.id}>
-                            {runningCellId === cell.id ? <Loader2 size={15} className="lab-spin" /> : <Code2 size={15} />}
-                            Run code
-                          </button>
-                          <button className="primary" onClick={() => markTaskDone(cell)} disabled={done}>
-                            <CheckCircle2 size={15} />
-                            {done ? 'Completed' : 'Mark complete'}
-                          </button>
-                        </div>
+                    <div className="cell-body">
+                      <div className="cell-heading">
+                        <span className="cell-type">{cell.cell_type}</span>
+                        <h2>{cell.title}</h2>
                       </div>
-                    )}
 
-                    {runResults[cell.id] && (
-                      <div className={`lab-run-output ${runResults[cell.id].success ? 'success' : 'error'}`}>
-                        <span>{runResults[cell.id].success ? 'Run output' : 'Run error'}</span>
-                        <pre>{runResults[cell.id].stdout || runResults[cell.id].stderr || '(no output)'}</pre>
+                      {cell.narrative && <p className="cell-narrative">{cell.narrative}</p>}
+
+                      {cell.cell_type === 'code' && cell.code && (
+                        <>
+                          <pre className="code-block"><code>{cell.code}</code></pre>
+                          {cell.expected_output && (
+                            <div className="cell-output">
+                              <span>Output</span>
+                              <pre>{cell.expected_output}</pre>
+                            </div>
+                          )}
+                          <div className="task-actions code-actions">
+                            <button onClick={() => runCell(cell)} disabled={runningCellId === cell.id}>
+                              {runningCellId === cell.id ? <Loader2 size={15} className="lab-spin" /> : <Code2 size={15} />}
+                              Run cell
+                            </button>
+                          </div>
+                        </>
+                      )}
+
+                      {cell.cell_type === 'task' && (
+                        <div className="task-cell">
+                          <p className="task-prompt">{cell.task_prompt}</p>
+                          <textarea
+                            value={taskCode[cell.id] ?? codeFor(cell)}
+                            onChange={(event) => setTaskCode((prev) => ({ ...prev, [cell.id]: event.target.value }))}
+                            spellCheck={false}
+                          />
+
+                          {cell.success_criteria && cell.success_criteria.length > 0 && (
+                            <div className="criteria">
+                              <h3>Success criteria</h3>
+                              {cell.success_criteria.map((criterion) => (
+                                <div key={criterion} className="criterion">
+                                  <CheckCircle2 size={13} />
+                                  <span>{criterion}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {visibleTips.length > 0 && (
+                            <div className="tips">
+                              {visibleTips.map((tip, tipNumber) => (
+                                <p key={`${cell.id}-${tip}`}>Tip {tipNumber + 1}: {tip}</p>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="task-actions">
+                            <button onClick={() => showNextTip(cell, index)} disabled={(tipIndex[cell.id] ?? 0) >= (cell.tips?.length ?? 0)}>
+                              <Lightbulb size={15} />
+                              Say tip
+                            </button>
+                            <button onClick={() => runCell(cell)} disabled={runningCellId === cell.id}>
+                              {runningCellId === cell.id ? <Loader2 size={15} className="lab-spin" /> : <Code2 size={15} />}
+                              Run code
+                            </button>
+                            <button className="primary" onClick={() => markTaskDone(cell)} disabled={done}>
+                              <CheckCircle2 size={15} />
+                              {done ? 'Completed' : 'Mark complete'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {runResults[cell.id] && (
+                        <div className={`lab-run-output ${runResults[cell.id].success ? 'success' : 'error'}`}>
+                          <span>{runResults[cell.id].success ? 'Run output' : 'Run error'}</span>
+                          <pre>{runResults[cell.id].stdout || runResults[cell.id].stderr || '(no output)'}</pre>
+                        </div>
+                      )}
+
+                      {/* Cell notes */}
+                      <div className="cell-notes">
+                        <button
+                          className={`cell-notes-toggle ${cellNoteOpen[cell.id] ? 'open' : ''}`}
+                          onClick={() =>
+                            setCellNoteOpen((prev) => ({ ...prev, [cell.id]: !prev[cell.id] }))
+                          }
+                        >
+                          <StickyNote size={13} />
+                          Notes
+                          {(cell.student_notes?.length ?? 0) > 0 && (
+                            <span style={{ marginLeft: 4, opacity: 0.7 }}>
+                              ({cell.student_notes!.length})
+                            </span>
+                          )}
+                          <ChevronDown size={13} />
+                        </button>
+                        {cellNoteOpen[cell.id] && (
+                          <div className="cell-notes-body">
+                            {cell.student_notes && cell.student_notes.length > 0 && (
+                              <ul className="cell-notes-list">
+                                {cell.student_notes.map((note, ni) => (
+                                  <li key={ni}>{note.content}</li>
+                                ))}
+                              </ul>
+                            )}
+                            <textarea
+                              placeholder="Add a note for this cell..."
+                              value={cellNoteText[cell.id] || ''}
+                              onChange={(e) =>
+                                setCellNoteText((prev) => ({ ...prev, [cell.id]: e.target.value }))
+                              }
+                              onBlur={() => handleCellNoteBlur(cell.id)}
+                            />
+                            <div className={`cell-notes-saved ${cellNoteSaved[cell.id] ? 'visible' : ''}`}>
+                              <Save size={11} /> Saved
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </div>
+
+                  {/* Suggested questions — separate box next to the cell */}
+                  {hasQuestions && (
+                    <div className="sq-box">
+                      <div
+                        className="sq-box-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setSqBoxOpen(prev => ({ ...prev, [cell.id]: !prev[cell.id] }))}
+                      >
+                        <HelpCircle size={14} />
+                        <span>Relevant Questions</span>
+                        <ChevronDown
+                          size={14}
+                          style={{
+                            marginLeft: 'auto',
+                            transform: sqBoxOpen[cell.id] ? 'rotate(180deg)' : 'none',
+                            transition: 'transform 150ms'
+                          }}
+                        />
+                      </div>
+                      {sqBoxOpen[cell.id] && (
+                        <div className="sq-box-list">
+                          {cell.suggested_questions!.slice(0, 3).map((sq) => {
+                            const isAsked = sq.was_asked || askedQuestions.has(sq.question);
+                            return (
+                              <button
+                                key={sq.question}
+                                className={`sq-chip ${isAsked ? 'asked' : ''}`}
+                                onClick={() => !isAsked && handleAskQuestion(cell, sq, index)}
+                                disabled={isAsked}
+                              >
+                                <HelpCircle size={12} />
+                                {sq.question}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1479,6 +2068,92 @@ export default function CodingLab() {
           </div>
         </section>
       </main>
+
+      {/* Global notepad widget container */}
+      <div
+        ref={fabRef}
+        style={{
+          position: 'fixed',
+          left: fabPos.x !== -1 ? fabPos.x : undefined,
+          top: fabPos.y !== -1 ? fabPos.y : undefined,
+          right: fabPos.x !== -1 ? 'auto' : 24,
+          bottom: fabPos.y !== -1 ? 'auto' : 24,
+          zIndex: 50
+        }}
+      >
+        {/* Notepad panel — floating above the FAB */}
+        {notepadOpen && (
+          <div
+            className="notepad-panel"
+            ref={notepadRef}
+            style={{
+              position: 'absolute',
+              bottom: 'calc(100% + 16px)',
+              right: 0,
+              zIndex: 51,
+            }}
+          >
+            <div
+              className="notepad-header"
+              style={{ cursor: 'grab' }}
+              onMouseDown={(e) => {
+                if (!fabRef.current) return;
+                const rect = fabRef.current.getBoundingClientRect();
+                dragMovedRef.current = false;
+                dragFabRef.current = { dragging: true, offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top };
+              }}
+            >
+              <StickyNote size={15} />
+              <h3>Lab Notepad</h3>
+              <button onClick={() => setNotepadOpen(false)} onMouseDown={(e) => e.stopPropagation()}>
+                <X size={14} />
+              </button>
+            </div>
+            <div className="notepad-body">
+              {lab.general_notes && lab.general_notes.length > 0 && (
+                <ul className="notepad-notes-list">
+                  {lab.general_notes.map((note, ni) => (
+                    <li key={ni}>{note.content}</li>
+                  ))}
+                </ul>
+              )}
+              <textarea
+                placeholder="Write general notes about this lab..."
+                value={generalNoteText}
+                onChange={(e) => setGeneralNoteText(e.target.value)}
+                onBlur={handleGeneralNoteBlur}
+              />
+              <div className={`notepad-saved ${generalNoteSaved ? 'visible' : ''}`}>
+                <Save size={11} /> Saved
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Global notepad FAB */}
+        <button
+          className="notepad-fab"
+          style={{ position: 'relative', right: 'auto', bottom: 'auto' }}
+          onMouseDown={(e) => {
+            if (!fabRef.current) return;
+            const rect = fabRef.current.getBoundingClientRect();
+            dragMovedRef.current = false; // reset drag flag
+            dragFabRef.current = { dragging: true, offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top };
+          }}
+          onClick={(e) => {
+            if (dragMovedRef.current) {
+              dragMovedRef.current = false;
+              return; // was dragging, don't open
+            }
+            setNotepadOpen((prev) => !prev);
+          }}
+        >
+          <StickyNote size={22} />
+          {(lab.general_notes?.length ?? 0) > 0 && (
+            <span className="notepad-badge">{lab.general_notes!.length}</span>
+          )}
+        </button>
+      </div>
 
       {showCompletion && (
         <div className="completion-overlay">

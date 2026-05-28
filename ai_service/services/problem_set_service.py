@@ -112,16 +112,15 @@ def _summarize_lab_cells(lab_cells: list) -> str:
 
 async def _fetch_student_profile(student_id: str) -> dict:
     """Fetch the student's learning profile from Django."""
+    service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
     try:
-        # We need an auth token — for service-to-service calls we
-        # pass the student_id directly.  The Django endpoint requires auth,
-        # so we fall back to querying the profile via the admin-level
-        # or we handle gracefully.
-        # For now, return empty dict if we can't fetch.
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
                 f"{DJANGO_API_URL}/progress/learning-profile/",
-                headers={"X-Student-ID": student_id},
+                headers={
+                    "X-Student-ID": student_id,
+                    "X-Service-Key": service_key,
+                },
             )
             if response.status_code == 200:
                 data = response.json()
@@ -133,12 +132,17 @@ async def _fetch_student_profile(student_id: str) -> dict:
 
 async def _patch_recurrent_mistakes(student_id: str, mistakes: list[str]) -> None:
     """Patch the student's profile_data.recurrent_mistakes on Django."""
+    service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
+            headers = {
+                "X-Student-ID": student_id,
+                "X-Service-Key": service_key,
+            }
             # Fetch current profile
             resp = await client.get(
                 f"{DJANGO_API_URL}/progress/learning-profile/",
-                headers={"X-Student-ID": student_id},
+                headers=headers,
             )
             if resp.status_code != 200:
                 return
@@ -150,12 +154,68 @@ async def _patch_recurrent_mistakes(student_id: str, mistakes: list[str]) -> Non
             profile_data["recurrent_mistakes"] = updated
 
             await client.patch(
-                f"{DJANGO_API_URL}/progress/learning-profile/",
+                f"{DJANGO_API_URL}/progress/learning-profile/update/",
                 json={"profile_data": profile_data},
-                headers={"X-Student-ID": student_id},
+                headers=headers,
             )
     except Exception as e:
         logger.warning("Could not patch recurrent mistakes: %s", e)
+
+
+def _extract_relevant_profile_context(
+    profile_data: dict,
+    topic: str = "",
+) -> str:
+    """
+    Extract a compact, prompt-ready profile summary.
+    Always includes: learning_style_signals, recommended_approaches
+    Conditionally includes: topics_of_difficulty, topics_of_strength,
+                            unresolved_questions (if non-empty)
+    Never includes: emotional_tendencies, engagement_patterns
+    """
+    if not profile_data:
+        return "No profile available"
+
+    parts = []
+
+    learning_signals = profile_data.get("learning_style_signals", [])
+    if learning_signals:
+        parts.append(f"Learning style: {', '.join(str(s) for s in learning_signals)}")
+
+    approaches = profile_data.get("recommended_approaches", [])
+    if approaches:
+        parts.append(f"Effective approaches: {', '.join(str(a) for a in approaches)}")
+
+    difficulties = profile_data.get("topics_of_difficulty", [])
+    if difficulties:
+        if topic:
+            difficulties = [
+                d for d in difficulties
+                if topic.lower() in str(d).lower()
+                or any(word in str(d).lower() for word in topic.lower().split())
+            ]
+        if difficulties:
+            parts.append(f"Struggles with: {', '.join(str(d) for d in difficulties)}")
+
+    strengths = profile_data.get("topics_of_strength", [])
+    if strengths:
+        if topic:
+            strengths = [
+                s for s in strengths
+                if topic.lower() in str(s).lower()
+                or any(word in str(s).lower() for word in topic.lower().split())
+            ]
+        if strengths:
+            parts.append(f"Strong in: {', '.join(str(s) for s in strengths)}")
+
+    unresolved = profile_data.get("unresolved_questions", [])
+    if unresolved:
+        parts.append(
+            f"Unresolved questions from previous sessions: "
+            f"{', '.join(str(q) for q in unresolved[:5])}"
+        )
+
+    return "\n".join(parts) if parts else "No relevant profile data available"
 
 
 # ── Generation ───────────────────────────────────────────────────
@@ -174,6 +234,10 @@ CRITICAL RULES:
 - Every question MUST be directly grounded in the slides and lab content provided. No generic textbook or LeetCode-style problems.
 - If the student has known weaknesses, create questions that specifically target those areas.
 - If the student has strengths, include at least one question that pushes them to a harder level on those topics.
+- If unresolved_questions are provided and relevant to the session topic, \
+design at least one question that directly addresses an unresolved question. \
+This is the highest priority — a student's own open questions are the most \
+valuable learning targets.
 - Include an analogy_explanation per question that explains the core concept in a way that matches the student's profile.
 - Include an example_solution: ONE possible correct implementation. This is for student reference only — evaluation is rubric-based, not diffing against this solution.
 - DO NOT rely on the example_solution for grading. The rubric is the sole basis for evaluation.
@@ -301,6 +365,15 @@ async def generate(request) -> ProblemSetData:
     if not slides_content and not lab_cells:
         logger.warning("No session slides or lab content available — LLM will generate with minimal context")
 
+    # Extract structured profile context
+    profile_data = await _fetch_student_profile(student_id)
+    profile_context = _extract_relevant_profile_context(
+        profile_data,
+        topic=session_summary[:100] if session_summary else "",
+    )
+    unresolved_qs = profile_data.get("unresolved_questions", [])
+    unresolved_block = chr(10).join(str(q) for q in unresolved_qs) if unresolved_qs else "None"
+
     user_prompt = f"""Analyze the session content below, then generate an appropriate number of coding questions (typically 2-8) that thoroughly cover the material.
 
 SESSION SUMMARY:
@@ -313,7 +386,10 @@ LAB EXERCISES ({len(lab_cells)} cells):
 {lab_summary}
 
 STUDENT PROFILE:
-{profile_summary or 'No profile available'}
+{profile_context}
+
+UNRESOLVED QUESTIONS FROM PREVIOUS SESSIONS (address these if relevant):
+{unresolved_block}
 
 Based on the breadth and depth of the material above, decide how many questions are needed and what each should cover. Output ONLY a JSON array of question objects."""
 

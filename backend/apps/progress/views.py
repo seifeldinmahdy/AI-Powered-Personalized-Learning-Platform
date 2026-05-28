@@ -165,9 +165,15 @@ class StudentLearningProfileViewSet(viewsets.ModelViewSet):
     def partial_update(self, request, *args, **kwargs):
         """
         PATCH — merge incoming profile_data fields into existing profile_data.
+        Works both at /learning-profile/<pk>/ and /learning-profile/ (list level).
         Useful for updating recurrent_mistakes without overwriting the full profile.
         """
-        profile = StudentLearningProfile.objects.filter(student=request.user).first()
+        pk = kwargs.get("pk")
+        if pk:
+            profile = StudentLearningProfile.objects.filter(student=request.user, pk=pk).first()
+        else:
+            profile = StudentLearningProfile.objects.filter(student=request.user).first()
+
         if not profile:
             return Response(
                 {"detail": "No learning profile yet."},
@@ -186,6 +192,11 @@ class StudentLearningProfileViewSet(viewsets.ModelViewSet):
             profile.save(update_fields=["profile_summary"])
 
         return Response(StudentLearningProfileSerializer(profile).data)
+
+    @action(detail=False, methods=["patch"], url_path="update")
+    def patch_profile(self, request):
+        """PATCH /learning-profile/update/ — list-level patch alias."""
+        return self.partial_update(request)
 
 
 @api_view(['POST'])
