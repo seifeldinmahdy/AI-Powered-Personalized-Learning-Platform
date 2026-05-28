@@ -51,10 +51,22 @@ class MCQSettings(BaseSettings):
     MCQ_MAX_REGENERATION_ATTEMPTS: int = 2
     MCQ_DISTRACTOR_COUNT: int = 3
 
-    # ── Fine-tuned model paths ───────────────────────────────────────
-    # Empty = use Ollama.  Set the path when fine-tuned T5 models are ready.
-    QG_MODEL_PATH: str = ""
-    DG_MODEL_PATH: str = ""
+    # ── Llama / Unsloth base model ───────────────────────────────────
+    LLAMA_BASE_MODEL: str = "unsloth/Llama-3.2-3B-Instruct"
+
+    # ── Fine-tuned LoRA adapter paths ────────────────────────────────
+    # Empty = use Ollama.  Set the path when LoRA adapters are ready.
+    QG_LORA_PATH: str = ""
+    DG_LORA_PATH: str = ""
+
+    # ── LoRA hyperparameters ─────────────────────────────────────────
+    LORA_R: int = 16
+    LORA_ALPHA: int = 16
+    LORA_DROPOUT: float = 0.0  # Unsloth recommends 0 for speed
+
+    # ── Llama tokenizer / generation ─────────────────────────────────
+    MAX_SEQ_LENGTH: int = 512
+    LOAD_IN_4BIT: bool = True  # QLoRA — 4-bit quantization
 
 
 _settings: MCQSettings | None = None

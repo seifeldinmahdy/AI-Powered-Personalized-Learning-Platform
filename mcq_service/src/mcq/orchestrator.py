@@ -112,7 +112,7 @@ def generate_placement_assessment(
                 questions.append(mcq)
                 generated_for_topic += 1
 
-    generation_mode = "t5" if settings.QG_MODEL_PATH else "ollama"
+    generation_mode = "llama_lora" if settings.QG_LORA_PATH else "ollama"
 
     logger.info(
         "placement_assessment_generated",
@@ -165,7 +165,7 @@ def generate_session_assessment(
             if mcq is not None:
                 questions.append(mcq)
 
-    generation_mode = "t5" if settings.QG_MODEL_PATH else "ollama"
+    generation_mode = "llama_lora" if settings.QG_LORA_PATH else "ollama"
 
     logger.info(
         "session_assessment_generated",

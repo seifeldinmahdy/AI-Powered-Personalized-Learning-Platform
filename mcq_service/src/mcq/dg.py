@@ -1,7 +1,7 @@
 """Distractor Generator (DG) — generates wrong-but-plausible answer options.
 
-Uses Ollama during development.  When DG_MODEL_PATH is set in settings,
-loads a fine-tuned T5 model instead.  No factory, no abstract classes.
+Uses Ollama during development.  When DG_LORA_PATH is set in settings,
+loads the Llama base model + DG LoRA adapter via Unsloth for inference.
 """
 
 from __future__ import annotations
@@ -14,14 +14,19 @@ from pathlib import Path
 import structlog
 
 from mcq.models import GeneratedQuestion, MCQOption, MCQQuestion
-from mcq.prompts.mcq_prompts import build_dg_prompt, build_dg_t5_input
+from mcq.prompts.mcq_prompts import (
+    build_dg_chat_prompt,
+    build_dg_prompt,
+    extract_dg_output,
+    format_chat_for_training,
+)
 
 logger = structlog.get_logger(__name__)
 
-# Lazy-loaded singletons
+# Lazy-loaded singletons — loaded once, reused for every call
 _ollama_client = None
-_t5_model = None
-_t5_tokenizer = None
+_llama_model = None
+_llama_tokenizer = None
 
 
 def _get_ollama_client(settings):
@@ -48,20 +53,40 @@ def _get_ollama_client(settings):
     return _ollama_client
 
 
-def _load_t5_model(model_path: str):
-    """Load fine-tuned T5 DG model and tokenizer from disk."""
-    global _t5_model, _t5_tokenizer
-    if _t5_model is not None:
-        return _t5_model, _t5_tokenizer
+def _load_llama_model(settings):
+    """Load the Llama base model + DG LoRA adapter once at startup.
 
-    from transformers import T5ForConditionalGeneration, T5Tokenizer
+    Uses Unsloth's FastLanguageModel for optimized inference.
+    """
+    global _llama_model, _llama_tokenizer
+    if _llama_model is not None:
+        return _llama_model, _llama_tokenizer
 
-    _t5_tokenizer = T5Tokenizer.from_pretrained(model_path)
-    _t5_model = T5ForConditionalGeneration.from_pretrained(model_path)
-    _t5_model.eval()
+    from unsloth import FastLanguageModel
 
-    logger.info("dg_t5_model_loaded", path=model_path)
-    return _t5_model, _t5_tokenizer
+    logger.info(
+        "dg_loading_llama_model",
+        base_model=settings.LLAMA_BASE_MODEL,
+        lora_path=settings.DG_LORA_PATH,
+        load_in_4bit=settings.LOAD_IN_4BIT,
+    )
+
+    # Load base model + LoRA adapter
+    _llama_model, _llama_tokenizer = FastLanguageModel.from_pretrained(
+        model_name=settings.DG_LORA_PATH,
+        max_seq_length=settings.MAX_SEQ_LENGTH,
+        load_in_4bit=settings.LOAD_IN_4BIT,
+    )
+
+    # Optimize for inference speed (Unsloth-specific)
+    FastLanguageModel.for_inference(_llama_model)
+
+    logger.info(
+        "dg_llama_model_loaded",
+        base_model=settings.LLAMA_BASE_MODEL,
+        lora_path=settings.DG_LORA_PATH,
+    )
+    return _llama_model, _llama_tokenizer
 
 
 def generate_mcq(
@@ -86,15 +111,15 @@ def generate_mcq(
         None if distractor generation fails completely.
     """
     num_distractors = settings.MCQ_DISTRACTOR_COUNT
-    use_t5 = bool(settings.DG_MODEL_PATH)
+    use_llama = bool(settings.DG_LORA_PATH)
 
     distractors: list[str] = []
 
     for attempt in range(1, settings.MCQ_MAX_REGENERATION_ATTEMPTS + 1):
         try:
-            if use_t5:
-                distractors = _generate_with_t5(
-                    generated_q, settings.DG_MODEL_PATH, num_distractors,
+            if use_llama:
+                distractors = _generate_with_llama(
+                    generated_q, settings, num_distractors, chunk_text,
                 )
             else:
                 distractors = _generate_with_ollama(
@@ -195,47 +220,116 @@ def _generate_with_ollama(
     return cleaned
 
 
-def _generate_with_t5(
+def _generate_with_llama(
     generated_q: GeneratedQuestion,
-    model_path: str,
+    settings,
     num_distractors: int,
+    chunk_text: str = "",
 ) -> list[str]:
-    """Generate distractors via fine-tuned T5 model."""
+    """Generate distractors via Llama + DG LoRA adapter.
+
+    Generates one distractor per call (each with a separate prompt).
+    Uses greedy decoding for deterministic output.
+    """
     import torch
 
-    model, tokenizer = _load_t5_model(model_path)
-    input_text = build_dg_t5_input(
-        question=generated_q.question,
-        correct_answer=generated_q.correct_answer,
-        question_type=generated_q.question_type,
-        topic=generated_q.topic,
-        mastery_level=generated_q.mastery_used,
-        score_category=generated_q.score_category_used,
-    )
+    model, tokenizer = _load_llama_model(settings)
+    distractors: list[str] = []
+    correct_lower = generated_q.correct_answer.strip().lower()
 
-    inputs = tokenizer(
-        input_text,
-        return_tensors="pt",
-        max_length=512,
-        truncation=True,
-    )
+    # Generate slightly more than needed to account for failures
+    max_attempts = num_distractors + 2
 
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=256,
-            num_beams=4,
-            early_stopping=True,
+    for i in range(max_attempts):
+        if len(distractors) >= num_distractors:
+            break
+
+        messages = build_dg_chat_prompt(
+            question=generated_q.question,
+            correct_answer=generated_q.correct_answer,
+            question_type=generated_q.question_type,
+            topic=generated_q.topic,
+            mastery_level=generated_q.mastery_used,
+            score_category=generated_q.score_category_used,
+            chunk_text=chunk_text,
         )
 
-    decoded = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        input_text = format_chat_for_training(messages, tokenizer)
+        inputs = tokenizer(
+            input_text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=settings.MAX_SEQ_LENGTH,
+        )
+        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        input_len = inputs["input_ids"].shape[1]
 
-    try:
-        result = json.loads(decoded)
-        raw = result.get("distractors", [])
-        if isinstance(raw, list):
-            return [str(d).strip() for d in raw if str(d).strip()]
-    except json.JSONDecodeError:
-        logger.warning("dg_t5_invalid_json", output=decoded[:200])
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=80,
+                temperature=0.0,
+                do_sample=False,
+            )
 
-    return []
+        new_tokens = outputs[0][input_len:]
+        raw_output = tokenizer.decode(new_tokens, skip_special_tokens=True)
+
+        logger.debug(
+            "dg_llama_raw_output",
+            output=raw_output[:150],
+            distractor_idx=i,
+            topic=generated_q.topic,
+        )
+
+        parsed = extract_dg_output(raw_output)
+        if parsed is None:
+            logger.warning(
+                "dg_llama_parse_failed",
+                output=raw_output[:150],
+                distractor_idx=i,
+            )
+            continue
+
+        # Validate: not identical to correct answer
+        if parsed.strip().lower() == correct_lower:
+            logger.warning(
+                "dg_llama_matches_correct",
+                distractor=parsed[:80],
+                distractor_idx=i,
+            )
+            continue
+
+        # Validate: not duplicate of existing distractors
+        if any(parsed.strip().lower() == d.strip().lower() for d in distractors):
+            logger.debug(
+                "dg_llama_duplicate_skipped",
+                distractor=parsed[:80],
+                distractor_idx=i,
+            )
+            continue
+
+        distractors.append(parsed)
+
+    if len(distractors) < num_distractors:
+        logger.warning(
+            "dg_llama_insufficient_distractors",
+            got=len(distractors),
+            need=num_distractors,
+            topic=generated_q.topic,
+        )
+
+        # Fallback: generate simple variations
+        fallbacks = [
+            f"Not {generated_q.correct_answer}",
+            f"None of the above",
+            f"All of the above",
+        ]
+        for fb in fallbacks:
+            if len(distractors) >= num_distractors:
+                break
+            if fb.strip().lower() != correct_lower and fb not in distractors:
+                distractors.append(fb)
+                logger.info("dg_llama_fallback_used", fallback=fb)
+
+    return distractors
