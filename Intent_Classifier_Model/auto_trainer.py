@@ -2,6 +2,7 @@ import os
 import json
 import shutil
 import subprocess
+import time
 
 STATE_FILE = "pipeline_state.json"
 RETRAIN_THRESHOLD = 50
@@ -22,6 +23,26 @@ def run_training_pipeline():
     print("\n" + "=" * 50)
     print(">>> Auto-Trainer: Triggering Retraining Pipeline")
     print("=" * 50)
+
+    print("\n[Step 0] Checking real utterance dataset...")
+    real_path = os.path.join(os.path.dirname(__file__), 'data', 'real_utterances.csv')
+    real_stale = (
+        not os.path.exists(real_path) or
+        (time.time() - os.path.getmtime(real_path)) > 7 * 24 * 3600  # older than 7 days
+    )
+    if real_stale:
+        print("[Step 0] Regenerating real utterances (Groq)...")
+        result = subprocess.run(
+            ["python", "generate_real_utterances.py", "--per-class", "50"],
+            capture_output=True, text=True, encoding="utf-8"
+        )
+        if result.returncode != 0:
+            print("[!] Real utterance generation failed (non-fatal):")
+            print(result.stderr[:500])
+        else:
+            print(f"[+] Real utterances ready at {real_path}")
+    else:
+        print(f"[+] Real utterances up to date: {real_path}")
     
     print("\n[Step 1] Running data generation (dataset_generator.py)...")
     result = subprocess.run(["python", "dataset_generator.py"], capture_output=True, text=True, encoding="utf-8")

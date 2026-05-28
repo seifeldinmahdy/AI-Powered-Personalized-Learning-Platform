@@ -49,6 +49,9 @@ PACES = ["normal", "fast", "slow", "rushed", "dragging", "moderate", "steady"]
 OUTPUT_PATH = os.path.join(os.path.dirname(__file__), 'data', 'real_utterances.csv')
 CACHE_PATH  = os.path.join(os.path.dirname(__file__), 'data', 'real_utterances_cache.json')
 
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_RAG_PIPELINE_DIR = os.path.abspath(os.path.join(_THIS_DIR, '..', 'rag_pipeline'))
+
 MODEL = "llama-3.3-70b-versatile"
 
 # ─────────────────────────────────────────────────────────────────────
@@ -155,6 +158,65 @@ ADJACENT_CLASSES = {
 
 
 # ─────────────────────────────────────────────────────────────────────
+# RAG PASSAGE FETCHER
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _fetch_rag_passages_for_topic(topic: str, top_k: int = 4) -> list[str]:
+    """Fetch real textbook passages from ChromaDB for a topic.
+    Returns empty list if RAG pipeline unavailable — generation falls back silently.
+    """
+    import sys
+    if _RAG_PIPELINE_DIR not in sys.path:
+        sys.path.insert(0, _RAG_PIPELINE_DIR)
+    try:
+        original_cwd = os.getcwd()
+        os.chdir(_RAG_PIPELINE_DIR)
+        from src.config.settings import get_settings
+        from src.llm.client import OllamaCloudClient
+        from src.retrieval.engine import RAGEngine
+        settings = get_settings()
+        os.chdir(original_cwd)
+        settings.chroma_db_path = os.path.join(_RAG_PIPELINE_DIR, 'data', 'chroma')
+        llm_client = OllamaCloudClient(
+            host=settings.ollama_host, model=settings.ollama_model,
+            api_key=settings.ollama_api_key, max_retries=settings.max_retries,
+        )
+        engine = RAGEngine(settings=settings, llm_client=llm_client)
+        response = engine.ask(
+            question=f'Explain {topic} in Python with examples',
+            topic=topic, top_k=top_k,
+        )
+        passages = []
+        if response and response.sources:
+            for s in response.sources:
+                raw = getattr(s, 'text', '') or ''
+                if len(raw) > 40:
+                    passages.append(raw.strip())
+        logger.info('RAG: %d passages for topic "%s"', len(passages), topic)
+        return passages
+    except Exception as exc:
+        logger.warning('RAG fetch failed for "%s": %s — template-only fallback', topic, exc)
+        return []
+
+
+def _format_rag_block(passages: list[str], topic: str) -> str:
+    if not passages:
+        return ''
+    lines = [
+        f'\n**Real textbook excerpts about {topic}**',
+        'Generate at least 10 questions that reference SPECIFIC concepts, code patterns,',
+        'or examples from these excerpts — not generic questions.\n',
+    ]
+    for i, p in enumerate(passages[:3], 1):
+        snippet = p[:400].replace('\n', ' ')
+        if len(p) > 400:
+            snippet += '...'
+        lines.append(f'[Excerpt {i}]: {snippet}\n')
+    return '\n'.join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────
 # CONTEXT GENERATION
 # ─────────────────────────────────────────────────────────────────────
 
@@ -194,12 +256,13 @@ def generate_utterances_for_class(
     intent_name: str,
     n_utterances: int = 40,
     cache: dict | None = None,
+    rag_passages: list[str] | None = None,
 ) -> list[str]:
     """
     Use Groq to generate realistic student utterances for a given intent class.
     Returns a list of utterance strings.
     """
-    cache_key = f"{intent_name}_{n_utterances}"
+    cache_key = f"{intent_name}_{n_utterances}_{'rag' if rag_passages else 'norag'}"
     if cache and cache_key in cache:
         logger.info(f"  Cache hit for {intent_name} ({len(cache[cache_key])} utterances)")
         return cache[cache_key]
@@ -221,6 +284,10 @@ def generate_utterances_for_class(
             + "\nMake sure every utterance you generate is clearly distinguishable from the adjacent class(es) above."
         )
 
+    rag_block = ''
+    if rag_passages and intent_name == 'On-Topic Question':
+        rag_block = _format_rag_block(rag_passages, 'the current Python topic')
+
     prompt = f"""You are a data generation expert for an educational AI tutor system.
 
 Generate exactly {n_utterances} realistic student utterances for the intent class: "{intent_name}"
@@ -229,7 +296,7 @@ Generate exactly {n_utterances} realistic student utterances for the intent clas
 
 **Example utterances** (for reference style, do NOT copy these):
 {examples_str}
-
+{rag_block}
 **Requirements**:
 1. Each utterance must be something a REAL college student would type in a chat
 2. Vary the style: formal, casual, slang, Gen-Z speak, typos, abbreviations, ALL CAPS
@@ -289,6 +356,14 @@ def main():
         '--no-cache', action='store_true',
         help='Ignore cached results and regenerate all',
     )
+    parser.add_argument(
+        '--use-rag', action='store_true',
+        help=(
+            'Fetch real textbook passages from the RAG pipeline and inject them '
+            'into the On-Topic generation prompt. Requires rag_pipeline to be '
+            'configured and ChromaDB to be indexed.'
+        ),
+    )
     args = parser.parse_args()
 
     # ── Groq client setup ──────────────────────────────────────────
@@ -307,6 +382,15 @@ def main():
 
     cache = {} if args.no_cache else _load_cache()
 
+    # ── RAG passage prefetch ──────────────────────────────────────
+    rag_passages: list[str] = []
+    if args.use_rag:
+        print('[RAG] Pre-fetching passages for all Python topics...')
+        for topic in PYTHON_TOPICS:
+            rag_passages.extend(_fetch_rag_passages_for_topic(topic, top_k=3))
+            time.sleep(0.2)
+        print(f'[RAG] {len(rag_passages)} total passages fetched.\n')
+
     print(f"\n{'='*60}")
     print(f"Generating Real Utterance Test Set via Groq ({MODEL})")
     print(f"{'='*60}")
@@ -319,6 +403,7 @@ def main():
 
         utterances = generate_utterances_for_class(
             client, intent_name, n_utterances=args.per_class, cache=cache,
+            rag_passages=rag_passages if (args.use_rag and intent_name == 'On-Topic Question') else None,
         )
 
         # Rate limit: Groq has a tokens-per-minute cap

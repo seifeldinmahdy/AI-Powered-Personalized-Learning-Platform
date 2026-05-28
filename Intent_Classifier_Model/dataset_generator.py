@@ -704,15 +704,22 @@ def get_pace_related(split_name='train'):
         return random.choice(PACE_TEST)
     return random.choice(PACE_TRAIN)
 
-def get_repeat_clarification(split_name='train'):
+def get_repeat_clarification(split_name='train', current_topic=None):
     if split_name == 'test' and random.random() < 0.5:
         return random.choice(HELD_OUT_REPEAT)
     
     if split_name == 'val':
-        return random.choice(REPEAT_VAL)
+        template = random.choice(REPEAT_VAL)
     elif split_name == 'test':
-        return random.choice(REPEAT_TEST)
-    return random.choice(REPEAT_TRAIN)
+        template = random.choice(REPEAT_TEST)
+    else:
+        template = random.choice(REPEAT_TRAIN)
+    # Fill {topic} slot if present
+    if '{topic}' in template and current_topic:
+        template = template.replace('{topic}', current_topic)
+    elif '{topic}' in template:
+        template = template.replace('{topic}', 'that last concept')
+    return template
 
 # ─────────────────────────────────────────────────────────────────────
 # PIPELINE GENERATION (3-way split: train/val/test)
@@ -747,7 +754,7 @@ def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, 
                 elif intent == 'Pace-Related':
                     student_input = get_pace_related(split_name=split_name)
                 elif intent == 'Repeat/clarification':
-                    student_input = get_repeat_clarification(split_name=split_name)
+                    student_input = get_repeat_clarification(split_name=split_name, current_topic=current_topic)
                 else:
                     student_input = get_off_topic_question(topic_idx, split_name=split_name)
 

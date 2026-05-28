@@ -469,8 +469,14 @@ def get_emotional_state(current_topic=None):
 def get_pace_related():
     return random.choice(PACE_TEMPLATES)
 
-def get_repeat_clarification():
-    return random.choice(REPEAT_TEMPLATES)
+def get_repeat_clarification(current_topic=None):
+    template = random.choice(REPEAT_TEMPLATES)
+    # Fill {topic} slot if present
+    if '{topic}' in template and current_topic:
+        template = template.replace('{topic}', current_topic)
+    elif '{topic}' in template:
+        template = template.replace('{topic}', 'that last concept')
+    return template
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -501,7 +507,7 @@ def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, 
             elif intent == 'Pace-Related':
                 student_input = get_pace_related()
             elif intent == 'Repeat/clarification':
-                student_input = get_repeat_clarification()
+                student_input = get_repeat_clarification(current_topic=current_topic)
             else:
                 student_input = get_off_topic_question(topic_idx)
 

@@ -208,8 +208,8 @@ def main():
         split_idx = int(len(real_df) * 0.70)
         real_train_df = real_df.iloc[:split_idx]
         real_eval_df  = real_df.iloc[split_idx:]
-        # Oversample real training data 15x so model learns from it
-        real_train_oversampled = pd.concat([real_train_df] * 15, ignore_index=True)
+        # Oversample real training data 8x so model learns from it
+        real_train_oversampled = pd.concat([real_train_df] * 8, ignore_index=True)
         train_df = pd.concat([train_df, real_train_oversampled], ignore_index=True)
         train_df = train_df.sample(frac=1, random_state=42).reset_index(drop=True)
         print(f"[+] Mixed {len(real_train_oversampled)} real utterance rows into training. Train total: {len(train_df)}")
