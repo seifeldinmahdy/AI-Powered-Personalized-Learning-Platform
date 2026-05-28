@@ -12,7 +12,6 @@ import os
 import sys
 import re
 import json
-import uuid
 import logging
 from datetime import datetime
 from typing import Optional
@@ -132,6 +131,59 @@ The JSON must have exactly these fields:
 """
 
 
+PROBLEM_SET_PROFILER_SYSTEM = """\
+You are a learning analyst. You will be given a student's complete problem 
+set results including per-question rubric breakdowns, hint usage, scores, 
+and mistake patterns.
+
+This is objective behavioral data — not conversation or subjective inference. 
+Treat it as high-confidence signal.
+
+WHAT TO ANALYZE:
+
+Rubric category failures (correctness, logic, edge_cases, syntax_style, 
+requirements):
+- Consistent failure in a category across multiple questions → strong 
+  signal for topics_of_difficulty
+- Consistent passing in a category → consider for topics_of_strength 
+  only if it appears across 3+ questions
+
+Hint usage patterns:
+- Student requested hint 3 (most direct) on multiple questions → 
+  significant struggle signal for that question's topic
+- Student requested no hints and scored above 80 → confidence signal 
+  for that topic
+- Student requested hint 2 but not hint 3 → moderate struggle, was 
+  able to self-correct
+
+Score trajectory:
+- Scores improving across questions on same topic → learning in progress, 
+  note in recommended_approaches that spaced repetition is working
+- Scores flat or declining → topic needs different approach
+
+Recurrent mistakes:
+- Mistake tags appearing across 2+ questions → strong topics_of_difficulty 
+  signal, also consider for recurrent_mistakes field
+
+Question topics targeted at known weaknesses:
+- If a question targeted a known weakness and student passed → consider 
+  moving that weakness to topics_of_strength or removing it from difficulty
+- If targeted weakness question was failed → reinforce in topics_of_difficulty
+
+OUTPUT RULES:
+- Update ONLY fields where you have clear evidence from the submission data
+- For list fields: APPEND new findings — do not replace existing values
+- For profile_summary: REWRITE the full paragraph incorporating problem 
+  set performance into the existing profile knowledge
+- For recurrent_mistakes: append any mistake tags seen 2+ times
+- Do NOT touch emotional_tendencies or engagement_patterns — problem set 
+  data does not carry emotional signal
+- Do NOT clear or overwrite any existing profile field — only enrich it
+- Return ONLY valid JSON matching the profile_data schema exactly
+- This profiler updates the same profile as the session and lab profilers
+"""
+
+
 async def update_profile(
     student_id: int,
     lesson_title: str,
@@ -158,9 +210,8 @@ async def update_profile(
         }
 
     student_id_str = str(student_id)
-    ledger_store = get_evidence_ledger_store()
 
-    # ── Evidence extraction (BEFORE existing profiler LLM call) ──
+    # ── Pass 1: Evidence extraction (in-memory only, not persisted to ledger) ──
     raw_session_data = {
         "session_log": session_log,
         "transcript": json.dumps(session_log, indent=2),
@@ -171,12 +222,11 @@ async def update_profile(
         session_type="tutor_session",
         raw_data=raw_session_data,
     )
-    # Assign IDs and save to ledger
-    for item in evidence_items:
-        item["id"] = f"ev_{student_id_str}_{uuid.uuid4().hex[:8]}"
-        item["session_id"] = session_id or f"session_{student_id}"
-        item["session_type"] = "tutor_session"
-    ledger_store.append_evidence(student_id_str, evidence_items)
+    qualifying_count = len(evidence_items)
+    logger.info(
+        "Session profiler: %d qualifying observations extracted",
+        qualifying_count,
+    )
 
     # ── Existing profiler LLM call (UNCHANGED) ──
     existing_data_str = json.dumps(existing_profile_data or {}, indent=2)
@@ -201,7 +251,22 @@ async def update_profile(
         f"EXISTING PROFILE DATA:\n"
         f"{existing_data_str}\n\n"
         f"NEW SESSION EMOTION LOG ({len(session_log)} events):\n"
-        f"{json.dumps(session_log, indent=2)}"
+        f"{json.dumps(session_log, indent=2)}\n\n"
+        f"IMPORTANT — PROPOSED CHANGES TRACKING:\n"
+        f"Return the updated profile_data JSON with one additional key:\n"
+        f'"_proposed_changes": [\n'
+        f'    {{\n'
+        f'        "field": "learning_style_signals",\n'
+        f'        "value": "prefers hands-on activities",\n'
+        f'        "justification": "Student explicitly asked about edge cases during task — direct behavioral evidence",\n'
+        f'        "evidence_count": 1,\n'
+        f'        "confidence": "high"\n'
+        f'    }}\n'
+        f']\n'
+        f"The _proposed_changes array must list EVERY change you are proposing "
+        f"compared to the existing profile. For list fields, list each new item "
+        f"separately. For profile_summary, list it as a single 'rewrite' entry.\n"
+        f"This key is stripped before writing to the database — it is for validation only."
     )
 
     try:
@@ -228,26 +293,19 @@ async def update_profile(
                 pd["unresolved_questions"] = existing_profile_data["unresolved_questions"]
                 result["profile_data"] = pd
 
-        # ── Validation (AFTER existing profiler LLM call) ──
+        # ── Pass 3: Validation (AFTER existing profiler LLM call) ──
         proposed_profile = result.get("profile_data", {})
         current_profile = existing_profile_data or {}
 
-        validated_profile, validated_records, pending_records = \
-            await _validate_proposed_updates(
-                student_id=student_id_str,
-                proposed_updates=proposed_profile,
-                current_profile=current_profile,
-                session_id=session_id or f"session_{student_id}",
-                session_type="tutor_session",
-            )
+        validated_profile = await _validate_proposed_updates(
+            student_id=student_id_str,
+            proposed_updates=proposed_profile,
+            current_profile=current_profile,
+            session_id=session_id or f"session_{student_id}",
+            session_type="tutor_session",
+            qualifying_observation_count=qualifying_count,
+        )
 
-        # Save ledger records
-        for record in validated_records:
-            ledger_store.add_validated_update(student_id_str, record)
-        for record in pending_records:
-            ledger_store.add_pending_observation(student_id_str, record)
-
-        # Return ONLY the validated profile (not the raw proposed_profile)
         # Preserve profile_summary from the profiler (threshold=0, always passes)
         if "profile_summary" not in validated_profile and "profile_summary" in result:
             validated_profile["profile_summary"] = result["profile_summary"]
@@ -282,8 +340,10 @@ def _empty_profile_data() -> dict:
 # These constants and functions wrap around the existing profiler
 # passes. They do NOT replace any existing LLM call or prompt.
 
-# Minimum number of independent evidence items (by weighted confidence)
-# required before the validator is called for a proposed change.
+# Minimum number of QUALIFYING observations needed before the validator
+# runs for a proposed change to this field.
+# A qualifying observation is one from a positive action source —
+# never from absence of action.
 EVIDENCE_THRESHOLDS = {
     "learning_style_signals": 2,
     "topics_of_difficulty": 2,
@@ -293,65 +353,88 @@ EVIDENCE_THRESHOLDS = {
     "notable_intentions": 1,
     "emotional_tendencies": 3,
     "unresolved_questions": 1,
-    "profile_summary": 0,  # always rewrite — no threshold
+    "profile_summary": 0,    # always rewrite, no threshold
+    "recurrent_mistakes": 1,
 }
 
-# Confidence weight for counting evidence toward threshold
-CONFIDENCE_WEIGHTS = {
-    "high": 1.0,
-    "medium": 0.6,
-    "low": 0.3,
+# Sources that count as qualifying positive-action observations.
+# Any observation whose source is NOT in this set is discarded.
+# "did not ask" observations are discarded at extraction time,
+# but this is a second safety net.
+QUALIFYING_SOURCES = {
+    "transcript",           # student said something explicitly
+    "lab_notes",            # student wrote a note
+    "task_completion",      # student completed or failed a task cell
+    "suggested_questions",  # student CLICKED a suggested question (was_asked=True only)
+    "submission",           # problem set submission result
+    "hint_usage",           # student used hint 3 (genuine struggle signal)
+    "explicit_statement",   # student directly stated a preference
 }
 
-
-def _evidence_weight(evidence_items: list[dict]) -> float:
-    """Sum the confidence weights of a list of evidence items."""
-    return sum(
-        CONFIDENCE_WEIGHTS.get(item.get("confidence", "low"), 0.3)
-        for item in evidence_items
-    )
+# Sources that are low-signal and only count toward emotional_tendencies
+LOW_SIGNAL_SOURCES = {
+    "emotion_detection",    # FER/SER — only valid for emotional_tendencies field
+}
 
 
 # ── Evidence extractor (pre-profiler first pass) ────────────────
 
 EVIDENCE_EXTRACTOR_SYSTEM = """\
-You are a behavioral observation recorder. You will be given data from a 
-student learning session. Your job is to extract factual behavioral 
-observations — things the student actually did or said — that could be 
-relevant to understanding how they learn.
+You are a behavioral observation recorder for a student learning system.
+You will be given data from a learning session. Your job is to extract 
+qualifying behavioral observations — things the student ACTIVELY DID.
 
-CRITICAL RULES:
-- Record FACTS only. Never interpret or label.
-- BAD: "Student is a visual learner"
-- GOOD: "Student said 'can you show me this with a diagram' after a 
-  text-only explanation of recursion"
-- BAD: "Student struggles with abstract concepts"  
-- GOOD: "Student asked for re-explanation 3 times during the abstract 
-  datastructures section"
-- Each observation must be a single specific event or pattern, 
-  not a general summary
-- Only record observations that are clearly evidenced in the data — 
-  do not infer or speculate
-- Assign confidence based on explicitness:
-    high: student explicitly stated something ("I learn better with visuals")
-    medium: clear behavioral pattern (consistently faster on hands-on tasks)
-    low: weak or ambiguous signal (single instance, could be coincidence)
-- For unusual or unexpected behaviors, record them exactly as observed — 
-  do not try to fit them into known learning patterns
-- supports_labels should be your best guess at which profile fields this 
-  observation might be relevant to — these are suggestions only, the 
-  profiler decides the actual labels
+CRITICAL RULE — WHAT TO RECORD AND WHAT TO DISCARD:
 
-Return ONLY a valid JSON array of observation objects. No markdown, 
-no preamble, no explanation.
+RECORD these (positive actions):
+- Student explicitly said or wrote something (quote it directly)
+- Student asked a question (they clicked it or typed it)
+- Student wrote a note (what did they write and about what)
+- Student completed or attempted a task (what was the task)
+- Student scored above or below a threshold on an objective assessment
+- Student used a hint (especially hint level 3 — direct hint — signals 
+  genuine struggle)
+- Student explicitly stated a preference ("I prefer", "can you slow down",
+  "can you show me visually", etc.)
+
+DISCARD these (absence of action — never record):
+- Student did NOT ask a question
+- Student did NOT click something
+- Student did NOT write a note
+- Student IGNORED something
+- Anything phrased as "student did not" or "student failed to"
+
+Absence of action is almost always ambiguous and must never be recorded.
+A student who doesn't click a suggested question about visual analogies 
+might be confident, might not have read it, or might not be interested — 
+you cannot know which.
+
+CONFIDENCE LEVELS:
+- high: student explicitly stated something, or objective score/completion data
+- medium: clear behavioral pattern from an action they took
+- low: single ambiguous instance of an action (use sparingly)
+
+SOURCES — use exactly one of these strings:
+- "transcript" — student said something during the session
+- "lab_notes" — student wrote a note in the lab
+- "task_completion" — student completed or attempted a task cell
+- "suggested_questions" — student clicked a suggested question
+- "submission" — objective problem set score or rubric result
+- "hint_usage" — student requested a hint (level matters)
+- "explicit_statement" — student directly stated a preference
+- "emotion_detection" — FER/SER reading (LOW SIGNAL — only use for 
+  emotional_tendencies, never for learning style or topic difficulty)
+
+Return ONLY a valid JSON array. No markdown, no preamble.
+If there are no qualifying observations, return an empty array [].
 
 Each object:
 {
-  "raw_observation": str,
-  "supports_labels": list[str],
-  "confidence": str,
-  "source": str,
-  "approximate_timestamp": str
+  "raw_observation": str,    // what the student ACTIVELY did, quoted directly
+  "supports_labels": list,   // which profile fields this might inform
+  "confidence": str,         // "high", "medium", or "low"
+  "source": str,             // exactly one of the source strings above
+  "approximate_timestamp": str  // ISO string if available, "" if not
 }
 """
 
@@ -380,10 +463,13 @@ Extract all behavioral observations from this session data."""
                 f"  [{n.get('timestamp', '')}] {n.get('content', '')}"
                 for n in notes
             ) or "  No notes"
-            questions_text = "\n".join(
-                f"  [{'ASKED' if q.get('was_asked') else 'NOT ASKED'}] {q.get('question', '')}"
+            # Only include questions the student actually clicked
+            asked_questions = [
+                f"  [ASKED] {q.get('question', '')}"
                 for q in questions
-            ) or "  No questions"
+                if q.get("was_asked")
+            ]
+            questions_text = "\n".join(asked_questions) or "  No questions asked"
             cells_text += (
                 f"\nCell: {cell.get('title', 'Untitled')} "
                 f"(type: {cell.get('cell_type', '')})\n"
@@ -406,6 +492,44 @@ PER-CELL DATA:
 
 Extract all behavioral observations from this lab data."""
 
+    elif session_type == "problem_set":
+        qs = raw_data.get("questions", [])
+        questions_text = ""
+        for q in qs:
+            cat_results = q.get("category_results", {})
+            cat_parts = []
+            for cat, r in cat_results.items():
+                if r.get("all_passed"):
+                    cat_parts.append(f"{cat}: pass")
+                else:
+                    p = r.get("passed", 0)
+                    t = r.get("total", 0)
+                    cat_parts.append(f"{cat}: {p}/{t} checks")
+            cat_summary = ", ".join(cat_parts)
+            questions_text += (
+                f"\nTopic: {q.get('topic', '')}\n"
+                f"Score: {q.get('final_score', 0)}/100 | Hints used: {q.get('hints_used', 0)}\n"
+                f"Rubric categories: {cat_summary}\n"
+                f"Mistake tags: {', '.join(q.get('mistake_tags', [])) or 'none'}\n"
+                f"Failed evidence: {'; '.join(q.get('failed_evidence', [])) or 'none'}\n"
+            )
+
+        return f"""SESSION TYPE: Problem set results
+
+SUMMARY:
+- Total questions: {raw_data.get('total_questions', 0)}
+- Average score: {raw_data.get('average_score', 0)}
+- Recurrent mistakes: {', '.join(raw_data.get('recurrent_mistakes_in_set', [])) or 'none'}
+- Topics needing most help (hint 3 used): {', '.join(raw_data.get('hint_3_topics', [])) or 'none'}
+- Topics showing confidence (no hints, high score): {', '.join(raw_data.get('no_hint_high_score_topics', [])) or 'none'}
+
+PER-QUESTION DATA:
+{questions_text}
+
+Extract behavioral observations from this objective submission data. 
+Rubric category failures and hint 3 usage are high-confidence signals. 
+Single-question patterns are medium confidence."""
+
     return f"SESSION TYPE: {session_type}\nDATA: {json.dumps(raw_data)}"
 
 
@@ -415,207 +539,199 @@ async def _extract_evidence(
     raw_data: dict,
 ) -> list[dict]:
     """
-    First pass: extract raw behavioral observations from session data.
-    Returns a list of evidence items — facts only, no interpretations.
-    Uses the generation client at temperature=0.1.
+    Extract qualifying behavioral observations from session data.
+    Returns only positive-action observations — never absence-of-action.
+    Uses _get_ollama_client() at temperature=0.1.
     """
+    user_message = _build_extractor_user_message(session_type, raw_data)
+
     try:
         client = _get_ollama_client()
-        user_msg = _build_extractor_user_message(session_type, raw_data)
-
         result = client.chat_json(
             messages=[
                 {"role": "system", "content": EVIDENCE_EXTRACTOR_SYSTEM},
-                {"role": "user", "content": user_msg},
+                {"role": "user", "content": user_message},
             ],
             temperature=0.1,
-            timeout_override=90,
+            timeout_override=60,
         )
 
-        # chat_json returns a dict; the extractor should return a list
-        # Handle both cases: result might be {"observations": [...]} or [...]
+        # Result should be a list
         if isinstance(result, list):
             observations = result
-        elif isinstance(result, dict):
-            # Try common wrapper keys
-            for key in ("observations", "items", "evidence", "data"):
-                if key in result and isinstance(result[key], list):
-                    observations = result[key]
-                    break
-            else:
-                logger.warning(
-                    "Evidence extractor returned dict without list key: %s",
-                    list(result.keys()),
-                )
-                observations = []
+        elif isinstance(result, dict) and "observations" in result:
+            observations = result["observations"]
         else:
-            observations = []
+            logger.warning("Evidence extractor returned unexpected shape: %s", type(result))
+            return []
 
-        # Validate and normalize each observation
-        valid = []
+        # Filter: discard any observation that slipped through the prompt
+        # filter and is phrased as absence of action
+        absence_phrases = [
+            "did not ask", "did not click", "did not write",
+            "did not complete", "failed to", "never asked",
+            "ignored", "skipped", "did not interact",
+        ]
+        filtered = []
         for obs in observations:
             if not isinstance(obs, dict):
                 continue
-            if not obs.get("raw_observation"):
+            raw = obs.get("raw_observation", "").lower()
+            if any(phrase in raw for phrase in absence_phrases):
+                logger.debug(
+                    "Discarding absence-of-action observation: %s",
+                    obs.get("raw_observation", "")[:80],
+                )
                 continue
-            valid.append({
-                "raw_observation": str(obs["raw_observation"]),
-                "supports_labels": obs.get("supports_labels", []),
-                "confidence": obs.get("confidence", "low"),
-                "source": obs.get("source", "unknown"),
-                "timestamp": obs.get("approximate_timestamp", ""),
-                "used_in_profile_update": False,
-            })
+            # Discard emotion_detection observations for non-emotional fields
+            source = obs.get("source", "")
+            supports = obs.get("supports_labels", [])
+            if source == "emotion_detection":
+                # Only keep if it supports emotional_tendencies
+                if not any("emotion" in str(s).lower() for s in supports):
+                    continue
+            filtered.append(obs)
 
         logger.info(
-            "evidence_extracted session_id=%s type=%s count=%d",
-            session_id, session_type, len(valid),
+            "Evidence extractor: %d raw observations, %d after filtering",
+            len(observations), len(filtered),
         )
-        return valid
+        return filtered
 
     except Exception as e:
-        logger.warning(
-            "Evidence extraction failed (continuing with empty): %s", e
-        )
+        logger.warning("Evidence extraction failed: %s", e)
         return []
 
 
 # ── Validator (post-profiler third pass) ────────────────────────
 
-VALIDATOR_SYSTEM = """\
-You are a strict evidence evaluator for a student learning profile system. 
-You will be given a proposed update to a student's profile and the evidence 
-that supposedly supports it.
 
-Your job: decide YES or NO — does the provided evidence sufficiently justify 
-this specific profile update?
-
-EVALUATION RULES:
-- Common, well-understood learning science labels (visual learner, 
-  hands-on preference, struggles with abstraction): require clear and 
-  direct behavioral evidence. Indirect signals are acceptable if there 
-  are multiple of them.
-- Unusual or highly specific labels (anything you would not find in a 
-  standard learning styles framework): apply STRICTER scrutiny. Unusual 
-  conclusions require stronger and more explicit evidence because there 
-  is no common knowledge baseline to support inference.
-- A single piece of evidence is almost never sufficient unless it is 
-  an explicit direct statement from the student ("I learn better when...")
-- Evidence from multiple independent sources (transcript + lab notes + 
-  task completion) is stronger than multiple pieces from the same source
-- If the evidence is ambiguous, answer NO
-- If the proposed value is already in the current profile, answer YES 
-  automatically — do not block reinforcement of existing beliefs
-
-Return ONLY valid JSON:
-{
-  "decision": "YES" or "NO",
-  "reasoning": "One or two sentences explaining your decision, 
-                citing specific evidence items",
-  "evidence_ids_used": ["ev_001", "ev_002"]
-}
-"""
-
-
-def _build_validator_message(
-    change: dict,
-    supporting_evidence: list[dict],
-    current_profile: dict,
-) -> str:
-    evidence_text = "\n".join(
-        f"- [{e['confidence'].upper()}] [{e.get('source', 'unknown')}] "
-        f"{e['raw_observation']} (id: {e['id']})"
-        for e in supporting_evidence
-    ) or "No supporting evidence found"
-
-    return f"""PROPOSED PROFILE UPDATE:
-Field: {change['field']}
-Proposed value to add: "{change['proposed_value']}"
-Change type: {change['change_type']}
-
-CURRENT PROFILE VALUE FOR THIS FIELD:
-{json.dumps(change['current_value'], indent=2)}
-
-SUPPORTING EVIDENCE FROM LEDGER:
-{evidence_text}
-
-Does the evidence justify adding "{change['proposed_value']}" 
-to {change['field']}?"""
-
-
-def _diff_profile_updates(
-    current: dict,
-    proposed: dict,
-) -> list[dict]:
-    """
-    Compare proposed profile_data against current profile_data.
-    Return a list of proposed changes.
-    """
-    changes = []
-    for field, proposed_value in proposed.items():
-        current_value = current.get(field)
-
-        if isinstance(proposed_value, list) and isinstance(current_value, list):
-            # Find new items
-            new_items = [v for v in proposed_value if v not in current_value]
-            for item in new_items:
-                changes.append({
-                    "field": field,
-                    "change_type": "append",
-                    "proposed_value": item,
-                    "current_value": current_value,
-                })
-        elif isinstance(proposed_value, str) and field == "profile_summary":
-            changes.append({
-                "field": field,
-                "change_type": "rewrite",
-                "proposed_value": proposed_value,
-                "current_value": current_value or "",
-            })
-        elif isinstance(proposed_value, dict):
-            # For engagement_patterns, emotional_tendencies etc.
-            for subkey, subval in proposed_value.items():
-                if isinstance(subval, list):
-                    current_subval = (current_value or {}).get(subkey, [])
-                    new_subitems = [v for v in subval if v not in current_subval]
-                    for item in new_subitems:
-                        changes.append({
-                            "field": f"{field}.{subkey}",
-                            "change_type": "append",
-                            "proposed_value": item,
-                            "current_value": current_subval,
-                        })
-                else:
-                    if subval != (current_value or {}).get(subkey):
-                        changes.append({
-                            "field": f"{field}.{subkey}",
-                            "change_type": "update",
-                            "proposed_value": subval,
-                            "current_value": (current_value or {}).get(subkey),
-                        })
-    return changes
-
-
-def _apply_change_to_profile(profile: dict, change: dict) -> None:
-    """Apply a validated change to the profile dict in place."""
-    field = change["field"]
-    value = change["proposed_value"]
-
+def _apply_single_change(profile: dict, field: str, value: str) -> None:
+    """Apply a single validated change to the profile dict in place."""
     if "." in field:
-        # Nested field like "engagement_patterns.high"
         parent, child = field.split(".", 1)
         if parent not in profile:
             profile[parent] = {}
-        if isinstance(profile[parent].get(child), list):
-            if value not in profile[parent][child]:
-                profile[parent][child].append(value)
-        else:
-            profile[parent][child] = value
+        target = profile[parent]
+        if isinstance(target, dict):
+            if isinstance(target.get(child), list):
+                if value not in target[child]:
+                    target[child].append(value)
+            else:
+                target[child] = value
     elif isinstance(profile.get(field), list):
         if value not in profile[field]:
             profile[field].append(value)
-    else:
+    elif field in profile or field in EVIDENCE_THRESHOLDS:
         profile[field] = value
+
+
+def _diff_profile_updates(current: dict, proposed: dict) -> list[dict]:
+    """
+    Fallback: compute proposed changes by diffing current vs proposed.
+    Used when profiler LLM did not include _proposed_changes.
+    Returns list of change dicts with empty justification.
+    """
+    changes = []
+    for field, proposed_value in proposed.items():
+        if field.startswith("_"):
+            continue
+        current_value = current.get(field)
+
+        if isinstance(proposed_value, list) and isinstance(current_value, list):
+            for item in proposed_value:
+                if item not in current_value:
+                    changes.append({
+                        "field": field,
+                        "value": str(item),
+                        "justification": "inferred from profiler output (no explicit justification)",
+                        "evidence_count": 1,
+                        "confidence": "medium",
+                    })
+        elif isinstance(proposed_value, str) and field == "profile_summary":
+            changes.append({
+                "field": "profile_summary",
+                "value": proposed_value,
+                "justification": "profile_summary rewrite",
+                "evidence_count": 999,
+                "confidence": "high",
+            })
+        elif isinstance(proposed_value, dict):
+            cv = current_value or {}
+            for subkey, subval in proposed_value.items():
+                if isinstance(subval, list):
+                    current_subval = cv.get(subkey, [])
+                    for item in subval:
+                        if item not in current_subval:
+                            changes.append({
+                                "field": f"{field}.{subkey}",
+                                "value": str(item),
+                                "justification": "inferred from profiler output",
+                                "evidence_count": 1,
+                                "confidence": "medium",
+                            })
+    return changes
+
+
+async def _run_validator(
+    field: str,
+    value: str,
+    justification: str,
+    times_seen: int,
+    current_profile: dict,
+) -> tuple[bool, str]:
+    """
+    Binary validator: should this value be added to this profile field?
+    Returns (approved: bool, reasoning: str)
+    Uses temperature=0.0 for consistency.
+    """
+    prompt = f"""A student learning profile system wants to add the following:
+
+Field: {field}
+Value to add: "{value}"
+Times this pattern has been observed: {times_seen}
+Justification from the profiler: "{justification}"
+
+Current profile context:
+{json.dumps({k: v for k, v in current_profile.items()
+             if k not in ("profile_summary", "_proposed_changes")},
+            indent=2)}
+
+Should this value be added to {field}?
+
+Rules for your decision:
+- Common learning labels (visual learner, hands-on preference, struggles \
+with abstraction): approve if justification cites a clear behavioral \
+observation, even if times_seen is 1 for threshold=1 fields
+- Unusual or highly specific labels: require stronger justification — \
+if you would not find this in a standard learning framework, be stricter
+- If value contradicts existing profile entries strongly, reject and \
+explain why
+- If the justification is vague ("student seemed to prefer this") without \
+a specific behavioral observation, reject
+- If the justification cites a specific action (asked a question, wrote \
+a note, scored below threshold), approve
+
+Return ONLY valid JSON:
+{{
+  "decision": "YES" or "NO",
+  "reasoning": "one sentence citing the specific evidence or explaining rejection"
+}}"""
+
+    try:
+        client = _get_ollama_client()
+        result = client.chat_json(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            timeout_override=45,
+        )
+        decision = str(result.get("decision", "NO")).upper().strip()
+        reasoning = result.get("reasoning", "")
+        return (decision == "YES", reasoning)
+    except Exception as e:
+        logger.warning("Validator failed: %s", e)
+        # Default to NO on failure — do not write unvalidated data
+        return (False, f"validator error: {e}")
 
 
 async def _validate_proposed_updates(
@@ -624,207 +740,144 @@ async def _validate_proposed_updates(
     current_profile: dict,
     session_id: str,
     session_type: str,
-) -> tuple[dict, list[dict], list[dict]]:
+    qualifying_observation_count: int = 0,
+) -> dict:
     """
-    Validates each proposed change against the evidence ledger.
+    Validates proposed profile changes before writing to Django.
 
-    Returns:
-        validated_profile: dict — only validated changes, safe to write
-        validated_update_records: list — records to add to validated_updates
-        pending_records: list — records to add to pending_observations
+    Uses proposed_changes from the profiler output (with justifications)
+    instead of trying to link evidence IDs post-hoc.
+
+    Returns: validated_profile dict (safe to write to Django)
+    Side effects: writes to evidence ledger (validated_updates and pending)
     """
     from services.evidence_ledger_store import get_evidence_ledger_store
 
     ledger_store = get_evidence_ledger_store()
 
-    # Start with current profile as baseline
-    validated_profile = json.loads(json.dumps(current_profile)) if current_profile else {}
-    validated_update_records: list[dict] = []
-    pending_records: list[dict] = []
-
-    # ── 4d: Check pending observations that may now have enough evidence ──
-    try:
-        ready_pending = ledger_store.get_pending_ready_for_validation(
-            student_id, EVIDENCE_THRESHOLDS
-        )
-        for pending in ready_pending:
-            supporting_evidence = ledger_store.get_evidence_for_labels(
-                student_id,
-                labels=[pending["proposed_label"], pending["proposed_field"]],
-            )
-            change_for_pending = {
-                "field": pending["proposed_field"],
-                "change_type": "append",
-                "proposed_value": pending["proposed_label"],
-                "current_value": current_profile.get(
-                    pending["proposed_field"].split(".")[0], []
-                ),
-            }
-            try:
-                client = _get_ollama_client()
-                validator_result = client.chat_json(
-                    messages=[
-                        {"role": "system", "content": VALIDATOR_SYSTEM},
-                        {"role": "user", "content": _build_validator_message(
-                            change_for_pending, supporting_evidence, current_profile
-                        )},
-                    ],
-                    temperature=0.0,
-                    timeout_override=60,
-                )
-                decision = validator_result.get("decision", "NO").upper()
-                reasoning = validator_result.get("reasoning", "")
-                evidence_ids_used = validator_result.get("evidence_ids_used", [])
-
-                if decision == "YES":
-                    validated_update_records.append({
-                        "session_id": session_id,
-                        "session_type": session_type,
-                        "field": pending["proposed_field"],
-                        "value_added": pending["proposed_label"],
-                        "evidence_ids": evidence_ids_used,
-                        "validator_reasoning": reasoning,
-                        "written_at": datetime.utcnow().isoformat(),
-                    })
-                    _apply_change_to_profile(validated_profile, change_for_pending)
-                    # Remove from pending
-                    ledger_store.remove_pending_by_label(
-                        student_id, pending["proposed_label"]
-                    )
-                    logger.info(
-                        "pending_validated student=%s label=%s",
-                        student_id, pending["proposed_label"],
-                    )
-                else:
-                    # Still not enough — bump sessions_observed, leave in pending
-                    logger.info(
-                        "pending_still_rejected student=%s label=%s reason=%s",
-                        student_id, pending["proposed_label"], reasoning,
-                    )
-            except Exception as e:
-                logger.warning(
-                    "Validator failed for pending label=%s: %s",
-                    pending.get("proposed_label"), e,
-                )
-    except Exception as e:
-        logger.warning("Failed to check pending observations: %s", e)
-
-    # ── 4a: Diff the proposed update against current profile ──
-    proposed_changes = _diff_profile_updates(current_profile, proposed_updates)
+    # Extract proposed changes list from profiler output
+    proposed_changes = proposed_updates.pop("_proposed_changes", [])
 
     if not proposed_changes:
-        logger.info("No profile changes detected for student=%s", student_id)
-        return validated_profile, validated_update_records, pending_records
+        # Profiler didn't include _proposed_changes —
+        # fall back to diff-based detection
+        proposed_changes = _diff_profile_updates(current_profile, proposed_updates)
 
-    # ── 4b–4c: For each proposed change, check evidence threshold ──
-    for change in proposed_changes:
-        if change["field"] == "profile_summary":
-            # Always allow profile_summary rewrite
-            validated_profile["profile_summary"] = change["proposed_value"]
-            continue
+    # Start with current profile as base
+    # We will only add validated changes on top of it
+    validated_profile = {k: v for k, v in current_profile.items()}
 
-        # Find evidence that supports this proposed value
-        supporting_evidence = ledger_store.get_evidence_for_labels(
-            student_id,
-            labels=[change["proposed_value"], change["field"]],
+    # Check pending items that have now reached threshold
+    ready_pending = ledger_store.get_pending_ready(student_id)
+    for pending_item in ready_pending:
+        # Run validator on this pending item
+        approved, reasoning = await _run_validator(
+            field=pending_item["field"],
+            value=pending_item["value"],
+            justification=pending_item["last_justification"],
+            times_seen=pending_item["times_seen"],
+            current_profile=current_profile,
+        )
+        if approved:
+            _apply_single_change(
+                validated_profile, pending_item["field"], pending_item["value"]
+            )
+            ledger_store.record_validated_update(
+                student_id=student_id,
+                field=pending_item["field"],
+                value=pending_item["value"],
+                session_id=session_id,
+                session_type=session_type,
+                justification=(
+                    f"Graduated from pending after "
+                    f"{pending_item['times_seen']} sessions: {reasoning}"
+                ),
+                evidence_summary=(
+                    f"Seen {pending_item['times_seen']} times, "
+                    f"threshold {pending_item['threshold']}"
+                ),
+            )
+        ledger_store.remove_pending(
+            student_id, pending_item["field"], pending_item["value"]
         )
 
-        # Check threshold using confidence weights
-        weight = _evidence_weight(supporting_evidence)
-        field_base = change["field"].split(".")[0]
-        threshold = EVIDENCE_THRESHOLDS.get(field_base, 2)
+    # Process new proposed changes
+    for change in proposed_changes:
+        field = change.get("field", "")
+        value = str(change.get("value", ""))
+        justification = change.get("justification", "")
+        evidence_count = int(change.get("evidence_count", 0))
 
-        if weight < threshold:
-            # Below threshold — add to pending, skip validator
-            pending_records.append({
-                "proposed_label": change["proposed_value"],
-                "proposed_field": change["field"],
-                "proposed_value": change["proposed_value"],
-                "evidence_ids": [e["id"] for e in supporting_evidence],
-                "validator_reasoning": (
-                    f"Insufficient evidence: weight {weight:.1f} < "
-                    f"threshold {threshold}. "
-                    f"Needs {threshold - weight:.1f} more weight."
-                ),
-                "sessions_observed": 1,
-                "first_seen": datetime.utcnow().isoformat(),
-            })
-            logger.info(
-                "change_pending student=%s field=%s value=%s weight=%.1f threshold=%d",
-                student_id, change["field"], change["proposed_value"],
-                weight, threshold,
+        if not field or not value:
+            continue
+
+        # profile_summary always passes through
+        if field == "profile_summary":
+            validated_profile["profile_summary"] = value
+            ledger_store.record_validated_update(
+                student_id=student_id,
+                field="profile_summary",
+                value="[rewritten]",
+                session_id=session_id,
+                session_type=session_type,
+                justification="profile_summary always rewritten each session",
+                evidence_summary="automatic",
             )
             continue
 
-        # Above threshold — send to validator LLM
-        try:
-            client = _get_ollama_client()
-            validator_result = client.chat_json(
-                messages=[
-                    {"role": "system", "content": VALIDATOR_SYSTEM},
-                    {"role": "user", "content": _build_validator_message(
-                        change, supporting_evidence, current_profile
-                    )},
-                ],
-                temperature=0.0,
-                timeout_override=60,
+        # Check if value already in profile — always allow reinforcement
+        field_base = field.split(".")[0]
+        current_val = current_profile.get(field_base)
+        already_present = False
+        if isinstance(current_val, list) and value in current_val:
+            already_present = True
+        if already_present:
+            # Already in profile — no need to re-validate, skip
+            continue
+
+        # Get threshold for this field
+        threshold = EVIDENCE_THRESHOLDS.get(field_base, 2)
+
+        if threshold == 0:
+            # No threshold required
+            _apply_single_change(validated_profile, field, value)
+            ledger_store.record_validated_update(
+                student_id, field, value, session_id, session_type,
+                justification, f"no threshold required for {field}"
             )
+            continue
 
-            decision = validator_result.get("decision", "NO").upper()
-            reasoning = validator_result.get("reasoning", "")
-            evidence_ids_used = validator_result.get("evidence_ids_used", [])
-
-            if decision == "YES":
-                validated_update_records.append({
-                    "session_id": session_id,
-                    "session_type": session_type,
-                    "field": change["field"],
-                    "value_added": change["proposed_value"],
-                    "evidence_ids": evidence_ids_used,
-                    "validator_reasoning": reasoning,
-                    "written_at": datetime.utcnow().isoformat(),
-                })
-                _apply_change_to_profile(validated_profile, change)
-                logger.info(
-                    "change_validated student=%s field=%s value=%s",
-                    student_id, change["field"], change["proposed_value"],
+        # Check if evidence_count meets threshold
+        if evidence_count >= threshold:
+            # Run validator
+            approved, reasoning = await _run_validator(
+                field=field,
+                value=value,
+                justification=justification,
+                times_seen=evidence_count,
+                current_profile=current_profile,
+            )
+            if approved:
+                _apply_single_change(validated_profile, field, value)
+                ledger_store.record_validated_update(
+                    student_id, field, value, session_id, session_type,
+                    justification, f"validator approved: {reasoning}"
                 )
             else:
-                pending_records.append({
-                    "proposed_label": change["proposed_value"],
-                    "proposed_field": change["field"],
-                    "proposed_value": change["proposed_value"],
-                    "evidence_ids": [e["id"] for e in supporting_evidence],
-                    "validator_reasoning": reasoning,
-                    "sessions_observed": 1,
-                    "first_seen": datetime.utcnow().isoformat(),
-                })
-                logger.info(
-                    "change_rejected student=%s field=%s value=%s reason=%s",
-                    student_id, change["field"], change["proposed_value"],
-                    reasoning,
+                # Validator rejected — put in pending with count reset to 1
+                ledger_store.increment_pending(
+                    student_id, field, value, threshold,
+                    session_id, f"validator rejected: {reasoning}"
                 )
-        except Exception as e:
-            # Validator failed — default to NO
-            logger.warning(
-                "Validator LLM failed for field=%s: %s — defaulting to NO",
-                change["field"], e,
+        else:
+            # Below threshold — increment pending counter
+            ledger_store.increment_pending(
+                student_id, field, value, threshold,
+                session_id, justification
             )
-            pending_records.append({
-                "proposed_label": change["proposed_value"],
-                "proposed_field": change["field"],
-                "proposed_value": change["proposed_value"],
-                "evidence_ids": [e["id"] for e in supporting_evidence],
-                "validator_reasoning": f"Validator LLM error: {e}",
-                "sessions_observed": 1,
-                "first_seen": datetime.utcnow().isoformat(),
-            })
 
-    logger.info(
-        "validation_complete student=%s validated=%d pending=%d",
-        student_id, len(validated_update_records), len(pending_records),
-    )
-    return validated_profile, validated_update_records, pending_records
+    return validated_profile
+
 
 
 # ── Emotion fusion ───────────────────────────────────────────────
@@ -993,10 +1046,8 @@ async def run_lab_profiler(
     Returns the updated profile_data dict.
     """
     from services.lab_store import get_coding_lab_store
-    from services.evidence_ledger_store import get_evidence_ledger_store
 
     lab_store = get_coding_lab_store()
-    ledger_store = get_evidence_ledger_store()
 
     # Get everything the profiler needs — this method includes timestamps
     lab_data = lab_store.get_lab_notes_for_profiler(lab_id)
@@ -1005,17 +1056,17 @@ async def run_lab_profiler(
         logger.warning("Lab profiler: no lab data found for lab_id=%s", lab_id)
         return {}
 
-    # ── Evidence extraction (BEFORE existing profiler LLM call) ──
+    # ── Pass 1: Evidence extraction (in-memory only, not persisted) ──
     evidence_items = await _extract_evidence(
         session_id=lab_id,
         session_type="lab_session",
         raw_data=lab_data,
     )
-    for item in evidence_items:
-        item["id"] = f"ev_{student_id}_{uuid.uuid4().hex[:8]}"
-        item["session_id"] = lab_id
-        item["session_type"] = "lab_session"
-    ledger_store.append_evidence(student_id, evidence_items)
+    qualifying_count = len(evidence_items)
+    logger.info(
+        "Lab profiler: %d qualifying observations extracted",
+        qualifying_count,
+    )
 
     # Fetch current profile to merge into
     current_profile = await _fetch_student_profile(student_id)
@@ -1068,7 +1119,23 @@ Based on this lab data, update the student profile. Remember:
 - REWRITE profile_summary to incorporate lab findings
 - POPULATE unresolved_questions from notes containing questions \
 and unasked questions on difficult topics
-- Return ONLY the updated profile_data JSON object"""
+- Return ONLY the updated profile_data JSON object
+
+IMPORTANT — PROPOSED CHANGES TRACKING:
+Return the updated profile_data JSON with one additional key:
+"_proposed_changes": [
+    {{
+        "field": "learning_style_signals",
+        "value": "prefers hands-on activities",
+        "justification": "Student wrote detailed notes during task cell — direct behavioral evidence",
+        "evidence_count": 1,
+        "confidence": "high"
+    }}
+]
+The _proposed_changes array must list EVERY change you are proposing \
+compared to the existing profile. For list fields, list each new item \
+separately. For profile_summary, list it as a single 'rewrite' entry.
+This key is stripped before writing to the database — it is for validation only."""
 
     # ── Existing lab profiler LLM call (UNCHANGED) ──
     try:
@@ -1086,21 +1153,23 @@ and unasked questions on difficult topics
         if "unresolved_questions" not in updated_profile:
             updated_profile["unresolved_questions"] = []
 
-        # ── Validation (AFTER existing profiler LLM call) ──
-        validated_profile, validated_records, pending_records = \
-            await _validate_proposed_updates(
-                student_id=student_id,
-                proposed_updates=updated_profile,
-                current_profile=current_profile,
-                session_id=lab_id,
-                session_type="lab_session",
-            )
+        # ── Pass 3: Validation (AFTER existing profiler LLM call) ──
+        validated_profile = await _validate_proposed_updates(
+            student_id=student_id,
+            proposed_updates=updated_profile,
+            current_profile=current_profile,
+            session_id=lab_id,
+            session_type="lab_session",
+            qualifying_observation_count=qualifying_count,
+        )
 
-        # Save ledger records
-        for record in validated_records:
-            ledger_store.add_validated_update(student_id, record)
-        for record in pending_records:
-            ledger_store.add_pending_observation(student_id, record)
+        # Recover profile_summary if validator did not write it
+        # (profile_summary lives outside profile_data and never passes
+        # through _validate_proposed_updates — must be recovered explicitly)
+        if "profile_summary" not in validated_profile:
+            ps = updated_profile.get("profile_summary") or current_profile.get("profile_summary", "")
+            if ps:
+                validated_profile["profile_summary"] = ps
 
         # Patch Django profile with ONLY the validated profile
         await _patch_student_profile(student_id, validated_profile)
@@ -1110,4 +1179,209 @@ and unasked questions on difficult topics
     except Exception as e:
         logger.error("Lab profiler failed for lab_id=%s: %s", lab_id, e)
         return current_profile
+
+
+async def run_problem_set_profiler(
+    student_id: str,
+    problem_set_id: str,
+    lesson_id: str,
+) -> dict:
+    """
+    Runs when the student reaches the problem set summary screen
+    (after viewing all results and solutions).
+    Analyzes objective submission data to update the student profile.
+    Uses the same evidence extraction + validation pipeline as other profilers.
+    Returns the updated profile_data dict.
+    """
+    from services.problem_set_store import get_problem_set_store
+    from collections import Counter
+
+    ps_store = get_problem_set_store()
+
+    # Load the full problem set with all submissions
+    problem_set = ps_store.load(student_id, lesson_id, problem_set_id)
+    if not problem_set:
+        logger.warning(
+            "Problem set profiler: no problem set found id=%s", problem_set_id
+        )
+        return {}
+
+    # Build structured submission summary for the evidence extractor
+    # and profiler prompt
+    questions_summary = []
+    all_mistake_tags = []
+    hint_3_topics = []
+    no_hint_high_score_topics = []
+
+    for question in (problem_set.questions or []):
+        qid = question.id if hasattr(question, "id") else question.get("id", "")
+        qtopic = question.topic if hasattr(question, "topic") else question.get("topic", "")
+        qtarget = (
+            question.target_weakness
+            if hasattr(question, "target_weakness")
+            else question.get("target_weakness")
+        )
+
+        # Find submission for this question
+        submissions = problem_set.submissions or {}
+        sub = submissions.get(qid)
+        if not sub:
+            continue
+
+        # Handle both Pydantic model and dict
+        sub_dict = sub.model_dump() if hasattr(sub, "model_dump") else sub
+        result = sub_dict.get("result", {})
+        hints_used = sub_dict.get("hints_used", 0)
+        hint_deductions = sub_dict.get("hint_deductions", {})
+        final_score = result.get("final_score", result.get("score", 0))
+        mistake_tags = result.get("mistake_tags", [])
+        failed_evidence = result.get("failed_evidence", [])
+        evaluated_rubric = result.get("evaluated_rubric", [])
+
+        all_mistake_tags.extend(mistake_tags)
+
+        # Track hint 3 usage
+        if hints_used >= 3 or any(v > 0.10 * 40 for v in hint_deductions.values()):
+            hint_3_topics.append(qtopic)
+
+        if hints_used == 0 and final_score >= 80:
+            no_hint_high_score_topics.append(qtopic)
+
+        # Build rubric category breakdown
+        category_results = {}
+        for crit in evaluated_rubric:
+            if isinstance(crit, dict):
+                cat = crit.get("category", "unknown")
+                checks = crit.get("checks", [])
+                passed = sum(1 for c in checks if c.get("result") is True)
+                total = len(checks)
+                category_results[cat] = {
+                    "passed": passed,
+                    "total": total,
+                    "all_passed": passed == total,
+                }
+
+        questions_summary.append({
+            "topic": qtopic,
+            "target_weakness": qtarget,
+            "final_score": final_score,
+            "hints_used": hints_used,
+            "mistake_tags": mistake_tags,
+            "failed_evidence": failed_evidence[:3],  # cap for prompt length
+            "category_results": category_results,
+        })
+
+    if not questions_summary:
+        logger.warning(
+            "Problem set profiler: no submissions found for problem set %s",
+            problem_set_id
+        )
+        return {}
+
+    # Count recurrent mistakes
+    mistake_counts = Counter(all_mistake_tags)
+    recurrent_in_set = [tag for tag, count in mistake_counts.items() if count >= 2]
+
+    # Build raw data dict for evidence extractor
+    raw_data = {
+        "questions": questions_summary,
+        "recurrent_mistakes_in_set": recurrent_in_set,
+        "hint_3_topics": hint_3_topics,
+        "no_hint_high_score_topics": no_hint_high_score_topics,
+        "total_questions": len(questions_summary),
+        "average_score": round(
+            sum(q["final_score"] for q in questions_summary) / len(questions_summary)
+        ) if questions_summary else 0,
+    }
+
+    # ── Pass 1: Evidence extraction (in-memory only) ──
+    evidence_items = await _extract_evidence(
+        session_id=problem_set_id,
+        session_type="problem_set",
+        raw_data=raw_data,
+    )
+    qualifying_count = len(evidence_items)
+    logger.info(
+        "Problem set profiler: %d qualifying observations extracted",
+        qualifying_count,
+    )
+
+    # ── Pass 2: Profiler LLM ──
+    current_profile = await _fetch_student_profile(student_id)
+
+    user_prompt = f"""CURRENT STUDENT PROFILE:
+{json.dumps(current_profile, indent=2)}
+
+PROBLEM SET SUBMISSION DATA:
+Total questions: {raw_data['total_questions']}
+Average score: {raw_data['average_score']}
+Recurrent mistakes across questions: {recurrent_in_set}
+Topics where student needed most direct hint (hint 3): {hint_3_topics}
+Topics where student scored 80+ with no hints: {no_hint_high_score_topics}
+
+Per-question breakdown:
+{json.dumps(questions_summary, indent=2)}
+
+Based on this objective submission data, update the student profile.
+Remember:
+- APPEND to list fields, never replace
+- REWRITE profile_summary incorporating problem set performance
+- High-confidence data: rubric category failures and hint 3 usage
+- Medium-confidence data: single-question score patterns
+- Return ONLY the updated profile_data JSON object
+
+IMPORTANT — PROPOSED CHANGES TRACKING:
+Return the updated profile_data JSON with one additional key:
+"_proposed_changes": [
+    {{
+        "field": "topics_of_difficulty",
+        "value": "edge case handling",
+        "justification": "Student failed edge_cases rubric category in 3/4 questions — high-confidence pattern",
+        "evidence_count": 3,
+        "confidence": "high"
+    }}
+]
+The _proposed_changes array must list EVERY change you are proposing \
+compared to the existing profile. For list fields, list each new item \
+separately. For profile_summary, list it as a single 'rewrite' entry.
+This key is stripped before writing to the database — it is for validation only."""
+
+    try:
+        client = _get_ollama_client()
+        proposed_profile = client.chat_json(
+            messages=[
+                {"role": "system", "content": PROBLEM_SET_PROFILER_SYSTEM},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
+            timeout_override=120,
+        )
+    except Exception as e:
+        logger.error(
+            "Problem set profiler LLM failed for ps_id=%s: %s",
+            problem_set_id, e
+        )
+        return current_profile
+
+    # ── Pass 3: Validation ──
+    validated_profile = await _validate_proposed_updates(
+        student_id=student_id,
+        proposed_updates=proposed_profile,
+        current_profile=current_profile,
+        session_id=problem_set_id,
+        session_type="problem_set",
+        qualifying_observation_count=qualifying_count,
+    )
+
+    # Recover profile_summary if validator did not write it
+    if "profile_summary" not in validated_profile:
+        ps = proposed_profile.get("profile_summary") or current_profile.get("profile_summary", "")
+        if ps:
+            validated_profile["profile_summary"] = ps
+
+    # Write validated profile to Django
+    if validated_profile:
+        await _patch_student_profile(student_id, validated_profile)
+
+    return validated_profile
 

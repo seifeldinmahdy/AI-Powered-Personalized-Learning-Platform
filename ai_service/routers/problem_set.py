@@ -132,6 +132,43 @@ async def get_hint(request: HintRequest):
         raise HTTPException(status_code=500, detail=f"Hint generation failed: {e}")
 
 
+class SummaryViewedRequest(BaseModel):
+    problem_set_id: str
+    student_id: str
+    lesson_id: str
+
+
+@router.post("/summary-viewed")
+async def summary_viewed(request: SummaryViewedRequest):
+    """
+    Fired when the student reaches the problem set summary screen.
+    Validates the problem set exists, then fires the problem set profiler
+    as a background task. Returns immediately.
+    """
+    import asyncio
+
+    store = get_problem_set_store()
+    problem_set = store.load(
+        request.student_id, request.lesson_id, request.problem_set_id
+    )
+    if not problem_set:
+        raise HTTPException(status_code=404, detail="Problem set not found")
+
+    try:
+        from services.profiler_service import run_problem_set_profiler
+        asyncio.create_task(
+            run_problem_set_profiler(
+                student_id=request.student_id,
+                problem_set_id=request.problem_set_id,
+                lesson_id=request.lesson_id,
+            )
+        )
+    except Exception as e:
+        logger.warning("Failed to launch problem set profiler: %s", e)
+
+    return {"status": "ok"}
+
+
 @router.get("/{problem_set_id}")
 async def get_problem_set(problem_set_id: str, student_id: str = ""):
     """Get a problem set with submissions merged."""

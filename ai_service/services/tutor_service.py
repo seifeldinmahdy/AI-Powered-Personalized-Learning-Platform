@@ -216,6 +216,68 @@ TUTOR_SKILLS = {
         "and ask them to complete or apply the remaining part. "
         "Example: 'A loop keeps running as long as a condition is true. So what do you think happens if that condition never becomes false?'"
     ),
+
+    # ── Profile-driven skills (activated by student profile data) ──
+
+    "DIFFICULTY_TOPIC": (
+        "SKILL — DIFFICULTY TOPIC: The current subtopic covers something "
+        "this student has historically struggled with. Slow down. Use at "
+        "least two concrete real-world examples before introducing any "
+        "abstraction. Check understanding with a direct question before "
+        "moving on. Do not assume prior knowledge for this concept even "
+        "if it seems basic."
+    ),
+
+    "STRENGTH_TOPIC": (
+        "SKILL — STRENGTH TOPIC: The current subtopic covers something "
+        "this student already understands well. Move at a faster pace. "
+        "Skip basic definitions. Push toward a more challenging application, "
+        "edge case, or extension of this concept to keep them engaged."
+    ),
+
+    "VISUAL_LEARNER": (
+        "SKILL — VISUAL LEARNER: This student learns best through visual "
+        "and spatial thinking. Use spatial language throughout: 'picture "
+        "this as a tree', 'imagine a grid where each row represents...', "
+        "'draw a box for each step'. Reference any diagrams or visuals on "
+        "the current slide explicitly. Avoid purely abstract descriptions."
+    ),
+
+    "HANDS_ON_LEARNER": (
+        "SKILL — HANDS-ON LEARNER: This student learns best by doing. "
+        "Lead with a code example or concrete manipulation before explaining "
+        "theory. Say things like 'try changing this value and see what "
+        "happens' or 'if you ran this right now, you would see...'. "
+        "Ground every concept in something the student can immediately touch."
+    ),
+
+    "SURFACE_UNRESOLVED": (
+        "SKILL — UNRESOLVED QUESTION: This student had an open question "
+        "from a previous session that relates to the current topic. "
+        "Weave the answer into your explanation naturally without saying "
+        "'you asked this before'. Just address it as part of the content."
+    ),
+
+    "PACE_SLOW": (
+        "SKILL — PACE PREFERENCE SLOW: This student has expressed a "
+        "preference for a slower pace. Take extra time on each concept. "
+        "Use more examples than usual. Do not rush transitions."
+    ),
+
+    "PACE_FAST": (
+        "SKILL — PACE PREFERENCE FAST: This student has expressed a "
+        "preference for a faster pace. Be concise. Skip extended analogies "
+        "unless the student seems confused. Move to the next concept "
+        "promptly after a brief comprehension check."
+    ),
+
+    "RECURRENT_MISTAKE": (
+        "SKILL — RECURRENT MISTAKE PATTERN: This student has a known "
+        "recurring mistake pattern related to the current topic. "
+        "Proactively address the common mistake before the student makes "
+        "it. Say something like 'one thing many students get tripped up "
+        "on here is...' without singling out the student personally."
+    ),
 }
 
 
@@ -235,6 +297,7 @@ class TutorSession:
 
     session_id: str
     topics: List[dict]  # [{name: str, subtopics: [str, ...]}]
+    student_id: Optional[str] = None
     current_topic_idx: int = 0
     current_subtopic_idx: int = 0
     running_summary: str = ""
@@ -484,12 +547,51 @@ def _sync_to_shared_store(session: TutorSession) -> None:
 
 # ── Public API ──
 
+
+async def _fetch_student_profile_for_tutor(student_id: str) -> dict:
+    """Fetch student profile from Django for tutor personalization."""
+    django_url = os.getenv("DJANGO_API_URL", "http://localhost:8000/api")
+    service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{django_url}/progress/learning-profile/",
+                headers={
+                    "X-Student-ID": student_id,
+                    "X-Service-Key": service_key,
+                },
+            )
+            if response.status_code == 200:
+                return response.json()
+    except Exception as e:
+        logger.warning("Tutor profile fetch failed: %s", e)
+    return {}
+
+
+async def _fetch_and_attach_profile(session: TutorSession) -> None:
+    """Async helper to fetch and attach profile to session after creation."""
+    if not session.student_id:
+        return
+    profile_data = await _fetch_student_profile_for_tutor(session.student_id)
+    if profile_data:
+        session.student_profile_data = profile_data.get("profile_data")
+        if not session.student_profile_summary:
+            session.student_profile_summary = profile_data.get(
+                "profile_summary", ""
+            )
+        logger.info(
+            "Profile attached to session %s for student %s",
+            session.session_id, session.student_id
+        )
+
+
 def create_session(
     topics: List[dict],
     voice: str = "en-US-GuyNeural",
     session_id: Optional[str] = None,
     student_profile_summary: Optional[str] = None,
     student_profile_data: Optional[dict] = None,
+    student_id: Optional[str] = None,
 ) -> TutorSession:
     """Create a new tutoring session."""
     sid = session_id or str(uuid.uuid4())
@@ -514,9 +616,33 @@ def create_session(
         status="idle",
         student_profile_summary=student_profile_summary,
         student_profile_data=student_profile_data,
+        student_id=student_id,
     )
     _sessions[sid] = session
     logger.info(f"Session {sid} created with {len(topics)} topics")
+
+    # If no profile data was passed by caller, try to fetch from Django
+    if session.student_profile_data is None and session.student_id:
+        try:
+            import asyncio
+            # create_session is sync — run the async fetch in the event loop
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Schedule fetch without blocking — profile will be
+                # available by the time the first chunk is generated
+                asyncio.ensure_future(_fetch_and_attach_profile(session))
+            else:
+                profile_data = loop.run_until_complete(
+                    _fetch_student_profile_for_tutor(session.student_id)
+                )
+                if profile_data:
+                    session.student_profile_data = profile_data.get("profile_data")
+                    session.student_profile_summary = (
+                        session.student_profile_summary
+                        or profile_data.get("profile_summary", "")
+                    )
+        except Exception as e:
+            logger.warning("Could not pre-fetch student profile: %s", e)
 
     # ── Seed SharedSessionStore ──
     from services.session_store import get_session_store
@@ -618,11 +744,107 @@ async def generate_lecture_chunk(
     if session.student_profile_data or session.student_profile_summary:
         active_skills.append("ENGAGEMENT_ADAPT")
 
+    # ── Profile-driven skill activation ──
+    topic_name = session.current_topic or "General Review"
+    subtopic_name = session.current_subtopic
+
+    if session.student_profile_data:
+        profile = session.student_profile_data
+        subtopic_lower = (subtopic_name or "").lower()
+        topic_lower = (topic_name or "").lower()
+        combined_lower = f"{subtopic_lower} {topic_lower}"
+
+        difficulties = [str(d).lower() for d in profile.get("topics_of_difficulty", [])]
+        strengths = [str(s).lower() for s in profile.get("topics_of_strength", [])]
+        style_signals = [str(s).lower() for s in profile.get("learning_style_signals", [])]
+        intentions = [str(i).lower() for i in profile.get("notable_intentions", [])]
+        unresolved = profile.get("unresolved_questions", [])
+        recurrent_mistakes = profile.get("recurrent_mistakes", [])
+
+        # Difficulty topic detection — substring match in both directions
+        is_difficulty_topic = any(
+            d in combined_lower or any(word in d for word in combined_lower.split() if len(word) > 3)
+            for d in difficulties
+        )
+        is_strength_topic = any(
+            s in combined_lower or any(word in s for word in combined_lower.split() if len(word) > 3)
+            for s in strengths
+        )
+
+        # Only activate one of DIFFICULTY or STRENGTH — difficulty takes priority
+        if is_difficulty_topic:
+            active_skills.append("DIFFICULTY_TOPIC")
+        elif is_strength_topic:
+            active_skills.append("STRENGTH_TOPIC")
+
+        # Learning style detection
+        is_visual = any("visual" in s or "diagram" in s or "spatial" in s for s in style_signals)
+        is_hands_on = any("hands" in s or "practical" in s or "doing" in s or "concrete" in s for s in style_signals)
+
+        if is_visual:
+            active_skills.append("VISUAL_LEARNER")
+        elif is_hands_on:
+            # Only add HANDS_ON if VISUAL not already added — avoid conflicting style skills
+            active_skills.append("HANDS_ON_LEARNER")
+
+        # Pace preference detection from notable_intentions
+        wants_slow = any("slow" in i or "slower" in i or "more time" in i for i in intentions)
+        wants_fast = any("fast" in i or "faster" in i or "skip" in i or "quick" in i for i in intentions)
+        if wants_slow:
+            active_skills.append("PACE_SLOW")
+        elif wants_fast:
+            active_skills.append("PACE_FAST")
+
+        # Unresolved question surfacing — find one relevant to current subtopic
+        if not hasattr(session, '_surfaced_unresolved'):
+            session._surfaced_unresolved = set()
+
+        for q in unresolved:
+            q_words = [w for w in q.lower().split() if len(w) > 4]
+            if (
+                q not in session._surfaced_unresolved
+                and any(w in combined_lower for w in q_words)
+            ):
+                # Temporarily customize the skill text with the actual question
+                original_skill = TUTOR_SKILLS["SURFACE_UNRESOLVED"]
+                TUTOR_SKILLS["SURFACE_UNRESOLVED"] = (
+                    original_skill
+                    + f' The specific unresolved question is: "{q}"'
+                )
+                active_skills.append("SURFACE_UNRESOLVED")
+                session._surfaced_unresolved.add(q)
+                break  # only one per chunk
+
+        # Recurrent mistake detection — if current topic relates to a known mistake
+        if recurrent_mistakes:
+            recurrent_lower = [str(m).lower() for m in recurrent_mistakes]
+            mistake_match = any(
+                m in combined_lower or any(w in m for w in combined_lower.split() if len(w) > 3)
+                for m in recurrent_lower
+            )
+            if mistake_match:
+                active_skills.append("RECURRENT_MISTAKE")
+
+    # ── Remove ENGAGEMENT_ADAPT if more specific profile skills were activated ──
+    profile_specific_skills = {
+        "DIFFICULTY_TOPIC", "STRENGTH_TOPIC", "VISUAL_LEARNER",
+        "HANDS_ON_LEARNER", "PACE_SLOW", "PACE_FAST",
+        "SURFACE_UNRESOLVED", "RECURRENT_MISTAKE"
+    }
+    if any(s in active_skills for s in profile_specific_skills):
+        active_skills = [s for s in active_skills if s != "ENGAGEMENT_ADAPT"]
+
     # Build the composed system prompt
     system_prompt = _build_system_prompt(LECTURE_SYSTEM_PROMPT, active_skills)
 
-    topic_name = session.current_topic or "General Review"
-    subtopic_name = session.current_subtopic
+    # Restore SURFACE_UNRESOLVED to its template form after use
+    if "SURFACE_UNRESOLVED" in active_skills:
+        TUTOR_SKILLS["SURFACE_UNRESOLVED"] = (
+            "SKILL — UNRESOLVED QUESTION: This student had an open question "
+            "from a previous session that relates to the current topic. "
+            "Weave the answer into your explanation naturally without saying "
+            "'you asked this before'. Just address it as part of the content."
+        )
 
     context_parts = []
     if session.running_summary:
@@ -656,6 +878,7 @@ async def generate_lecture_chunk(
     if session.is_first_chunk:
         context_parts.append("This is the BEGINNING of the session. Start with a brief warm greeting.")
         session.is_first_chunk = False
+
 
     # Look ahead to tell the model what's next
     next_item = _peek_next(session)
@@ -834,6 +1057,17 @@ async def answer_question(
 
     if student_emotion and student_emotion.lower() in ("confused", "surprise", "fear"):
         qa_skills.append("CONFUSION_DIAGNOSIS")
+
+    # Profile-driven skills in Q&A context
+    if session.student_profile_data:
+        profile = session.student_profile_data
+        style_signals = [str(s).lower() for s in profile.get("learning_style_signals", [])]
+        is_visual = any("visual" in s or "diagram" in s for s in style_signals)
+        is_hands_on = any("hands" in s or "concrete" in s for s in style_signals)
+        if is_visual:
+            qa_skills.append("VISUAL_LEARNER")
+        elif is_hands_on:
+            qa_skills.append("HANDS_ON_LEARNER")
 
     system_prompt = _build_system_prompt(ANSWER_SYSTEM_PROMPT, qa_skills)
 

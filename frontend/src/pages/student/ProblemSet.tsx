@@ -7,6 +7,7 @@ import {
     getStudentProblemSets,
     submitAnswer,
     getDynamicHint,
+    notifySummaryViewed,
     type ProblemSetData,
     type ProblemSetQuestion,
     type EvaluationResult,
@@ -87,6 +88,19 @@ export default function ProblemSet() {
     const current = questions[currentIdx] as ProblemSetQuestion | undefined;
     const allDone = questions.length > 0 && questions.every(q => !!results[q.id] || !!problemSet?.submissions?.[q.id]);
     const showSummary = allDone && currentIdx >= questions.length;
+
+    // Fire once when summary screen mounts — triggers problem set profiler
+    useEffect(() => {
+        if (showSummary && problemSet?.problem_set_id && studentId && lessonId) {
+            notifySummaryViewed({
+                problemSetId: problemSet.problem_set_id,
+                studentId,
+                lessonId,
+            }).catch(err =>
+                console.warn('Summary viewed notification failed:', err)
+            );
+        }
+    }, [showSummary]);  // eslint-disable-line react-hooks/exhaustive-deps
 
     /* ── load / generate ───────────────────────────────────── */
 

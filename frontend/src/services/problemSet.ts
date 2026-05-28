@@ -194,3 +194,24 @@ export async function getDynamicHint(params: {
     }
     return res.json();
 }
+
+export async function notifySummaryViewed(params: {
+    problemSetId: string;
+    studentId: string;
+    lessonId: string;
+}): Promise<{ status: string }> {
+    const res = await fetch(`${AI_URL}/problem-set/summary-viewed`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            problem_set_id: params.problemSetId,
+            student_id: params.studentId,
+            lesson_id: params.lessonId,
+        }),
+    });
+    if (!res.ok) {
+        const detail = await res.text();
+        throw new Error(`Summary viewed notification failed: ${detail}`);
+    }
+    return res.json();
+}

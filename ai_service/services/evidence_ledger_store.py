@@ -1,24 +1,34 @@
 """
 Local file persistence for the evidence ledger.
 
-Each student accumulates behavioral observations and validation records
-into a single JSON file under ``ai_service/data/evidence_ledger/{student_id}/``.
-This mirrors the lightweight persistence approach used by problem_set_store
-and lab_store.
+Each student has a ledger JSON file under
+``ai_service/data/evidence_ledger/{student_id}/ledger.json``
+that records **outcomes only** — validated profile writes and pending
+observation counts.  Raw observations are never persisted.
+
+Ledger JSON structure::
+
+    {
+      "student_id": "16",
+      "last_updated": "2026-05-28T21:45:55Z",
+      "validated_updates": [ ... ],
+      "pending": [ ... ]
+    }
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "evidence_ledger"
+
+# Maximum validated_updates entries before oldest are pruned.
+_MAX_VALIDATED = 200
 
 
 class EvidenceLedgerStore:
@@ -36,43 +46,30 @@ class EvidenceLedgerStore:
         return d
 
     def get_ledger_path(self, student_id: str) -> Path:
-        """Returns path to the student's ledger JSON file."""
+        """Returns ``./data/evidence_ledger/{student_id}/ledger.json``."""
         return self._student_dir(student_id) / "ledger.json"
 
     # ── Load / Save ─────────────────────────────────────────────
 
     def load(self, student_id: str) -> dict:
-        """
-        Load the full ledger for a student.
-        Returns empty ledger structure if file does not exist.
-        """
+        """Load ledger or return empty structure."""
         path = self.get_ledger_path(student_id)
-        if not path.exists():
-            return {
-                "student_id": student_id,
-                "last_updated": "",
-                "evidence": [],
-                "pending_observations": [],
-                "validated_updates": [],
-            }
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            return raw
-        except Exception as exc:
-            logger.error(
-                "evidence_ledger_load_failed student_id=%s error=%s",
-                student_id, exc,
-            )
-            return {
-                "student_id": student_id,
-                "last_updated": "",
-                "evidence": [],
-                "pending_observations": [],
-                "validated_updates": [],
-            }
+        if path.exists():
+            try:
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                return data
+            except Exception as e:
+                logger.warning("Failed to load ledger for %s: %s", student_id, e)
+        return {
+            "student_id": student_id,
+            "last_updated": "",
+            "validated_updates": [],
+            "pending": [],
+        }
 
     def save(self, student_id: str, ledger: dict) -> None:
-        """Save the full ledger dict to disk. Sets last_updated to now."""
+        """Save ledger dict.  Sets ``last_updated`` to ``utcnow().isoformat()``."""
         ledger["last_updated"] = datetime.utcnow().isoformat() + "Z"
         path = self.get_ledger_path(student_id)
         path.write_text(
@@ -81,166 +78,124 @@ class EvidenceLedgerStore:
         )
         logger.info("evidence_ledger_saved student_id=%s path=%s", student_id, path)
 
-    # ── Evidence ────────────────────────────────────────────────
+    # ── Validated updates ───────────────────────────────────────
 
-    def append_evidence(
+    def record_validated_update(
         self,
         student_id: str,
-        items: list[dict],
+        field: str,
+        value: str,
+        session_id: str,
+        session_type: str,
+        justification: str,
+        evidence_summary: str,
     ) -> None:
         """
-        Append new evidence items to the ledger.
-        Each item shape:
-        {
-            "id": str,
-            "session_id": str,
-            "session_type": str,
-            "source": str,
-            "timestamp": str,
-            "raw_observation": str,
-            "supports_labels": list[str],
-            "confidence": str,
-            "used_in_profile_update": False
-        }
+        Record a change that passed validation and was written to Django.
+
+        Appends to ``validated_updates``.  Caps at ``_MAX_VALIDATED`` —
+        removes oldest entries if over the limit.
         """
-        if not items:
-            return
         ledger = self.load(student_id)
-        ledger["evidence"].extend(items)
+        ledger["validated_updates"].append({
+            "field": field,
+            "value": value,
+            "written_at": datetime.utcnow().isoformat() + "Z",
+            "session_id": session_id,
+            "session_type": session_type,
+            "justification": justification,
+            "evidence_summary": evidence_summary,
+        })
+        # Cap at _MAX_VALIDATED — remove oldest
+        if len(ledger["validated_updates"]) > _MAX_VALIDATED:
+            ledger["validated_updates"] = ledger["validated_updates"][-_MAX_VALIDATED:]
         self.save(student_id, ledger)
-        logger.info(
-            "evidence_appended student_id=%s count=%d total=%d",
-            student_id, len(items), len(ledger["evidence"]),
-        )
 
     # ── Pending observations ────────────────────────────────────
 
-    def add_pending_observation(
+    def increment_pending(
         self,
         student_id: str,
-        pending: dict,
-    ) -> None:
+        field: str,
+        value: str,
+        threshold: int,
+        session_id: str,
+        justification: str,
+    ) -> dict:
         """
-        Add a rejected proposed update to pending_observations.
-        If a pending item with the same proposed_label already exists,
-        merge: extend its evidence_ids, increment sessions_observed.
+        Increment the counter for a pending observation.
+
+        If an entry with this exact ``(field, value)`` already exists,
+        increment ``times_seen`` and update ``last_session_id`` /
+        ``last_justification``.  Otherwise create it with
+        ``times_seen=1``.
+
+        Returns the updated pending entry.
         """
         ledger = self.load(student_id)
-
-        # Check for existing pending with same proposed_label
         existing = None
-        for p in ledger["pending_observations"]:
-            if p.get("proposed_label") == pending.get("proposed_label"):
+        for p in ledger["pending"]:
+            if p.get("field") == field and p.get("value") == value:
                 existing = p
                 break
 
         if existing is not None:
-            # Merge: extend evidence_ids (deduplicate), bump sessions_observed
-            existing_ids = set(existing.get("evidence_ids", []))
-            new_ids = pending.get("evidence_ids", [])
-            for eid in new_ids:
-                if eid not in existing_ids:
-                    existing["evidence_ids"].append(eid)
-            existing["sessions_observed"] = existing.get("sessions_observed", 1) + 1
-            # Keep the latest validator_reasoning
-            existing["validator_reasoning"] = pending.get(
-                "validator_reasoning", existing.get("validator_reasoning", "")
-            )
+            existing["times_seen"] = existing.get("times_seen", 1) + 1
+            existing["last_session_id"] = session_id
+            existing["last_justification"] = justification
+            entry = existing
         else:
-            ledger["pending_observations"].append(pending)
+            entry = {
+                "field": field,
+                "value": value,
+                "first_seen": datetime.utcnow().isoformat() + "Z",
+                "times_seen": 1,
+                "threshold": threshold,
+                "last_session_id": session_id,
+                "last_justification": justification,
+            }
+            ledger["pending"].append(entry)
 
         self.save(student_id, ledger)
+        return entry
 
-    # ── Validated updates ───────────────────────────────────────
+    def get_pending_ready(self, student_id: str) -> list[dict]:
+        """Return all pending entries where ``times_seen >= threshold``."""
+        ledger = self.load(student_id)
+        return [
+            p for p in ledger.get("pending", [])
+            if p.get("times_seen", 0) >= p.get("threshold", 2)
+        ]
 
-    def add_validated_update(
+    def remove_pending(
         self,
         student_id: str,
-        update: dict,
+        field: str,
+        value: str,
     ) -> None:
         """
-        Record a validated update that was written to the profile.
-        Also mark the referenced evidence_ids as used_in_profile_update=True.
+        Remove a pending entry by ``(field, value)`` after it has been
+        processed by the validator (whether approved or rejected).
         """
         ledger = self.load(student_id)
-        ledger["validated_updates"].append(update)
-
-        # Mark evidence items as used
-        used_ids = set(update.get("evidence_ids", []))
-        if used_ids:
-            for ev in ledger["evidence"]:
-                if ev.get("id") in used_ids:
-                    ev["used_in_profile_update"] = True
-
+        ledger["pending"] = [
+            p for p in ledger["pending"]
+            if not (p.get("field") == field and p.get("value") == value)
+        ]
         self.save(student_id, ledger)
 
     # ── Queries ─────────────────────────────────────────────────
 
-    def get_pending_ready_for_validation(
+    def get_recent_validated(
         self,
         student_id: str,
-        thresholds: dict[str, int],
+        limit: int = 20,
     ) -> list[dict]:
-        """
-        Return pending observations whose evidence_ids count has reached
-        or exceeded the threshold for their proposed_field.
-        Uses confidence-weighted counting.
-        """
-        from services.profiler_service import _evidence_weight
-
+        """Return the most recent *N* ``validated_updates`` for audit/debug."""
         ledger = self.load(student_id)
-        evidence_by_id = {ev["id"]: ev for ev in ledger.get("evidence", [])}
-        ready = []
+        return ledger.get("validated_updates", [])[-limit:]
 
-        for pending in ledger.get("pending_observations", []):
-            field_base = pending.get("proposed_field", "").split(".")[0]
-            threshold = thresholds.get(field_base, 2)
 
-            # Gather evidence items for this pending observation
-            evidence_items = [
-                evidence_by_id[eid]
-                for eid in pending.get("evidence_ids", [])
-                if eid in evidence_by_id
-            ]
-            weight = _evidence_weight(evidence_items)
-
-            if weight >= threshold:
-                ready.append(pending)
-
-        return ready
-
-    def get_evidence_for_labels(
-        self,
-        student_id: str,
-        labels: list[str],
-    ) -> list[dict]:
-        """
-        Return all evidence items where supports_labels intersects with
-        the given labels list.
-        """
-        ledger = self.load(student_id)
-        labels_set = set(labels)
-        results = []
-
-        for ev in ledger.get("evidence", []):
-            ev_labels = set(ev.get("supports_labels", []))
-            if ev_labels & labels_set:
-                results.append(ev)
-
-        return results
-
-    def remove_pending_by_label(
-        self,
-        student_id: str,
-        proposed_label: str,
-    ) -> None:
-        """Remove a pending observation after it has been validated."""
-        ledger = self.load(student_id)
-        ledger["pending_observations"] = [
-            p for p in ledger["pending_observations"]
-            if p.get("proposed_label") != proposed_label
-        ]
-        self.save(student_id, ledger)
 
 
 # ── Module-level singleton ──────────────────────────────────────
