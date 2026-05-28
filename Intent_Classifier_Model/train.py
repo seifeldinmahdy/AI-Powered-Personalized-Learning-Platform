@@ -24,22 +24,20 @@ import warnings
 warnings.filterwarnings('ignore')
 from pathlib import Path
 
-import mlflow
+import wandb
 
 from TinyBert import IntentClassifier, IntentDataset
 
 INTENT_NAMES = ['On-Topic Question', 'Off-Topic Question', 'Emotional-State', 'Pace-Related', 'Repeat/clarification']
-DEFAULT_CONFIDENCE_THRESHOLD = 0.55
+DEFAULT_CONFIDENCE_THRESHOLD = 0.65
 BASE_DIR = Path(__file__).resolve().parent
 REAL_UTTERANCE_PATH = str(BASE_DIR / 'data' / 'real_utterances.csv')
-MLFLOW_EXPERIMENT_NAME = os.getenv('MLFLOW_EXPERIMENT_NAME', 'intent-classifier-distilbert')
 
 
 # ─────────────────────────────────────────────────────────────────────
 # UTILITIES
 # ─────────────────────────────────────────────────────────────────────
 
-DEFAULT_MLFLOW_TRACKING_URI = (Path(__file__).resolve().parent / 'mlruns').resolve().as_uri()
 
 
 def normalize_context(ctx: str) -> str:
@@ -50,20 +48,6 @@ def normalize_context(ctx: str) -> str:
     ctx = re.sub(r'\|\s*ability:[^|]+', '', ctx)
     ctx = re.sub(r'\s*\|\s*', ' | ', ctx).strip(' |')
     return ctx
-
-
-def cleanup_local_mlflow_store(store_root: Path):
-    """Remove malformed top-level experiment folders from a local MLflow store."""
-    if not store_root.exists():
-        return
-
-    for experiment_dir in store_root.iterdir():
-        if not experiment_dir.is_dir():
-            continue
-        if not experiment_dir.name.isdigit():
-            continue
-        if not (experiment_dir / 'meta.yaml').exists():
-            shutil.rmtree(experiment_dir, ignore_errors=True)
 
 
 class EarlyStopping:
@@ -287,17 +271,12 @@ def main():
         'val_f1': []
     }
 
-    mlflow_enabled = True
-    if mlflow_enabled:
-        tracking_uri = os.getenv('MLFLOW_TRACKING_URI')
-        effective_tracking_uri = tracking_uri or DEFAULT_MLFLOW_TRACKING_URI
-        if effective_tracking_uri == DEFAULT_MLFLOW_TRACKING_URI:
-            cleanup_local_mlflow_store(Path(__file__).resolve().parent / 'mlruns')
-        mlflow.set_tracking_uri(effective_tracking_uri)
-        mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
-        mlflow.start_run(run_name=f"distilbert-intent-{int(time.time())}")
-        mlflow.log_params(hyperparams)
-        mlflow.log_params({
+    # ── wandb experiment tracking ────────────────────────────────────
+    wandb.init(
+        project="intent-classifier",
+        name=f"distilbert-cnn-{int(time.time())}",
+        config={
+            **hyperparams,
             'model_name': 'DistilBert-CNN',
             'num_classes': num_classes,
             'train_rows': len(train_df),
@@ -306,11 +285,9 @@ def main():
             'total_steps': total_steps,
             'warmup_steps': warmup_steps,
             'confidence_threshold': DEFAULT_CONFIDENCE_THRESHOLD,
-        })
-        mlflow.log_dict(dataset_summary, 'dataset_summary.json')
-        for path in [TRAIN_PATH, VAL_PATH, TEST_PATH, REAL_UTTERANCE_PATH]:
-            if os.path.exists(path):
-                mlflow.log_artifact(path, artifact_path='dataset')
+            **dataset_summary,
+        },
+    )
 
     # ── Training loop ──────────────────────────────────────────────
     for epoch in range(EPOCHS):
@@ -334,27 +311,27 @@ def main():
 
         print(f"Epoch {epoch+1}: Train Loss: {avg_train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f} | Val F1: {val_f1:.4f}")
 
-        if mlflow_enabled:
-            metrics_to_log = {
-                'train_loss': float(avg_train_loss),
-                'val_loss': float(val_loss),
-                'val_accuracy': float(val_acc),
-                'val_precision': float(val_prec),
-                'val_recall': float(val_rec),
-                'val_f1': float(val_f1),
-            }
-            
-            # Compute per-class F1
-            _, _, per_class_f1, _ = precision_recall_fscore_support(
-                all_labels, all_preds, average=None, zero_division=0
-            )
-            for i, name in enumerate(INTENT_NAMES):
-                if i < len(per_class_f1):
-                    # safely replacing spaces/slashes for mlflow metric names
-                    safe_name = name.replace(" ", "_").replace("/", "_")
-                    metrics_to_log[f'val_f1_{safe_name}'] = float(per_class_f1[i])
+        # ── wandb per-epoch logging ──────────────────────────────────
+        metrics_to_log = {
+            'epoch': epoch + 1,
+            'train_loss': float(avg_train_loss),
+            'val_loss': float(val_loss),
+            'val_accuracy': float(val_acc),
+            'val_precision': float(val_prec),
+            'val_recall': float(val_rec),
+            'val_f1': float(val_f1),
+        }
+        
+        # Compute per-class F1
+        _, _, per_class_f1, _ = precision_recall_fscore_support(
+            all_labels, all_preds, average=None, zero_division=0
+        )
+        for i, name in enumerate(INTENT_NAMES):
+            if i < len(per_class_f1):
+                safe_name = name.replace(" ", "_").replace("/", "_")
+                metrics_to_log[f'val_f1_{safe_name}'] = float(per_class_f1[i])
 
-            mlflow.log_metrics(metrics_to_log, step=epoch + 1)
+        wandb.log(metrics_to_log)
 
         if val_f1 > best_val_f1:
             best_val_f1 = val_f1
@@ -471,22 +448,20 @@ def main():
     with open('training_results.json', 'w') as f:
         json.dump(results, f, indent=4)
 
-    if mlflow_enabled:
-        mlflow.log_metrics(
-            {
-                'test_loss': float(test_loss),
-                'test_accuracy': float(test_acc),
-                'test_precision': float(test_prec),
-                'test_recall': float(test_rec),
-                'test_f1': float(test_f1),
-                'training_duration_seconds': float(training_duration),
-                'epochs_trained': float(len(history['train_loss'])),
-            }
-        )
-        mlflow.log_dict(results, 'training_results.json')
-        if os.path.exists(best_model_path):
-            mlflow.log_artifact(best_model_path, artifact_path='model')
-        mlflow.end_run()
+    # ── wandb final logging ──────────────────────────────────────────
+    wandb.log({
+        'test_loss': float(test_loss),
+        'test_accuracy': float(test_acc),
+        'test_precision': float(test_prec),
+        'test_recall': float(test_rec),
+        'test_f1': float(test_f1),
+        'training_duration_seconds': float(training_duration),
+        'epochs_trained': float(len(history['train_loss'])),
+    })
+    wandb.save('training_results.json')
+    if os.path.exists(best_model_path):
+        wandb.save(best_model_path)
+    wandb.finish()
 
     print(f"\n{'='*60}")
     print(f"TRAINING COMPLETE  ({training_duration:.1f}s)")

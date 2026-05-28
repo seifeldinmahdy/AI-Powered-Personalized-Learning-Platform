@@ -39,7 +39,7 @@ async def classify_intent(request: IntentRequest):
             )
 
         # ── Resolve confidence threshold ────────────────────────────
-        threshold = request.confidence_threshold if request.confidence_threshold is not None else 0.55
+        threshold = request.confidence_threshold if request.confidence_threshold is not None else 0.65
 
         service = get_intent_service()
         predictions, inference_time = service.classify(
@@ -130,7 +130,7 @@ async def chat_intent(request: ChatRequest):
                 "Of course! I'll explain that again in a simpler way. "
                 "[ACTION: POST /tutor/repeat {\"mode\": \"rephrase\"}]"
             ),
-            'Low Confidence': (
+            'Unknown': (
                 "I'm not quite sure what you mean. Could you rephrase that? "
                 "I want to make sure I understand you correctly."
             ),

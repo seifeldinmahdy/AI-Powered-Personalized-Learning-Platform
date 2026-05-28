@@ -76,3 +76,7 @@ ai_service/static/buffer.bin
 ai_service/static/*.gltf
 ai_service/static/*.glb
 *.log
+
+# Weights & Biases
+wandb/
+Intent_Classifier_Model/wandb/

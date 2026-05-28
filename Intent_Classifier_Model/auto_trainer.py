@@ -50,20 +50,25 @@ def run_training_pipeline():
             
             print(f"New model validation ({metric_source}): Accuracy={acc*100:.2f}%, F1={f1*100:.2f}%")
             
+            # Per-class quality floor: reject if Emotional-State F1 is too low
+            per_class = results.get("per_class_metrics", {})
+            emotional_f1 = per_class.get("Emotional-State", {}).get("f1_score", 0.0)
+            
             # Validation logic:
             # 1. Prefer real-utterance metrics when available.
             # 2. Perfect 100% on test set = pure memorization (reject)
+            # 3. Per-class floor: Emotional-State F1 >= 0.75
             if acc >= 1.0:
                 print(f"[!] Perfect 100% test accuracy. Likely memorization. Rejecting model.")
                 return False
-            elif acc >= 0.80 and f1 >= 0.80:
-                print(f"[+] Metrics meet quality bar. Promoting model to production.")
+            elif acc >= 0.80 and f1 >= 0.80 and emotional_f1 >= 0.75:
+                print(f"[+] Metrics meet quality bar (emotional_f1={emotional_f1:.3f}). Promoting model to production.")
                 if os.path.exists(MODEL_NEW_STAGE_PATH):
                     shutil.copy(MODEL_NEW_STAGE_PATH, MODEL_PROD_PATH)
                     print(f"[+] Model published to {MODEL_PROD_PATH}")
                     return True
             else:
-                print(f"[!] Metrics below quality bar. Rejecting model.")
+                print(f"[!] Quality bar not met (acc={acc:.3f}, f1={f1:.3f}, emotional_f1={emotional_f1:.3f}). Rejecting model.")
                 return False
     else:
         print("[!] Could not find training_results.json.")

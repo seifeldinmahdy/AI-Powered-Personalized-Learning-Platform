@@ -309,7 +309,7 @@ class TinyBertCNN(nn.Module):
         self.dropout = nn.Dropout(dropout)
         
         # Hidden FC layer
-        cnn_out_dim = len(filter_sizes) * num_filters
+        cnn_out_dim = len(filter_sizes) * num_filters + self.bert_hidden_size  # CNN + [CLS]
         self.fc_hidden = nn.Linear(cnn_out_dim, hidden_dim)
         self.bn_hidden = nn.BatchNorm1d(hidden_dim)
         
@@ -343,6 +343,9 @@ class TinyBertCNN(nn.Module):
         # sequence_output: (batch_size, seq_len, hidden_size)
         sequence_output = bert_output.last_hidden_state
         
+        # ── Extract [CLS] sentence embedding ──────────────────────────
+        cls_output = sequence_output[:, 0, :]             # (batch, hidden_size)
+        
         # Transpose for CNN: (batch_size, hidden_size, seq_len)
         sequence_output = sequence_output.transpose(1, 2)
         
@@ -361,9 +364,9 @@ class TinyBertCNN(nn.Module):
             pooled = torch.max_pool1d(conv_out, conv_out.size(2)).squeeze(2)
             conv_outputs.append(pooled)
         
-        # Concatenate all features
-        # concatenated: (batch_size, len(filter_sizes) * num_filters)
-        concatenated = torch.cat(conv_outputs, dim=1)
+        # Concatenate CNN features + [CLS] embedding
+        # concatenated: (batch_size, len(filter_sizes) * num_filters + hidden_size)
+        concatenated = torch.cat(conv_outputs + [cls_output], dim=1)
         concatenated = self.dropout(concatenated)
         
         # Hidden FC layer
