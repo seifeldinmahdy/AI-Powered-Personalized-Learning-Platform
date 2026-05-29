@@ -1,27 +1,31 @@
 """Question Generator (QG) — generates a single MCQ question from a chunk.
 
-Uses Ollama during development.  When QG_MODEL_PATH is set in settings,
-loads a fine-tuned T5 model instead.  No factory, no abstract classes.
+Uses Ollama during development.  When QG_LORA_PATH is set in settings,
+loads the Llama base model + QG LoRA adapter via Unsloth for inference.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
 import structlog
 
 from mcq.models import GeneratedQuestion
-from mcq.prompts.mcq_prompts import build_qg_prompt, build_qg_t5_input
+from mcq.prompts.mcq_prompts import (
+    build_qg_chat_prompt,
+    build_qg_prompt,
+    extract_qg_output,
+    format_chat_for_training,
+)
 
 logger = structlog.get_logger(__name__)
 
-# Lazy-loaded singletons
+# Lazy-loaded singletons — loaded once, reused for every call
 _ollama_client = None
-_t5_model = None
-_t5_tokenizer = None
+_llama_model = None
+_llama_tokenizer = None
 
 
 def _get_ollama_client(settings):
@@ -49,20 +53,42 @@ def _get_ollama_client(settings):
     return _ollama_client
 
 
-def _load_t5_model(model_path: str):
-    """Load fine-tuned T5 model and tokenizer from disk."""
-    global _t5_model, _t5_tokenizer
-    if _t5_model is not None:
-        return _t5_model, _t5_tokenizer
+def _load_llama_model(settings):
+    """Load the Llama base model + QG LoRA adapter once at startup.
 
-    from transformers import T5ForConditionalGeneration, T5Tokenizer
+    Uses Unsloth's FastLanguageModel for optimized inference.
+    The base model is loaded with the same quantization settings used
+    during training, and the LoRA adapter is applied on top.
+    """
+    global _llama_model, _llama_tokenizer
+    if _llama_model is not None:
+        return _llama_model, _llama_tokenizer
 
-    _t5_tokenizer = T5Tokenizer.from_pretrained(model_path)
-    _t5_model = T5ForConditionalGeneration.from_pretrained(model_path)
-    _t5_model.eval()
+    from unsloth import FastLanguageModel
 
-    logger.info("qg_t5_model_loaded", path=model_path)
-    return _t5_model, _t5_tokenizer
+    logger.info(
+        "qg_loading_llama_model",
+        base_model=settings.LLAMA_BASE_MODEL,
+        lora_path=settings.QG_LORA_PATH,
+        load_in_4bit=settings.LOAD_IN_4BIT,
+    )
+
+    # Load base model + LoRA adapter in one call
+    _llama_model, _llama_tokenizer = FastLanguageModel.from_pretrained(
+        model_name=settings.QG_LORA_PATH,
+        max_seq_length=settings.MAX_SEQ_LENGTH,
+        load_in_4bit=settings.LOAD_IN_4BIT,
+    )
+
+    # Optimize for inference speed (Unsloth-specific)
+    FastLanguageModel.for_inference(_llama_model)
+
+    logger.info(
+        "qg_llama_model_loaded",
+        base_model=settings.LLAMA_BASE_MODEL,
+        lora_path=settings.QG_LORA_PATH,
+    )
+    return _llama_model, _llama_tokenizer
 
 
 def generate_question(
@@ -95,15 +121,15 @@ def generate_question(
     GeneratedQuestion or None
         None if generation fails after all retry attempts.
     """
-    use_t5 = bool(settings.QG_MODEL_PATH)
-    generation_mode = "t5" if use_t5 else "ollama"
+    use_llama = bool(settings.QG_LORA_PATH)
+    generation_mode = "llama_lora" if use_llama else "ollama"
 
     for attempt in range(1, settings.MCQ_MAX_REGENERATION_ATTEMPTS + 1):
         try:
-            if use_t5:
-                result = _generate_with_t5(
+            if use_llama:
+                result = _generate_with_llama(
                     chunk_text, topic, question_type, mastery_level,
-                    score_category, settings.QG_MODEL_PATH,
+                    score_category, settings, attempt,
                 )
             else:
                 result = _generate_with_ollama(
@@ -118,6 +144,7 @@ def generate_question(
                     topic=topic,
                     type=question_type,
                     reason="empty_result",
+                    mode=generation_mode,
                 )
                 continue
 
@@ -138,6 +165,7 @@ def generate_question(
                 attempt=attempt,
                 topic=topic,
                 type=question_type,
+                mode=generation_mode,
             )
 
     logger.error(
@@ -145,6 +173,7 @@ def generate_question(
         topic=topic,
         type=question_type,
         max_attempts=settings.MCQ_MAX_REGENERATION_ATTEMPTS,
+        mode=generation_mode,
     )
     return None
 
@@ -179,44 +208,70 @@ def _generate_with_ollama(
     return data
 
 
-def _generate_with_t5(
+def _generate_with_llama(
     chunk_text: str,
     topic: str,
     question_type: str,
     mastery_level: str,
     score_category: str,
-    model_path: str,
+    settings,
+    attempt: int,
 ) -> dict | None:
-    """Generate question via fine-tuned T5 model."""
+    """Generate question via Llama + QG LoRA adapter.
+
+    Uses greedy decoding for deterministic output.  On retry (attempt > 1),
+    adds a format-enforcement hint to the system message.
+    """
     import torch
 
-    model, tokenizer = _load_t5_model(model_path)
-    input_text = build_qg_t5_input(
+    model, tokenizer = _load_llama_model(settings)
+
+    messages = build_qg_chat_prompt(
         chunk_text, topic, question_type, mastery_level, score_category,
     )
 
+    # On retry, reinforce the format constraint
+    if attempt > 1:
+        messages[0]["content"] += "\n\nOutput only in the specified format."
+
+    input_text = format_chat_for_training(messages, tokenizer)
     inputs = tokenizer(
         input_text,
         return_tensors="pt",
-        max_length=512,
         truncation=True,
+        max_length=settings.MAX_SEQ_LENGTH,
     )
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    input_len = inputs["input_ids"].shape[1]
 
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            max_new_tokens=256,
-            num_beams=4,
-            early_stopping=True,
+            max_new_tokens=150,
+            temperature=0.0,
+            do_sample=False,
         )
 
-    decoded = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    # Extract only generated tokens (not the input prompt)
+    new_tokens = outputs[0][input_len:]
+    raw_output = tokenizer.decode(new_tokens, skip_special_tokens=True)
 
-    try:
-        result = json.loads(decoded)
-        if "question" in result and "correct_answer" in result:
-            return result
-    except json.JSONDecodeError:
-        logger.warning("qg_t5_invalid_json", output=decoded[:200])
+    logger.debug(
+        "qg_llama_raw_output",
+        output=raw_output[:200],
+        topic=topic,
+        type=question_type,
+    )
 
-    return None
+    parsed = extract_qg_output(raw_output)
+    if parsed is None:
+        logger.warning(
+            "qg_llama_parse_failed",
+            attempt=attempt,
+            output=raw_output[:200],
+            topic=topic,
+            type=question_type,
+        )
+        return None
+
+    return parsed

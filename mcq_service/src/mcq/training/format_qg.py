@@ -1,13 +1,23 @@
-"""Format QG training data — converts raw JSONL into T5-ready input/target pairs.
+"""Format QG training data — converts raw JSONL into Llama chat-formatted examples.
 
-Reads qg_training_data.jsonl and writes qg_train.jsonl with fields:
-  - input_text: structured T5 prefix
-  - target_text: JSON output the model should produce
+Reads mcq_raw.jsonl and writes qg_train.jsonl with a single ``text`` field
+containing the complete chat conversation (system + user + assistant) formatted
+with the Llama tokenizer's chat template.  This is the format TRL's SFTTrainer
+expects when using ``dataset_text_field="text"``.
+
+Usage::
+
+    python -m mcq.training.format_qg \\
+        --input data/mcq_training/mcq_raw.jsonl \\
+        --output data/mcq_training/qg_train.jsonl \\
+        --tokenizer unsloth/Llama-3.2-3B-Instruct
 """
 
 from __future__ import annotations
 
+import argparse
 import json
+import sys
 from pathlib import Path
 
 import structlog
@@ -15,24 +25,64 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
+def _build_qg_messages(sample: dict) -> list[dict[str, str]]:
+    """Build chat messages for a single QG training example.
+
+    Returns the system + user + assistant message list.
+    The assistant response uses the structured QUESTION/ANSWER/EXPLANATION format.
+    """
+    # Lazy import to avoid circular dependency at module level
+    mcq_src = str(Path(__file__).resolve().parent.parent.parent)
+    if mcq_src not in sys.path:
+        sys.path.insert(0, mcq_src)
+
+    from mcq.prompts.mcq_prompts import build_qg_chat_prompt
+
+    messages = build_qg_chat_prompt(
+        chunk_text=sample.get("chunk", ""),
+        topic=sample.get("topic", ""),
+        question_type=sample.get("question_type", "4a"),
+        mastery_level=sample.get("mastery_level", "Intermediate"),
+        score_category=sample.get("score_category", "moderate"),
+    )
+
+    # Build assistant response in the structured output format
+    assistant_content = (
+        f"QUESTION: {sample['question']}\n"
+        f"ANSWER: {sample['correct_answer']}\n"
+        f"EXPLANATION: {sample.get('explanation', 'No explanation provided.')}"
+    )
+
+    messages.append({"role": "assistant", "content": assistant_content})
+    return messages
+
+
 def format_qg_data(
     input_path: str,
     output_path: str,
+    tokenizer_name: str = "unsloth/Llama-3.2-3B-Instruct",
 ) -> int:
-    """Convert raw QG training data to T5-ready format.
+    """Convert raw QG training data to Llama chat-formatted examples.
 
     Parameters
     ----------
     input_path :
-        Path to qg_training_data.jsonl.
+        Path to mcq_raw.jsonl (output of data_generator.py).
     output_path :
         Path to write formatted qg_train.jsonl.
+    tokenizer_name :
+        HuggingFace tokenizer identifier for applying the chat template.
 
     Returns
     -------
     int
         Number of formatted samples written.
     """
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    logger.info("format_qg_tokenizer_loaded", tokenizer=tokenizer_name)
+
     in_p = Path(input_path)
     out_p = Path(output_path)
     out_p.parent.mkdir(parents=True, exist_ok=True)
@@ -48,14 +98,58 @@ def format_qg_data(
 
             try:
                 sample = json.loads(line)
+
+                # Validate required fields
+                if not sample.get("question") or not sample.get("correct_answer"):
+                    logger.warning("format_qg_skip_missing_fields", line=line[:100])
+                    continue
+
+                messages = _build_qg_messages(sample)
+
+                # Apply chat template to get the full formatted string
+                text = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=False,
+                )
+
                 formatted = {
-                    "input_text": sample["input"],
-                    "target_text": sample["output"],
+                    "text": text,
+                    "question_type": sample.get("question_type", "unknown"),
+                    "mastery_level": sample.get("mastery_level", "unknown"),
+                    "score_category": sample.get("score_category", "unknown"),
                 }
                 fout.write(json.dumps(formatted) + "\n")
                 count += 1
-            except (json.JSONDecodeError, KeyError):
-                logger.warning("format_qg_skip_invalid_line", line=line[:100])
+
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning("format_qg_skip_invalid_line", line=line[:100], error=str(e))
 
     logger.info("format_qg_complete", samples=count, output=str(out_p))
     return count
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Format raw MCQ data into Llama chat-formatted QG training examples.",
+    )
+    parser.add_argument(
+        "--input", required=True,
+        help="Path to mcq_raw.jsonl.",
+    )
+    parser.add_argument(
+        "--output", required=True,
+        help="Path to write formatted qg_train.jsonl.",
+    )
+    parser.add_argument(
+        "--tokenizer", default="unsloth/Llama-3.2-3B-Instruct",
+        help="HuggingFace tokenizer to use for chat template formatting.",
+    )
+    args = parser.parse_args()
+
+    count = format_qg_data(args.input, args.output, args.tokenizer)
+    print(f"Formatted {count} QG training examples → {args.output}")
+
+
+if __name__ == "__main__":
+    main()

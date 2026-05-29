@@ -1,18 +1,29 @@
 """
-Assessment Router — placement test generation and submission endpoints.
+Assessment Router — placement test generation/submission + MCQ session endpoints.
+
+Existing endpoints (placement test — implemented separately):
+  POST /assessments/generate
+  POST /assessments/generate-categorized
+  POST /assessments/submit-placement
+  GET  /assessments/health
+
+New MCQ service endpoints (session assessments only):
+  POST /assessments/session   — generate session checkpoint MCQs
+  POST /assessments/submit    — score checkpoint and update student context
 """
 
 from __future__ import annotations
 
 import logging
-import math
+import sys
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from services.assessment_service import generate_assessment_questions, generate_categorized_questions
-from services.category_service import build_assessment_categories
+from services.category_service import build_assessment_categories, _get_embedder
 from services.student_context_store import get_student_context_store
 from schemas.student_context import (
     UnifiedStudentContext,
@@ -68,7 +79,7 @@ class PlacementResultResponse(BaseModel):
     context_saved: bool
 
 
-# ── Endpoints ────────────────────────────────────────────────────
+# ── Existing Endpoints (placement — unchanged) ───────────────────
 
 
 @router.post("/generate")
@@ -211,3 +222,181 @@ async def submit_placement(req: SubmitPlacementRequest):
 @router.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MCQ SERVICE — LAZY IMPORTS AND SINGLETON
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_mcq_modules_loaded = False
+_mcq_settings = None
+
+
+def _ensure_mcq_imports():
+    """Add mcq_service paths to sys.path once."""
+    global _mcq_modules_loaded
+    if _mcq_modules_loaded:
+        return
+    mcq_src = str(Path(__file__).resolve().parent.parent.parent / "mcq_service" / "src")
+    mcq_config = str(Path(__file__).resolve().parent.parent.parent / "mcq_service")
+    for p in (mcq_src, mcq_config):
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    _mcq_modules_loaded = True
+
+
+def _get_mcq_settings():
+    """Get or create MCQ settings singleton."""
+    global _mcq_settings
+    if _mcq_settings is not None:
+        return _mcq_settings
+    _ensure_mcq_imports()
+    from config.settings import get_settings as _get_settings  # type: ignore
+    _mcq_settings = _get_settings()
+    return _mcq_settings
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POST /assessments/session
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@router.post("/session")
+async def mcq_session_endpoint(req: dict):
+    """Generate MCQ session checkpoint via the mcq_service pipeline.
+
+    Accepts SessionAssessmentRequest body.
+    Validates student context exists before generation.
+    Returns AssessmentResponse.
+    """
+    import asyncio
+
+    try:
+        _ensure_mcq_imports()
+        from mcq.models import SessionAssessmentRequest  # type: ignore
+        from mcq.orchestrator import generate_session_assessment  # type: ignore
+
+        session_req = SessionAssessmentRequest(**req)
+
+        # Validate chunks are non-empty
+        if not session_req.chunks:
+            raise HTTPException(
+                status_code=422,
+                detail="Chunks list is empty — cannot generate questions.",
+            )
+
+        # Validate student context exists
+        store = get_student_context_store()
+        student_context = store.load(session_req.student_id, session_req.course_id)
+        if student_context is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"No student context found for student={session_req.student_id}, "
+                    f"course={session_req.course_id}. Complete placement test first."
+                ),
+            )
+
+        # Verify request context matches stored context
+        if (session_req.context.student_id != session_req.student_id or
+                session_req.context.course_id != session_req.course_id):
+            raise HTTPException(
+                status_code=422,
+                detail="context.student_id/course_id must match request student_id/course_id.",
+            )
+
+        settings = _get_mcq_settings()
+        response = await asyncio.to_thread(
+            generate_session_assessment, session_req, settings,
+        )
+        return response.model_dump()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("MCQ session generation failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POST /assessments/submit
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@router.post("/submit")
+async def mcq_submit_endpoint(req: dict):
+    """Score a checkpoint submission and update student context.
+
+    1. Score answers via score_checkpoint
+    2. Update topic_performance via weighted moving average
+    3. Append incorrect answers to student context
+    4. Return CheckpointResult
+    """
+    try:
+        _ensure_mcq_imports()
+        from mcq.models import CheckpointSubmission  # type: ignore
+        from mcq.scoring import score_checkpoint  # type: ignore
+
+        submission = CheckpointSubmission(**req)
+
+        # ── 1. Score the submission ──────────────────────────────
+        result = score_checkpoint(submission)
+
+        # ── 2. Update student context ────────────────────────────
+        if result.per_topic_scores:
+            store = get_student_context_store()
+            context = store.load(submission.student_id, submission.course_id)
+
+            if context is not None:
+                from services.topic_mastery import update_topic_performance_scores
+
+                settings = _get_mcq_settings()
+                weight = settings.TOPIC_PERFORMANCE_UPDATE_WEIGHT
+
+                update_result = update_topic_performance_scores(
+                    current_performance=context.profile.topic_performance,
+                    session_scores=result.per_topic_scores,
+                    weight=weight,
+                )
+
+                context.profile.topic_performance = update_result["topic_performance"]
+                context.profile.strengths = update_result["strengths"]
+                context.profile.weaknesses = update_result["weaknesses"]
+
+                # ── 3. Append incorrect answers ──────────────────
+                for qr in result.question_results:
+                    if not qr["correct"]:
+                        context.profile.incorrectly_answered.append({
+                            "question": qr.get("chosen_answer", ""),
+                            "chosen_option": qr.get("chosen_answer", ""),
+                            "correct_option": qr.get("correct_answer", ""),
+                            "question_type": qr.get("question_type", ""),
+                            "topic": qr.get("topic", ""),
+                        })
+
+                # Regenerate summary
+                mastery = context.profile.mastery_level
+                intent = context.profile.course_intent or submission.course_id
+                parts = [f"{mastery} learner in {intent}."]
+                if context.profile.strengths:
+                    parts.append(f"Strong in: {', '.join(context.profile.strengths)}.")
+                if context.profile.weaknesses:
+                    parts.append(f"Needs work on: {', '.join(context.profile.weaknesses)}.")
+                context.profile.student_profile_summary = " ".join(parts)
+
+                # Persist atomically
+                store.save(submission.student_id, submission.course_id, context)
+
+                logger.info(
+                    "mcq_submit_context_updated student=%s course=%s session=%d "
+                    "checkpoint=%d score=%.2f",
+                    submission.student_id, submission.course_id,
+                    submission.session_number, submission.checkpoint_index,
+                    result.score,
+                )
+
+        return result.model_dump()
+
+    except Exception as e:
+        logger.exception("MCQ submission scoring failed")
+        raise HTTPException(status_code=500, detail=str(e))
