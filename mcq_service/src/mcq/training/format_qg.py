@@ -40,7 +40,6 @@ def _build_qg_messages(sample: dict) -> list[dict[str, str]]:
 
     messages = build_qg_chat_prompt(
         chunk_text=sample.get("chunk", ""),
-        topic=sample.get("topic", ""),
         question_type=sample.get("question_type", "4a"),
         mastery_level=sample.get("mastery_level", "Intermediate"),
         score_category=sample.get("score_category", "moderate"),

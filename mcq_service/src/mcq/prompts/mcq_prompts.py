@@ -18,15 +18,101 @@ from mcq.scoring_categories import score_category_description
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SHARED CONDITIONING BLOCKS
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# These are injected verbatim into every generation prompt system message,
+# immediately after the taxonomy and before the output format.  Block 3 is
+# conditional: only injected when misconception_context is not None/empty.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_CONDITIONING_MASTERY = """\
+CONDITIONING INSTRUCTIONS — MASTERY LEVEL
+──────────────────────────────────────────
+When mastery is Novice:
+- Generate recall or recognition questions only.
+- Use simple vocabulary that matches the chunk language exactly.
+- The correct answer must be directly stated or immediately obvious from the source.
+- Do not require the student to connect multiple ideas or infer anything beyond what is written.
+- For distractors: use plausible but clearly wrong options that a student who read the source carefully would eliminate.
+
+When mastery is Intermediate:
+- Generate application or distinction questions.
+- The student must connect two ideas or apply a concept to a situation — not just recall.
+- Moderate vocabulary — assume the student knows basic terminology.
+- The correct answer requires understanding, not just memorization.
+- For distractors: use real alternatives that require careful reasoning to eliminate.
+
+When mastery is Expert:
+- Generate reasoning, inference, or misconception questions.
+- The student must analyze why something works, identify edge cases, or reason about trade-offs.
+- Technical vocabulary is appropriate — assume strong foundational knowledge.
+- The correct answer requires synthesis across multiple concepts.
+- For distractors: use sophisticated options that are plausible to someone with partial understanding."""
+
+_CONDITIONING_SCORE = """\
+CONDITIONING INSTRUCTIONS — SCORE CATEGORY
+────────────────────────────────────────────
+When score_category is very_weak:
+- Override the mastery level entirely — generate the simplest possible question regardless of mastery.
+- Generate a definition or direct recall question (Type 4a) even for Intermediate or Expert students.
+- The student needs their foundation rebuilt on this specific topic before advancing.
+- Keep distractors moderate — the student is struggling and needs confidence, not harder traps.
+- Do not generate reasoning or application questions under any circumstance.
+
+When score_category is weak:
+- Generate one cognitive level simpler than the mastery level would normally suggest.
+- An Intermediate student gets a recognition question rather than an application question.
+- Distractors should be plausible but distinguishable with careful reading.
+
+When score_category is moderate:
+- Generate the standard question type for the given mastery level.
+- Use standard distractor difficulty for the mastery level.
+
+When score_category is strong:
+- Push to the hardest question type the mastery level allows.
+- A Novice student with a strong score gets the hardest Novice-appropriate question.
+- Distractors should be as challenging as the mastery ceiling permits."""
+
+
+def _conditioning_misconception_block(misconception_context: str) -> str:
+    """Return Block 3 formatted with the specific misconception context."""
+    return f"""\
+CONDITIONING INSTRUCTIONS — MISCONCEPTION CONTEXT
+───────────────────────────────────────────────────
+A previous failure by this student has been provided. Follow these rules exactly:
+
+- Do NOT repeat the same question, the same scenario, or the same correct answer framing.
+- Do NOT use the student's previous wrong answer as a distractor verbatim — approach the same gap differently.
+- Frame a completely new scenario that forces the student to directly confront this specific misunderstanding: {misconception_context}
+- The correct answer must implicitly or explicitly address why the misconception is wrong.
+- At least one distractor must appeal to the same wrong mental model from a new angle — not a copy of the previous wrong answer but a variation that tests whether the student truly corrected their thinking or just memorized the previous correct answer.
+- The question difficulty level and type follow the mastery and score category rules above — misconception context only changes the scenario framing, not the difficulty."""
+
+
+def _build_conditioning_section(
+    misconception_context: str | None = None,
+) -> str:
+    """Assemble the full conditioning section (Blocks 1–3) as a single string.
+
+    Block 3 is omitted when ``misconception_context`` is None or empty.
+    """
+    blocks = [_CONDITIONING_MASTERY, _CONDITIONING_SCORE]
+    if misconception_context:
+        blocks.append(_conditioning_misconception_block(misconception_context))
+    return "\n\n".join(blocks)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # QG — OLLAMA PROMPT (flat string, unchanged for development use)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def build_qg_prompt(
     chunk_text: str,
-    topic: str,
     question_type: str,
     mastery_level: str,
     score_category: str,
+    misconception_context: str | None = None,
 ) -> str:
     """Build the full question generation prompt (Ollama / flat string).
 
@@ -34,14 +120,15 @@ def build_qg_prompt(
     ----------
     chunk_text :
         Source text from which the question must be derivable.
-    topic :
-        Topic tag for the content.
     question_type :
         Selected type ID (e.g. "1", "4a", "4d").
     mastery_level :
         Student's global mastery level.
     score_category :
         The per-topic score category.
+    misconception_context :
+        Optional description of a prior student failure on this topic.
+        When provided, Block 3 conditioning is injected into the prompt.
 
     Returns
     -------
@@ -49,13 +136,16 @@ def build_qg_prompt(
         Complete prompt ready for Ollama LLM.
     """
     category_desc = score_category_description(score_category)
+    conditioning = _build_conditioning_section(misconception_context)
 
     return f"""\
 You are an expert educational question writer for a personalized learning platform.
 
 {QUESTION_TYPE_TAXONOMY}
 
-TASK: Generate exactly ONE multiple-choice question of Type {question_type} for the topic "{topic}".
+{conditioning}
+
+TASK: Generate exactly ONE multiple-choice question of Type {question_type}.
 
 STUDENT CONTEXT:
 - Global mastery level: {mastery_level}
@@ -91,11 +181,11 @@ def build_dg_prompt(
     question: str,
     correct_answer: str,
     question_type: str,
-    topic: str,
     mastery_level: str,
     score_category: str,
     num_distractors: int = 3,
     chunk_text: str = "",
+    misconception_context: str | None = None,
 ) -> str:
     """Build the distractor generation prompt (Ollama / flat string).
 
@@ -107,8 +197,6 @@ def build_dg_prompt(
         The correct answer.
     question_type :
         Type ID of the question.
-    topic :
-        Topic tag.
     mastery_level :
         Student's global mastery level.
     score_category :
@@ -117,6 +205,9 @@ def build_dg_prompt(
         Number of wrong answers to generate (default 3).
     chunk_text :
         Source content for context.
+    misconception_context :
+        Optional description of a prior student failure on this topic.
+        When provided, Block 3 conditioning is injected into the prompt.
 
     Returns
     -------
@@ -125,13 +216,14 @@ def build_dg_prompt(
     """
     modifier = SCORE_CATEGORY_DISTRACTOR_MODIFIER.get(score_category, "standard")
     category_desc = score_category_description(score_category)
+    conditioning = _build_conditioning_section(misconception_context)
 
     modifier_instructions = {
         "keep_moderate": (
             "Make distractors clearly distinguishable from the correct answer. "
             "The student has very weak understanding and needs to build confidence. "
             "Each distractor should be obviously wrong to someone who has read the "
-            "source material, but still related to the topic."
+            "source material, but still related to the content."
         ),
         "slightly_below_standard": (
             "Make distractors plausible but not subtle. They should test whether "
@@ -155,10 +247,11 @@ def build_dg_prompt(
     return f"""\
 You are an expert at creating wrong-but-plausible answer options for educational MCQs.
 
+{conditioning}
+
 QUESTION: {question}
 CORRECT ANSWER: {correct_answer}
 QUESTION TYPE: {question_type}
-TOPIC: {topic}
 STUDENT MASTERY: {mastery_level}
 TOPIC SCORE CATEGORY: {score_category}
 
@@ -174,7 +267,7 @@ REQUIREMENTS:
 1. Each distractor must be the same format/length as the correct answer.
 2. Each distractor must be wrong but plausible — it should represent a real \
 mistake a student might make.
-3. No distractor should be obviously absurd or unrelated to the topic.
+3. No distractor should be obviously absurd or unrelated to the content.
 4. Distractors should not overlap with each other or with the correct answer.
 
 Return ONLY valid JSON with no markdown fences:
@@ -190,30 +283,32 @@ Return ONLY valid JSON with no markdown fences:
 
 def build_qg_chat_prompt(
     chunk_text: str,
-    topic: str,
     question_type: str,
     mastery_level: str,
     score_category: str,
+    misconception_context: str | None = None,
 ) -> list[dict[str, str]]:
     """Build the QG prompt as a Llama chat message list.
 
     Returns a list of message dicts with ``role`` and ``content`` keys
     following the standard chat template format used by Llama 3.2 Instruct.
-    The system message contains the taxonomy, role description, and output
-    format specification.  The user message contains all conditioning fields.
+    The system message contains the taxonomy, conditioning instructions, and
+    output format specification.  The user message contains all conditioning
+    fields.
 
     Parameters
     ----------
     chunk_text :
         Source text from which the question must be derivable.
-    topic :
-        Topic tag for the content.
     question_type :
         Selected type ID (e.g. "1", "4a", "4d").
     mastery_level :
         Student's global mastery level.
     score_category :
         The per-topic score category.
+    misconception_context :
+        Optional description of a prior student failure on this topic.
+        When provided, Block 3 conditioning is injected into the system message.
 
     Returns
     -------
@@ -221,11 +316,14 @@ def build_qg_chat_prompt(
         Chat-formatted messages ready for ``tokenizer.apply_chat_template``.
     """
     category_desc = score_category_description(score_category)
+    conditioning = _build_conditioning_section(misconception_context)
 
     system_content = f"""\
 You are an expert educational MCQ question generator for a personalized learning platform.
 
 {QUESTION_TYPE_TAXONOMY}
+
+{conditioning}
 
 OUTPUT FORMAT — you must output exactly this structure and nothing else:
 QUESTION: <the question text>
@@ -235,7 +333,7 @@ EXPLANATION: <why this is correct>
 Do not output anything other than the specified format above. No preamble, no JSON, no markdown."""
 
     user_content = f"""\
-Generate a Type {question_type} question for topic "{topic}".
+Generate a Type {question_type} question.
 
 Mastery level: {mastery_level}
 Score category: {score_category} — {category_desc}
@@ -259,15 +357,33 @@ def build_dg_chat_prompt(
     question: str,
     correct_answer: str,
     question_type: str,
-    topic: str,
     mastery_level: str,
     score_category: str,
     chunk_text: str = "",
+    misconception_context: str | None = None,
 ) -> list[dict[str, str]]:
     """Build the DG prompt as a Llama chat message list.
 
     Each call produces a prompt that generates exactly ONE distractor.
     Call multiple times for multiple distractors.
+
+    Parameters
+    ----------
+    question :
+        The generated question text.
+    correct_answer :
+        The correct answer.
+    question_type :
+        Type ID of the question.
+    mastery_level :
+        Student's global mastery level.
+    score_category :
+        Per-topic score category.
+    chunk_text :
+        Source content for context.
+    misconception_context :
+        Optional description of a prior student failure on this topic.
+        When provided, Block 3 conditioning is injected into the system message.
 
     Returns
     -------
@@ -276,6 +392,7 @@ def build_dg_chat_prompt(
     """
     modifier = SCORE_CATEGORY_DISTRACTOR_MODIFIER.get(score_category, "standard")
     category_desc = score_category_description(score_category)
+    conditioning = _build_conditioning_section(misconception_context)
 
     modifier_instructions = {
         "keep_moderate": "clearly distinguishable — student needs confidence",
@@ -285,8 +402,10 @@ def build_dg_chat_prompt(
     }
     modifier_text = modifier_instructions.get(modifier, modifier_instructions["standard"])
 
-    system_content = """\
+    system_content = f"""\
 You are an expert at creating wrong-but-plausible answer options for educational MCQs.
+
+{conditioning}
 
 OUTPUT FORMAT — you must output exactly one line and nothing else:
 DISTRACTOR: <the distractor text>
@@ -301,7 +420,6 @@ Do not output anything other than the specified format above. No preamble, no JS
 Question: {question}
 Correct answer: {correct_answer}
 Question type: Type {question_type}
-Topic: {topic}
 Mastery: {mastery_level}
 Score category: {score_category} — {category_desc}
 Difficulty: {modifier_text}{context_block}

@@ -40,7 +40,6 @@ def _build_dg_messages(sample: dict, distractor: str) -> list[dict[str, str]]:
         question=sample.get("question", ""),
         correct_answer=sample.get("correct_answer", ""),
         question_type=sample.get("question_type", "4a"),
-        topic=sample.get("topic", ""),
         mastery_level=sample.get("mastery_level", "Intermediate"),
         score_category=sample.get("score_category", "moderate"),
         chunk_text=sample.get("chunk", ""),

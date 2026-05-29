@@ -188,7 +188,7 @@ def _generate_with_ollama(
 ) -> dict | None:
     """Generate question via Ollama LLM."""
     prompt = build_qg_prompt(
-        chunk_text, topic, question_type, mastery_level, score_category,
+        chunk_text, question_type, mastery_level, score_category,
     )
 
     client = _get_ollama_client(settings)
@@ -227,7 +227,7 @@ def _generate_with_llama(
     model, tokenizer = _load_llama_model(settings)
 
     messages = build_qg_chat_prompt(
-        chunk_text, topic, question_type, mastery_level, score_category,
+        chunk_text, question_type, mastery_level, score_category,
     )
 
     # On retry, reinforce the format constraint

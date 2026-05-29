@@ -153,6 +153,12 @@ MASTERY_TYPE_ELIGIBILITY: dict[str, list[str]] = {
     "Expert": ["1", "2", "3", "4a", "4b", "4c", "4d", "4e"],
 }
 
+# Flat union of every type across all mastery tiers — used by data_generator
+# when --balanced-types is set to allocate equal quota per type.
+ALL_QUESTION_TYPES: list[str] = sorted(
+    {t for types in MASTERY_TYPE_ELIGIBILITY.values() for t in types}
+)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SCORE CATEGORY → TYPE OVERRIDE

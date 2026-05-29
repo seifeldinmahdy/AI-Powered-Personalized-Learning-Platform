@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -60,7 +61,12 @@ TRAIN_CONFIG = {
 
 
 def _stratified_split(data_path: str, val_ratio: float = 0.1):
-    """Split data into train/val with stratification on question_type."""
+    """Shuffle then split data into train/val with stratification on question_type.
+
+    Shuffling before splitting ensures that each training batch sees a mixed
+    distribution of question types, mastery levels, and source books.  The
+    fixed seed makes the split deterministic and reproducible across runs.
+    """
     from sklearn.model_selection import train_test_split
 
     samples = []
@@ -72,6 +78,11 @@ def _stratified_split(data_path: str, val_ratio: float = 0.1):
                     samples.append(json.loads(line))
                 except json.JSONDecodeError:
                     continue
+
+    # Shuffle before splitting so the sequential book order in the source
+    # file does not bias the train/val split or batch composition.
+    random.seed(42)
+    random.shuffle(samples)
 
     if len(samples) < 10:
         split_idx = max(1, int(len(samples) * (1 - val_ratio)))
