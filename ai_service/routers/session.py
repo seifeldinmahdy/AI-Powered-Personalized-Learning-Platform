@@ -125,8 +125,15 @@ async def update_session_state(session_id: str, request: UpdateLiveSessionReques
             live_kwargs["time_spent_per_slide"] = time_spent
 
         if request.tutor_event_push is not None:
+            event = dict(request.tutor_event_push)
+            if "slide_index" not in event:
+                event["slide_index"] = data.live.current_slide_index
+            if "slide_title" not in event and data.live.current_slide_title:
+                event["slide_title"] = data.live.current_slide_title
+            if "slide_content" not in event and data.live.current_slide_content:
+                event["slide_content"] = data.live.current_slide_content
             events = list(data.live.tutor_events)
-            events.append(request.tutor_event_push)
+            events.append(event)
             live_kwargs["tutor_events"] = events
 
     if live_kwargs:

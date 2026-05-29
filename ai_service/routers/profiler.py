@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 from services.profiler_service import update_profile, fuse_emotions
 from services.session_store import get_session_store
 from schemas.student_context import UnifiedStudentContext
+import collections
 import logging
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,95 @@ class FuseEmotionsRequest(BaseModel):
     )
 
 
+# ─── Helpers ─────────────────────────────────────────────────────
+
+
+def _group_session_log_by_slide(session_data) -> list[dict]:
+    """Group emotion signals and tutor events by slide_index into one entry per slide."""
+    slides: dict[int, dict] = {}
+
+    def _init_slide(idx: int) -> dict:
+        return {
+            "slide_index": idx,
+            "slide_title": "",
+            "slide_content": "",
+            "all_emotions": [],
+            "student_questions": [],
+            "tutor_responses": [],
+            "notable_events": [],
+        }
+
+    # Pass 1: emotion signals
+    for signal in session_data.live.emotion_signals:
+        idx = signal.get("slide_index", 0)
+        if idx not in slides:
+            slides[idx] = _init_slide(idx)
+        entry = slides[idx]
+
+        # Fill slide_title / slide_content if missing from this entry
+        if not entry["slide_title"] and signal.get("slide_title"):
+            entry["slide_title"] = signal["slide_title"]
+        if not entry["slide_content"] and signal.get("slide_content"):
+            entry["slide_content"] = signal["slide_content"]
+
+        fused = signal.get("fused_emotion")
+        if fused:
+            entry["all_emotions"].append(fused)
+
+        event_type = signal.get("event_type", "")
+        qt = signal.get("question_transcript", "")
+        if "question" in event_type or qt:
+            if qt:
+                entry["student_questions"].append(qt)
+
+    # Pass 2: tutor events
+    for event in session_data.live.tutor_events:
+        idx = event.get("slide_index", 0)
+        if idx not in slides:
+            slides[idx] = _init_slide(idx)
+        entry = slides[idx]
+
+        if not entry["slide_title"] and event.get("slide_title"):
+            entry["slide_title"] = event["slide_title"]
+        if not entry["slide_content"] and event.get("slide_content"):
+            entry["slide_content"] = event["slide_content"]
+
+        text = event.get("dr_nova_response_summary") or event.get("text", "")
+        if text:
+            entry["tutor_responses"].append(text)
+
+        event_type = event.get("event_type", "")
+        if event_type and event_type != "passive":
+            entry["notable_events"].append(event_type)
+
+    # Compute derived fields
+    for idx, entry in slides.items():
+        if entry["all_emotions"]:
+            counter = collections.Counter(entry["all_emotions"])
+            entry["dominant_emotion"] = counter.most_common(1)[0][0]
+        else:
+            entry["dominant_emotion"] = "neutral"
+
+        entry["time_spent_seconds"] = session_data.live.time_spent_per_slide.get(
+            str(idx), 0
+        )
+
+    # Filter out slides with no meaningful signal
+    result = [
+        entry for entry in slides.values()
+        if entry["all_emotions"] or entry["student_questions"] or entry["tutor_responses"]
+    ]
+
+    # Sort by slide_index
+    result.sort(key=lambda e: e["slide_index"])
+
+    # Fallback: if nothing meaningful, return raw emotion signals
+    if not result:
+        return list(session_data.live.emotion_signals)
+
+    return result
+
+
 # ─── Endpoints ───────────────────────────────────────────────────
 
 
@@ -99,21 +189,9 @@ async def update(request: UpdateProfileRequest):
             store = get_session_store()
             session_data = store.get_session(request.session_id)
             if session_data:
-                # Use emotion signals as the base interaction log
-                backend_logs = list(session_data.live.emotion_signals)
-                
-                # Merge tutor events into the log
-                for event in session_data.live.tutor_events:
-                    backend_logs.append({
-                        "timestamp": event.get("timestamp", ""),
-                        "slide_index": event.get("slide_index", 0),
-                        "event_type": "tutor_" + event.get("event_type", "event"),
-                        "dr_nova_response_summary": event.get("text", "")
-                    })
-                
-                if backend_logs:
-                    log_dicts = backend_logs
-                    logger.info("Profiler /update: Pulled %d interaction logs from SharedSessionStore for session %s", len(log_dicts), request.session_id)
+                # Group by slide for structured per-slide analysis
+                log_dicts = _group_session_log_by_slide(session_data)
+                logger.info("Profiler /update: Grouped %d slide entries from SharedSessionStore for session %s", len(log_dicts), request.session_id)
 
         result = await update_profile(
             student_id=request.student_id,
@@ -122,6 +200,7 @@ async def update(request: UpdateProfileRequest):
             existing_profile_summary=request.existing_profile_summary,
             existing_profile_data=request.existing_profile_data,
             student_context=request.student_context,
+            session_id=request.session_id or "",
         )
         return {"success": True, **result}
     except Exception as e:
@@ -192,13 +271,14 @@ async def fuse(request: FuseEmotionsRequest):
                         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
                         "slide_index": slide_index,
                         "slide_title": slide_title,
+                        "slide_content": session_data.live.current_slide_content or "",
                         "subtopic": subtopic,
                         "fer_emotion": request.fer_emotion,
                         "fer_confidence": request.fer_confidence,
                         "ser_emotion": request.ser_emotion,
                         "ser_confidence": request.ser_confidence,
                         "fused_emotion": fused,
-                        "event_type": "passive"
+                        "event_type": "passive",
                     }
                     signals.append(new_signal)
                     
@@ -229,19 +309,12 @@ async def fuse(request: FuseEmotionsRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/evidence-ledger/{student_id}")
-async def get_evidence_ledger(student_id: str):
-    """
-    Return the full evidence ledger for a student.
-    For debugging and auditing only — shows why the profiler
-    concluded what it did. Intended for instructor/admin use.
-    """
+@router.get("/audit-log/{student_id}")
+async def get_audit_log_endpoint(student_id: str, limit: int = 50):
     try:
-        from services.evidence_ledger_store import get_evidence_ledger_store
-        ledger_store = get_evidence_ledger_store()
-        ledger = ledger_store.load(student_id)
-        return {"success": True, "ledger": ledger}
+        from services.profiler_service import get_audit_log
+        entries = get_audit_log(student_id, limit=limit)
+        return {"success": True, "audit_log": entries}
     except Exception as e:
-        logger.error(f"Evidence ledger fetch error: {e}")
+        logger.error(f"Audit log fetch error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
