@@ -31,10 +31,16 @@ class MCQSettings(BaseSettings):
         extra="ignore",
     )
 
-    # ── Ollama Cloud ─────────────────────────────────────────────────
+    # ── Ollama ───────────────────────────────────────────────────────
     OLLAMA_HOST: str = "https://ollama.com"
     OLLAMA_API_KEY: str = ""
-    OLLAMA_MODEL: str = "gpt-oss:120b"
+    OLLAMA_MODEL: str = "gpt-oss:120b"  # shared fallback
+
+    # Per-model overrides (empty = use OLLAMA_MODEL).
+    # Set to local Ollama model names to use fine-tuned GGUF models
+    # without touching the LoRA paths (which require CUDA/Unsloth).
+    QG_OLLAMA_MODEL: str = ""   # e.g. "mcq-qg" for local inference
+    DG_OLLAMA_MODEL: str = ""   # e.g. "mcq-dg" for local inference
 
     # ── Session checkpoints ──────────────────────────────────────────
     CHECKPOINT_INTERVAL: int = 3

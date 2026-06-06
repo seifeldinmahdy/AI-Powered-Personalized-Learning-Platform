@@ -7,8 +7,8 @@ conversation (system + user + assistant) formatted with the Llama tokenizer.
 Usage::
 
     python -m mcq.training.format_dg \\
-        --input data/mcq_training/mcq_raw.jsonl \\
-        --output data/mcq_training/dg_train.jsonl \\
+        --input data/mcq_training/mcq_final_cleaned.jsonl \\
+        --output data/mcq_training/dg_formatted.jsonl \\
         --tokenizer unsloth/Llama-3.2-3B-Instruct
 """
 
@@ -136,8 +136,8 @@ def main():
         description="Format raw MCQ data into Llama chat-formatted DG training examples.",
     )
     parser.add_argument(
-        "--input", required=True,
-        help="Path to mcq_raw.jsonl.",
+        "--input", default="data/mcq_training/mcq_final_cleaned.jsonl",
+        help="Path to cleaned MCQ JSONL (default: mcq_final_cleaned.jsonl).",
     )
     parser.add_argument(
         "--output", required=True,

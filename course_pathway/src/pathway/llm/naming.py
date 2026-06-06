@@ -50,13 +50,18 @@ class OllamaClient:
         temperature: float = 0.3,
         json_mode: bool = False,
         timeout_override: int | None = None,
+        num_predict: int | None = None,
     ) -> str:
         """Send a chat completion and return the raw content string."""
+        options: dict[str, Any] = {"temperature": temperature}
+        if num_predict is not None:
+            options["num_predict"] = num_predict
+
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
             "stream": False,
-            "options": {"temperature": temperature},
+            "options": options,
         }
         if json_mode:
             payload["format"] = "json"
@@ -95,9 +100,16 @@ class OllamaClient:
         messages: list[dict[str, str]],
         temperature: float = 0.3,
         timeout_override: int | None = None,
+        num_predict: int | None = None,
     ) -> dict[str, Any]:
         """Chat expecting a JSON response, parsed into a dict."""
-        raw = self.chat(messages, temperature=temperature, json_mode=True, timeout_override=timeout_override)
+        raw = self.chat(
+            messages,
+            temperature=temperature,
+            json_mode=True,
+            timeout_override=timeout_override,
+            num_predict=num_predict,
+        )
         try:
             return json.loads(raw)
         except json.JSONDecodeError:

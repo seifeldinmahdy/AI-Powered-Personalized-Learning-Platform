@@ -394,8 +394,14 @@ def _build_tasks(
                 m for m, types in MASTERY_TYPE_ELIGIBILITY.items()
                 if qtype in types
             ]
-            mastery = random.choice(compatible_masteries) if compatible_masteries \
-                else _weighted_sample(MASTERY_WEIGHTS)
+            if compatible_masteries:
+                # Filter MASTERY_WEIGHTS to only compatible levels, re-normalize
+                filtered = {m: MASTERY_WEIGHTS[m] for m in compatible_masteries
+                            if m in MASTERY_WEIGHTS}
+                mastery = _weighted_sample(filtered) if filtered \
+                    else random.choice(compatible_masteries)
+            else:
+                mastery = _weighted_sample(MASTERY_WEIGHTS)
 
             misconception_context = None
             if random.random() < 0.20:
@@ -749,6 +755,7 @@ def _worker(
     all_stats: list,
     pbar: tqdm,
     pbar_lock: threading.Lock,
+    target_counter: dict | None = None,
 ):
     """Worker thread: pulls tasks, calls Ollama, writes results.
 
@@ -765,6 +772,12 @@ def _worker(
         if key_pool.all_failed:
             logger.error("worker_stopping_all_keys_failed", worker=worker_id)
             break
+
+        # Stop if target reached (for --target mode)
+        if target_counter is not None:
+            with target_counter["lock"]:
+                if target_counter["count"] >= target_counter["target"]:
+                    break
 
         try:
             task = task_queue.get(timeout=5)
@@ -863,6 +876,10 @@ def _worker(
                 with open(output_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(result) + "\n")
             stats.record_success()
+            # Increment target counter if in target mode
+            if target_counter is not None:
+                with target_counter["lock"]:
+                    target_counter["count"] += 1
         else:
             logger.error(
                 "worker_all_retries_exhausted",
@@ -1032,6 +1049,26 @@ def _print_report(
     print(f"  {'Misconception-context samples:':<36} {misconception_count} ({miscon_pct:.1f}%)")
     print(f"  {'Est. DG training examples (x3):':<36} {dg_estimate}")
     print(f"  {'Output file:':<36} {output_path}")
+
+    # ── Mastery distribution validation ────────────────────────────────
+    if line_count > 0:
+        target_weights = {"Expert": 0.20, "Intermediate": 0.35, "Novice": 0.45}
+        print()
+        print("  MASTERY DISTRIBUTION VALIDATION")
+        any_violation = False
+        for m, target_pct in sorted(target_weights.items()):
+            actual_count = mastery_dist.get(m, 0)
+            actual_pct = actual_count / line_count
+            diff = abs(actual_pct - target_pct)
+            status = "OK" if diff <= 0.10 else "⚠ DRIFT"
+            if diff > 0.10:
+                any_violation = True
+            print(f"    {m:<14}: actual={100*actual_pct:.1f}%  target={100*target_pct:.1f}%  [{status}]")
+        if any_violation:
+            print()
+            print("  ⚠ WARNING: Mastery distribution has drifted >10pp from target.")
+            print("    This may indicate a sampling bug or eligibility constraint.")
+
     print("═" * W + "\n")
 
 
@@ -1070,6 +1107,22 @@ def main():
             "Enforce equal quota per question type. "
             "Each type gets len(chunks) // n_types tasks. "
             "Without this flag, types are sampled weighted by mastery distribution."
+        ),
+    )
+    parser.add_argument(
+        "--force-type", default=None, type=str,
+        help=(
+            "Force every task to use this question type, bypassing the "
+            "content-aware selector entirely. Mastery is fixed to Expert, "
+            "score_category is sampled 50/50 from moderate and strong. "
+            "Use with --target for boost generation of underrepresented types."
+        ),
+    )
+    parser.add_argument(
+        "--target", type=int, default=None,
+        help=(
+            "Stop generation after this many successful samples. "
+            "Primarily used with --force-type for boost generation."
         ),
     )
     args = parser.parse_args()
@@ -1111,7 +1164,27 @@ def main():
 
     # Resumability: skip already-processed chunks
     existing_hashes = _load_existing_hashes(args.output)
-    tasks = _build_tasks(chunks, existing_hashes, balanced_types=args.balanced_types)
+
+    # ── Force-type mode: override all task type/mastery/score decisions ──
+    if args.force_type:
+        tasks = _build_tasks(chunks, existing_hashes, balanced_types=False)
+        # Override each task with the forced type, Expert mastery, and
+        # moderate/strong score (50/50).  This bypasses the selector.
+        rng = random.Random(42)
+        forced_tasks = []
+        for i, task in enumerate(tasks):
+            task["question_type"] = args.force_type
+            task["mastery"] = "Expert"
+            task["score_category"] = "moderate" if i % 2 == 0 else "strong"
+            task["misconception_context"] = None  # no escalation in boost mode
+            forced_tasks.append(task)
+        tasks = forced_tasks
+        print(f"  Force-type mode: all tasks → Type {args.force_type}, Expert mastery")
+        print(f"  Score categories: 50% moderate, 50% strong")
+        if args.target:
+            print(f"  Target: stop after {args.target} successful samples")
+    else:
+        tasks = _build_tasks(chunks, existing_hashes, balanced_types=args.balanced_types)
 
     if args.balanced_types:
         print(f"  Balanced mode: equal quota per question type")
@@ -1133,14 +1206,24 @@ def main():
     pbar_lock = threading.Lock()
     all_stats: list[WorkerStats] = []
 
-    # tqdm progress bar
+    # tqdm progress bar — if --target is set, use that as the total
+    display_total = args.target if args.target else total_tasks
     pbar = tqdm(
-        total=total_tasks,
+        total=display_total,
         desc="Generating MCQs",
         unit="task",
         dynamic_ncols=True,
         colour="green",
     )
+
+    # Shared target counter for early stopping (--target mode)
+    target_counter = None
+    if args.target:
+        target_counter = {
+            "target": args.target,
+            "count": 0,
+            "lock": threading.Lock(),
+        }
 
     # Start workers — all share the KeyPool, each gets its own stats
     threads: list[threading.Thread] = []
@@ -1152,6 +1235,7 @@ def main():
             args=(
                 i, key_pool, task_queue, args.output,
                 file_lock, stats, all_stats, pbar, pbar_lock,
+                target_counter,
             ),
             daemon=True,
         )

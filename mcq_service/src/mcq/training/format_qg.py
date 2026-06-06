@@ -1,6 +1,6 @@
 """Format QG training data — converts raw JSONL into Llama chat-formatted examples.
 
-Reads mcq_raw.jsonl and writes qg_train.jsonl with a single ``text`` field
+Reads cleaned MCQ data and writes qg_train.jsonl with a single ``text`` field
 containing the complete chat conversation (system + user + assistant) formatted
 with the Llama tokenizer's chat template.  This is the format TRL's SFTTrainer
 expects when using ``dataset_text_field="text"``.
@@ -8,8 +8,8 @@ expects when using ``dataset_text_field="text"``.
 Usage::
 
     python -m mcq.training.format_qg \\
-        --input data/mcq_training/mcq_raw.jsonl \\
-        --output data/mcq_training/qg_train.jsonl \\
+        --input data/mcq_training/mcq_final_cleaned.jsonl \\
+        --output data/mcq_training/qg_formatted.jsonl \\
         --tokenizer unsloth/Llama-3.2-3B-Instruct
 """
 
@@ -17,12 +17,51 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+# ── Explanation normalization — strip letter-based option references ───────────
+# Order matters: longer/more-specific patterns first to avoid partial matches.
+_EXPLANATION_PATTERNS: list[tuple[re.Pattern, str]] = [
+    # "Options A, B, and C" / "options B, C, and D" (3 letters with commas)
+    (re.compile(
+        r'\boptions?\s+[A-D],\s*[A-D],?\s*and\s+[A-D]\b',
+        re.IGNORECASE,
+    ), 'the other options'),
+    # "Options A and B" / "options C and D" (2 letters)
+    (re.compile(
+        r'\boptions?\s+[A-D]\s+and\s+[A-D]\b',
+        re.IGNORECASE,
+    ), 'the other options'),
+    # "Choices A, B, and C" (3 letters with commas)
+    (re.compile(
+        r'\bchoices?\s+[A-D],\s*[A-D],?\s*and\s+[A-D]\b',
+        re.IGNORECASE,
+    ), 'the other choices'),
+    # "Choices A and B" (2 letters)
+    (re.compile(
+        r'\bchoices?\s+[A-D]\s+and\s+[A-D]\b',
+        re.IGNORECASE,
+    ), 'the other choices'),
+    # "Option A" / "option D" (single letter)
+    (re.compile(r'\boption\s+[A-D]\b', re.IGNORECASE), 'this option'),
+    # "Choice A" / "choice D" (single letter)
+    (re.compile(r'\bchoice\s+[A-D]\b', re.IGNORECASE), 'this choice'),
+    # Standalone "(A)" / "(B)" etc. used as inline references
+    (re.compile(r'\(([A-D])\)(?=\s)'), 'it'),
+]
+
+
+def _normalize_explanation(text: str) -> str:
+    """Remove letter-based answer-option references from an explanation."""
+    for pattern, replacement in _EXPLANATION_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
 
 
 def _build_qg_messages(sample: dict) -> list[dict[str, str]]:
@@ -45,11 +84,14 @@ def _build_qg_messages(sample: dict) -> list[dict[str, str]]:
         score_category=sample.get("score_category", "moderate"),
     )
 
+    explanation = sample.get('explanation', 'No explanation provided.')
+    explanation = _normalize_explanation(explanation)
+
     # Build assistant response in the structured output format
     assistant_content = (
         f"QUESTION: {sample['question']}\n"
         f"ANSWER: {sample['correct_answer']}\n"
-        f"EXPLANATION: {sample.get('explanation', 'No explanation provided.')}"
+        f"EXPLANATION: {explanation}"
     )
 
     messages.append({"role": "assistant", "content": assistant_content})
@@ -133,8 +175,8 @@ def main():
         description="Format raw MCQ data into Llama chat-formatted QG training examples.",
     )
     parser.add_argument(
-        "--input", required=True,
-        help="Path to mcq_raw.jsonl.",
+        "--input", default="data/mcq_training/mcq_final_cleaned.jsonl",
+        help="Path to cleaned MCQ JSONL (default: mcq_final_cleaned.jsonl).",
     )
     parser.add_argument(
         "--output", required=True,
