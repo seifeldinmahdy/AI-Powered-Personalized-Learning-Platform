@@ -28,7 +28,7 @@ import wandb
 
 from TinyBert import IntentClassifier, IntentDataset
 
-INTENT_NAMES = ['On-Topic Question', 'Off-Topic Question', 'Emotional-State', 'Pace-Related', 'Repeat/clarification']
+INTENT_NAMES = ['On-Topic Question', 'Off-Topic Question', 'Emotional-State', 'Pace-Related', 'Repeat/clarification', 'Debugging/Code-Sharing']
 DEFAULT_CONFIDENCE_THRESHOLD = 0.65
 BASE_DIR = Path(__file__).resolve().parent
 REAL_UTTERANCE_PATH = str(BASE_DIR / 'data' / 'real_utterances.csv')

@@ -13,6 +13,13 @@ import time
 import logging
 from typing import List, Dict, Tuple, Optional
 
+try:
+    from better_profanity import profanity
+    profanity.load_censor_words()
+    _PROFANITY_AVAILABLE = True
+except ImportError:
+    _PROFANITY_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,7 +55,7 @@ class IntentService:
         logger.info(f"Initializing IntentService using model: {self.model_path}")
 
         # Initialize the wrapper class
-        self.classifier = IntentClassifier_(num_classes=5)
+        self.classifier = IntentClassifier_(num_classes=6)
         self.splitter = CompoundSentenceSplitter_()
         
         # Load the production weights
@@ -120,7 +127,15 @@ class IntentService:
                 'Emotional-State',
                 'Pace-Related',
                 'Repeat/clarification',
+                'Debugging/Code-Sharing',
             ]
+            
+            # Profanity check on full input (detect but do NOT strip)
+            input_has_profanity = False
+            if _PROFANITY_AVAILABLE:
+                input_has_profanity = profanity.contains_profanity(student_input)
+                if input_has_profanity:
+                    logger.info("Profanity detected in student input.")
             
             for i, (pred_id, prob_arr) in enumerate(zip(preds, probs)):
                 prob_dict = {
@@ -141,6 +156,7 @@ class IntentService:
                         "probabilities": prob_dict,
                         "raw_prediction": predicted_name,
                         "raw_confidence": max_confidence,
+                        "contains_profanity": input_has_profanity,
                     })
                 else:
                     results.append({
@@ -151,6 +167,7 @@ class IntentService:
                         "probabilities": prob_dict,
                         "raw_prediction": None,
                         "raw_confidence": None,
+                        "contains_profanity": input_has_profanity,
                     })
                 
             inference_time = time.time() - start_time

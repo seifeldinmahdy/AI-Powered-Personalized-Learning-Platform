@@ -33,6 +33,7 @@ LABEL_MAP = {
     'Emotional-State': 2,
     'Pace-Related': 3,
     'Repeat/clarification': 4,
+    'Debugging/Code-Sharing': 5,
 }
 
 PYTHON_TOPICS = [
@@ -144,16 +145,37 @@ CLASS_DEFINITIONS = {
             "come again??",
         ],
     },
+    'Debugging/Code-Sharing': {
+        'definition': (
+            "The student is sharing actual code, pasting error messages, tracebacks, or "
+            "code snippets and asking for debugging help. The key distinction from "
+            "On-Topic Question is the PRESENCE OF CODE ARTIFACTS: backticks, inline code, "
+            "error type names (TypeError, NameError, IndexError, etc.), traceback lines, "
+            "variable names, or syntax fragments. If they mention specific error messages "
+            "or paste code, it is Debugging/Code-Sharing, NOT On-Topic Question."
+        ),
+        'examples': [
+            "my code `x = int('hello')` throws ValueError why",
+            "NameError: name 'y' is not defined but i defined it at the top",
+            "heres my function: `def add(a,b): return a+b` it crashes on strings",
+            "i get IndexError list index out of range when i do my_list[5]",
+            "`while True: x += 1` runs forever how do i stop it",
+            "TypeError: can only concatenate str not int which line is wrong",
+            "my variable count keeps resetting to 0 inside the loop",
+            "look at this traceback: File main.py line 5 — what does it mean",
+        ],
+    },
 }
 
 # DDAIR: adjacent class definitions for boundary-aware generation
 # The model generates better utterances when it knows what the confused classes look like.
 ADJACENT_CLASSES = {
-    'On-Topic Question': ['Off-Topic Question'],
+    'On-Topic Question': ['Off-Topic Question', 'Debugging/Code-Sharing'],
     'Off-Topic Question': ['On-Topic Question'],
     'Pace-Related': ['Repeat/clarification'],
     'Repeat/clarification': ['Pace-Related'],
     'Emotional-State': [],  # no dominant confusion pair
+    'Debugging/Code-Sharing': ['On-Topic Question'],
 }
 
 

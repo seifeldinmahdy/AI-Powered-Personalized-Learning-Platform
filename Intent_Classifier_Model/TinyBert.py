@@ -19,7 +19,8 @@ class IntentDataset(Dataset):
             'Off-Topic Question': 1,
             'Emotional-State': 2,
             'Pace-Related': 3,
-            'Repeat/clarification': 4
+            'Repeat/clarification': 4,
+            'Debugging/Code-Sharing': 5,
         }
     
     def __len__(self):

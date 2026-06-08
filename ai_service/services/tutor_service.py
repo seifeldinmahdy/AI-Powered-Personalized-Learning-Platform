@@ -278,6 +278,17 @@ TUTOR_SKILLS = {
         "it. Say something like 'one thing many students get tripped up "
         "on here is...' without singling out the student personally."
     ),
+
+    # Activated when intent is Debugging/Code-Sharing
+    "DIRECT_DEBUG_HELP": (
+        "SKILL — DIRECT DEBUG HELP: The student is sharing code or an error message "
+        "and asking for debugging help. Do NOT use the Socratic method here — they need "
+        "a direct, clear fix. Identify the bug or error, explain WHY it happens in one "
+        "or two sentences, then show the corrected approach. After giving the fix, ask "
+        "ONE follow-up question to check they understand the underlying concept, for "
+        "example: 'Does it make sense why Python raises that error when you try to "
+        "concatenate a string and an integer?'"
+    ),
 }
 
 
@@ -1039,6 +1050,61 @@ async def answer_question(
             "is_finished": session.status == "finished",
             "status": session.status,
             "inference_time": 0.0,
+        }
+
+    # ── Debugging/Code-Sharing — direct help, no Socratic ──────────
+    if effective_intent == "Debugging/Code-Sharing":
+        session.status = "answering"
+        debug_skills: list[str] = ["DIRECT_DEBUG_HELP"]
+        if student_emotion and student_emotion.lower() in ("confused", "surprise", "fear"):
+            debug_skills.append("CONFUSION_DIAGNOSIS")
+        system_prompt = _build_system_prompt(ANSWER_SYSTEM_PROMPT, debug_skills)
+
+        context_parts = []
+        if session.running_summary:
+            context_parts.append(f"CONTEXT (what we've covered so far):\n{session.running_summary}")
+        profile_context = _build_profile_context(session)
+        if profile_context:
+            context_parts.append(profile_context)
+        context_parts.append(f"CURRENT TOPIC: {session.current_topic or 'N/A'}")
+        if session.current_subtopic:
+            context_parts.append(f"CURRENT SUBTOPIC: {session.current_subtopic}")
+        context_parts.append(f"STUDENT'S CODE/ERROR: {question}")
+        user_prompt = "\n\n".join(context_parts)
+        conversation_history = _build_conversation_history(session, max_turns=3)
+
+        start = time.time()
+        answer_text = await _call_ollama(
+            system_prompt, user_prompt,
+            temperature=0.5,
+            conversation_history=conversation_history,
+        )
+        elapsed = round(time.time() - start, 2)
+
+        session.transcript.append({"role": "student", "text": question, "timestamp": time.time()})
+        session.transcript.append({
+            "role": "tutor", "text": answer_text,
+            "topic": session.current_topic, "subtopic": session.current_subtopic,
+            "timestamp": time.time(), "is_debug_answer": True,
+        })
+        if len(session.transcript) > 10:
+            session.transcript = session.transcript[-10:]
+
+        qa_text = f"Student debug request: {question}\nTutor fix: {answer_text}"
+        await _update_summary(session, qa_text)
+        session.status = prev_status if prev_status != "answering" else "lecturing"
+        _sync_to_shared_store(session)
+
+        return {
+            "answer": answer_text,
+            "intent": "Debugging/Code-Sharing",
+            "topic": session.current_topic,
+            "subtopic": session.current_subtopic,
+            "progress": session.progress,
+            "is_finished": session.status == "finished",
+            "status": session.status,
+            "inference_time": elapsed,
+            "active_skills": debug_skills,
         }
 
     # ── On-Topic Question (default path) ────────────────────────────
