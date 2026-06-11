@@ -29,50 +29,93 @@ from mcq.scoring_categories import score_category_description
 _CONDITIONING_MASTERY = """\
 CONDITIONING INSTRUCTIONS — MASTERY LEVEL
 ──────────────────────────────────────────
+Mastery controls HOW you frame the question — vocabulary, cognitive
+register, and distractor sophistication. It is INDEPENDENT of difficulty.
+
 When mastery is Novice:
-- Generate recall or recognition questions only.
-- Use simple vocabulary that matches the chunk language exactly.
-- The correct answer must be directly stated or immediately obvious from the source.
-- Do not require the student to connect multiple ideas or infer anything beyond what is written.
-- For distractors: use plausible but clearly wrong options that a student who read the source carefully would eliminate.
+  - Vocabulary: everyday language matching the chunk exactly
+  - Frame: "What is X?" / "What does X do?"
+  - Distractors: clearly wrong to anyone who read carefully; no subtle traps
+  - No cross-concept reasoning required
+  - Example question: "What is a stack?"
+  - Example distractor: a wrong but obviously unrelated answer
 
 When mastery is Intermediate:
-- Generate application or distinction questions.
-- The student must connect two ideas or apply a concept to a situation — not just recall.
-- Moderate vocabulary — assume the student knows basic terminology.
-- The correct answer requires understanding, not just memorization.
-- For distractors: use real alternatives that require careful reasoning to eliminate.
+  - Vocabulary: standard CS terminology assumed known
+  - Frame: connect two ideas or apply a concept to a simple scenario
+  - Distractors: require careful reasoning to eliminate (plausible-sounding)
+  - NEVER a pure definition (unless score_category forces Type 4a)
+  - Example question: "What is the difference between a stack and a queue?"
+  - Example distractor: plausible-sounding but subtly wrong
 
 When mastery is Expert:
-- Generate reasoning, inference, or misconception questions.
-- The student must analyze why something works, identify edge cases, or reason about trade-offs.
-- Technical vocabulary is appropriate — assume strong foundational knowledge.
-- The correct answer requires synthesis across multiple concepts.
-- For distractors: use sophisticated options that are plausible to someone with partial understanding."""
+  - Vocabulary: precise technical language — assume strong foundational knowledge
+  - Frame: WHY it works, edge cases, or tradeoffs across concepts
+  - Distractors: sophisticated, plausible to someone with partial understanding
+  - Synthesis across concepts is appropriate
+  - Example question: "Why does a hash table degrade to O(n) lookup in the worst case?"
+  - Example distractor: technically accurate in isolation but misses the key point"""
 
 _CONDITIONING_SCORE = """\
 CONDITIONING INSTRUCTIONS — SCORE CATEGORY
 ────────────────────────────────────────────
+Score category controls HOW HARD the question is. It is INDEPENDENT of
+mastery — mastery controls frame and vocabulary, score_category controls
+difficulty. They are orthogonal dimensions.
+
 When score_category is very_weak:
-- Override the mastery level entirely — generate the simplest possible question regardless of mastery.
-- Generate a definition or direct recall question (Type 4a) even for Intermediate or Expert students.
-- The student needs their foundation rebuilt on this specific topic before advancing.
-- Keep distractors moderate — the student is struggling and needs confidence, not harder traps.
-- Do not generate reasoning or application questions under any circumstance.
+  - OVERRIDES mastery on TYPE ONLY — always generate Type 4a (Definition/Recall)
+  - Mastery still controls vocabulary and distractor sophistication (do NOT dumb down)
+  - Even for Expert students: write a simple definition question with Expert vocabulary
+  - If the chunk contains code: identify the concept, ask a definition question about it
+  - Distractors: easy to eliminate — student needs to rebuild confidence
+  - Goal: restore the foundation before advancing
+  - Example (Expert + very_weak): "What is the purpose of a base case in recursion?" —
+    written with Expert vocabulary but a simple definitional frame
 
 When score_category is weak:
-- Generate one cognitive level simpler than the mastery level would normally suggest.
-- An Intermediate student gets a recognition question rather than an application question.
-- Distractors should be plausible but distinguishable with careful reading.
+  - Generate one cognitive level simpler than mastery alone would suggest
+  - An Intermediate student gets a Novice-difficulty question
+  - Distractors: plausible but distinguishable with careful reading
 
 When score_category is moderate:
-- Generate the standard question type for the given mastery level.
-- Use standard distractor difficulty for the mastery level.
+  - Generate the standard question type for the given mastery level
+  - Standard distractor difficulty for the mastery level
 
 When score_category is strong:
-- Push to the hardest question type the mastery level allows.
-- A Novice student with a strong score gets the hardest Novice-appropriate question.
-- Distractors should be as challenging as the mastery ceiling permits."""
+  - Push to the hardest question type the mastery level allows
+  - A Novice student with strong score gets the hardest Novice-appropriate question
+  - Distractors: as challenging as the mastery ceiling permits"""
+
+
+# Distractor labeling block — injected into QG prompts to teach structured distractor generation.
+_CONDITIONING_DISTRACTOR_LABELS = """\
+DISTRACTOR GENERATION — CATEGORY LABELS
+────────────────────────────────────────────
+Generate exactly 3 distractors, each targeting a DIFFERENT misconception:
+  - wrong_concept: student confuses this with a different concept entirely
+  - wrong_application: student understands the concept but applies it incorrectly
+  - partial_knowledge: student knows part of the answer but misses a key detail
+
+Each distractor must be meaningfully different from the other two and from
+the correct answer. Do not just paraphrase the correct answer."""
+
+
+# Context-scope restriction — injected into QG prompts to prevent textbook-reference questions.
+_CONDITIONING_CONTEXT_SCOPE = """\
+QUESTION SCOPE — CRITICAL CONSTRAINT
+────────────────────────────────────────────
+The student answering this question will NOT have access to the textbook,
+any figures or diagrams, or any specific code snippet from the source.
+
+You MUST generate a question that tests the underlying CS concept — NOT
+a question about the specific example, figure, or code in the text.
+
+NEVER generate: "According to the passage...", "As shown in Figure X...",
+"In the following code snippet...", or any textbook-specific framing.
+
+ALWAYS generate questions answerable by any student who knows the concept,
+regardless of which textbook they studied from."""
 
 
 def _conditioning_misconception_block(misconception_context: str) -> str:
@@ -93,13 +136,19 @@ A previous failure by this student has been provided. Follow these rules exactly
 def _build_conditioning_section(
     misconception_context: str | None = None,
 ) -> str:
-    """Assemble the full conditioning section (Blocks 1–3) as a single string.
+    """Assemble the full conditioning section (Blocks 1–4) as a single string.
 
-    Block 3 is omitted when ``misconception_context`` is None or empty.
+    Block 3 (misconception) is omitted when ``misconception_context`` is None or empty.
+    Block 4 (distractor labels) and the context-scope block are always included.
     """
-    blocks = [_CONDITIONING_MASTERY, _CONDITIONING_SCORE]
+    blocks = [
+        _CONDITIONING_CONTEXT_SCOPE,
+        _CONDITIONING_MASTERY,
+        _CONDITIONING_SCORE,
+    ]
     if misconception_context:
         blocks.append(_conditioning_misconception_block(misconception_context))
+    blocks.append(_CONDITIONING_DISTRACTOR_LABELS)
     return "\n\n".join(blocks)
 
 

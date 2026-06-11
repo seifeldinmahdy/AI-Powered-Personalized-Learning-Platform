@@ -5,6 +5,11 @@ objects (question + correct answer + 3 distractors) for each chunk sampled
 with weighted mastery/score_category distributions.  Workers write results
 thread-safely to a single JSONL output file.
 
+Synthetic chunks (replacing the removed Scipy PDF) are generated on demand
+from clean, book-agnostic CS educational paragraphs via ``generate_synthetic_chunks``.
+All chunks — PDF-sourced and synthetic alike — pass through ``sanitize_chunk``
+before being sent to the teacher LLM.
+
 Usage::
 
     python -m mcq.training.data_generator \\
@@ -77,6 +82,12 @@ CONFIG = {
     "key_fail_threshold": 3,
     # Seconds to wait before re-trying a failed key
     "key_cooldown": 60,
+    # Books to exclude from PDF loading (noisy, code-heavy, or book-reference-polluted)
+    "excluded_books": {
+        "ScipyLectures-simple.pdf",
+    },
+    # How many synthetic chunks to generate when the generator is invoked
+    "n_synthetic_chunks": 180,
 }
 
 MASTERY_WEIGHTS = {
@@ -268,12 +279,384 @@ def _clean_chunk_text(text: str, book_stem: str) -> str:
     return "\n".join(cleaned).strip()
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# CHUNK SANITIZER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Compiled patterns for sanitize_chunk — applied to every chunk, PDF and synthetic.
+_SANITIZE_FIGURE_RE = re.compile(
+    r'(?i)'
+    r'(?:figure|fig\.?)\s*[\d.]+'
+    r'|\bsee figure\b'
+    r'|\bas shown above\b'
+    r'|\bthe diagram above\b'
+    r'|\bthe table below\b',
+)
+_SANITIZE_SOURCE_RE = re.compile(
+    r'(?i)'
+    r'from the \w[^.,]{0,40} lecture notes'
+    r'|\bin this book\b'
+    r'|\bthe author\b'
+    r'|\bthe text states\b'
+    r'|\bthe passage\b'
+    r'|\bthis chapter\b'
+    r'|\bthis section\b',
+)
+_SANITIZE_FORWARD_RE = re.compile(
+    r'(?i)'
+    r'as discussed in chapter \w+'
+    r'|\bwe saw earlier\b'
+    r'|\bin the next section\b'
+    r'|\bpreviously\b'
+    r'|\blater in this\b',
+)
+# Unicode box-drawing characters U+2500–U+257F
+_SANITIZE_BOX_CHARS_RE = re.compile(r'[\u2500-\u257f]+')
+# A line consisting entirely of box-drawing chars and whitespace
+_SANITIZE_BOX_LINE_RE = re.compile(r'^[\u2500-\u257f\s]+$')
+# PDF page-number prefix at start of line: "55 " with no other digits following
+_SANITIZE_PAGE_PREFIX_RE = re.compile(r'^\d{1,4} +(?=[A-Z])', re.MULTILINE)
+
+
+def sanitize_chunk(text: str) -> str | None:
+    """Strip book-specific artifacts from any chunk before sending to the teacher LLM.
+
+    Applies to both real PDF chunks and synthetic chunks as a safety net.
+
+    Strips:
+    - Figure/diagram references
+    - Book/source/passage references
+    - Forward/backward cross-references
+    - Code blocks longer than 10 lines (truncated with note)
+    - PDF extraction artifacts: page-number prefixes, header repetitions
+    - Unicode box-drawing characters (decorative PDF separators)
+    - Normalises whitespace
+
+    Returns
+    -------
+    str or None
+        Cleaned text, or None if the cleaned text is fewer than 40 words
+        (too little content for a meaningful question).
+    """
+    if not text or not text.strip():
+        return None
+
+    lines = text.splitlines()
+    result_lines: list[str] = []
+    in_code_block = False
+    code_block_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # ── Box-drawing lines: drop entirely ──────────────────────────
+        if _SANITIZE_BOX_LINE_RE.match(stripped):
+            continue
+
+        # ── Track fenced code blocks ───────────────────────────────────
+        if stripped.startswith("```"):
+            if not in_code_block:
+                in_code_block = True
+                code_block_lines = [line]
+            else:
+                # Closing fence
+                in_code_block = False
+                code_block_lines.append(line)
+                # Truncate if too long
+                content_lines = code_block_lines[1:-1]  # strip fence markers
+                if len(content_lines) > 10:
+                    trimmed = code_block_lines[:11]  # opening fence + 10 content lines
+                    trimmed.append("# ... [code truncated — focus on the concept]")
+                    trimmed.append("```")
+                    result_lines.extend(trimmed)
+                else:
+                    result_lines.extend(code_block_lines)
+                code_block_lines = []
+            continue
+
+        if in_code_block:
+            code_block_lines.append(line)
+            continue
+
+        # ── Strip page-number prefixes ("55 Some Heading") ─────────────
+        line = _SANITIZE_PAGE_PREFIX_RE.sub("", line)
+        stripped = line.strip()
+        if not stripped:
+            result_lines.append("")
+            continue
+
+        # ── Remove inline box-drawing chars ────────────────────────────
+        stripped = _SANITIZE_BOX_CHARS_RE.sub("", stripped).strip()
+        if not stripped:
+            continue
+
+        # ── Remove figure references ────────────────────────────────────
+        stripped = _SANITIZE_FIGURE_RE.sub("", stripped).strip()
+
+        # ── Remove source/book references ───────────────────────────────
+        stripped = _SANITIZE_SOURCE_RE.sub("", stripped).strip()
+
+        # ── Remove forward/backward references ─────────────────────────
+        stripped = _SANITIZE_FORWARD_RE.sub("", stripped).strip()
+
+        if stripped:
+            result_lines.append(stripped)
+
+    # Flush any unterminated code block
+    if in_code_block and code_block_lines:
+        content_lines = code_block_lines[1:]
+        if len(content_lines) > 10:
+            trimmed = code_block_lines[:11]
+            trimmed.append("# ... [code truncated — focus on the concept]")
+            result_lines.extend(trimmed)
+        else:
+            result_lines.extend(code_block_lines)
+
+    # Normalise: collapse runs of blank lines to one
+    cleaned_lines: list[str] = []
+    prev_blank = False
+    for ln in result_lines:
+        is_blank = not ln.strip()
+        if is_blank and prev_blank:
+            continue
+        cleaned_lines.append(ln)
+        prev_blank = is_blank
+
+    cleaned = "\n".join(cleaned_lines).strip()
+
+    # Discard if too short after cleaning
+    if len(cleaned.split()) < 40:
+        return None
+
+    return cleaned
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SYNTHETIC CHUNK GENERATOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Topic distribution for synthetic chunk generation.
+# Tuple format: (topic_tag, subtopics_list)
+# Subtopics are cycled through evenly to fill the per-topic chunk quota.
+_SYNTHETIC_TOPIC_DISTRIBUTION: list[tuple[str, list[str]]] = [
+    ("data_structures", [
+        "arrays",
+        "linked lists",
+        "binary trees",
+        "general trees",
+        "graphs",
+        "hash tables",
+        "heaps",
+        "tries",
+        "stacks",
+        "queues",
+    ]),
+    ("algorithms", [
+        "sorting algorithms",
+        "binary search",
+        "recursion",
+        "dynamic programming",
+        "greedy algorithms",
+        "breadth-first search (BFS)",
+        "depth-first search (DFS)",
+        "divide and conquer",
+    ]),
+    ("complexity", [
+        "Big-O notation",
+        "time vs space tradeoffs",
+        "amortized analysis",
+        "best average and worst case complexity",
+    ]),
+    ("python_fundamentals", [
+        "Python functions and scope",
+        "mutability and pass-by-object-reference in Python",
+        "Python generators",
+        "list comprehensions and dict comprehensions",
+        "Python decorators",
+    ]),
+    ("oop_concepts", [
+        "inheritance in object-oriented programming",
+        "polymorphism",
+        "encapsulation",
+        "composition vs inheritance",
+        "abstraction and method resolution order",
+    ]),
+    ("functional_concepts", [
+        "map filter and reduce",
+        "closures in Python",
+        "higher-order functions",
+        "lambda expressions",
+        "immutability in functional programming",
+    ]),
+    ("error_handling", [
+        "exceptions and try/except in Python",
+        "custom exception classes",
+        "the finally block and cleanup",
+        "context managers and the with statement",
+    ]),
+    ("file_and_io", [
+        "file handling in Python",
+        "serialization with JSON and pickle",
+        "buffering and file modes",
+    ]),
+    ("basic_ml_concepts", [
+        "overfitting and underfitting",
+        "bias-variance tradeoff",
+        "cross-validation",
+        "loss functions",
+        "gradient descent",
+        "regularization in machine learning",
+    ]),
+    ("statistics_basics", [
+        "mean variance and standard deviation",
+        "probability distributions",
+        "hypothesis testing",
+        "correlation vs causation",
+        "sampling and sampling bias",
+    ]),
+]
+
+
+def generate_synthetic_chunks(
+    n_chunks: int,
+    api_key: str,
+) -> list[dict]:
+    """Generate clean, reference-free CS educational paragraphs via the teacher LLM.
+
+    Distributes chunks evenly across topics and their subtopics.  Each chunk
+    is passed through ``sanitize_chunk`` before being returned, and discarded
+    if it comes back shorter than 40 words.  The teacher LLM is called
+    synchronously (single-threaded) — this function is intended to be called
+    once from ``main()`` before the multi-threaded generation loop starts.
+
+    Parameters
+    ----------
+    n_chunks :
+        Target number of synthetic chunks to generate.
+    api_key :
+        API key to use for calling the teacher LLM (uses CONFIG model).
+
+    Returns
+    -------
+    list[dict]
+        Each dict has ``text``, ``topic``, ``book`` keys compatible with
+        the standard chunk format expected by ``_build_tasks``.
+    """
+    client = _make_ollama_client(api_key)
+
+    # Flatten topic/subtopic pairs distributed evenly to reach n_chunks total
+    n_topics = len(_SYNTHETIC_TOPIC_DISTRIBUTION)
+    base_per_topic = n_chunks // n_topics
+    remainder = n_chunks % n_topics
+
+    targets: list[tuple[str, str]] = []  # (topic_tag, subtopic)
+    for i, (tag, subtopics) in enumerate(_SYNTHETIC_TOPIC_DISTRIBUTION):
+        count = base_per_topic + (1 if i < remainder else 0)
+        # Cycle through subtopics
+        for j in range(count):
+            subtopic = subtopics[j % len(subtopics)]
+            targets.append((tag, subtopic))
+
+    # Shuffle to avoid topic-block ordering in the final dataset
+    rng = random.Random(99)
+    rng.shuffle(targets)
+
+    synthetic_chunks: list[dict] = []
+    seen_hashes: set[str] = set()
+
+    logger.info(
+        "synthetic_chunk_generation_start",
+        target=n_chunks,
+        actual_targets=len(targets),
+    )
+    print(f"\n  Generating {len(targets)} synthetic chunks...")
+
+    for idx, (tag, subtopic) in enumerate(targets):
+        prompt = (
+            f"Write a self-contained educational paragraph (100-150 words) about "
+            f"the computer science concept: {subtopic}\n\n"
+            "Rules:\n"
+            "- No figure references, no 'as shown above', no 'in this example'\n"
+            "- No reference to any specific book, lecture, author, or publication\n"
+            "- No 'we', no 'the student', no 'you will learn'\n"
+            "- State the concept directly and precisely\n"
+            "- Include one concrete illustrative sentence\n"
+            "- End with a consequence or implication of the concept\n\n"
+            "Output only the paragraph, nothing else."
+        )
+
+        try:
+            response = client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.8,
+                timeout_override=60,
+            )
+
+            raw_text: str = ""
+            if isinstance(response, str):
+                raw_text = response
+            elif isinstance(response, dict):
+                raw_text = (
+                    response.get("content")
+                    or response.get("text")
+                    or response.get("message", {}).get("content", "")
+                    or ""
+                )
+
+            raw_text = raw_text.strip()
+            if not raw_text:
+                logger.warning("synthetic_chunk_empty_response", subtopic=subtopic, idx=idx)
+                continue
+
+            cleaned = sanitize_chunk(raw_text)
+            if cleaned is None:
+                logger.warning(
+                    "synthetic_chunk_too_short_after_sanitize",
+                    subtopic=subtopic,
+                    idx=idx,
+                )
+                continue
+
+            chunk_h = _chunk_hash(cleaned)
+            if chunk_h in seen_hashes:
+                logger.debug("synthetic_chunk_duplicate", subtopic=subtopic)
+                continue
+
+            seen_hashes.add(chunk_h)
+            synthetic_chunks.append({
+                "text": cleaned,
+                "topic": tag,
+                "book": f"synthetic:{tag}",
+            })
+
+            if (idx + 1) % 20 == 0:
+                print(f"    {idx + 1}/{len(targets)} synthetic chunks generated...")
+
+        except Exception:
+            logger.exception(
+                "synthetic_chunk_generation_failed",
+                subtopic=subtopic,
+                idx=idx,
+            )
+
+    logger.info(
+        "synthetic_chunk_generation_done",
+        requested=n_chunks,
+        generated=len(synthetic_chunks),
+    )
+    print(f"  Synthetic chunks generated: {len(synthetic_chunks)} / {len(targets)} succeeded")
+    return synthetic_chunks
+
+
 def _load_chunks_from_pdfs(books_dir: str, chunk_size: int, chunk_overlap: int) -> list[dict]:
     """Load and chunk all PDFs from the books directory.
 
     Books are processed in **alphabetical order** so the task queue always
     starts from the first book, first chunk.  Chunk artifacts (headers,
-    page numbers, edition lines) are stripped before returning.
+    page numbers, edition lines) are stripped, then every chunk passes
+    through ``sanitize_chunk`` to remove book-specific references.
+
+    Books listed in ``CONFIG["excluded_books"]`` are skipped entirely.
     """
     from langchain_community.document_loaders import PyPDFLoader
     from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -283,6 +666,7 @@ def _load_chunks_from_pdfs(books_dir: str, chunk_size: int, chunk_overlap: int) 
         logger.error("books_dir_not_found", path=books_dir)
         return []
 
+    excluded = CONFIG.get("excluded_books", set())
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -293,27 +677,45 @@ def _load_chunks_from_pdfs(books_dir: str, chunk_size: int, chunk_overlap: int) 
     # Sort alphabetically for deterministic, book-ordered processing
     pdf_files = sorted(books_path.glob("*.pdf"), key=lambda p: p.name.lower())
     logger.info("found_pdf_files", count=len(pdf_files), dir=books_dir)
+
     for i, p in enumerate(pdf_files):
+        if p.name in excluded:
+            logger.info("book_excluded", index=i + 1, name=p.name)
+            print(f"  Skipping excluded book: {p.name}")
+            continue
         logger.info("book_order", index=i + 1, name=p.name)
 
     for pdf_path in pdf_files:
+        if pdf_path.name in excluded:
+            continue
         try:
             loader = PyPDFLoader(str(pdf_path))
             pages = loader.load()
             splits = splitter.split_documents(pages)
             book_stem = pdf_path.stem
+            skipped = 0
             for doc in splits:
                 raw_text = doc.page_content.strip()
                 text = _clean_chunk_text(raw_text, book_stem)
-                if len(text) < 50:
+                # Run through the full sanitizer — removes figure refs, source
+                # refs, cross-refs, over-long code blocks, and box-drawing chars
+                sanitized = sanitize_chunk(text)
+                if sanitized is None:
+                    skipped += 1
                     continue
                 # Use the PDF filename stem as topic — ignore langchain's
                 # metadata.topic which leaks page-level noise.
                 all_chunks.append({
-                    "text": text,
+                    "text": sanitized,
                     "topic": book_stem,
                     "book": pdf_path.name,
                 })
+            if skipped:
+                logger.info(
+                    "pdf_chunks_sanitized_out",
+                    book=pdf_path.name,
+                    skipped=skipped,
+                )
         except Exception:
             logger.exception("pdf_load_failed", path=str(pdf_path))
 
@@ -505,8 +907,136 @@ def _make_ollama_client(api_key: str):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+_PROMPT_CONTEXT_SCOPE = """\
+CRITICAL INSTRUCTION — QUESTION SCOPE:
+The student answering this question will NOT have access to:
+- The source textbook or lecture notes
+- Any figures, diagrams, or images referenced in the text
+- Any specific code snippets from the chunk below
+
+You MUST generate a question that tests the underlying CS concept
+or principle described in the chunk — NOT a question about the
+specific example, figure, or code that appears in the text.
+
+BAD (never generate):
+  "In the following code snippet from the Scipy lecture notes..."
+  "According to the passage, what does Figure 3.2 show?"
+  "As shown in the example above..."
+
+GOOD (generate these instead):
+  "What does the boxplot() function visualize?"
+  "Which data structure provides O(1) average-case lookup time?"
+  "What happens when a recursive function has no base case?"
+
+The question must be answerable by any student who understands
+the concept — even without having read this specific textbook."""
+
+
+_PROMPT_CODE_LENGTH = """\
+If your question needs to reference code, limit it to a MAXIMUM
+of 5 lines. Never reproduce a full code block from the chunk in
+your question stem. Prefer to describe what the code does in words."""
+
+
+_PROMPT_SIGNAL_SEPARATION = """\
+TWO SIGNALS — TWO DIFFERENT JOBS:
+
+MASTERY LEVEL controls HOW you frame the question — vocabulary,
+cognitive register, and distractor sophistication:
+
+  Novice:
+    - Vocabulary: everyday language matching the chunk exactly
+    - Frame: "What is X?" / "What does X do?"
+    - Distractors: clearly wrong to anyone who read carefully
+    - No cross-concept reasoning required
+    - Example: "What is a stack?"
+    - Example distractor: a wrong but obviously unrelated answer
+
+  Intermediate:
+    - Vocabulary: standard CS terminology assumed known
+    - Frame: connect two ideas or apply to a simple scenario
+    - Distractors: require careful reasoning to eliminate
+    - NEVER a pure definition (unless score_category overrides)
+    - Example: "What is the difference between a stack and a queue?"
+    - Example distractor: plausible-sounding but subtly wrong
+
+  Expert:
+    - Vocabulary: precise technical language, assume mastery
+    - Frame: WHY it works, edge cases, tradeoffs
+    - Distractors: sophisticated, plausible to partial knowers
+    - Synthesis across concepts is appropriate
+    - Example: "Why does a hash table degrade to O(n) lookup in
+      the worst case?"
+    - Example distractor: technically accurate but misses the point
+
+SCORE CATEGORY controls HOW HARD the question is — difficulty
+and whether mastery type is overridden:
+
+  very_weak:
+    - OVERRIDES mastery on TYPE ONLY — always generate Type 4a
+    - Mastery still controls vocabulary and distractor sophistication
+    - Even for Expert students: simple definition question
+    - Distractors: easy to eliminate, student needs confidence
+    - Goal: rebuild the foundation before anything else
+
+  weak:
+    - One cognitive level easier than mastery alone would suggest
+    - An Intermediate student gets a Novice-difficulty question
+    - Distractors: plausible but distinguishable with careful reading
+
+  moderate:
+    - Standard difficulty for the mastery level, no adjustment
+
+  strong:
+    - Hardest difficulty mastery allows
+    - Distractors: as subtle and challenging as mastery permits
+
+IMPORTANT: mastery and score_category are independent dimensions.
+A Novice + strong student gets a hard Novice-framed question.
+An Expert + very_weak student gets a Type 4a — but written with
+Expert vocabulary, not dumbed-down language. Same type, different
+register."""
+
+
+_PROMPT_DISTRACTOR_LABELS = """\
+Generate exactly 3 distractors, each targeting a DIFFERENT
+misconception. Label each:
+  - wrong_concept: student confuses this with a different concept
+  - wrong_application: student understands but applies incorrectly
+  - partial_knowledge: student knows part but misses a key detail
+
+Each distractor must be meaningfully different from the other two
+and from the correct answer. Output one distractor per category."""
+
+
+def _build_very_weak_override_block(question_type: str) -> str:
+    """Return the very_weak hard override injection block.
+
+    Only injected when score_category is 'very_weak'.
+    """
+    return (
+        "score_category is very_weak. You MUST generate a Type 4a "
+        "(Definition/Recall) question REGARDLESS of whether the chunk "
+        "contains code. If the chunk contains code, identify the concept "
+        "the code demonstrates and ask a definition question about that "
+        "concept — not about the syntax or output of the code.\n\n"
+        "Example: chunk shows a recursive function →\n"
+        "BAD:  \"What does this recursive function return?\"\n"
+        "GOOD: \"What is the purpose of a base case in a recursive function?\""
+    )
+
+
 def _build_generation_prompt(task: dict) -> str:
-    """Build a combined QG+DG generation prompt for a single MCQ."""
+    """Build a combined QG+DG generation prompt for a single MCQ.
+
+    Incorporates five blocks beyond the taxonomy:
+    1. Context-scope restriction (no figure/textbook questions)
+    2. very_weak hard type override (injected only when applicable)
+    3. Code length restriction (max 5 lines in question stem)
+    4. Explicit mastery vs score_category separation with examples
+    5. Distractor category labeling (wrong_concept / wrong_application /
+       partial_knowledge)
+    """
     mcq_src = str(Path(__file__).resolve().parent.parent.parent)
     if mcq_src not in sys.path:
         sys.path.insert(0, mcq_src)
@@ -515,21 +1045,31 @@ def _build_generation_prompt(task: dict) -> str:
     from mcq.scoring_categories import score_category_description
 
     category_desc = score_category_description(task["score_category"])
+
     misconception_block = ""
     if task["misconception_context"]:
-        misconception_block = f"""
-MISCONCEPTION CONTEXT:
-Previously, {task['misconception_context']}.
-Generate a question that approaches this topic from a different angle to
-address the underlying gap.  One distractor should target the same
-misconception from a new perspective.
-"""
+        misconception_block = (
+            f"\nMISCONCEPTION CONTEXT:\n"
+            f"Previously, {task['misconception_context']}.\n"
+            f"Generate a question that approaches this topic from a different angle to\n"
+            f"address the underlying gap.  One distractor should target the same\n"
+            f"misconception from a new perspective.\n"
+        )
+
+    # Inject the very_weak override block only when applicable
+    very_weak_block = ""
+    if task["score_category"] == "very_weak":
+        very_weak_block = f"\n{_build_very_weak_override_block(task['question_type'])}\n"
 
     return f"""\
 You are an expert educational question writer.
 
 {QUESTION_TYPE_TAXONOMY}
 
+{_PROMPT_CONTEXT_SCOPE}
+
+{_PROMPT_SIGNAL_SEPARATION}
+{very_weak_block}
 TASK: Generate a complete multiple-choice question of Type {task['question_type']} \
 for the topic "{task['topic']}".
 
@@ -538,17 +1078,22 @@ STUDENT PROFILE:
 - Topic score category: {task['score_category']}
 - {category_desc}
 {misconception_block}
+{_PROMPT_CODE_LENGTH}
+
 SOURCE CONTENT:
 \"\"\"
 {task['text']}
 \"\"\"
+
+{_PROMPT_DISTRACTOR_LABELS}
 
 Generate exactly ONE question with the correct answer, explanation, and exactly \
 3 wrong-but-plausible distractors.
 
 REQUIREMENTS:
 1. The question MUST be Type {task['question_type']} as defined in the taxonomy.
-2. The question must be answerable from the source content alone.
+2. The question must be answerable from the source content alone without
+   needing the textbook, any figures, or any code block.
 3. Each distractor must be plausible but incorrect.
 4. No distractor should match the correct answer.
 5. No two distractors should be identical.
@@ -1156,11 +1701,31 @@ def main():
     # Ensure output directory exists
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
 
-    # Load chunks
+    # Load chunks from PDFs (Scipy excluded automatically)
     chunks = _load_chunks_from_pdfs(args.books, args.chunk_size, args.chunk_overlap)
     if not chunks:
         print("ERROR: No chunks loaded from books directory.")
         sys.exit(1)
+
+    # Generate synthetic chunks to replace the removed Scipy PDF examples
+    # Uses the first primary key (or first available key) for a single-threaded
+    # pre-generation pass before the multi-threaded MCQ loop begins.
+    synthetic_key = primary_keys[0] if primary_keys else (backup_keys[0] if backup_keys else None)
+    if synthetic_key and not args.force_type:
+        n_syn = CONFIG.get("n_synthetic_chunks", 180)
+        synthetic = generate_synthetic_chunks(
+            n_chunks=n_syn,
+            api_key=synthetic_key,
+        )
+        if synthetic:
+            chunks = chunks + synthetic
+            logger.info(
+                "synthetic_chunks_added",
+                synthetic=len(synthetic),
+                total=len(chunks),
+            )
+        else:
+            logger.warning("no_synthetic_chunks_generated")
 
     # Resumability: skip already-processed chunks
     existing_hashes = _load_existing_hashes(args.output)
