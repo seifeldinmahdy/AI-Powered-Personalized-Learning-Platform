@@ -15,6 +15,7 @@ import pandas as pd
 import os
 import re
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,16 @@ def generate_session_context(current_topic_idx):
 # EXPANDED TEMPLATE BANKS (40+ per class)
 # ─────────────────────────────────────────────────────────────────────
 
+# ── ON_TOPIC vs DEBUGGING boundary ──────────────────────────────────────────
+# On-Topic     = conceptual question WITHOUT a specific code artifact.
+#   YES: "how does enumerate() work?"  "what does IndexError mean in general?"
+#   NO:  "my loop `for i in range(10)` skips a number"  <-- Debugging
+#
+# Debugging    = student shares a broken code artifact (backticks, traceback,
+#                specific error with surrounding code context).
+#   YES: "`for i in range(10): print(i)` — why does it skip the last number?"
+#   NO:  "what causes IndexError in general?"  <-- On-Topic
+
 ON_TOPIC_TEMPLATES = [
     # Direct questions
     "How do I use {topic} in my code?",
@@ -163,19 +174,19 @@ ON_TOPIC_TEMPLATES = [
     "Are we going to learn about {topic} soon?",
     "Will {topic} be on the exam?",
     "Is {topic} related to what we are doing now?",
-    # Code-snippet templates (T1-B) — critical for programming education domain
-    "why does `def {topic}():` give me a SyntaxError?",
-    "my code keeps throwing IndexError on line 3, what am i doing wrong",
-    "i wrote a for loop but it prints None every iteration",
-    "what does self mean inside a class method",
-    "why is my function returning None instead of the value",
-    "i get a NameError when i call {topic}, what does that mean",
-    "can you look at this: `for i in range(len(lst))` is this right",
-    "TypeError: unsupported operand — what is that",
-    "my if statement isnt working even though the condition is true",
-    "how do i fix IndentationError",
-    "why does `print({topic})` show something unexpected",
-    "i pasted my code but it wont run, where is the bug",
+    # Conceptual questions (pure concept, no code artifacts)
+    "what is the difference between a list and a tuple",
+    "when would i use a dictionary instead of a list",
+    "why do we need functions if i can just write the code inline",
+    "what does immutable mean in Python",
+    "how does python handle memory management",
+    "what is the difference between a method and a function",
+    "when should i use a class instead of just variables and functions",
+    "what is recursion and when is it useful",
+    "how do generators work and why are they memory efficient",
+    "what is the difference between deep copy and shallow copy",
+    "why does python use indentation instead of braces",
+    "what are decorators and when would i use one",
 ]
 
 ON_TOPIC_CONTEXT_TEMPLATES = [
@@ -247,6 +258,11 @@ OFF_TOPIC_FUTURE_TOPIC_TEMPLATES = [
     "How long until we get to {topic}?",
     # MOVED to ON_TOPIC_TEMPLATES (T1-A): "Is {topic} related to what we are doing now?" (curriculum-relevant)
 ]
+
+# ── Authoring rule — Emotional-State ────────────────────────────────────────
+# Templates express a FEELING or internal state only.
+# MUST NOT contain pace vocabulary (too fast, slow down, speed, keep up).
+# Test: if the utterance could appear in PACE_TEMPLATES, it does not belong here.
 
 EMOTIONAL_TEMPLATES = [
     # Frustration
@@ -508,7 +524,30 @@ HELD_OUT_OFF_TOPIC = ["are you an AI", "what time is it", "tell me a joke"]
 # actual code, not just a conceptual question about programming.
 # ─────────────────────────────────────────────────────────────────────
 
+# ── ON_TOPIC vs DEBUGGING boundary ──────────────────────────────────────────
+# On-Topic     = conceptual question WITHOUT a specific code artifact.
+#   YES: "how does enumerate() work?"  "what does IndexError mean in general?"
+#   NO:  "my loop `for i in range(10)` skips a number"  <-- Debugging
+#
+# Debugging    = student shares a broken code artifact (backticks, traceback,
+#                specific error with surrounding code context).
+#   YES: "`for i in range(10): print(i)` — why does it skip the last number?"
+#   NO:  "what causes IndexError in general?"  <-- On-Topic
+
 DEBUGGING_TEMPLATES = [
+    # Moved from ON_TOPIC_TEMPLATES — these contain code artifacts
+    "why does `def {topic}():` give me a SyntaxError?",
+    "my code keeps throwing IndexError on line 3, what am i doing wrong",
+    "i wrote a for loop but it prints None every iteration",
+    "what does self mean inside a class method",
+    "why is my function returning None instead of the value",
+    "i get a NameError when i call {topic}, what does that mean",
+    "can you look at this: `for i in range(len(lst))` is this right",
+    "TypeError: unsupported operand — what is that",
+    "my if statement isnt working even though the condition is true",
+    "how do i fix IndentationError",
+    "why does `print({topic})` show something unexpected",
+    "i pasted my code but it wont run, where is the bug",
     # Inline code + error type
     "`for i in range(10): print(i)` — why does this skip the last number",
     "i get `ValueError: invalid literal for int()` what does that mean",
@@ -986,23 +1025,46 @@ def paraphrase_with_llm(
                 f'paraphrases that a real student might say. Vary formality, slang, and length. '
                 f'Return ONLY a JSON object: {{"paraphrases": [[p1,p2,p3], ...]}}\n\n{numbered}'
             )
-            try:
-                resp = client.chat.completions.create(
-                    model='llama-3.1-8b-instant',
-                    messages=[{'role': 'user', 'content': prompt}],
-                    temperature=0.8,
-                    max_tokens=2048,
-                    response_format={'type': 'json_object'},
-                )
-                text = resp.choices[0].message.content.strip()
-                data = json.loads(text)
-                groups = data.get('paraphrases', [])
-                for s, group in zip(uncached, groups):
-                    cache[s] = group if isinstance(group, list) else []
-            except Exception as e:
-                logger.error('LLM paraphrase batch failed: %s', e)
+
+            # Retry with exponential backoff for Groq 429 rate limits
+            max_retries = 5
+            backoff = 2.0  # seconds — doubles each retry
+            success = False
+            for attempt in range(max_retries):
+                try:
+                    resp = client.chat.completions.create(
+                        model='llama-3.1-8b-instant',
+                        messages=[{'role': 'user', 'content': prompt}],
+                        temperature=0.8,
+                        max_tokens=2048,
+                        response_format={'type': 'json_object'},
+                    )
+                    text = resp.choices[0].message.content.strip()
+                    data = json.loads(text)
+                    groups = data.get('paraphrases', [])
+                    for s, group in zip(uncached, groups):
+                        cache[s] = group if isinstance(group, list) else []
+                    success = True
+                    break
+                except Exception as e:
+                    err_str = str(e)
+                    if '429' in err_str or 'rate_limit' in err_str:
+                        wait = backoff * (2 ** attempt)
+                        logger.warning(
+                            'Rate limited (attempt %d/%d) — waiting %.1fs before retry',
+                            attempt + 1, max_retries, wait,
+                        )
+                        time.sleep(wait)
+                    else:
+                        logger.error('LLM paraphrase batch failed: %s', e)
+                        break  # non-retryable error
+
+            if not success:
                 for s in uncached:
                     cache[s] = []
+
+            # Throttle between batches to stay under Groq TPM limit
+            time.sleep(3)
 
         for s in batch:
             all_paraphrases.extend(cache.get(s, []))

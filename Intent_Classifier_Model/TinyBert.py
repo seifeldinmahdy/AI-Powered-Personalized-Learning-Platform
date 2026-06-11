@@ -7,7 +7,7 @@ import re
 
 class IntentDataset(Dataset):
     """
-    Dataset for handling student input and session context for 5-class intent categorization.
+    Dataset for handling student input and session context for 6-class intent categorization.
     """
     def __init__(self, data, tokenizer, max_length=128):
         # data: list of dicts with 'student_input', 'session_context', 'label'
@@ -254,28 +254,30 @@ class CompoundSentenceSplitter:
 class TinyBertCNN(nn.Module):
     """
     TinyBERT-CNN model for intent classification.
-    Combines TinyBERT embeddings with CNN layers + BatchNorm + hidden FC layer.
+    Combines TinyBERT embeddings with CNN layers + GroupNorm + hidden FC layer.
     """
     
     def __init__(
         self,
         num_classes,
         bert_model_name='distilbert-base-uncased',
-        num_filters=128,
-        filter_sizes=[2, 3, 4],
-        dropout=0.3,
+        num_filters=192,
+        filter_sizes=[3, 4, 5, 6],
+        dropout=0.2,
         hidden_dim=128,
-        freeze_bert=False
+        freeze_bert=False,
+        temperature=1.0
     ):
         """
         Args:
             num_classes (int): Number of intent classes
             bert_model_name (str): Pre-trained TinyBERT model name
-            num_filters (int): Number of filters for each filter size
-            filter_sizes (list): List of filter sizes for CNN
+            num_filters (int): Number of filters for each filter size (default 192)
+            filter_sizes (list): List of filter sizes for CNN (default [3,4,5,6])
             dropout (float): Dropout rate
             hidden_dim (int): Hidden FC layer dimension
             freeze_bert (bool): Whether to freeze BERT parameters
+            temperature (float): Temperature scaling parameter for logit calibration
         """
         super(TinyBertCNN, self).__init__()
         
@@ -292,7 +294,7 @@ class TinyBertCNN(nn.Module):
             for param in self.bert.parameters():
                 param.requires_grad = False
         
-        # CNN layers with BatchNorm
+        # CNN layers with GroupNorm (batch-size-invariant)
         self.convs = nn.ModuleList([
             nn.Conv1d(
                 in_channels=self.bert_hidden_size,
@@ -302,7 +304,7 @@ class TinyBertCNN(nn.Module):
             for fs in filter_sizes
         ])
         self.batchnorms = nn.ModuleList([
-            nn.BatchNorm1d(num_filters)
+            nn.GroupNorm(num_groups=32, num_channels=num_filters)
             for _ in filter_sizes
         ])
         
@@ -312,10 +314,13 @@ class TinyBertCNN(nn.Module):
         # Hidden FC layer
         cnn_out_dim = len(filter_sizes) * num_filters + self.bert_hidden_size  # CNN + [CLS]
         self.fc_hidden = nn.Linear(cnn_out_dim, hidden_dim)
-        self.bn_hidden = nn.BatchNorm1d(hidden_dim)
+        self.bn_hidden = nn.GroupNorm(num_groups=16, num_channels=hidden_dim)
         
         # Output layer
         self.fc = nn.Linear(hidden_dim, num_classes)
+        
+        # Temperature scaling
+        self.temperature = temperature
         
     def forward(self, input_ids, attention_mask, token_type_ids=None):
         """
@@ -370,12 +375,14 @@ class TinyBertCNN(nn.Module):
         concatenated = torch.cat(conv_outputs + [cls_output], dim=1)
         concatenated = self.dropout(concatenated)
         
-        # Hidden FC layer
+        # Hidden FC layer (no dropout here — single application above)
         hidden = torch.relu(self.bn_hidden(self.fc_hidden(concatenated)))
-        hidden = self.dropout(hidden)
         
         # Final classification
         logits = self.fc(hidden)
+        
+        # Temperature scaling
+        logits = logits / self.temperature
         
         return logits
 
@@ -389,11 +396,12 @@ class IntentClassifier:
         self,
         num_classes,
         bert_model_name='distilbert-base-uncased',
-        num_filters=128,
-        filter_sizes=[2, 3, 4],
-        dropout=0.3,
+        num_filters=192,
+        filter_sizes=[3, 4, 5, 6],
+        dropout=0.2,
         freeze_bert=False,
-        device=None
+        device=None,
+        temperature=1.0
     ):
         self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
@@ -404,7 +412,8 @@ class IntentClassifier:
             num_filters=num_filters,
             filter_sizes=filter_sizes,
             dropout=dropout,
-            freeze_bert=freeze_bert
+            freeze_bert=freeze_bert,
+            temperature=temperature
         ).to(self.device)
         
         # Initialize tokenizer
@@ -571,6 +580,109 @@ class IntentClassifier:
         
         return loss.item()
     
+    def train_step_amp(self, batch, optimizer, criterion, scaler=None):
+        """
+        Single training step with AMP mixed-precision support.
+        
+        Args:
+            batch: Dictionary with 'input_ids', 'attention_mask', 'labels'
+            optimizer: Optimizer
+            criterion: Loss function
+            scaler: GradScaler instance for AMP, or None for standard training
+            
+        Returns:
+            loss: Training loss (float)
+        """
+        from torch.cuda.amp import autocast
+        
+        self.model.train()
+        input_ids = batch['input_ids'].to(self.device)
+        attention_mask = batch['attention_mask'].to(self.device)
+        labels = batch['labels'].to(self.device)
+        token_type_ids = batch.get('token_type_ids')
+        if token_type_ids is not None:
+            token_type_ids = token_type_ids.to(self.device)
+        
+        optimizer.zero_grad()
+        
+        with autocast():
+            logits = self.model(input_ids, attention_mask, token_type_ids=token_type_ids)
+            loss = criterion(logits, labels)
+        
+        if scaler:
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            optimizer.step()
+        
+        return loss.item()
+    
+    def predict_with_confidence(self, student_inputs, session_contexts=None,
+                                max_length=128, split_compound=False,
+                                thresholds=None):
+        """
+        Predict intents with per-class confidence thresholds.
+        
+        Args:
+            student_inputs: list of input strings
+            session_contexts: list of context strings (optional)
+            max_length: tokenization max length
+            split_compound: whether to split compound sentences
+            thresholds: dict mapping class_index -> threshold float, or None for defaults
+                       Defaults: {0: 0.55, 1: 0.70, 2: 0.50, 3: 0.60, 4: 0.60, 5: 0.60}
+        
+        Returns:
+            results: list of dicts, each with keys:
+                'label': predicted class index (or -1 if below threshold)
+                'intent_name': class name string (or 'Low Confidence')
+                'confidence': float probability of top class
+                'probabilities': np.array of all 6 class probs
+                'below_threshold': bool
+        """
+        import numpy as np
+        
+        INTENT_NAMES = ['On-Topic Question', 'Off-Topic Question', 'Emotional-State',
+                        'Pace-Related', 'Repeat/clarification', 'Debugging/Code-Sharing']
+        
+        default_thresholds = {0: 0.55, 1: 0.70, 2: 0.50, 3: 0.60, 4: 0.60, 5: 0.60}
+        if thresholds is None:
+            thresholds = default_thresholds
+        
+        predictions, probabilities = self.predict(
+            student_inputs, session_contexts, max_length, split_compound
+        )
+        
+        results = []
+        for i in range(len(predictions)):
+            pred = int(predictions[i])
+            probs = probabilities[i]
+            confidence = float(probs[pred])
+            threshold = thresholds.get(pred, 0.60)
+            
+            if confidence >= threshold:
+                results.append({
+                    'label': pred,
+                    'intent_name': INTENT_NAMES[pred] if pred < len(INTENT_NAMES) else f'Class-{pred}',
+                    'confidence': confidence,
+                    'probabilities': probs,
+                    'below_threshold': False
+                })
+            else:
+                results.append({
+                    'label': -1,
+                    'intent_name': 'Low Confidence',
+                    'confidence': confidence,
+                    'probabilities': probs,
+                    'below_threshold': True
+                })
+        
+        return results
+    
     def evaluate(self, dataloader, criterion):
         """
         Evaluate model on validation/test set
@@ -613,17 +725,31 @@ class IntentClassifier:
         
         return avg_loss, accuracy
     
-    def save_model(self, path):
-        """Save model checkpoint"""
-        torch.save({
+    def save_model(self, path, temperature=None):
+        """Save model checkpoint with full architecture config."""
+        checkpoint = {
             'model_state_dict': self.model.state_dict(),
-            'num_classes': self.num_classes
-        }, path)
+            'num_classes': self.num_classes,
+            'bert_model_name': self.model.bert.config._name_or_path,
+            'filter_sizes': [conv.kernel_size[0] for conv in self.model.convs],
+            'num_filters': self.model.convs[0].out_channels if self.model.convs else 0,
+            'hidden_dim': self.model.fc_hidden.out_features,
+            'dropout': self.model.dropout.p,
+            'temperature': temperature or self.model.temperature,
+            'label_map': IntentDataset({}).label_map if hasattr(IntentDataset, 'label_map') else {},
+        }
+        torch.save(checkpoint, path)
         print(f"Model saved to {path}")
     
     def load_model(self, path):
-        """Load model checkpoint"""
+        """Load model checkpoint and restore config."""
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.num_classes = checkpoint.get('num_classes', self.num_classes)
+        if 'temperature' in checkpoint:
+            self.model.temperature = checkpoint['temperature']
         print(f"Model loaded from {path}")
+        print(f"  Classes: {self.num_classes}, Backbone: {checkpoint.get('bert_model_name', 'unknown')}, "
+              f"Filters: {checkpoint.get('num_filters', '?')}×{checkpoint.get('filter_sizes', '?')}, "
+              f"Temperature: {checkpoint.get('temperature', 1.0)}")
 
