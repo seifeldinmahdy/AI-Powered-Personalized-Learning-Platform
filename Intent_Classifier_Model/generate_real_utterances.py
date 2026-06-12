@@ -431,7 +431,7 @@ def main():
     print(f"\n{'='*60}")
     print(f"Generating Real Utterance Test Set via Groq ({MODEL})")
     print(f"{'='*60}")
-    print(f"Target: {args.per_class} utterances × {len(LABEL_MAP)} classes = "
+    print(f"Target: {args.per_class} utterances x {len(LABEL_MAP)} classes = "
           f"{args.per_class * len(LABEL_MAP)} total\n")
 
     all_rows = []
@@ -464,7 +464,7 @@ def main():
     df.to_csv(OUTPUT_PATH, index=False)
 
     print(f"\n{'='*60}")
-    print(f"[+] Generated {len(df)} utterances → {OUTPUT_PATH}")
+    print(f"[+] Generated {len(df)} utterances -> {OUTPUT_PATH}")
     print(f"{'='*60}")
     print(f"\nDistribution:")
     print(df['intent_name'].value_counts().to_string())
