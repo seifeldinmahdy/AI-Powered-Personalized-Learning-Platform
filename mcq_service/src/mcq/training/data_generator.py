@@ -1869,8 +1869,10 @@ def _run_judge_b(
     """Call Judge B and return a parsed result. Never raises."""
     try:
         prompt = _build_judge_b_prompt(mcq)
+        # /nothink disables Qwen3 thinking mode — without it the model
+        # spends all output tokens inside <think> tags and returns empty content.
         raw = judge_b_client.chat(
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": prompt + "\n/nothink"}],
             temperature=0.2,
             timeout_override=120,
         )
@@ -2001,7 +2003,7 @@ def _run_judge_c(
     try:
         prompt = _build_judge_c_prompt(mcq)
         raw = judge_c_client.chat(
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": prompt + "\n/nothink"}],
             temperature=0.2,
             timeout_override=90,
         )
@@ -2136,7 +2138,7 @@ def _run_judge_d(
     try:
         prompt = _build_judge_d_prompt(mcq)
         raw = judge_d_client.chat(
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": prompt + "\n/nothink"}],
             temperature=0.2,
             timeout_override=90,
         )
