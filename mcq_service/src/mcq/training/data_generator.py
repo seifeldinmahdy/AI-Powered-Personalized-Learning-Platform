@@ -110,8 +110,9 @@ CONFIG = {
     },
     # How many synthetic chunks to generate when the generator is invoked
     "n_synthetic_chunks": 180,
-    # Evaluation queue capacity
-    "eval_queue_maxsize": 200,
+    # Evaluation queue capacity — 0 = unbounded so generation workers never
+    # block waiting for judges to drain the queue.
+    "eval_queue_maxsize": 0,
 }
 
 # ── Data targets (Action 5) ──────────────────────────────────────────────────
@@ -1770,8 +1771,17 @@ def _parse_judge_b_response(raw: str) -> JudgeBResult:
     scores in Python.  The LLM is never asked to produce a score directly.
     """
     def _yn(key: str, default: str = "NO") -> str:
-        """Extract a YES/NO answer for a given field key."""
-        m = re.search(rf'^{key}:\s*(YES|NO)', raw, re.MULTILINE | re.IGNORECASE)
+        """Extract a YES/NO answer for a given field key.
+
+        Tolerates markdown decoration: the model may wrap the key in **bold**,
+        prefix with '-' or spaces, or omit the ^ anchor alignment.
+        Pattern: optional leading non-word chars, then KEY: YES/NO.
+        """
+        # Match KEY: YES/NO with optional leading decoration on the same line.
+        m = re.search(
+            rf'(?:^|[^\w]){re.escape(key)}[:\s]+\*?\*?(YES|NO)\*?\*?',
+            raw, re.MULTILINE | re.IGNORECASE
+        )
         if m:
             return m.group(1).upper()
         return default
@@ -1944,7 +1954,10 @@ def _parse_judge_c_response(raw: str) -> JudgeCResult:
     All 5 hard check answers are extracted by regex; verdict computed in Python.
     """
     def _yn(key: str, default: str = "NO") -> str:
-        m = re.search(rf'^{key}:\s*(YES|NO)', raw, re.MULTILINE | re.IGNORECASE)
+        m = re.search(
+            rf'(?:^|[^\w]){re.escape(key)}[:\s]+\*?\*?(YES|NO)\*?\*?',
+            raw, re.MULTILINE | re.IGNORECASE
+        )
         return m.group(1).upper() if m else default
 
     sub_checks = {
@@ -2063,7 +2076,10 @@ def _parse_judge_d_response(raw: str) -> JudgeDResult:
     of claims); derives verdict in Python.
     """
     def _yn(key: str, default: str = "NO") -> str:
-        m = re.search(rf'^{key}:\s*(YES|NO)', raw, re.MULTILINE | re.IGNORECASE)
+        m = re.search(
+            rf'(?:^|[^\w]){re.escape(key)}[:\s]+\*?\*?(YES|NO)\*?\*?',
+            raw, re.MULTILINE | re.IGNORECASE
+        )
         return m.group(1).upper() if m else default
 
     # Extract all CLAIM_N_VERIFIED entries (1, 2, 3, ...)
