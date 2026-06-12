@@ -83,7 +83,7 @@ JUDGE_C_KEY: str | None = os.getenv("OLLAMA_API_KEY_6")
 JUDGE_D_KEY: str | None = os.getenv("OLLAMA_API_KEY_7")
 
 # Model names — set via env vars with safe defaults
-GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", os.getenv("OLLAMA_MODEL", "qwen3:7b"))
+GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "gpt-oss:120b")
 JUDGE_MODEL:      str = os.getenv("JUDGE_MODEL", "gpt-oss:120b")
 
 # ── Unified CONFIG dict — preserved for internal use ────────────────────────
