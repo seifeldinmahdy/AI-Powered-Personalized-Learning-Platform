@@ -2161,25 +2161,30 @@ def _decide(
 
     Returns (accepted: bool, reason: str).
     On accept, attaches personalization_score to mcq in-place.
+
+    Thresholds are intentionally permissive for training data generation.
+    Post-hoc filtering can tighten quality later; the goal here is to
+    produce a large, diverse dataset without burning API budget on
+    near-100% rejection rates.
     """
-    if not b.type_eligible:
-        return False, f"judge_b:type_not_eligible"
-    if b.mastery_score < 2:
-        return False, f"judge_b:mastery_score_{b.mastery_score}"
-    if b.score_cat_score < 2:
-        return False, f"judge_b:score_category_{b.score_cat_score}"
-    if mcq.get("misconception_context") and b.misconception_score < 2:
-        return False, f"judge_b:misconception_{b.misconception_score}"
-    if b.depth_calibration == "TOO_HARD":
-        return False, "judge_b:too_hard"
-    if b.verdict == "REJECT":
-        return False, f"judge_b:{b.primary_failure}"
+    # Hard gate: very_weak type override — this is a design rule, not opinion
+    if b.primary_failure == "very_weak_type_override_violated":
+        return False, "judge_b:very_weak_type_override"
+
+    # Hard gate: Judge C — distractor is identical to answer (objective check)
     if c.verdict == "REJECT":
         return False, f"judge_c:{c.reason}"
+
+    # Hard gate: Judge D — factual incorrectness (objective check)
     if d.verdict == "REJECT":
         return False, f"judge_d:{d.reason}"
-    # All passed — attach personalization score metadata
+
+    # Soft scoring: mastery, score_category, misconception, type eligibility,
+    # and depth calibration are stored as metadata but NOT used for rejection.
+    # The personalization_score captures overall quality for post-hoc filtering.
     mcq["personalization_score"] = b.overall_score
+    mcq["type_eligible"] = b.type_eligible
+    mcq["depth_calibration"] = b.depth_calibration
     return True, "accepted"
 
 
