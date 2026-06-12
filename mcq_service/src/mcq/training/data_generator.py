@@ -31,7 +31,10 @@ import sys
 import threading
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import structlog
 from dotenv import load_dotenv
@@ -46,31 +49,50 @@ load_dotenv(dotenv_path=_ENV_PATH, override=False)
 logger = structlog.get_logger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CONFIGURATION
+# NINE-KEY PIPELINE ARCHITECTURE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# KEY ASSIGNMENT (hard-coded — do not swap roles):
+#   GENERATION_KEYS  = [key_1, key_2, key_3, key_4]   — primary generation workers
+#   FALLBACK_KEYS    = [key_8, key_9]                  — cycling fallback on hard failure
+#   JUDGE_B_KEY      = key_5                           — personalization judge (20B)
+#   JUDGE_C_KEY      = key_6                           — distractor quality judge (20B)
+#   JUDGE_D_KEY      = key_7                           — factual correctness judge (20B)
+#
+# GENERATION_MODEL = small model (speed); JUDGE_MODEL = 20B model (accuracy).
+# NEVER swap: do not use 20B for generation or small for judging.
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ── Key resolution — each role has a named env var ──────────────────────────
+GENERATION_KEYS: list[str] = [
+    k for k in [
+        os.getenv("OLLAMA_API_KEY_1"),
+        os.getenv("OLLAMA_API_KEY_2"),
+        os.getenv("OLLAMA_API_KEY_3"),
+        os.getenv("OLLAMA_API_KEY_4"),
+    ] if k
+]
+FALLBACK_KEYS: list[str] = [
+    k for k in [
+        os.getenv("OLLAMA_API_KEY_8"),
+        os.getenv("OLLAMA_API_KEY_9"),
+    ] if k
+]
+JUDGE_B_KEY: str | None = os.getenv("OLLAMA_API_KEY_5")
+JUDGE_C_KEY: str | None = os.getenv("OLLAMA_API_KEY_6")
+JUDGE_D_KEY: str | None = os.getenv("OLLAMA_API_KEY_7")
+
+# Model names — set via env vars with safe defaults
+GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", os.getenv("OLLAMA_MODEL", "qwen3:7b"))
+JUDGE_MODEL:      str = os.getenv("JUDGE_MODEL", "qwen3:20b")
+
+# ── Unified CONFIG dict — preserved for internal use ────────────────────────
 CONFIG = {
-    # Primary key set — used first
-    "api_keys_primary": [
-        k for k in [
-            os.getenv("OLLAMA_API_KEY_1"),
-            os.getenv("OLLAMA_API_KEY_2"),
-            os.getenv("OLLAMA_API_KEY_3"),
-            os.getenv("OLLAMA_API_KEY_4"),
-        ] if k
-    ],
-    # Backup key set — activated when primary keys fail
-    "api_keys_backup": [
-        k for k in [
-            os.getenv("OLLAMA_API_KEY_B1"),
-            os.getenv("OLLAMA_API_KEY_B2"),
-            os.getenv("OLLAMA_API_KEY_B3"),
-            os.getenv("OLLAMA_API_KEY_B4"),
-            os.getenv("OLLAMA_API_KEY_B5"),
-        ] if k
-    ],
+    # Aggregate key lists for KeyPool (used by generation workers)
+    "api_keys_primary": GENERATION_KEYS,
+    "api_keys_backup":  FALLBACK_KEYS,
     "ollama_host": os.getenv("OLLAMA_HOST", "https://ollama.com"),
-    "model": os.getenv("OLLAMA_MODEL", "gpt-oss:120b"),
+    "model": GENERATION_MODEL,
     "output": "data/mcq_training/mcq_raw.jsonl",
     "raw_books_dir": "data/raw_books",
     "chunk_size": 800,
@@ -88,6 +110,28 @@ CONFIG = {
     },
     # How many synthetic chunks to generate when the generator is invoked
     "n_synthetic_chunks": 180,
+    # Evaluation queue capacity
+    "eval_queue_maxsize": 200,
+}
+
+# ── Data targets (Action 5) ──────────────────────────────────────────────────
+# Because judges reject ~50%, we generate 2× the clean target.
+DATA_TARGETS = {
+    # QG
+    "qg_raw_target":   12_000,   # raw generations before judging
+    "qg_clean_target":  6_000,   # post-judge accepted samples
+    # DG — 3 examples per QG sample
+    "dg_raw_target":   36_000,
+    "dg_clean_target": 18_000,
+    # Stratified cap within any type: no (mastery × score_cat) combo > 40%
+    "max_combo_pct_within_type": 0.40,
+    # Mandatory minimums in the FINAL accepted dataset
+    "min_very_weak_novice_4a":        150,
+    "min_very_weak_intermediate_4a":  150,
+    "min_very_weak_expert_4a":        150,
+    "min_novice_intermediate_pairs":  200,
+    "min_code_type_each":             150,   # types 1, 2, 3
+    "min_conceptual_type_each":       200,   # types 4a, 4b, 4c, 4d, 4e
 }
 
 MASTERY_WEIGHTS = {
@@ -883,8 +927,17 @@ def _build_tasks(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _make_ollama_client(api_key: str):
-    """Create an OllamaClient with a specific API key."""
+def _make_ollama_client(api_key: str, model: str | None = None):
+    """Create an OllamaClient with a specific API key and optional model override.
+
+    Parameters
+    ----------
+    api_key :
+        The API key for the request.
+    model :
+        Model name.  Defaults to ``GENERATION_MODEL`` (small, fast).
+        Pass ``JUDGE_MODEL`` to create a 20B judge client.
+    """
     pathway_src = str(
         Path(__file__).resolve().parent.parent.parent.parent.parent / "course_pathway" / "src"
     )
@@ -895,7 +948,7 @@ def _make_ollama_client(api_key: str):
 
     return OllamaClient(
         host=CONFIG["ollama_host"],
-        model=CONFIG["model"],
+        model=model or GENERATION_MODEL,
         api_key=api_key,
         max_retries=3,
         timeout=180,
@@ -1163,12 +1216,15 @@ def _validate_response(data: dict) -> str | None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# KEY POOL  — thread-safe primary ↔ backup rotation
+# KEY POOL  — thread-safe primary ↔ backup rotation (generation workers)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 class KeyPool:
     """Thread-safe API key pool with primary→backup→primary rotation.
+
+    Used by generation workers only.  Judge keys are dedicated singletons
+    and never go through this pool.
 
     Each worker owns one key at a time. When it reports an API error the pool
     immediately gives it the next available key (cycling through primary first,
@@ -1269,6 +1325,604 @@ class KeyPool:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# WORKER POOL  — generation key management with hard-failure fallback cycling
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class WorkerPool:
+    """Manages 4 primary generation keys with fallback cycling on hard failure.
+
+    A "hard failure" is: connection refused, auth error (401/403), or
+    5 consecutive timeouts from the same key.  A single timeout or rate
+    limit is NOT a hard failure — the caller should retry once before
+    calling ``mark_failed``.
+
+    When a key is hard-failed, it is permanently removed from the active
+    set and replaced by the next fallback key.  If no fallbacks remain the
+    active pool shrinks.  ``available()`` returns False only when the active
+    pool is completely empty.
+    """
+
+    def __init__(self, primary_keys: list[str], fallback_keys: list[str]):
+        self._lock = threading.Lock()
+        self.active_keys: list[str]  = list(primary_keys)
+        self.fallback_keys: list[str] = list(fallback_keys)
+        self.failed_keys: set[str]   = set()
+
+        # Per-key consecutive timeout counter (resets on success)
+        self._timeout_count: dict[str, int] = {
+            k: 0 for k in primary_keys + fallback_keys
+        }
+        self._TIMEOUT_HARD_LIMIT = 5
+
+    def get_active_keys(self) -> list[str]:
+        """Return a snapshot of the currently active key list."""
+        with self._lock:
+            return list(self.active_keys)
+
+    def report_success(self, key: str) -> None:
+        """Reset the timeout counter for a key after a successful call."""
+        with self._lock:
+            self._timeout_count[key] = 0
+
+    def report_timeout(self, key: str) -> bool:
+        """Record a timeout for ``key``.  Returns True if this becomes a hard failure."""
+        with self._lock:
+            self._timeout_count[key] = self._timeout_count.get(key, 0) + 1
+            if self._timeout_count[key] >= self._TIMEOUT_HARD_LIMIT:
+                return True  # caller should call mark_failed
+            return False
+
+    def mark_failed(self, key: str) -> None:
+        """Permanently remove ``key`` from the active pool and replace with next fallback."""
+        with self._lock:
+            if key in self.active_keys:
+                self.active_keys.remove(key)
+                self.failed_keys.add(key)
+                if self.fallback_keys:
+                    replacement = self.fallback_keys.pop(0)
+                    self.active_keys.append(replacement)
+                    logger.info(
+                        "worker_key_replaced",
+                        failed=key[:8] + "...",
+                        replacement=replacement[:8] + "...",
+                        active_count=len(self.active_keys),
+                    )
+                else:
+                    logger.warning(
+                        "worker_key_failed_no_fallback",
+                        failed=key[:8] + "...",
+                        active_count=len(self.active_keys),
+                    )
+
+    def available(self) -> bool:
+        """Return True if there is at least one active key."""
+        with self._lock:
+            return len(self.active_keys) > 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# JUDGE A — REGEX PRE-FILTER  (no LLM, no key, instant)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Compiled once at import time.
+_JUDGE_A_PATTERNS: list[re.Pattern] = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r'the following code snippet',
+        r'the code above',
+        r'the code below',
+        r'from the \w[^.,]{0,40} lecture',
+        r'from the \w[^.,]{0,40} notes',
+        r'\bfigure\s+[\d.]+',
+        r'\bfig\.?\s+[\d.]+',
+        r'\bthe diagram\b',
+        r'the table above',
+        r'according to the passage',
+        r'according to the text',
+        r'the author states',
+        r'\bas shown\b',
+        r'as described above',
+    ]
+]
+# Code block longer than 5 lines: fence open + 5+ content lines + fence close
+_JUDGE_A_CODE_BLOCK_RE = re.compile(r'```[^`]*\n(?:[^\n]*\n){6,}[^`]*```', re.DOTALL)
+
+
+def _passes_regex_filter(mcq: dict) -> bool:
+    """Judge A: fast regex pre-filter. No LLM call.
+
+    Returns True (passes) if the generated question is free of
+    textbook-reference patterns and does not include a code block
+    longer than 5 lines in the question stem.
+    """
+    question = mcq.get("question", "")
+    for pat in _JUDGE_A_PATTERNS:
+        if pat.search(question):
+            return False
+    if _JUDGE_A_CODE_BLOCK_RE.search(question):
+        return False
+    return True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# JUDGE B — FULL PERSONALIZATION ADHERENCE  (JUDGE_B_KEY, JUDGE_MODEL)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class JudgeBResult:
+    verdict: str                    # "ACCEPT" or "REJECT"
+    overall_score: float            # average of all signal scores (0–3)
+    primary_failure: str            # which signal failed first, or "NONE"
+    mastery_score: int   = 0
+    score_cat_score: int = 0
+    misconception_score: int = 0
+    type_eligible: bool  = True
+    depth_calibration: str = "CORRECT"
+    raw_response: str = ""
+
+
+_JUDGE_B_MISCONCEPTION_NONE = """\
+SIGNAL 3 — MISCONCEPTION CONTEXT
+This signal is inactive. Score automatically 3.
+MISCONCEPTION_SCORE: 3
+MISCONCEPTION_REASON: No misconception context provided."""
+
+
+def _build_judge_b_misconception_block(mc: str | None) -> str:
+    """Build Signal 3 block — None or populated depending on misconception_context."""
+    if not mc:
+        return _JUDGE_B_MISCONCEPTION_NONE
+    return f"""\
+SIGNAL 3 — MISCONCEPTION CONTEXT
+─────────────────────────────────────────────────────
+Misconception: {mc}
+
+Rules:
+  - MUST NOT repeat the same scenario the student previously failed
+  - MUST approach the same conceptual gap from a NEW angle
+  - At least one distractor MUST appeal to the same wrong mental
+    model from a new angle (not verbatim copy)
+  - The correct answer MUST implicitly address why the misconception
+    is wrong
+
+Score 0-3:
+  0 = ignores misconception entirely
+  1 = related to topic but does not target the gap
+  2 = targets the gap but one element missing
+  3 = perfectly targets misconception from a new angle
+
+MISCONCEPTION_SCORE: [0-3]
+MISCONCEPTION_REASON: [one sentence]"""
+
+
+def _build_judge_b_prompt(mcq: dict) -> str:
+    """Build the full Judge B prompt for one MCQ sample."""
+    mastery    = mcq.get("mastery_level", "Intermediate")
+    score_cat  = mcq.get("score_category", "moderate")
+    qtype      = mcq.get("question_type", "4a")
+    mc         = mcq.get("misconception_context") or None
+    chunk      = mcq.get("chunk", "")
+    question   = mcq.get("question", "")
+    answer     = mcq.get("correct_answer", "")
+    explanation= mcq.get("explanation", "")
+
+    misconception_block = _build_judge_b_misconception_block(mc)
+
+    return f"""\
+You are a strict personalization quality reviewer for an adaptive
+learning platform. Verify that a generated MCQ correctly reflects
+ALL personalization signals simultaneously.
+
+PERSONALIZATION SIGNALS:
+  mastery_level:    {mastery}
+  score_category:   {score_cat}
+  question_type:    {qtype}
+  misconception:    {mc or "NONE"}
+
+SOURCE CHUNK:
+{chunk}
+
+GENERATED QUESTION:
+{question}
+
+CORRECT ANSWER:
+{answer}
+
+EXPLANATION:
+{explanation}
+
+─────────────────────────────────────────────────────
+SIGNAL RESPONSIBILITIES — READ BEFORE SCORING
+─────────────────────────────────────────────────────
+MASTERY controls HOW the question is framed: vocabulary, cognitive
+register, and distractor sophistication. Score Signal 1 on these.
+
+SCORE CATEGORY controls HOW HARD the question is: difficulty within
+what mastery allows, and whether mastery is overridden on type.
+Score Signal 2 on this.
+
+They interact once: very_weak overrides mastery on TYPE only. But
+mastery still governs vocabulary and distractor sophistication even
+when very_weak is active. An Expert + very_weak student gets a
+Type 4a with Expert vocabulary — not baby talk. Score both signals
+independently. Do not conflate them.
+
+─────────────────────────────────────────────────────
+SIGNAL 1 — MASTERY LEVEL: {mastery}
+Evaluate: vocabulary depth, cognitive framing, distractor
+sophistication. NOT question difficulty — that is Signal 2.
+─────────────────────────────────────────────────────
+Novice framing:
+  - Vocabulary matches chunk language exactly, no added jargon
+  - Question asks what something IS or DOES
+  - Answer directly stated or immediately derivable from chunk
+  - No cross-concept reasoning required
+  - Distractors: clearly wrong to anyone who read carefully,
+    not subtle, not traps
+
+Intermediate framing:
+  - Standard CS terminology assumed known
+  - Question connects two ideas OR applies a concept to a scenario
+  - Must NOT be a pure definition (unless score_category forces 4a)
+  - Student must understand, not just recall
+  - Distractors: require careful reasoning to eliminate
+
+Expert framing:
+  - Precise technical vocabulary, assume strong foundation
+  - Question reasons about WHY, edge cases, or tradeoffs
+  - May synthesize across multiple concepts
+  - Distractors: sophisticated, plausible to partial knowers,
+    require deep knowledge to rule out
+
+Score 0-3 on VOCABULARY, FRAMING, and DISTRACTOR SOPHISTICATION only:
+  0 = completely wrong framing (wrong vocabulary register)
+  1 = partially matches, some elements of wrong framing
+  2 = mostly correct, minor vocabulary or sophistication issue
+  3 = perfectly calibrated framing and distractor sophistication
+
+MASTERY_SCORE: [0-3]
+MASTERY_REASON: [one sentence — reference vocabulary or sophistication]
+
+─────────────────────────────────────────────────────
+SIGNAL 2 — SCORE CATEGORY: {score_cat}
+Evaluate: question difficulty and distractor difficulty.
+NOT vocabulary or framing — that is Signal 1.
+─────────────────────────────────────────────────────
+very_weak (HARD OVERRIDE on type — not on framing):
+  - Question TYPE must be 4a regardless of mastery
+  - Difficulty: simplest possible question on this concept
+  - Distractor difficulty: easy to eliminate, builds confidence
+  - Vocabulary and distractor sophistication still follow mastery
+
+weak:
+  - Difficulty one level below mastery standard
+  - Distractor difficulty: plausible but distinguishable with effort
+
+moderate:
+  - Standard difficulty for mastery level, no adjustment
+
+strong:
+  - Hardest difficulty mastery allows
+  - Distractor difficulty: as subtle as mastery permits
+
+Score 0-3 on QUESTION DIFFICULTY and DISTRACTOR DIFFICULTY only:
+  0 = completely wrong difficulty level
+  1 = partially reflects difficulty signal
+  2 = mostly correct difficulty calibration
+  3 = perfectly calibrated question and distractor difficulty
+
+SCORE_CATEGORY_SCORE: [0-3]
+SCORE_CATEGORY_REASON: [one sentence — reference difficulty specifically]
+
+─────────────────────────────────────────────────────
+{misconception_block}
+
+─────────────────────────────────────────────────────
+SIGNAL 4 — TYPE × MASTERY ELIGIBILITY
+─────────────────────────────────────────────────────
+Eligibility matrix:
+  Novice:       Types 1, 4a only
+  Intermediate: Types 1, 2, 3, 4b, 4c only
+  Expert:       All types
+
+Score category override:
+  very_weak → forces 4a regardless of mastery
+  weak → one level below mastery standard
+  strong → highest eligible type for mastery
+
+Is {qtype} eligible given mastery={mastery}
+and score_category={score_cat}?
+
+TYPE_ELIGIBLE: YES/NO
+TYPE_REASON: [one sentence if NO]
+
+─────────────────────────────────────────────────────
+SIGNAL 5 — COGNITIVE DEPTH CALIBRATION
+─────────────────────────────────────────────────────
+Given all signals combined, is the cognitive depth correct?
+
+  Too easy: simpler than the signals require
+  Correct: matches the intersection of all signals
+  Too hard: demands more than the signals allow
+
+DEPTH_CALIBRATION: TOO_EASY / CORRECT / TOO_HARD
+DEPTH_REASON: [one sentence]
+
+─────────────────────────────────────────────────────
+FINAL VERDICT
+─────────────────────────────────────────────────────
+  - If TYPE_ELIGIBLE is NO → automatic REJECT
+  - If MASTERY_SCORE < 2 → REJECT
+  - If SCORE_CATEGORY_SCORE < 2 → REJECT
+  - If MISCONCEPTION_SCORE < 2 (when misconception active) → REJECT
+  - If DEPTH_CALIBRATION is TOO_HARD → REJECT
+  - If all scores >= 2 and TYPE_ELIGIBLE is YES → ACCEPT
+
+VERDICT: ACCEPT or REJECT
+OVERALL_PERSONALIZATION_SCORE: [average of all signal scores, 0-3]
+PRIMARY_FAILURE: [which signal failed first, or NONE]
+"""
+
+
+def _parse_judge_b_response(raw: str) -> JudgeBResult:
+    """Parse the structured text response from Judge B into a JudgeBResult."""
+    def _extract_int(key: str, default: int = 0) -> int:
+        m = re.search(rf'^{key}:\s*(\d)', raw, re.MULTILINE)
+        return int(m.group(1)) if m else default
+
+    def _extract_str(key: str, default: str = "") -> str:
+        m = re.search(rf'^{key}:\s*(.+)', raw, re.MULTILINE)
+        return m.group(1).strip() if m else default
+
+    verdict    = _extract_str("VERDICT", "REJECT").upper()
+    if "ACCEPT" in verdict:
+        verdict = "ACCEPT"
+    else:
+        verdict = "REJECT"
+
+    mastery_score   = _extract_int("MASTERY_SCORE")
+    score_cat_score = _extract_int("SCORE_CATEGORY_SCORE")
+    misconc_score   = _extract_int("MISCONCEPTION_SCORE", default=3)
+    overall_raw     = _extract_str("OVERALL_PERSONALIZATION_SCORE", "0")
+    try:
+        overall = float(overall_raw)
+    except ValueError:
+        overall = (mastery_score + score_cat_score + misconc_score) / 3.0
+
+    type_eligible_raw = _extract_str("TYPE_ELIGIBLE", "YES").upper()
+    type_eligible = "NO" not in type_eligible_raw
+
+    depth_raw = _extract_str("DEPTH_CALIBRATION", "CORRECT").upper()
+    if "TOO_EASY" in depth_raw:
+        depth = "TOO_EASY"
+    elif "TOO_HARD" in depth_raw:
+        depth = "TOO_HARD"
+    else:
+        depth = "CORRECT"
+
+    primary_failure = _extract_str("PRIMARY_FAILURE", "NONE")
+
+    return JudgeBResult(
+        verdict=verdict,
+        overall_score=round(overall, 2),
+        primary_failure=primary_failure,
+        mastery_score=mastery_score,
+        score_cat_score=score_cat_score,
+        misconception_score=misconc_score,
+        type_eligible=type_eligible,
+        depth_calibration=depth,
+        raw_response=raw[:500],
+    )
+
+
+def _run_judge_b(
+    mcq: dict,
+    judge_b_client,
+) -> JudgeBResult:
+    """Call Judge B and return a parsed result. Never raises."""
+    try:
+        prompt = _build_judge_b_prompt(mcq)
+        raw = judge_b_client.chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            timeout_override=120,
+        )
+        return _parse_judge_b_response(raw)
+    except Exception as exc:
+        logger.warning("judge_b_failed", error=str(exc)[:100])
+        # On failure, default to ACCEPT with low score to avoid silent data loss
+        return JudgeBResult(
+            verdict="ACCEPT",
+            overall_score=0.0,
+            primary_failure="judge_b_exception",
+            raw_response=str(exc)[:200],
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# JUDGE C — DISTRACTOR QUALITY  (JUDGE_C_KEY, JUDGE_MODEL)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class JudgeCResult:
+    verdict: str       # "ACCEPT" or "REJECT"
+    reason: str = ""   # which check failed
+
+
+def _build_judge_c_prompt(mcq: dict) -> str:
+    """Build the Judge C distractor quality prompt."""
+    question = mcq.get("question", "")
+    answer   = mcq.get("correct_answer", "")
+    dists    = mcq.get("distractors", ["", "", ""])
+    d1 = dists[0] if len(dists) > 0 else ""
+    d2 = dists[1] if len(dists) > 1 else ""
+    d3 = dists[2] if len(dists) > 2 else ""
+    return f"""\
+You are a quality reviewer for educational MCQ training data.
+Evaluate the quality of these three distractors.
+
+Question: {question}
+Correct answer: {answer}
+
+Distractors:
+D1: {d1}
+D2: {d2}
+D3: {d3}
+
+Check each:
+1. Is D1 clearly different from the correct answer? YES/NO
+2. Is D2 clearly different from the correct answer? YES/NO
+3. Is D3 clearly different from the correct answer? YES/NO
+4. Are all three distractors meaningfully different from each other? YES/NO
+5. Could each distractor plausibly be chosen by a student who partially
+   understands the topic? YES/NO
+6. Are all distractors in the same format/length as the correct answer? YES/NO
+
+If ANY of 1-3 is NO → REJECT (distractor equals correct answer)
+If 4 is NO → REJECT (duplicates)
+If 5 is NO → REJECT (implausible)
+6 is advisory only — note but do not reject
+
+Respond: ACCEPT or REJECT
+If REJECT: REASON: [which check failed]
+"""
+
+
+def _run_judge_c(
+    mcq: dict,
+    judge_c_client,
+) -> JudgeCResult:
+    """Call Judge C and return a parsed result. Never raises."""
+    try:
+        prompt = _build_judge_c_prompt(mcq)
+        raw = judge_c_client.chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            timeout_override=90,
+        )
+        raw_upper = raw.upper()
+        if "ACCEPT" in raw_upper:
+            verdict = "ACCEPT"
+            reason = ""
+        else:
+            verdict = "REJECT"
+            m = re.search(r'REASON:\s*(.+)', raw, re.IGNORECASE)
+            reason = m.group(1).strip() if m else "unknown check failed"
+        return JudgeCResult(verdict=verdict, reason=reason)
+    except Exception as exc:
+        logger.warning("judge_c_failed", error=str(exc)[:100])
+        return JudgeCResult(verdict="ACCEPT", reason="judge_c_exception")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# JUDGE D — FACTUAL CORRECTNESS  (JUDGE_D_KEY, JUDGE_MODEL)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class JudgeDResult:
+    verdict: str       # "ACCEPT" or "REJECT"
+    reason: str = ""   # which check failed
+
+
+def _build_judge_d_prompt(mcq: dict) -> str:
+    """Build the Judge D factual correctness prompt."""
+    chunk       = mcq.get("chunk", "")
+    question    = mcq.get("question", "")
+    answer      = mcq.get("correct_answer", "")
+    explanation = mcq.get("explanation", "")
+    return f"""\
+You are a fact-checker for educational MCQ training data.
+
+Chunk:
+{chunk}
+
+Question: {question}
+Stated correct answer: {answer}
+Explanation: {explanation}
+
+Check:
+1. Is the stated correct answer actually correct? YES/NO
+2. Is the question answerable based on general CS knowledge
+   (not requiring outside trivia)? YES/NO
+3. Does the explanation correctly justify the answer? YES/NO
+4. Is the question free of ambiguity (only one defensibly
+   correct answer)? YES/NO
+
+If ANY answer is NO → REJECT
+If ALL are YES → ACCEPT
+
+Respond: ACCEPT or REJECT
+If REJECT: REASON: [which check failed]
+"""
+
+
+def _run_judge_d(
+    mcq: dict,
+    judge_d_client,
+) -> JudgeDResult:
+    """Call Judge D and return a parsed result. Never raises."""
+    try:
+        prompt = _build_judge_d_prompt(mcq)
+        raw = judge_d_client.chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            timeout_override=90,
+        )
+        raw_upper = raw.upper()
+        if "ACCEPT" in raw_upper:
+            verdict = "ACCEPT"
+            reason = ""
+        else:
+            verdict = "REJECT"
+            m = re.search(r'REASON:\s*(.+)', raw, re.IGNORECASE)
+            reason = m.group(1).strip() if m else "unknown check failed"
+        return JudgeDResult(verdict=verdict, reason=reason)
+    except Exception as exc:
+        logger.warning("judge_d_failed", error=str(exc)[:100])
+        return JudgeDResult(verdict="ACCEPT", reason="judge_d_exception")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DECISION LOGIC
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _decide(
+    b: JudgeBResult,
+    c: JudgeCResult,
+    d: JudgeDResult,
+    mcq: dict,
+) -> tuple[bool, str]:
+    """Apply decision logic across all three judge verdicts.
+
+    Returns (accepted: bool, reason: str).
+    On accept, attaches personalization_score to mcq in-place.
+    """
+    if not b.type_eligible:
+        return False, f"judge_b:type_not_eligible"
+    if b.mastery_score < 2:
+        return False, f"judge_b:mastery_score_{b.mastery_score}"
+    if b.score_cat_score < 2:
+        return False, f"judge_b:score_category_{b.score_cat_score}"
+    if mcq.get("misconception_context") and b.misconception_score < 2:
+        return False, f"judge_b:misconception_{b.misconception_score}"
+    if b.depth_calibration == "TOO_HARD":
+        return False, "judge_b:too_hard"
+    if b.verdict == "REJECT":
+        return False, f"judge_b:{b.primary_failure}"
+    if c.verdict == "REJECT":
+        return False, f"judge_c:{c.reason}"
+    if d.verdict == "REJECT":
+        return False, f"judge_d:{d.reason}"
+    # All passed — attach personalization score metadata
+    mcq["personalization_score"] = b.overall_score
+    return True, "accepted"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # WORKER
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1294,23 +1948,26 @@ def _worker(
     worker_id: int,
     key_pool: KeyPool,
     task_queue: queue.Queue,
-    output_path: str,
-    file_lock: threading.Lock,
+    eval_queue: queue.Queue,
     stats: WorkerStats,
     all_stats: list,
     pbar: tqdm,
     pbar_lock: threading.Lock,
     target_counter: dict | None = None,
 ):
-    """Worker thread: pulls tasks, calls Ollama, writes results.
+    """Generation worker: pulls tasks, calls Ollama, pushes validated MCQs
+    to the evaluation queue.
 
-    Owns one active API key at a time. On any API/network error the key is
-    reported to KeyPool which returns the next best key — possibly from the
-    backup set. Validation errors (bad JSON structure) keep the current key
-    and only append feedback to the conversation.
+    Does NOT write directly to disk — that is the responsibility of the
+    evaluation worker which runs the three LLM judges.
+
+    Owns one active API key at a time. On any API/network error the key
+    is reported to KeyPool which returns the next best key.
+    Validation errors (bad JSON structure) keep the current key and
+    append feedback to the conversation for self-correction.
     """
     current_key = key_pool.get_initial_key()
-    client = _make_ollama_client(current_key)
+    client = _make_ollama_client(current_key, model=GENERATION_MODEL)
 
     while True:
         # Stop if KeyPool has determined that all keys are permanently dead
@@ -1406,7 +2063,7 @@ def _worker(
                         new=new_key[:8] + "...",
                     )
                     current_key = new_key
-                    client = _make_ollama_client(current_key)
+                    client = _make_ollama_client(current_key, model=GENERATION_MODEL)
 
                 if key_pool.all_failed:
                     break
@@ -1417,11 +2074,9 @@ def _worker(
                     time.sleep(CONFIG["retry_delay"])
 
         if result is not None:
-            with file_lock:
-                with open(output_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(result) + "\n")
+            # Push to eval queue — evaluation worker handles judging + writing
+            eval_queue.put(result)
             stats.record_success()
-            # Increment target counter if in target mode
             if target_counter is not None:
                 with target_counter["lock"]:
                     target_counter["count"] += 1
@@ -1442,6 +2097,135 @@ def _worker(
             pbar.set_postfix(success=total_success, fail=total_fail, refresh=False)
 
         task_queue.task_done()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EVALUATION WORKER  — drains the eval queue with 3 parallel judge calls
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class EvalStats:
+    """Thread-safe counters for the evaluation pipeline."""
+
+    def __init__(self):
+        self.generated:               int   = 0
+        self.regex_rejected:          int   = 0
+        self.judge_b_rejected:        int   = 0
+        self.judge_c_rejected:        int   = 0
+        self.judge_d_rejected:        int   = 0
+        self.accepted:                int   = 0
+        self.personalization_score_sum: float = 0.0
+        self._lock = threading.Lock()
+
+    def add_generated(self):
+        with self._lock: self.generated += 1
+
+    def add_regex_reject(self):
+        with self._lock: self.regex_rejected += 1
+
+    def add_judge_b_reject(self):
+        with self._lock: self.judge_b_rejected += 1
+
+    def add_judge_c_reject(self):
+        with self._lock: self.judge_c_rejected += 1
+
+    def add_judge_d_reject(self):
+        with self._lock: self.judge_d_rejected += 1
+
+    def add_accepted(self, personalization_score: float):
+        with self._lock:
+            self.accepted += 1
+            self.personalization_score_sum += personalization_score
+
+    def avg_personalization_score(self) -> float:
+        with self._lock:
+            if self.accepted == 0:
+                return 0.0
+            return round(self.personalization_score_sum / self.accepted, 2)
+
+
+def _evaluation_worker(
+    eval_queue: queue.Queue,
+    output_path: str,
+    file_lock: threading.Lock,
+    judge_b_client,
+    judge_c_client,
+    judge_d_client,
+    eval_stats: EvalStats,
+):
+    """Evaluation worker: drains eval_queue, runs 3 parallel judges, writes accepted.
+
+    Judge A (regex pre-filter) runs synchronously in Python — no LLM call.
+    Judges B, C, D fire in parallel via ThreadPoolExecutor.
+    The worker blocks only on evaluation of the current item, not on
+    generation workers — they continue filling the queue independently.
+    """
+    rejected_log: list[dict] = []
+
+    while True:
+        try:
+            item = eval_queue.get(timeout=10)
+        except queue.Empty:
+            # Idle check — queue will be poisoned with None when gen is done
+            continue
+
+        # Poison pill signals end-of-stream
+        if item is None:
+            eval_queue.task_done()
+            break
+
+        mcq = item
+        eval_stats.add_generated()
+
+        # ── Judge A: regex pre-filter ───────────────────────────────────
+        if not _passes_regex_filter(mcq):
+            eval_stats.add_regex_reject()
+            rejected_log.append({"reason": "judge_a_regex", "question": mcq.get("question", "")[:100]})
+            logger.debug("eval_rejected_judge_a", question=mcq.get("question", "")[:80])
+            eval_queue.task_done()
+            continue
+
+        # ── Judges B, C, D: fire in parallel ───────────────────────────
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            fb = ex.submit(_run_judge_b, mcq, judge_b_client)
+            fc = ex.submit(_run_judge_c, mcq, judge_c_client)
+            fd = ex.submit(_run_judge_d, mcq, judge_d_client)
+            b_result = fb.result()
+            c_result = fc.result()
+            d_result = fd.result()
+
+        accepted, reason = _decide(b_result, c_result, d_result, mcq)
+
+        if accepted:
+            eval_stats.add_accepted(mcq.get("personalization_score", 0.0))
+            with file_lock:
+                with open(output_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(mcq) + "\n")
+            logger.debug(
+                "eval_accepted",
+                personalization_score=mcq.get("personalization_score"),
+                question_type=mcq.get("question_type"),
+            )
+        else:
+            # Track which judge caused the rejection
+            if reason.startswith("judge_b"):
+                eval_stats.add_judge_b_reject()
+            elif reason.startswith("judge_c"):
+                eval_stats.add_judge_c_reject()
+            elif reason.startswith("judge_d"):
+                eval_stats.add_judge_d_reject()
+            rejected_log.append({"reason": reason, "question": mcq.get("question", "")[:100]})
+            logger.debug("eval_rejected", reason=reason)
+
+        eval_queue.task_done()
+
+    # Write rejection log alongside the output file
+    logger.info(
+        "evaluation_worker_done",
+        total_evaluated=eval_stats.generated,
+        accepted=eval_stats.accepted,
+        rejected=len(rejected_log),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1474,17 +2258,57 @@ def _load_existing_hashes(output_path: str) -> set[str]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# FINAL REPORT
+# REPORTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _print_quality_report(
+    eval_stats: EvalStats,
+    worker_pool: WorkerPool,
+    all_stats: list,
+    elapsed: float = 0.0,
+):
+    """Print the post-evaluation quality report."""
+    W = 47
+    gen  = eval_stats.generated
+    rej_a = eval_stats.regex_rejected
+    rej_b = eval_stats.judge_b_rejected
+    rej_c = eval_stats.judge_c_rejected
+    rej_d = eval_stats.judge_d_rejected
+    acc   = eval_stats.accepted
+    avg_p = eval_stats.avg_personalization_score()
+
+    pct = lambda n: f"({100 * n / max(gen, 1):.1f}%)"
+
+    print("\n" + "═" * W)
+    print("  DATA GENERATION — QUALITY REPORT")
+    print("═" * W)
+    print(f"  Generated:                {gen:>6}")
+    print(f"  Pattern filter rejects:   {rej_a:>6}  {pct(rej_a):>8}")
+    print(f"  Judge B rejects:          {rej_b:>6}  {pct(rej_b):>8}  [personalization, 20B]")
+    print(f"  Judge C rejects:          {rej_c:>6}  {pct(rej_c):>8}  [distractor quality, 20B]")
+    print(f"  Judge D rejects:          {rej_d:>6}  {pct(rej_d):>8}  [factual correctness, 20B]")
+    print(f"  Final accepted:           {acc:>6}  {pct(acc):>8}")
+    print(f"  Avg personalization score: {avg_p:.2f} / 3.0")
+    if elapsed > 0:
+        print(f"  Elapsed:                  {elapsed/60:.1f} min")
+    print()
+    print("  Worker key events:")
+    print(f"    Primary keys active:      {len(worker_pool.active_keys)}")
+    print(f"    Fallback keys consumed:   {len(FALLBACK_KEYS) - len(worker_pool.fallback_keys)}")
+    print(f"    Hard failures:            {len(worker_pool.failed_keys)}")
+    print("═" * W + "\n")
+
+
 def _print_report(
-    all_stats: list[WorkerStats],
+    all_stats: list,
     output_path: str,
     total_tasks: int,
     elapsed: float = 0.0,
+    eval_stats: EvalStats | None = None,
+    worker_pool: WorkerPool | None = None,
 ):
-    """Print comprehensive final generation report to terminal."""
+    """Print comprehensive final generation + quality report to terminal."""
     total_success = sum(s.success for s in all_stats)
     total_failure = sum(s.failure for s in all_stats)
 
@@ -1496,6 +2320,7 @@ def _print_report(
     attempt_dist:  Counter = Counter()
     misconception_count = 0
     line_count = 0
+    pscore_sum = 0.0
 
     path = Path(output_path)
     if path.exists():
@@ -1514,6 +2339,7 @@ def _print_report(
                     attempt_dist[obj.get("_attempts", 1)] += 1
                     if obj.get("misconception_context"):
                         misconception_count += 1
+                    pscore_sum += obj.get("personalization_score", 0.0)
                 except json.JSONDecodeError:
                     pass
 
@@ -1522,6 +2348,7 @@ def _print_report(
     avg_attempts = (sum(k * v for k, v in attempt_dist.items()) / max(line_count, 1))
     miscon_pct   = 100 * misconception_count / max(line_count, 1)
     dg_estimate  = line_count * 3  # each MCQ yields 3 DG examples
+    avg_pscore   = pscore_sum / max(line_count, 1)
 
     W = 66
     print("\n" + "═" * W)
@@ -1593,6 +2420,7 @@ def _print_report(
     print(f"  {'File size:':<36} {file_size_mb:.1f} MB")
     print(f"  {'Misconception-context samples:':<36} {misconception_count} ({miscon_pct:.1f}%)")
     print(f"  {'Est. DG training examples (x3):':<36} {dg_estimate}")
+    print(f"  {'Avg personalization score:':<36} {avg_pscore:.2f} / 3.0")
     print(f"  {'Output file:':<36} {output_path}")
 
     # ── Mastery distribution validation ────────────────────────────────
@@ -1616,6 +2444,10 @@ def _print_report(
 
     print("═" * W + "\n")
 
+    # ── Quality report (evaluation pipeline) ──────────────────────────
+    if eval_stats is not None and worker_pool is not None:
+        _print_quality_report(eval_stats, worker_pool, all_stats, elapsed)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
@@ -1636,7 +2468,7 @@ def main():
     )
     parser.add_argument(
         "--workers", type=int, default=CONFIG["num_workers"],
-        help="Number of parallel worker threads.",
+        help="Number of parallel generation worker threads (max 4, one per generation key).",
     )
     parser.add_argument(
         "--chunk-size", type=int, default=CONFIG["chunk_size"],
@@ -1670,47 +2502,97 @@ def main():
             "Primarily used with --force-type for boost generation."
         ),
     )
+    parser.add_argument(
+        "--skip-judges", action="store_true", default=False,
+        help=(
+            "Bypass all three LLM judges and write all structurally-valid MCQs "
+            "directly to the output file. Useful for fast test runs or when "
+            "judge keys are unavailable."
+        ),
+    )
     args = parser.parse_args()
 
-    # Build KeyPool from primary + backup key sets
-    primary_keys = CONFIG["api_keys_primary"]
-    backup_keys  = CONFIG["api_keys_backup"]
-    all_keys = primary_keys + backup_keys
-    if not all_keys:
-        print("ERROR: No valid API keys found. Set OLLAMA_API_KEY_1..4 in .env")
+    # ── Validate key availability ────────────────────────────────────────
+    gen_keys = GENERATION_KEYS
+    fallback = FALLBACK_KEYS
+    all_gen_keys = gen_keys + fallback
+
+    if not all_gen_keys:
+        print(
+            "ERROR: No generation keys found.\n"
+            "Set OLLAMA_API_KEY_1..4 (primary) and/or "
+            "OLLAMA_API_KEY_8..9 (fallback) in .env"
+        )
         sys.exit(1)
 
+    judge_keys_available = bool(JUDGE_B_KEY and JUDGE_C_KEY and JUDGE_D_KEY)
+    if not judge_keys_available and not args.skip_judges:
+        print(
+            "WARNING: One or more judge keys missing "
+            "(OLLAMA_API_KEY_5/6/7). LLM judges will be skipped.\n"
+            "Use --skip-judges to silence this warning."
+        )
+        args.skip_judges = True
+
+    # ── Print pipeline config ────────────────────────────────────────────
+    print()
+    print(f"  Generation model: {GENERATION_MODEL}")
+    print(f"  Judge model:      {JUDGE_MODEL}")
+    print(f"  Generation keys:  {len(gen_keys)} primary + {len(fallback)} fallback")
+    if args.skip_judges:
+        print("  Judges:           SKIPPED")
+    else:
+        print(f"  Judge B key:      {'SET' if JUDGE_B_KEY else 'MISSING'}")
+        print(f"  Judge C key:      {'SET' if JUDGE_C_KEY else 'MISSING'}")
+        print(f"  Judge D key:      {'SET' if JUDGE_D_KEY else 'MISSING'}")
+
+    # ── Build generation key pool ────────────────────────────────────────
     key_pool = KeyPool(
-        primary=primary_keys,
-        backup=backup_keys,
+        primary=gen_keys,
+        backup=fallback,
         fail_threshold=CONFIG["key_fail_threshold"],
         cooldown=CONFIG["key_cooldown"],
     )
 
-    num_workers = min(args.workers, len(all_keys))
+    # WorkerPool tracks hard failures and manages fallback cycling
+    worker_pool = WorkerPool(
+        primary_keys=gen_keys,
+        fallback_keys=list(fallback),  # copy — WorkerPool mutates it
+    )
+
+    num_workers = min(args.workers, max(len(all_gen_keys), 1))
     logger.info(
         "data_generator_starting",
         workers=num_workers,
-        primary_keys=len(primary_keys),
-        backup_keys=len(backup_keys),
+        generation_keys=len(gen_keys),
+        fallback_keys=len(fallback),
+        generation_model=GENERATION_MODEL,
+        judge_model=JUDGE_MODEL,
+        skip_judges=args.skip_judges,
         books_dir=args.books,
     )
-    print(f"  Keys: {len(primary_keys)} primary + {len(backup_keys)} backup = {len(all_keys)} total")
     print(f"  Workers: {num_workers}")
 
-    # Ensure output directory exists
+    # ── Build judge clients (20B model, one per dedicated key) ───────────
+    if not args.skip_judges:
+        judge_b_client = _make_ollama_client(JUDGE_B_KEY, model=JUDGE_MODEL)
+        judge_c_client = _make_ollama_client(JUDGE_C_KEY, model=JUDGE_MODEL)
+        judge_d_client = _make_ollama_client(JUDGE_D_KEY, model=JUDGE_MODEL)
+    else:
+        judge_b_client = judge_c_client = judge_d_client = None
+
+    # ── Ensure output directory exists ──────────────────────────────────
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
 
-    # Load chunks from PDFs (Scipy excluded automatically)
+    # ── Load chunks from PDFs (Scipy excluded automatically) ─────────────
     chunks = _load_chunks_from_pdfs(args.books, args.chunk_size, args.chunk_overlap)
     if not chunks:
         print("ERROR: No chunks loaded from books directory.")
         sys.exit(1)
 
-    # Generate synthetic chunks to replace the removed Scipy PDF examples
-    # Uses the first primary key (or first available key) for a single-threaded
-    # pre-generation pass before the multi-threaded MCQ loop begins.
-    synthetic_key = primary_keys[0] if primary_keys else (backup_keys[0] if backup_keys else None)
+    # Generate synthetic chunks to replace the removed Scipy PDF examples.
+    # Uses the first generation key for a single-threaded pre-generation pass.
+    synthetic_key = gen_keys[0] if gen_keys else (fallback[0] if fallback else None)
     if synthetic_key and not args.force_type:
         n_syn = CONFIG.get("n_synthetic_chunks", 180)
         synthetic = generate_synthetic_chunks(
@@ -1730,18 +2612,16 @@ def main():
     # Resumability: skip already-processed chunks
     existing_hashes = _load_existing_hashes(args.output)
 
-    # ── Force-type mode: override all task type/mastery/score decisions ──
+    # ── Build task list ──────────────────────────────────────────────────
     if args.force_type:
         tasks = _build_tasks(chunks, existing_hashes, balanced_types=False)
-        # Override each task with the forced type, Expert mastery, and
-        # moderate/strong score (50/50).  This bypasses the selector.
         rng = random.Random(42)
         forced_tasks = []
         for i, task in enumerate(tasks):
             task["question_type"] = args.force_type
             task["mastery"] = "Expert"
             task["score_category"] = "moderate" if i % 2 == 0 else "strong"
-            task["misconception_context"] = None  # no escalation in boost mode
+            task["misconception_context"] = None
             forced_tasks.append(task)
         tasks = forced_tasks
         print(f"  Force-type mode: all tasks → Type {args.force_type}, Expert mastery")
@@ -1758,20 +2638,22 @@ def main():
         print("All chunks already processed. Nothing to do.")
         return
 
-    # Build task queue
+    # ── Build queues ─────────────────────────────────────────────────────
     task_queue: queue.Queue = queue.Queue()
     for task in tasks:
         task_queue.put(task)
 
+    eval_queue: queue.Queue = queue.Queue(maxsize=CONFIG["eval_queue_maxsize"])
+
     total_tasks = len(tasks)
     logger.info("tasks_queued", total=total_tasks)
 
-    # Shared state
-    file_lock = threading.Lock()
-    pbar_lock = threading.Lock()
+    # ── Shared state ─────────────────────────────────────────────────────
+    file_lock  = threading.Lock()
+    pbar_lock  = threading.Lock()
+    eval_stats = EvalStats()
     all_stats: list[WorkerStats] = []
 
-    # tqdm progress bar — if --target is set, use that as the total
     display_total = args.target if args.target else total_tasks
     pbar = tqdm(
         total=display_total,
@@ -1781,7 +2663,6 @@ def main():
         colour="green",
     )
 
-    # Shared target counter for early stopping (--target mode)
     target_counter = None
     if args.target:
         target_counter = {
@@ -1790,26 +2671,60 @@ def main():
             "lock": threading.Lock(),
         }
 
-    # Start workers — all share the KeyPool, each gets its own stats
-    threads: list[threading.Thread] = []
+    # ── Launch evaluation worker first ───────────────────────────────────
+    # The evaluation worker drains eval_queue and applies judges.
+    # If judges are skipped, it writes all items directly.
+    if args.skip_judges:
+        # Fast path: bypass all judges — write directly in eval thread
+        def _direct_eval_worker():
+            while True:
+                try:
+                    item = eval_queue.get(timeout=10)
+                except queue.Empty:
+                    continue
+                if item is None:
+                    eval_queue.task_done()
+                    break
+                eval_stats.add_generated()
+                eval_stats.add_accepted(item.get("personalization_score", 0.0))
+                with file_lock:
+                    with open(args.output, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(item) + "\n")
+                eval_queue.task_done()
+
+        eval_thread = threading.Thread(target=_direct_eval_worker, daemon=True)
+    else:
+        eval_thread = threading.Thread(
+            target=_evaluation_worker,
+            args=(
+                eval_queue, args.output, file_lock,
+                judge_b_client, judge_c_client, judge_d_client,
+                eval_stats,
+            ),
+            daemon=True,
+        )
+    eval_thread.start()
+
+    # ── Launch generation workers ────────────────────────────────────────
+    gen_threads: list[threading.Thread] = []
     for i in range(num_workers):
         stats = WorkerStats()
         all_stats.append(stats)
         t = threading.Thread(
             target=_worker,
             args=(
-                i, key_pool, task_queue, args.output,
-                file_lock, stats, all_stats, pbar, pbar_lock,
+                i, key_pool, task_queue, eval_queue,
+                stats, all_stats, pbar, pbar_lock,
                 target_counter,
             ),
             daemon=True,
         )
         t.start()
-        threads.append(t)
+        gen_threads.append(t)
 
     t_start = time.time()
     try:
-        for t in threads:
+        for t in gen_threads:
             t.join()
     except KeyboardInterrupt:
         print("\n\nInterrupted — partial results saved. Run again to resume.")
@@ -1820,7 +2735,18 @@ def main():
         pbar.set_postfix(success=success_total, fail=failure_total)
         pbar.close()
 
-    _print_report(all_stats, args.output, total_tasks, elapsed=elapsed)
+    # Signal evaluation worker to stop and wait for it to drain
+    eval_queue.put(None)
+    eval_thread.join()
+
+    _print_report(
+        all_stats,
+        args.output,
+        total_tasks,
+        elapsed=elapsed,
+        eval_stats=eval_stats,
+        worker_pool=worker_pool,
+    )
 
 
 if __name__ == "__main__":
