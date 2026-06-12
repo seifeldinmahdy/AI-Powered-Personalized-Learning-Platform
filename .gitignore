@@ -88,3 +88,4 @@ Intent_Classifier_Model/kaggle_train.ipynb
 # TTS/ASR benchmark testing (separate sibling project)
 TTS testing/
 .venv_benchmark/
+/Obsidian_vault/
