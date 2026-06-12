@@ -568,42 +568,40 @@ def generate_synthetic_chunks(
 ) -> list[dict]:
     """Generate clean, reference-free CS educational paragraphs via the teacher LLM.
 
-    Distributes chunks evenly across topics and their subtopics.  Each chunk
-    is passed through ``sanitize_chunk`` before being returned, and discarded
-    if it comes back shorter than 40 words.  The teacher LLM is called
-    synchronously (single-threaded) — this function is intended to be called
-    once from ``main()`` before the multi-threaded generation loop starts.
+    All API keys run in parallel — one persistent worker thread per key.  Tasks
+    are drawn from a shared queue so every key stays busy until all targets are
+    processed.  Each successful chunk is written to ``cache_path`` immediately
+    (with a threading lock) so a Ctrl-C loses at most one in-flight request per
+    key.
 
-    On API failure the call is retried on the next key in ``api_keys`` before
-    giving up on that chunk.  Completed chunks are written to ``cache_path``
-    (one JSON object per line) as they are generated, so an interrupted run
-    can be resumed without regenerating chunks that were already written.
+    On restart the cache is loaded; already-generated chunks are skipped by
+    count (same deterministic shuffle seed) so the function resumes from where
+    it left off.
 
     Parameters
     ----------
     n_chunks :
         Target number of synthetic chunks to generate.
     api_keys :
-        Ordered list of API keys to try.  The function cycles through them
-        on consecutive failures: key[0] is tried first; on failure key[1]
-        is tried for the same chunk, and so on.  If all keys fail for a
-        given chunk, that chunk is skipped.
+        API keys to run in parallel.  One thread is spawned per key; all threads
+        work simultaneously on different tasks pulled from a shared queue.
     cache_path :
-        Path to a JSONL file used to cache generated chunks.  Existing
-        entries are loaded at startup so an interrupted run resumes where
-        it left off.  Pass ``None`` to disable caching.
+        Optional path to a JSONL file.  Chunks are appended as they complete.
+        If the file exists on startup its contents are loaded and those targets
+        are skipped.  Pass ``None`` to disable caching.
 
     Returns
     -------
     list[dict]
-        Each dict has ``text``, ``topic``, ``book`` keys compatible with
-        the standard chunk format expected by ``_build_tasks``.
+        Each dict has ``text``, ``topic``, ``book`` keys compatible with the
+        standard chunk format expected by ``_build_tasks``.
     """
     if not api_keys:
         logger.error("generate_synthetic_chunks_no_keys")
         return []
 
     # ── Load cache (resume support) ──────────────────────────────────────
+    result_lock: threading.Lock = threading.Lock()
     synthetic_chunks: list[dict] = []
     seen_hashes: set[str] = set()
 
@@ -624,11 +622,11 @@ def generate_synthetic_chunks(
                     pass
         if synthetic_chunks:
             print(
-                f"  Synthetic chunk cache loaded: {len(synthetic_chunks)} chunks "
+                f"  Synthetic chunk cache: {len(synthetic_chunks)} chunks loaded "
                 f"from {cache_file} (resuming)"
             )
             if len(synthetic_chunks) >= n_chunks:
-                print("  Cache already contains the target number of chunks. Skipping generation.")
+                print("  Cache already at target. Skipping generation.")
                 return synthetic_chunks
 
     already_have = len(synthetic_chunks)
@@ -643,35 +641,56 @@ def generate_synthetic_chunks(
     for i, (tag, subtopics) in enumerate(_SYNTHETIC_TOPIC_DISTRIBUTION):
         count = base_per_topic + (1 if i < remainder else 0)
         for j in range(count):
-            subtopic = subtopics[j % len(subtopics)]
-            targets.append((tag, subtopic))
+            targets.append((tag, subtopics[j % len(subtopics)]))
 
     rng = random.Random(99)
     rng.shuffle(targets)
 
-    # Skip targets whose hashes are already cached (approximate: skip by count)
+    # Skip already-cached targets (same deterministic seed = same order)
     targets_remaining = targets[already_have:]
 
+    n_keys = len(api_keys)
     logger.info(
         "synthetic_chunk_generation_start",
         target=n_chunks,
         cached=already_have,
         still_needed=still_needed,
         actual_targets=len(targets_remaining),
+        parallel_keys=n_keys,
     )
-    print(f"\n  Generating {len(targets_remaining)} synthetic chunks "
-          f"(need {still_needed} more, have {already_have} cached)...")
+    print(
+        f"\n  Generating {len(targets_remaining)} synthetic chunks in parallel "
+        f"({n_keys} keys, need {still_needed} more, have {already_have} cached)..."
+    )
 
-    # ── Pre-build one client per key ─────────────────────────────────────
+    # ── One Ollama client per key ─────────────────────────────────────────
     clients = [_make_ollama_client(k) for k in api_keys]
-    n_keys = len(clients)
-    key_idx = 0  # current key cursor
 
-    # ── Open cache file for appending ────────────────────────────────────
+    # ── Shared task queue — all threads drain this ────────────────────────
+    task_queue: queue.Queue = queue.Queue()
+    for item in targets_remaining:
+        task_queue.put(item)
+
+    # ── Open cache file for appending (shared across threads via lock) ────
     cache_fh = open(cache_file, "a", encoding="utf-8") if cache_file else None
 
-    try:
-        for abs_idx, (tag, subtopic) in enumerate(targets_remaining):
+    # ── Progress bar driven from worker threads ───────────────────────────
+    pbar = tqdm(
+        total=len(targets_remaining),
+        desc="Synthetic chunks",
+        unit="chunk",
+        dynamic_ncols=True,
+        colour="cyan",
+    )
+
+    def _syn_worker(key_idx: int, client: Any) -> None:
+        """Worker pinned to one API key — keeps pulling tasks until queue empty."""
+        while True:
+            try:
+                tag, subtopic = task_queue.get_nowait()
+            except queue.Empty:
+                return  # nothing left — this thread is done
+
             prompt = (
                 f"Write a self-contained educational paragraph (100-150 words) about "
                 f"the computer science concept: {subtopic}\n\n"
@@ -685,90 +704,84 @@ def generate_synthetic_chunks(
                 "Output only the paragraph, nothing else."
             )
 
-            # Try each key in round-robin order until one succeeds or all fail.
-            succeeded = False
-            for attempt in range(n_keys):
-                current_key_idx = (key_idx + attempt) % n_keys
-                client = clients[current_key_idx]
-                try:
-                    response = client.chat(
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0.8,
-                        timeout_override=60,
-                    )
-
-                    raw_text: str = ""
-                    if isinstance(response, str):
-                        raw_text = response
-                    elif isinstance(response, dict):
-                        raw_text = (
-                            response.get("content")
-                            or response.get("text")
-                            or response.get("message", {}).get("content", "")
-                            or ""
-                        )
-
-                    raw_text = raw_text.strip()
-                    if not raw_text:
-                        logger.warning(
-                            "synthetic_chunk_empty_response",
-                            subtopic=subtopic, key_idx=current_key_idx,
-                        )
-                        continue  # try next key
-
-                    cleaned = sanitize_chunk(raw_text)
-                    if cleaned is None:
-                        logger.warning(
-                            "synthetic_chunk_too_short_after_sanitize",
-                            subtopic=subtopic,
-                        )
-                        succeeded = True  # API worked, chunk just too short
-                        break
-
-                    chunk_h = _chunk_hash(cleaned)
-                    if chunk_h in seen_hashes:
-                        logger.debug("synthetic_chunk_duplicate", subtopic=subtopic)
-                        succeeded = True
-                        break
-
-                    entry = {"text": cleaned, "topic": tag, "book": f"synthetic:{tag}"}
-                    seen_hashes.add(chunk_h)
-                    synthetic_chunks.append(entry)
-
-                    # Flush to cache immediately so a Ctrl-C doesn't lose this chunk.
-                    if cache_fh:
-                        cache_fh.write(json.dumps(entry) + "\n")
-                        cache_fh.flush()
-
-                    # Advance the key cursor so the next chunk starts on the next key,
-                    # distributing load across all keys evenly.
-                    key_idx = (current_key_idx + 1) % n_keys
-                    succeeded = True
-                    break
-
-                except Exception as exc:
-                    logger.warning(
-                        "synthetic_chunk_key_failed",
-                        subtopic=subtopic,
-                        key_idx=current_key_idx,
-                        error=str(exc)[:120],
-                        next_attempt=attempt + 1,
-                    )
-                    # Try the next key for this same chunk.
-
-            if not succeeded:
-                logger.error(
-                    "synthetic_chunk_all_keys_failed",
-                    subtopic=subtopic,
-                    idx=abs_idx,
+            try:
+                response = client.chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.8,
+                    timeout_override=60,
                 )
 
-            done_total = already_have + len(synthetic_chunks) - already_have
-            if (abs_idx + 1) % 20 == 0:
-                print(f"    {abs_idx + 1}/{len(targets_remaining)} targets processed "
-                      f"({len(synthetic_chunks)} chunks total)...")
+                raw_text: str = ""
+                if isinstance(response, str):
+                    raw_text = response
+                elif isinstance(response, dict):
+                    raw_text = (
+                        response.get("content")
+                        or response.get("text")
+                        or response.get("message", {}).get("content", "")
+                        or ""
+                    )
 
+                raw_text = raw_text.strip()
+                if not raw_text:
+                    logger.warning(
+                        "synthetic_chunk_empty_response",
+                        subtopic=subtopic, key_idx=key_idx,
+                    )
+                    task_queue.task_done()
+                    pbar.update(1)
+                    continue
+
+                cleaned = sanitize_chunk(raw_text)
+                if cleaned is None:
+                    logger.warning(
+                        "synthetic_chunk_too_short_after_sanitize",
+                        subtopic=subtopic, key_idx=key_idx,
+                    )
+                    task_queue.task_done()
+                    pbar.update(1)
+                    continue
+
+                chunk_h = _chunk_hash(cleaned)
+                entry = {"text": cleaned, "topic": tag, "book": f"synthetic:{tag}"}
+
+                with result_lock:
+                    if chunk_h not in seen_hashes:
+                        seen_hashes.add(chunk_h)
+                        synthetic_chunks.append(entry)
+                        if cache_fh:
+                            cache_fh.write(json.dumps(entry) + "\n")
+                            cache_fh.flush()
+                    else:
+                        logger.debug("synthetic_chunk_duplicate", subtopic=subtopic)
+
+            except Exception as exc:
+                logger.warning(
+                    "synthetic_chunk_failed",
+                    subtopic=subtopic,
+                    key_idx=key_idx,
+                    error=str(exc)[:120],
+                )
+            finally:
+                task_queue.task_done()
+                pbar.update(1)
+
+    # ── Launch all key-threads simultaneously ─────────────────────────────
+    try:
+        with ThreadPoolExecutor(max_workers=n_keys, thread_name_prefix="syn") as pool:
+            futures = [
+                pool.submit(_syn_worker, idx, clients[idx])
+                for idx in range(n_keys)
+            ]
+            for fut in as_completed(futures):
+                exc = fut.exception()
+                if exc:
+                    logger.error(
+                        "synthetic_worker_thread_crashed",
+                        error=str(exc)[:200],
+                    )
     finally:
+        pbar.close()
         if cache_fh:
             cache_fh.close()
 
@@ -777,10 +790,11 @@ def generate_synthetic_chunks(
         requested=n_chunks,
         generated=len(synthetic_chunks),
     )
-    print(f"  Synthetic chunks: {len(synthetic_chunks)} / {n_chunks} target "
-          f"({already_have} from cache + {len(synthetic_chunks) - already_have} new)")
+    print(
+        f"  Synthetic chunks done: {len(synthetic_chunks)} / {n_chunks} target "
+        f"({already_have} from cache + {len(synthetic_chunks) - already_have} new)"
+    )
     return synthetic_chunks
-
 
 def _load_chunks_from_pdfs(books_dir: str, chunk_size: int, chunk_overlap: int) -> list[dict]:
     """Load and chunk all PDFs from the books directory.
