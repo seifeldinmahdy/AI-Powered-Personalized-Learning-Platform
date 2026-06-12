@@ -1783,8 +1783,17 @@ def _parse_judge_b_response(raw: str) -> JudgeBResult:
         return default
 
     def _str(key: str, default: str = "") -> str:
-        m = re.search(rf'^{key}:\s*(.+)', raw, re.MULTILINE)
-        return m.group(1).strip() if m else default
+        # Line-scan: find any line containing key (case-insensitive), return
+        # the text after the first colon.  Decoration-agnostic.
+        key_upper = key.upper()
+        for line in raw.splitlines():
+            if key_upper in line.upper():
+                # Grab everything after the first colon
+                idx = line.find(":")
+                if idx >= 0:
+                    return line[idx + 1:].strip().strip("*").strip()
+                return line.strip()
+        return default
 
     # Collect all sub-check answers into a flat dict for score functions
     parsed: dict = {
@@ -2086,10 +2095,15 @@ def _parse_judge_d_response(raw: str) -> JudgeDResult:
                     return m.group(1).upper()
         return default
 
-    # Extract all CLAIM_N_VERIFIED entries (1, 2, 3, ...)
+    # Extract all CLAIM_N_VERIFIED entries (1, 2, 3, ...) — line-scan approach
     claim_results: dict[str, str] = {}
-    for m in re.finditer(r'^(CLAIM_\d+_VERIFIED):\s*(YES|NO)', raw, re.MULTILINE | re.IGNORECASE):
-        claim_results[m.group(1).lower()] = m.group(2).upper()
+    for line in raw.splitlines():
+        line_upper = line.upper()
+        cm = re.search(r'(CLAIM_\d+_VERIFIED)', line_upper)
+        if cm:
+            yn_m = re.search(r'\b(YES|NO)\b', line, re.IGNORECASE)
+            if yn_m:
+                claim_results[cm.group(1).lower()] = yn_m.group(1).upper()
 
     # If no claims found at all, treat as unverified (parser fault → soft reject)
     if not claim_results:
