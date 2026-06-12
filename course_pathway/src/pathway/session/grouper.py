@@ -1,26 +1,31 @@
-"""Session Grouper — packs personalised chunks into token-budgeted sessions.
+"""Session Grouper — turns curriculum sections into learning sessions.
 
-Rules
------
-1. Each session contains between ``min_tokens`` and ``max_tokens`` of
-   raw text (default 3000–5000 tokens).
-2. A session must never mix chunks from conceptually unrelated sections.
-   Sections that share prerequisite relationships may appear together,
-   but unrelated sections are always separated.
-3. If a section's total tokens exceed one session's budget, it is split
-   across consecutive sessions with continuity titles
-   (e.g. "While Loops — Part 2").
-4. Definitional chunks always appear before applied chunks within a
-   session (guaranteed by the personaliser's sort order, preserved here).
+Design principle
+----------------
+A *session* is a pedagogical unit (one study sitting), so the **number of
+sessions must reflect the conceptual structure of the course, not the raw
+text volume of the source book**.  Two textbooks covering the same syllabus
+at different verbosity should yield a similar number of sessions.
 
-Token counting uses a word-count heuristic: ``len(text.split()) * 1.3``.
-This closely approximates BPE token counts for English prose and avoids
-requiring a heavy tokenizer dependency for session budgeting.
+For that reason the grouper maps **one curriculum section → one session**
+(the sections themselves come from the top-down LLM curriculum designer,
+which already groups related topics into a bounded number of logical
+sessions).  A hard ``max_sessions`` cap is enforced by merging
+pedagogically-adjacent sections when the curriculum is unusually long.
+This fully decouples the session count from book size:
+
+    num_sessions = min(num_non_empty_sections, max_sessions)
+
+Historically this module re-packed every chunk into fixed token-budgeted
+sessions (3000–5000 tokens) and split large sections into "— Part 2/3/4…".
+That made the session count scale linearly with book size (big books →
+80+ sessions), which is what this design replaces.
+
+Token counting (``len(text.split()) * 1.3``) is retained for *reporting*
+``estimated_token_count`` only — it no longer drives the session count.
 """
 
 from __future__ import annotations
-
-import math
 
 import structlog
 
@@ -38,30 +43,45 @@ def _estimate_tokens(text: str) -> int:
     """Estimate the token count of *text* using a word-count heuristic.
 
     English text averages ~1.3 sub-word tokens per whitespace-delimited
-    word with BPE tokenizers.  This is accurate enough for session
-    budgeting (we don't need exact counts).
+    word with BPE tokenizers.  Used only for reporting per-session token
+    counts; it does not influence how sessions are formed.
     """
     return int(len(text.split()) * 1.3)
 
 
 class SessionGrouper:
-    """Groups personalised chunks into token-budgeted learning sessions.
+    """Builds learning sessions from personalised curriculum sections.
+
+    One non-empty section becomes one session.  If the curriculum has more
+    sections than ``max_sessions``, consecutive sections are merged evenly
+    so the final count never exceeds the cap — keeping the session count a
+    function of course structure rather than book length.
 
     Parameters
     ----------
-    min_tokens:
-        Minimum raw-text tokens per session.
-    max_tokens:
-        Maximum raw-text tokens per session.
+    max_sessions:
+        Hard upper bound on the number of sessions produced.  This is the
+        primary control that decouples session count from book size.
+    target_sessions:
+        Informational target the curriculum designer aims for; retained for
+        logging/diagnostics.
+    min_tokens, max_tokens:
+        Deprecated.  Accepted for backward compatibility with existing
+        callers/tests but no longer used to size or split sessions.
     """
 
     def __init__(
         self,
-        min_tokens: int = 3000,
-        max_tokens: int = 5000,
+        max_sessions: int = 25,
+        target_sessions: int = 15,
+        min_tokens: int | None = None,
+        max_tokens: int | None = None,
     ) -> None:
-        self._min = min_tokens
-        self._max = max_tokens
+        self._max_sessions = max(1, max_sessions)
+        self._target_sessions = target_sessions
+        # Retained only so legacy callers passing token budgets don't break.
+        self._min_tokens = min_tokens
+        self._max_tokens = max_tokens
 
     def group_sessions(
         self,
@@ -70,79 +90,42 @@ class SessionGrouper:
     ) -> list[Session]:
         """Build an ordered list of ``Session`` objects.
 
-        Strategy: iterate through sections in teaching order, accumulating
-        chunks into a running buffer.  When the buffer reaches ``max_tokens``
-        or a single large section needs its own session(s), flush.
-
-        Adjacent small sections are naturally packed together because
-        the topological sort already placed related sections near each
-        other — sections that appear consecutively share prerequisite
-        proximity and are pedagogically related.
-
         Parameters
         ----------
         sections:
-            Personalised, ordered sections.
+            Personalised, ordered sections (one per curriculum session).
         section_chunks:
             Mapping section_id → selected chunks for that section.
 
         Returns
         -------
         list[Session]
-            Sessions numbered starting from 1.
+            Sessions numbered starting from 1, capped at ``max_sessions``.
         """
-        sessions: list[Session] = []
-
-        # Running buffer
-        buf_pairs: list[tuple[CourseChunk, int]] = []
-        buf_tokens = 0
-        buf_titles: list[str] = []
-
+        # Build one unit per non-empty section, preserving teaching order.
+        units: list[tuple[list[str], list[CourseChunk]]] = []
         for section in sections:
             chunks = section_chunks.get(section.section_id, [])
             if not chunks:
                 continue
+            units.append(([section.display_title], list(chunks)))
 
-            section_pairs = [(c, _estimate_tokens(c.raw_text)) for c in chunks]
-            section_tokens = sum(t for _, t in section_pairs)
+        if not units:
+            return []
 
-            # Case 1: section is too large for a single session → flush buffer,
-            # then split the section across dedicated sessions.
-            if section_tokens > self._max:
-                # Flush whatever is in the buffer
-                if buf_pairs:
-                    sessions.append(self._flush_buffer(
-                        buf_pairs, buf_titles, len(sessions) + 1
-                    ))
-                    buf_pairs, buf_tokens, buf_titles = [], 0, []
+        # Enforce the hard cap by merging consecutive sections evenly.
+        if len(units) > self._max_sessions:
+            logger.info(
+                "session_count_capped",
+                sections=len(units),
+                max_sessions=self._max_sessions,
+            )
+            units = self._merge_to_cap(units, self._max_sessions)
 
-                # Split this large section
-                sessions.extend(self._split_large_section(
-                    section, section_pairs, len(sessions) + 1
-                ))
-                continue
-
-            # Case 2: adding this section would bust the budget → flush first.
-            if buf_tokens + section_tokens > self._max and buf_pairs:
-                sessions.append(self._flush_buffer(
-                    buf_pairs, buf_titles, len(sessions) + 1
-                ))
-                buf_pairs, buf_tokens, buf_titles = [], 0, []
-
-            # Accumulate into buffer
-            buf_pairs.extend(section_pairs)
-            buf_tokens += section_tokens
-            buf_titles.append(section.display_title)
-
-        # Flush remaining buffer
-        if buf_pairs:
-            sessions.append(self._flush_buffer(
-                buf_pairs, buf_titles, len(sessions) + 1
-            ))
-
-        # Re-number
-        for i, session in enumerate(sessions, 1):
-            session.session_number = i
+        sessions = [
+            self._build_session(titles, chunks, i)
+            for i, (titles, chunks) in enumerate(units, 1)
+        ]
 
         total_chunks = sum(len(s.chunks) for s in sessions)
         total_tokens = sum(s.estimated_token_count for s in sessions)
@@ -159,13 +142,38 @@ class SessionGrouper:
     # ── Internal helpers ─────────────────────────────────────────
 
     @staticmethod
-    def _flush_buffer(
-        pairs: list[tuple[CourseChunk, int]],
+    def _merge_to_cap(
+        units: list[tuple[list[str], list[CourseChunk]]],
+        cap: int,
+    ) -> list[tuple[list[str], list[CourseChunk]]]:
+        """Merge consecutive units into exactly ``cap`` groups.
+
+        Distribution is as even as possible while preserving order, so
+        pedagogically-adjacent sections (already sorted) end up together.
+        """
+        n = len(units)
+        base, extra = divmod(n, cap)
+
+        merged: list[tuple[list[str], list[CourseChunk]]] = []
+        idx = 0
+        for g in range(cap):
+            size = base + (1 if g < extra else 0)
+            group = units[idx : idx + size]
+            idx += size
+            titles = [t for u in group for t in u[0]]
+            chunks = [c for u in group for c in u[1]]
+            merged.append((titles, chunks))
+
+        return merged
+
+    @staticmethod
+    def _build_session(
         titles: list[str],
+        chunks: list[CourseChunk],
         session_number: int,
     ) -> Session:
-        """Build a session from the accumulated buffer."""
-        # Session title: use all section titles, max 3 before truncating
+        """Build a session from a (possibly merged) group of sections."""
+        # Session title: list section titles, collapsing once there are many.
         if len(titles) <= 3:
             title = ", ".join(titles)
         else:
@@ -173,15 +181,15 @@ class SessionGrouper:
 
         session_chunks = [
             SessionChunk(chunk_id=c.chunk_id, raw_text=c.raw_text)
-            for c, _ in pairs
+            for c in chunks
         ]
-        topics = list(dict.fromkeys(c.topic for c, _ in pairs))
-        total_tokens = sum(t for _, t in pairs)
+        topics = list(dict.fromkeys(c.topic for c in chunks))
+        total_tokens = sum(_estimate_tokens(c.raw_text) for c in chunks)
 
-        books = [c.book for c, _ in pairs if c.book]
+        books = [c.book for c in chunks if c.book]
         book = books[0] if books else ""
-        page_start = min((c.page_start for c, _ in pairs), default=0)
-        page_end = max((c.page_end for c, _ in pairs), default=0)
+        page_start = min((c.page_start for c in chunks), default=0)
+        page_end = max((c.page_end for c in chunks), default=0)
 
         return Session(
             session_number=session_number,
@@ -193,53 +201,3 @@ class SessionGrouper:
             page_range_start=page_start,
             page_range_end=page_end,
         )
-
-    def _split_large_section(
-        self,
-        section: DiscoveredSection,
-        chunk_tokens: list[tuple[CourseChunk, int]],
-        start_number: int,
-    ) -> list[Session]:
-        """Split a section too large for one session into balanced parts."""
-        total_tokens = sum(t for _, t in chunk_tokens)
-
-        # Tolerance: if the section is just slightly over the budget (10%),
-        # don't split it at all to avoid a tiny 1-chunk "Part 2".
-        if total_tokens <= self._max * 1.10:
-            return [self._flush_buffer(chunk_tokens, [section.display_title], start_number)]
-
-        num_parts = math.ceil(total_tokens / self._max)
-        target_tokens_per_part = total_tokens / num_parts
-
-        sessions: list[Session] = []
-        current_pairs: list[tuple[CourseChunk, int]] = []
-        current_tokens = 0
-        part = 1
-
-        for chunk, tokens in chunk_tokens:
-            # Flush if adding the NEXT token would push us too far past the target
-            # for this part (unless it's the last part).
-            if current_tokens > 0 and (current_tokens + tokens / 2 >= target_tokens_per_part):
-                if part < num_parts:
-                    title = f"{section.display_title} — Part {part}"
-                    sessions.append(self._flush_buffer(
-                        current_pairs, [title], start_number + part - 1
-                    ))
-                    part += 1
-                    current_pairs = []
-                    current_tokens = 0
-
-            current_pairs.append((chunk, tokens))
-            current_tokens += tokens
-
-        if current_pairs:
-            title = (
-                f"{section.display_title} — Part {part}"
-                if part > 1 or sessions
-                else section.display_title
-            )
-            sessions.append(self._flush_buffer(
-                current_pairs, [title], start_number + part - 1
-            ))
-
-        return sessions

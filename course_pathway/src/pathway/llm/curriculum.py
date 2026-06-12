@@ -12,8 +12,8 @@ Uses the existing ``OllamaClient`` from ``llm.naming``.
 
 from __future__ import annotations
 
+import math
 import re
-from collections import defaultdict
 from difflib import SequenceMatcher
 
 import structlog
@@ -110,10 +110,23 @@ def _build_topic_listing(topics: list[str]) -> str:
 
 def _alphabetical_fallback(
     topics: list[str],
-    topics_per_session: int = 10,
+    topics_per_session: int | None = None,
+    target_sessions: int = 15,
 ) -> list[LLMCurriculumSession]:
-    """Group topics alphabetically into sessions as a safe fallback."""
+    """Group topics alphabetically into sessions as a safe fallback.
+
+    By default the number of sessions is bounded to ``target_sessions`` by
+    putting more topics per session as the topic count grows, so the fallback
+    (like the LLM path) does not scale the session count with book size.
+    An explicit ``topics_per_session`` overrides this (used by tests).
+    """
     sorted_topics = sorted(topics, key=lambda t: t.lower())
+
+    if topics_per_session is None:
+        # Spread topics across at most ``target_sessions`` sessions.
+        target = max(1, target_sessions)
+        topics_per_session = max(1, math.ceil(len(sorted_topics) / target))
+
     sessions: list[LLMCurriculumSession] = []
 
     for i in range(0, len(sorted_topics), topics_per_session):
@@ -194,6 +207,9 @@ def design_curriculum(
     book_titles: list[str] | None = None,
     max_retries: int = 3,
     timeout: int = 600,
+    target_sessions: int = 15,
+    min_sessions: int = 8,
+    max_sessions: int = 25,
 ) -> list[LLMCurriculumSession]:
     """Design a complete curriculum top-down using the LLM.
 
@@ -211,6 +227,12 @@ def design_curriculum(
         Retries on validation failure before fallback.
     timeout:
         Timeout in seconds for the LLM call.
+    target_sessions:
+        Number of sessions the designer aims for, regardless of topic count.
+    min_sessions, max_sessions:
+        Bounds requested from the LLM. ``max_sessions`` is also enforced as a
+        hard cap (over-long curricula are merged down) so the session count
+        never scales with book size.
 
     Returns
     -------
@@ -244,6 +266,9 @@ def design_curriculum(
         course_intent=effective_intent,
         count=len(clean_topics),
         topic_listing=topic_listing,
+        target_sessions=target_sessions,
+        min_sessions=min_sessions,
+        max_sessions=max_sessions,
     )
 
     # Attempt LLM call with retries
@@ -311,6 +336,20 @@ def design_curriculum(
                 s for s in validated_sessions if s.topics
             ]
 
+            # Hard cap: if the LLM ignored the bound and returned too many
+            # sessions, merge adjacent ones so the count never scales with
+            # book size.
+            if len(validated_sessions) > max_sessions:
+                logger.info(
+                    "curriculum_session_count_capped",
+                    attempt=attempt,
+                    returned=len(validated_sessions),
+                    max_sessions=max_sessions,
+                )
+                validated_sessions = _merge_sessions_to_cap(
+                    validated_sessions, max_sessions
+                )
+
             # Re-number sessions
             for i, session in enumerate(validated_sessions, 1):
                 session.session_number = i
@@ -336,7 +375,49 @@ def design_curriculum(
         reason="All retries exhausted",
         max_retries=max_retries,
     )
-    return _alphabetical_fallback(clean_topics)
+    return _alphabetical_fallback(clean_topics, target_sessions=target_sessions)
+
+
+# ── Session cap ──────────────────────────────────────────────────
+
+
+def _merge_sessions_to_cap(
+    sessions: list[LLMCurriculumSession],
+    cap: int,
+) -> list[LLMCurriculumSession]:
+    """Merge consecutive sessions so at most ``cap`` remain.
+
+    Consecutive (already pedagogically ordered) sessions are combined into
+    ``cap`` groups as evenly as possible. The first session's title is kept
+    for each merged group; topics and difficulties are concatenated.
+    """
+    if cap < 1 or len(sessions) <= cap:
+        return sessions
+
+    n = len(sessions)
+    base, extra = divmod(n, cap)
+
+    merged: list[LLMCurriculumSession] = []
+    idx = 0
+    for g in range(cap):
+        size = base + (1 if g < extra else 0)
+        group = sessions[idx : idx + size]
+        idx += size
+
+        topics: list[str] = []
+        for s in group:
+            topics.extend(s.topics)
+
+        merged.append(
+            LLMCurriculumSession(
+                session_number=g + 1,
+                session_title=group[0].session_title,
+                topics=topics,
+                difficulty=group[0].difficulty,
+            )
+        )
+
+    return merged
 
 
 # ── Topic validation ─────────────────────────────────────────────

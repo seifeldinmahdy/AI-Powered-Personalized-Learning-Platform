@@ -46,19 +46,30 @@ class TestSessionGrouper:
         for session in sessions:
             assert len(session.chunks) > 0
 
-    def test_token_budget_respected(self, sample_chunks, intermediate_context):
-        max_tokens = 1000
+    def test_session_count_capped(self, sample_chunks, intermediate_context):
+        """The session count never exceeds max_sessions, regardless of volume."""
         sections, section_chunks = _build_personalised(
             sample_chunks, intermediate_context
         )
-        grouper = SessionGrouper(min_tokens=100, max_tokens=max_tokens)
+        grouper = SessionGrouper(max_sessions=3)
         sessions = grouper.group_sessions(sections, section_chunks)
 
-        for session in sessions:
-            assert session.estimated_token_count <= max_tokens * 1.1, (
-                f"Session {session.session_number} exceeds budget: "
-                f"{session.estimated_token_count} > {max_tokens}"
-            )
+        assert 0 < len(sessions) <= 3
+
+    def test_one_session_per_section_when_under_cap(
+        self, sample_chunks, intermediate_context
+    ):
+        """With a generous cap, each non-empty section becomes one session."""
+        sections, section_chunks = _build_personalised(
+            sample_chunks, intermediate_context
+        )
+        non_empty = sum(
+            1 for s in sections if section_chunks.get(s.section_id)
+        )
+        grouper = SessionGrouper(max_sessions=100)
+        sessions = grouper.group_sessions(sections, section_chunks)
+
+        assert len(sessions) == non_empty
 
     def test_session_numbering(self, sample_chunks, novice_context):
         sections, section_chunks = _build_personalised(
@@ -93,14 +104,37 @@ class TestSessionGrouper:
 
         assert session_chunk_ids == expected_ids
 
-    def test_large_budget_fewer_sessions(self, sample_chunks, novice_context):
+    def test_lower_cap_fewer_sessions(self, sample_chunks, novice_context):
         sections, section_chunks = _build_personalised(
             sample_chunks, novice_context
         )
-        small_budget = SessionGrouper(min_tokens=50, max_tokens=200)
-        large_budget = SessionGrouper(min_tokens=500, max_tokens=5000)
+        low_cap = SessionGrouper(max_sessions=2)
+        high_cap = SessionGrouper(max_sessions=100)
 
-        small_sessions = small_budget.group_sessions(sections, section_chunks)
-        large_sessions = large_budget.group_sessions(sections, section_chunks)
+        low_sessions = low_cap.group_sessions(sections, section_chunks)
+        high_sessions = high_cap.group_sessions(sections, section_chunks)
 
-        assert len(large_sessions) <= len(small_sessions)
+        assert len(low_sessions) <= len(high_sessions)
+        assert len(low_sessions) <= 2
+
+    def test_count_independent_of_text_volume(
+        self, sample_chunks, intermediate_context
+    ):
+        """Inflating every chunk's raw text must not change the session count."""
+        sections, section_chunks = _build_personalised(
+            sample_chunks, intermediate_context
+        )
+        grouper = SessionGrouper(max_sessions=25)
+        base = grouper.group_sessions(sections, section_chunks)
+
+        # Inflate raw text 10x — pure volume increase, same structure.
+        inflated = {
+            sid: [
+                chunk.model_copy(update={"raw_text": chunk.raw_text * 10})
+                for chunk in chunks
+            ]
+            for sid, chunks in section_chunks.items()
+        }
+        inflated_sessions = grouper.group_sessions(sections, inflated)
+
+        assert len(inflated_sessions) == len(base)
