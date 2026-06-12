@@ -563,7 +563,8 @@ _SYNTHETIC_TOPIC_DISTRIBUTION: list[tuple[str, list[str]]] = [
 
 def generate_synthetic_chunks(
     n_chunks: int,
-    api_key: str,
+    api_keys: list[str],
+    cache_path: str | None = None,
 ) -> list[dict]:
     """Generate clean, reference-free CS educational paragraphs via the teacher LLM.
 
@@ -573,12 +574,24 @@ def generate_synthetic_chunks(
     synchronously (single-threaded) — this function is intended to be called
     once from ``main()`` before the multi-threaded generation loop starts.
 
+    On API failure the call is retried on the next key in ``api_keys`` before
+    giving up on that chunk.  Completed chunks are written to ``cache_path``
+    (one JSON object per line) as they are generated, so an interrupted run
+    can be resumed without regenerating chunks that were already written.
+
     Parameters
     ----------
     n_chunks :
         Target number of synthetic chunks to generate.
-    api_key :
-        API key to use for calling the teacher LLM (uses CONFIG model).
+    api_keys :
+        Ordered list of API keys to try.  The function cycles through them
+        on consecutive failures: key[0] is tried first; on failure key[1]
+        is tried for the same chunk, and so on.  If all keys fail for a
+        given chunk, that chunk is skipped.
+    cache_path :
+        Path to a JSONL file used to cache generated chunks.  Existing
+        entries are loaded at startup so an interrupted run resumes where
+        it left off.  Pass ``None`` to disable caching.
 
     Returns
     -------
@@ -586,109 +599,186 @@ def generate_synthetic_chunks(
         Each dict has ``text``, ``topic``, ``book`` keys compatible with
         the standard chunk format expected by ``_build_tasks``.
     """
-    client = _make_ollama_client(api_key)
+    if not api_keys:
+        logger.error("generate_synthetic_chunks_no_keys")
+        return []
 
-    # Flatten topic/subtopic pairs distributed evenly to reach n_chunks total
+    # ── Load cache (resume support) ──────────────────────────────────────
+    synthetic_chunks: list[dict] = []
+    seen_hashes: set[str] = set()
+
+    cache_file: Path | None = Path(cache_path) if cache_path else None
+    if cache_file and cache_file.exists():
+        with open(cache_file, "r", encoding="utf-8") as _cf:
+            for _line in _cf:
+                _line = _line.strip()
+                if not _line:
+                    continue
+                try:
+                    _entry = json.loads(_line)
+                    _h = _chunk_hash(_entry.get("text", ""))
+                    if _h not in seen_hashes:
+                        seen_hashes.add(_h)
+                        synthetic_chunks.append(_entry)
+                except (json.JSONDecodeError, KeyError):
+                    pass
+        if synthetic_chunks:
+            print(
+                f"  Synthetic chunk cache loaded: {len(synthetic_chunks)} chunks "
+                f"from {cache_file} (resuming)"
+            )
+            if len(synthetic_chunks) >= n_chunks:
+                print("  Cache already contains the target number of chunks. Skipping generation.")
+                return synthetic_chunks
+
+    already_have = len(synthetic_chunks)
+    still_needed = n_chunks - already_have
+
+    # ── Build target list ────────────────────────────────────────────────
     n_topics = len(_SYNTHETIC_TOPIC_DISTRIBUTION)
     base_per_topic = n_chunks // n_topics
     remainder = n_chunks % n_topics
 
-    targets: list[tuple[str, str]] = []  # (topic_tag, subtopic)
+    targets: list[tuple[str, str]] = []
     for i, (tag, subtopics) in enumerate(_SYNTHETIC_TOPIC_DISTRIBUTION):
         count = base_per_topic + (1 if i < remainder else 0)
-        # Cycle through subtopics
         for j in range(count):
             subtopic = subtopics[j % len(subtopics)]
             targets.append((tag, subtopic))
 
-    # Shuffle to avoid topic-block ordering in the final dataset
     rng = random.Random(99)
     rng.shuffle(targets)
 
-    synthetic_chunks: list[dict] = []
-    seen_hashes: set[str] = set()
+    # Skip targets whose hashes are already cached (approximate: skip by count)
+    targets_remaining = targets[already_have:]
 
     logger.info(
         "synthetic_chunk_generation_start",
         target=n_chunks,
-        actual_targets=len(targets),
+        cached=already_have,
+        still_needed=still_needed,
+        actual_targets=len(targets_remaining),
     )
-    print(f"\n  Generating {len(targets)} synthetic chunks...")
+    print(f"\n  Generating {len(targets_remaining)} synthetic chunks "
+          f"(need {still_needed} more, have {already_have} cached)...")
 
-    for idx, (tag, subtopic) in enumerate(targets):
-        prompt = (
-            f"Write a self-contained educational paragraph (100-150 words) about "
-            f"the computer science concept: {subtopic}\n\n"
-            "Rules:\n"
-            "- No figure references, no 'as shown above', no 'in this example'\n"
-            "- No reference to any specific book, lecture, author, or publication\n"
-            "- No 'we', no 'the student', no 'you will learn'\n"
-            "- State the concept directly and precisely\n"
-            "- Include one concrete illustrative sentence\n"
-            "- End with a consequence or implication of the concept\n\n"
-            "Output only the paragraph, nothing else."
-        )
+    # ── Pre-build one client per key ─────────────────────────────────────
+    clients = [_make_ollama_client(k) for k in api_keys]
+    n_keys = len(clients)
+    key_idx = 0  # current key cursor
 
-        try:
-            response = client.chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.8,
-                timeout_override=60,
+    # ── Open cache file for appending ────────────────────────────────────
+    cache_fh = open(cache_file, "a", encoding="utf-8") if cache_file else None
+
+    try:
+        for abs_idx, (tag, subtopic) in enumerate(targets_remaining):
+            prompt = (
+                f"Write a self-contained educational paragraph (100-150 words) about "
+                f"the computer science concept: {subtopic}\n\n"
+                "Rules:\n"
+                "- No figure references, no 'as shown above', no 'in this example'\n"
+                "- No reference to any specific book, lecture, author, or publication\n"
+                "- No 'we', no 'the student', no 'you will learn'\n"
+                "- State the concept directly and precisely\n"
+                "- Include one concrete illustrative sentence\n"
+                "- End with a consequence or implication of the concept\n\n"
+                "Output only the paragraph, nothing else."
             )
 
-            raw_text: str = ""
-            if isinstance(response, str):
-                raw_text = response
-            elif isinstance(response, dict):
-                raw_text = (
-                    response.get("content")
-                    or response.get("text")
-                    or response.get("message", {}).get("content", "")
-                    or ""
-                )
+            # Try each key in round-robin order until one succeeds or all fail.
+            succeeded = False
+            for attempt in range(n_keys):
+                current_key_idx = (key_idx + attempt) % n_keys
+                client = clients[current_key_idx]
+                try:
+                    response = client.chat(
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.8,
+                        timeout_override=60,
+                    )
 
-            raw_text = raw_text.strip()
-            if not raw_text:
-                logger.warning("synthetic_chunk_empty_response", subtopic=subtopic, idx=idx)
-                continue
+                    raw_text: str = ""
+                    if isinstance(response, str):
+                        raw_text = response
+                    elif isinstance(response, dict):
+                        raw_text = (
+                            response.get("content")
+                            or response.get("text")
+                            or response.get("message", {}).get("content", "")
+                            or ""
+                        )
 
-            cleaned = sanitize_chunk(raw_text)
-            if cleaned is None:
-                logger.warning(
-                    "synthetic_chunk_too_short_after_sanitize",
+                    raw_text = raw_text.strip()
+                    if not raw_text:
+                        logger.warning(
+                            "synthetic_chunk_empty_response",
+                            subtopic=subtopic, key_idx=current_key_idx,
+                        )
+                        continue  # try next key
+
+                    cleaned = sanitize_chunk(raw_text)
+                    if cleaned is None:
+                        logger.warning(
+                            "synthetic_chunk_too_short_after_sanitize",
+                            subtopic=subtopic,
+                        )
+                        succeeded = True  # API worked, chunk just too short
+                        break
+
+                    chunk_h = _chunk_hash(cleaned)
+                    if chunk_h in seen_hashes:
+                        logger.debug("synthetic_chunk_duplicate", subtopic=subtopic)
+                        succeeded = True
+                        break
+
+                    entry = {"text": cleaned, "topic": tag, "book": f"synthetic:{tag}"}
+                    seen_hashes.add(chunk_h)
+                    synthetic_chunks.append(entry)
+
+                    # Flush to cache immediately so a Ctrl-C doesn't lose this chunk.
+                    if cache_fh:
+                        cache_fh.write(json.dumps(entry) + "\n")
+                        cache_fh.flush()
+
+                    # Advance the key cursor so the next chunk starts on the next key,
+                    # distributing load across all keys evenly.
+                    key_idx = (current_key_idx + 1) % n_keys
+                    succeeded = True
+                    break
+
+                except Exception as exc:
+                    logger.warning(
+                        "synthetic_chunk_key_failed",
+                        subtopic=subtopic,
+                        key_idx=current_key_idx,
+                        error=str(exc)[:120],
+                        next_attempt=attempt + 1,
+                    )
+                    # Try the next key for this same chunk.
+
+            if not succeeded:
+                logger.error(
+                    "synthetic_chunk_all_keys_failed",
                     subtopic=subtopic,
-                    idx=idx,
+                    idx=abs_idx,
                 )
-                continue
 
-            chunk_h = _chunk_hash(cleaned)
-            if chunk_h in seen_hashes:
-                logger.debug("synthetic_chunk_duplicate", subtopic=subtopic)
-                continue
+            done_total = already_have + len(synthetic_chunks) - already_have
+            if (abs_idx + 1) % 20 == 0:
+                print(f"    {abs_idx + 1}/{len(targets_remaining)} targets processed "
+                      f"({len(synthetic_chunks)} chunks total)...")
 
-            seen_hashes.add(chunk_h)
-            synthetic_chunks.append({
-                "text": cleaned,
-                "topic": tag,
-                "book": f"synthetic:{tag}",
-            })
-
-            if (idx + 1) % 20 == 0:
-                print(f"    {idx + 1}/{len(targets)} synthetic chunks generated...")
-
-        except Exception:
-            logger.exception(
-                "synthetic_chunk_generation_failed",
-                subtopic=subtopic,
-                idx=idx,
-            )
+    finally:
+        if cache_fh:
+            cache_fh.close()
 
     logger.info(
         "synthetic_chunk_generation_done",
         requested=n_chunks,
         generated=len(synthetic_chunks),
     )
-    print(f"  Synthetic chunks generated: {len(synthetic_chunks)} / {len(targets)} succeeded")
+    print(f"  Synthetic chunks: {len(synthetic_chunks)} / {n_chunks} target "
+          f"({already_have} from cache + {len(synthetic_chunks) - already_have} new)")
     return synthetic_chunks
 
 
@@ -2804,13 +2894,16 @@ def main():
         sys.exit(1)
 
     # Generate synthetic chunks to replace the removed Scipy PDF examples.
-    # Uses the first generation key for a single-threaded pre-generation pass.
-    synthetic_key = gen_keys[0] if gen_keys else (fallback[0] if fallback else None)
-    if synthetic_key and not args.force_type:
+    # All generation keys are passed so the function can cycle through them
+    # on per-call failures.  A JSONL cache file sits next to mcq_raw.jsonl so
+    # an interrupted run reloads completed chunks instead of regenerating them.
+    if all_gen_keys and not args.force_type:
         n_syn = CONFIG.get("n_synthetic_chunks", 180)
+        _syn_cache = str(Path(args.output).parent / "mcq_synthetic_chunks_cache.jsonl")
         synthetic = generate_synthetic_chunks(
             n_chunks=n_syn,
-            api_key=synthetic_key,
+            api_keys=all_gen_keys,
+            cache_path=_syn_cache,
         )
         if synthetic:
             chunks = chunks + synthetic
