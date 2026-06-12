@@ -488,7 +488,7 @@ def _call_qg(
 
 
 def _call_qg_ollama(chunk_text, topic, question_type, mastery_level, score_category, misconception_context, settings) -> dict | None:
-    from mcq.prompts.mcq_prompts import build_qg_prompt  # type: ignore
+    from mcq.prompts.mcq_prompts import build_qg_chat_prompt, extract_qg_output  # type: ignore
     import sys
     from pathlib import Path
 
@@ -510,17 +510,24 @@ def _call_qg_ollama(chunk_text, topic, question_type, mastery_level, score_categ
         max_retries=2,
         timeout=120,
     )
-    prompt = build_qg_prompt(chunk_text, question_type, mastery_level, score_category, misconception_context)
-    raw_prompt = f"[{'local:' + model_name if is_local else 'cloud:' + model_name} — {len(prompt)} chars]"
-    data = client.chat_json(
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-        timeout_override=120,
-        num_predict=512,   # explicit: prevents Ollama resetting to default 128
+
+    # Use the SAME chat-format prompt the model was fine-tuned on.
+    # Output is tagged text: QUESTION: / ANSWER: / EXPLANATION:
+    messages = build_qg_chat_prompt(
+        chunk_text, question_type, mastery_level, score_category, misconception_context
     )
-    if isinstance(data, dict) and "question" in data and "correct_answer" in data:
-        data["_raw"] = raw_prompt
-        return data
+    raw = client.chat(
+        messages=messages,
+        temperature=0.0,
+        json_mode=False,
+        timeout_override=120,
+        num_predict=256,
+    )
+    raw_label = f"[{'local:' + model_name if is_local else 'cloud:' + model_name} — {len(messages[0]['content']) + len(messages[1]['content'])} chars]"
+    parsed = extract_qg_output(raw)
+    if parsed:
+        parsed["_raw"] = raw_label
+        return parsed
     return None
 
 
@@ -613,7 +620,7 @@ def _call_dg(generated_q, chunk_text, settings, max_new_tokens) -> tuple[MCQQues
 
 
 def _call_dg_ollama(generated_q, chunk_text, settings, raw_outputs) -> tuple[MCQQuestion | None, list[str]]:
-    from mcq.prompts.mcq_prompts import build_dg_prompt  # type: ignore
+    from mcq.prompts.mcq_prompts import build_dg_chat_prompt, extract_dg_output  # type: ignore
     import sys, random
     from pathlib import Path
 
@@ -636,37 +643,38 @@ def _call_dg_ollama(generated_q, chunk_text, settings, raw_outputs) -> tuple[MCQ
         timeout=120,
     )
     num_distractors = settings.MCQ_DISTRACTOR_COUNT
-    prompt = build_dg_prompt(
-        question=generated_q.question,
-        correct_answer=generated_q.correct_answer,
-        question_type=generated_q.question_type,
-        mastery_level=generated_q.mastery_used,
-        score_category=generated_q.score_category_used,
-        num_distractors=num_distractors,
-        chunk_text=chunk_text,
-    )
-    raw_outputs.append(f"[{'local:' + model_name if is_local else 'cloud:' + model_name} — {len(prompt)} chars]")
-    data = client.chat_json(
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.8,
-        timeout_override=120,
-        num_predict=256,   # explicit: prevents Ollama resetting to default 128
-    )
-    if not isinstance(data, dict):
-        return None, raw_outputs
-
-    raw_list = data.get("distractors", [])
-    if not isinstance(raw_list, list):
-        return None, raw_outputs
-
     correct_lower = generated_q.correct_answer.strip().lower()
-    distractors = [
-        str(d).strip() for d in raw_list
-        if str(d).strip().lower() != correct_lower and str(d).strip()
-    ][:num_distractors]
+    distractors: list[str] = []
+    label = f"[{'local:' + model_name if is_local else 'cloud:' + model_name}]"
 
-    # Fallback padding — same as Llama path; prevents ValidationError when
-    # the model returns fewer distractors than num_distractors
+    # Call DG once per distractor — mirrors the LoRA path exactly.
+    # build_dg_chat_prompt generates ONE distractor per call.
+    max_attempts = num_distractors + 2
+    for _ in range(max_attempts):
+        if len(distractors) >= num_distractors:
+            break
+        messages = build_dg_chat_prompt(
+            question=generated_q.question,
+            correct_answer=generated_q.correct_answer,
+            question_type=generated_q.question_type,
+            mastery_level=generated_q.mastery_used,
+            score_category=generated_q.score_category_used,
+            chunk_text=chunk_text,
+        )
+        raw = client.chat(
+            messages=messages,
+            temperature=0.8,
+            json_mode=False,
+            timeout_override=60,
+            num_predict=80,
+        )
+        raw_outputs.append(f"{label} {raw[:120]}")
+        parsed = extract_dg_output(raw)
+        if parsed and parsed.strip().lower() != correct_lower:
+            if not any(parsed.strip().lower() == d.strip().lower() for d in distractors):
+                distractors.append(parsed)
+
+    # Fallback padding so we always reach num_distractors
     fallbacks = ["None of the above", "All of the above", "Not defined in this context"]
     for fb in fallbacks:
         if len(distractors) >= num_distractors:
