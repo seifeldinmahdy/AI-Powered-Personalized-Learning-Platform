@@ -1446,58 +1446,59 @@ def _passes_regex_filter(mcq: dict) -> bool:
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # JUDGE B — FULL PERSONALIZATION ADHERENCE  (JUDGE_B_KEY, JUDGE_MODEL)
+# G-Eval: reasoning written BEFORE each sub-check answer.
+# HD-Eval: 9 atomic YES/NO sub-checks; score derived in Python, never by LLM.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 @dataclass
 class JudgeBResult:
     verdict: str                    # "ACCEPT" or "REJECT"
-    overall_score: float            # average of all signal scores (0–3)
-    primary_failure: str            # which signal failed first, or "NONE"
-    mastery_score: int   = 0
-    score_cat_score: int = 0
-    misconception_score: int = 0
+    overall_score: float            # (mastery + score_cat + misconception) / 3
+    primary_failure: str            # which sub-check failed first, or "NONE"
+    mastery_score: int   = 0        # count of YES from 3 mastery sub-checks
+    score_cat_score: int = 0        # count of YES from 3 score_cat sub-checks
+    misconception_score: int = 0    # count of YES from 3 misconception sub-checks
     type_eligible: bool  = True
     depth_calibration: str = "CORRECT"
+    # Raw sub-check answers stored for sub-check pass-rate reporting
+    sub_checks: dict = field(default_factory=dict)
     raw_response: str = ""
 
 
-_JUDGE_B_MISCONCEPTION_NONE = """\
+# ── Misconception block (substituted in Python before sending) ─────────────
+_JUDGE_B_MISCONCEPTION_NONE_BLOCK = """\
 SIGNAL 3 — MISCONCEPTION CONTEXT
-This signal is inactive. Score automatically 3.
-MISCONCEPTION_SCORE: 3
-MISCONCEPTION_REASON: No misconception context provided."""
+─────────────────────────────────────────────────────
+MISCONCEPTION_REASONING: Not applicable — no misconception context.
+MISCONCEPTION_CHECK_NEW_ANGLE: YES
+MISCONCEPTION_CHECK_DISTRACTOR_TARGETS: YES
+MISCONCEPTION_CHECK_ANSWER_ADDRESSES_GAP: YES"""
 
 
 def _build_judge_b_misconception_block(mc: str | None) -> str:
-    """Build Signal 3 block — None or populated depending on misconception_context."""
+    """Build Signal 3 block — auto-YES when no misconception context."""
     if not mc:
-        return _JUDGE_B_MISCONCEPTION_NONE
+        return _JUDGE_B_MISCONCEPTION_NONE_BLOCK
     return f"""\
 SIGNAL 3 — MISCONCEPTION CONTEXT
 ─────────────────────────────────────────────────────
 Misconception: {mc}
 
-Rules:
-  - MUST NOT repeat the same scenario the student previously failed
-  - MUST approach the same conceptual gap from a NEW angle
-  - At least one distractor MUST appeal to the same wrong mental
-    model from a new angle (not verbatim copy)
-  - The correct answer MUST implicitly address why the misconception
-    is wrong
+MISCONCEPTION_REASONING: [1-2 sentences: does this question approach
+  the same conceptual gap from a new angle? Does a distractor target
+  the misconception?]
 
-Score 0-3:
-  0 = ignores misconception entirely
-  1 = related to topic but does not target the gap
-  2 = targets the gap but one element missing
-  3 = perfectly targets misconception from a new angle
-
-MISCONCEPTION_SCORE: [0-3]
-MISCONCEPTION_REASON: [one sentence]"""
+MISCONCEPTION_CHECK_NEW_ANGLE: [YES/NO — different scenario than
+  the one the student previously failed?]
+MISCONCEPTION_CHECK_DISTRACTOR_TARGETS: [YES/NO — does at least
+  one distractor appeal to the same wrong mental model?]
+MISCONCEPTION_CHECK_ANSWER_ADDRESSES_GAP: [YES/NO — does the
+  correct answer implicitly address why the misconception is wrong?]"""
 
 
 def _build_judge_b_prompt(mcq: dict) -> str:
-    """Build the full Judge B prompt for one MCQ sample."""
+    """Build the full Judge B prompt (G-Eval + HD-Eval restructured)."""
     mastery    = mcq.get("mastery_level", "Intermediate")
     score_cat  = mcq.get("score_category", "moderate")
     qtype      = mcq.get("question_type", "4a")
@@ -1505,14 +1506,13 @@ def _build_judge_b_prompt(mcq: dict) -> str:
     chunk      = mcq.get("chunk", "")
     question   = mcq.get("question", "")
     answer     = mcq.get("correct_answer", "")
-    explanation= mcq.get("explanation", "")
+    explanation = mcq.get("explanation", "")
 
     misconception_block = _build_judge_b_misconception_block(mc)
 
     return f"""\
 You are a strict personalization quality reviewer for an adaptive
-learning platform. Verify that a generated MCQ correctly reflects
-ALL personalization signals simultaneously.
+learning platform.
 
 PERSONALIZATION SIGNALS:
   mastery_level:    {mastery}
@@ -1533,87 +1533,69 @@ EXPLANATION:
 {explanation}
 
 ─────────────────────────────────────────────────────
-SIGNAL RESPONSIBILITIES — READ BEFORE SCORING
+SIGNAL RESPONSIBILITIES
 ─────────────────────────────────────────────────────
 MASTERY controls HOW the question is framed: vocabulary, cognitive
-register, and distractor sophistication. Score Signal 1 on these.
+register, distractor sophistication.
 
-SCORE CATEGORY controls HOW HARD the question is: difficulty within
-what mastery allows, and whether mastery is overridden on type.
-Score Signal 2 on this.
+SCORE CATEGORY controls HOW HARD the question is: difficulty, and
+whether mastery is overridden on type (very_weak forces Type 4a but
+mastery still governs vocabulary and distractor sophistication).
 
-They interact once: very_weak overrides mastery on TYPE only. But
-mastery still governs vocabulary and distractor sophistication even
-when very_weak is active. An Expert + very_weak student gets a
-Type 4a with Expert vocabulary — not baby talk. Score both signals
-independently. Do not conflate them.
+Evaluate each signal below. For each, FIRST write one to two
+sentences of reasoning addressing the sub-checks, THEN answer each
+sub-check YES or NO. Do not answer the sub-checks before writing
+your reasoning.
 
 ─────────────────────────────────────────────────────
-SIGNAL 1 — MASTERY LEVEL: {mastery}
-Evaluate: vocabulary depth, cognitive framing, distractor
-sophistication. NOT question difficulty — that is Signal 2.
+SIGNAL 1 — MASTERY: {mastery}
 ─────────────────────────────────────────────────────
-Novice framing:
-  - Vocabulary matches chunk language exactly, no added jargon
-  - Question asks what something IS or DOES
-  - Answer directly stated or immediately derivable from chunk
-  - No cross-concept reasoning required
-  - Distractors: clearly wrong to anyone who read carefully,
-    not subtle, not traps
+Reference framing rules:
+  Novice: vocabulary matches chunk exactly, asks what something IS
+    or DOES, no cross-concept reasoning, distractors clearly wrong
+    to a careful reader
+  Intermediate: standard CS terminology, connects two ideas or
+    applies to a scenario, never a pure definition (unless
+    score_category forces 4a), distractors require careful reasoning
+  Expert: precise technical vocabulary, reasons about WHY/edge
+    cases/tradeoffs, may synthesize concepts, distractors plausible
+    to partial knowers
 
-Intermediate framing:
-  - Standard CS terminology assumed known
-  - Question connects two ideas OR applies a concept to a scenario
-  - Must NOT be a pure definition (unless score_category forces 4a)
-  - Student must understand, not just recall
-  - Distractors: require careful reasoning to eliminate
+MASTERY_REASONING: [1-2 sentences: does the vocabulary and cognitive
+  register in this question match {mastery}? Reference specific
+  words or phrasing from the question.]
 
-Expert framing:
-  - Precise technical vocabulary, assume strong foundation
-  - Question reasons about WHY, edge cases, or tradeoffs
-  - May synthesize across multiple concepts
-  - Distractors: sophisticated, plausible to partial knowers,
-    require deep knowledge to rule out
-
-Score 0-3 on VOCABULARY, FRAMING, and DISTRACTOR SOPHISTICATION only:
-  0 = completely wrong framing (wrong vocabulary register)
-  1 = partially matches, some elements of wrong framing
-  2 = mostly correct, minor vocabulary or sophistication issue
-  3 = perfectly calibrated framing and distractor sophistication
-
-MASTERY_SCORE: [0-3]
-MASTERY_REASON: [one sentence — reference vocabulary or sophistication]
+MASTERY_CHECK_VOCABULARY: [YES/NO — does vocabulary depth match
+  {mastery}?]
+MASTERY_CHECK_FRAMING: [YES/NO — does the cognitive demand
+  (recall/connect/reason) match {mastery}?]
+MASTERY_CHECK_DISTRACTOR_SOPHISTICATION: [YES/NO — does distractor
+  sophistication match {mastery}?]
 
 ─────────────────────────────────────────────────────
 SIGNAL 2 — SCORE CATEGORY: {score_cat}
-Evaluate: question difficulty and distractor difficulty.
-NOT vocabulary or framing — that is Signal 1.
 ─────────────────────────────────────────────────────
-very_weak (HARD OVERRIDE on type — not on framing):
-  - Question TYPE must be 4a regardless of mastery
-  - Difficulty: simplest possible question on this concept
-  - Distractor difficulty: easy to eliminate, builds confidence
-  - Vocabulary and distractor sophistication still follow mastery
+Reference difficulty rules:
+  very_weak: TYPE must be 4a regardless of mastery; simplest
+    possible question; distractors easy to eliminate; mastery
+    vocabulary/sophistication still applies
+  weak: one level easier than mastery standard; distractors
+    plausible but distinguishable with effort
+  moderate: standard difficulty for mastery, no adjustment
+  strong: hardest difficulty mastery allows; distractors as subtle
+    as mastery permits
 
-weak:
-  - Difficulty one level below mastery standard
-  - Distractor difficulty: plausible but distinguishable with effort
+SCORE_CATEGORY_REASONING: [1-2 sentences: does the question and
+  distractor difficulty match {score_cat}? If very_weak, is the
+  TYPE actually 4a?]
 
-moderate:
-  - Standard difficulty for mastery level, no adjustment
-
-strong:
-  - Hardest difficulty mastery allows
-  - Distractor difficulty: as subtle as mastery permits
-
-Score 0-3 on QUESTION DIFFICULTY and DISTRACTOR DIFFICULTY only:
-  0 = completely wrong difficulty level
-  1 = partially reflects difficulty signal
-  2 = mostly correct difficulty calibration
-  3 = perfectly calibrated question and distractor difficulty
-
-SCORE_CATEGORY_SCORE: [0-3]
-SCORE_CATEGORY_REASON: [one sentence — reference difficulty specifically]
+SCORE_CATEGORY_CHECK_TYPE_OVERRIDE: [YES/NO — if score_category is
+  very_weak, is question_type actually 4a? If score_category is
+  NOT very_weak, answer YES automatically (not applicable).]
+SCORE_CATEGORY_CHECK_DIFFICULTY: [YES/NO — does question difficulty
+  match {score_cat}?]
+SCORE_CATEGORY_CHECK_DISTRACTOR_DIFFICULTY: [YES/NO — does
+  distractor difficulty match {score_cat}?]
 
 ─────────────────────────────────────────────────────
 {misconception_block}
@@ -1625,75 +1607,97 @@ Eligibility matrix:
   Novice:       Types 1, 4a only
   Intermediate: Types 1, 2, 3, 4b, 4c only
   Expert:       All types
+Override: very_weak forces 4a regardless of mastery.
 
-Score category override:
-  very_weak → forces 4a regardless of mastery
-  weak → one level below mastery standard
-  strong → highest eligible type for mastery
-
-Is {qtype} eligible given mastery={mastery}
-and score_category={score_cat}?
-
-TYPE_ELIGIBLE: YES/NO
+TYPE_ELIGIBLE: [YES/NO — is {qtype} eligible given
+  mastery={mastery} and score_category={score_cat}?]
 TYPE_REASON: [one sentence if NO]
 
 ─────────────────────────────────────────────────────
-SIGNAL 5 — COGNITIVE DEPTH CALIBRATION
+SIGNAL 5 — COGNITIVE DEPTH
 ─────────────────────────────────────────────────────
-Given all signals combined, is the cognitive depth correct?
-
-  Too easy: simpler than the signals require
-  Correct: matches the intersection of all signals
-  Too hard: demands more than the signals allow
-
-DEPTH_CALIBRATION: TOO_EASY / CORRECT / TOO_HARD
-DEPTH_REASON: [one sentence]
+DEPTH_REASONING: [1-2 sentences: given all signals combined, is the
+  cognitive depth of this question too easy, correct, or too hard?]
+DEPTH_CALIBRATION: [TOO_EASY / CORRECT / TOO_HARD]
 
 ─────────────────────────────────────────────────────
-FINAL VERDICT
+END OF EVALUATION — do not compute a final score or verdict.
+The numeric score and accept/reject decision are computed
+separately from your sub-check answers above.
 ─────────────────────────────────────────────────────
-  - If TYPE_ELIGIBLE is NO → automatic REJECT
-  - If MASTERY_SCORE < 2 → REJECT
-  - If SCORE_CATEGORY_SCORE < 2 → REJECT
-  - If MISCONCEPTION_SCORE < 2 (when misconception active) → REJECT
-  - If DEPTH_CALIBRATION is TOO_HARD → REJECT
-  - If all scores >= 2 and TYPE_ELIGIBLE is YES → ACCEPT
-
-VERDICT: ACCEPT or REJECT
-OVERALL_PERSONALIZATION_SCORE: [average of all signal scores, 0-3]
-PRIMARY_FAILURE: [which signal failed first, or NONE]
 """
 
 
-def _parse_judge_b_response(raw: str) -> JudgeBResult:
-    """Parse the structured text response from Judge B into a JudgeBResult."""
-    def _extract_int(key: str, default: int = 0) -> int:
-        m = re.search(rf'^{key}:\s*(\d)', raw, re.MULTILINE)
-        return int(m.group(1)) if m else default
+# ── HD-Eval Python scoring functions ─────────────────────────────────────
+# The LLM provides atomic YES/NO sub-checks; Python counts them.
+# The LLM never picks "2 vs 3" directly — the arithmetic is deterministic.
 
-    def _extract_str(key: str, default: str = "") -> str:
+def _score_mastery_signal(parsed: dict) -> int:
+    checks = [
+        parsed.get("mastery_check_vocabulary", "NO"),
+        parsed.get("mastery_check_framing", "NO"),
+        parsed.get("mastery_check_distractor_sophistication", "NO"),
+    ]
+    return sum(1 for c in checks if c == "YES")
+
+
+def _score_category_signal(parsed: dict) -> int:
+    checks = [
+        parsed.get("score_category_check_type_override", "NO"),
+        parsed.get("score_category_check_difficulty", "NO"),
+        parsed.get("score_category_check_distractor_difficulty", "NO"),
+    ]
+    return sum(1 for c in checks if c == "YES")
+
+
+def _score_misconception_signal(parsed: dict) -> int:
+    checks = [
+        parsed.get("misconception_check_new_angle", "NO"),
+        parsed.get("misconception_check_distractor_targets", "NO"),
+        parsed.get("misconception_check_answer_addresses_gap", "NO"),
+    ]
+    return sum(1 for c in checks if c == "YES")
+
+
+def _parse_judge_b_response(raw: str) -> JudgeBResult:
+    """Parse Judge B's structured text response into a JudgeBResult.
+
+    Extracts all atomic YES/NO sub-checks by regex; derives numeric
+    scores in Python.  The LLM is never asked to produce a score directly.
+    """
+    def _yn(key: str, default: str = "NO") -> str:
+        """Extract a YES/NO answer for a given field key."""
+        m = re.search(rf'^{key}:\s*(YES|NO)', raw, re.MULTILINE | re.IGNORECASE)
+        if m:
+            return m.group(1).upper()
+        return default
+
+    def _str(key: str, default: str = "") -> str:
         m = re.search(rf'^{key}:\s*(.+)', raw, re.MULTILINE)
         return m.group(1).strip() if m else default
 
-    verdict    = _extract_str("VERDICT", "REJECT").upper()
-    if "ACCEPT" in verdict:
-        verdict = "ACCEPT"
-    else:
-        verdict = "REJECT"
+    # Collect all sub-check answers into a flat dict for score functions
+    parsed: dict = {
+        "mastery_check_vocabulary":              _yn("MASTERY_CHECK_VOCABULARY"),
+        "mastery_check_framing":                 _yn("MASTERY_CHECK_FRAMING"),
+        "mastery_check_distractor_sophistication": _yn("MASTERY_CHECK_DISTRACTOR_SOPHISTICATION"),
+        "score_category_check_type_override":    _yn("SCORE_CATEGORY_CHECK_TYPE_OVERRIDE", default="YES"),
+        "score_category_check_difficulty":       _yn("SCORE_CATEGORY_CHECK_DIFFICULTY"),
+        "score_category_check_distractor_difficulty": _yn("SCORE_CATEGORY_CHECK_DISTRACTOR_DIFFICULTY"),
+        "misconception_check_new_angle":         _yn("MISCONCEPTION_CHECK_NEW_ANGLE", default="YES"),
+        "misconception_check_distractor_targets": _yn("MISCONCEPTION_CHECK_DISTRACTOR_TARGETS", default="YES"),
+        "misconception_check_answer_addresses_gap": _yn("MISCONCEPTION_CHECK_ANSWER_ADDRESSES_GAP", default="YES"),
+    }
 
-    mastery_score   = _extract_int("MASTERY_SCORE")
-    score_cat_score = _extract_int("SCORE_CATEGORY_SCORE")
-    misconc_score   = _extract_int("MISCONCEPTION_SCORE", default=3)
-    overall_raw     = _extract_str("OVERALL_PERSONALIZATION_SCORE", "0")
-    try:
-        overall = float(overall_raw)
-    except ValueError:
-        overall = (mastery_score + score_cat_score + misconc_score) / 3.0
+    mastery_score       = _score_mastery_signal(parsed)
+    score_cat_score     = _score_category_signal(parsed)
+    misconception_score = _score_misconception_signal(parsed)
+    overall_score       = round((mastery_score + score_cat_score + misconception_score) / 3.0, 2)
 
-    type_eligible_raw = _extract_str("TYPE_ELIGIBLE", "YES").upper()
-    type_eligible = "NO" not in type_eligible_raw
+    type_eligible_raw = _str("TYPE_ELIGIBLE", "YES").upper()
+    type_eligible     = "NO" not in type_eligible_raw
 
-    depth_raw = _extract_str("DEPTH_CALIBRATION", "CORRECT").upper()
+    depth_raw = _str("DEPTH_CALIBRATION", "CORRECT").upper()
     if "TOO_EASY" in depth_raw:
         depth = "TOO_EASY"
     elif "TOO_HARD" in depth_raw:
@@ -1701,18 +1705,41 @@ def _parse_judge_b_response(raw: str) -> JudgeBResult:
     else:
         depth = "CORRECT"
 
-    primary_failure = _extract_str("PRIMARY_FAILURE", "NONE")
+    # ── Derive verdict + primary_failure in Python — never from LLM output ──
+    # very_weak type-override check is the first and hardest gate.
+    if parsed["score_category_check_type_override"] == "NO":
+        verdict        = "REJECT"
+        primary_failure = "very_weak_type_override_violated"
+    elif not type_eligible:
+        verdict        = "REJECT"
+        primary_failure = "type_ineligible"
+    elif mastery_score < 2:
+        verdict        = "REJECT"
+        primary_failure = "mastery_mismatch"
+    elif score_cat_score < 2:
+        verdict        = "REJECT"
+        primary_failure = "score_category_mismatch"
+    elif misconception_score < 2:
+        verdict        = "REJECT"
+        primary_failure = "misconception_mismatch"
+    elif depth == "TOO_HARD":
+        verdict        = "REJECT"
+        primary_failure = "too_hard"
+    else:
+        verdict        = "ACCEPT"
+        primary_failure = "NONE"
 
     return JudgeBResult(
         verdict=verdict,
-        overall_score=round(overall, 2),
+        overall_score=overall_score,
         primary_failure=primary_failure,
         mastery_score=mastery_score,
         score_cat_score=score_cat_score,
-        misconception_score=misconc_score,
+        misconception_score=misconception_score,
         type_eligible=type_eligible,
         depth_calibration=depth,
-        raw_response=raw[:500],
+        sub_checks=parsed,
+        raw_response=raw[:600],
     )
 
 
@@ -1731,28 +1758,34 @@ def _run_judge_b(
         return _parse_judge_b_response(raw)
     except Exception as exc:
         logger.warning("judge_b_failed", error=str(exc)[:100])
-        # On failure, default to ACCEPT with low score to avoid silent data loss
+        # On failure: ACCEPT with score 0 so the sample is not silently lost;
+        # the low personalization_score flags it for post-hoc review.
         return JudgeBResult(
             verdict="ACCEPT",
             overall_score=0.0,
             primary_failure="judge_b_exception",
+            sub_checks={},
             raw_response=str(exc)[:200],
         )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # JUDGE C — DISTRACTOR QUALITY  (JUDGE_C_KEY, JUDGE_MODEL)
+# G-Eval: reasoning before each YES/NO.
+# HD-Eval: 5 atomic hard checks + 1 advisory; verdict computed in Python.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 @dataclass
 class JudgeCResult:
     verdict: str       # "ACCEPT" or "REJECT"
-    reason: str = ""   # which check failed
+    reason:  str = ""  # comma-joined failed check names, or "NONE"
+    # Raw sub-check answers for pass-rate reporting
+    sub_checks: dict = field(default_factory=dict)
 
 
 def _build_judge_c_prompt(mcq: dict) -> str:
-    """Build the Judge C distractor quality prompt."""
+    """Build the Judge C distractor quality prompt (G-Eval + HD-Eval restructured)."""
     question = mcq.get("question", "")
     answer   = mcq.get("correct_answer", "")
     dists    = mcq.get("distractors", ["", "", ""])
@@ -1761,7 +1794,6 @@ def _build_judge_c_prompt(mcq: dict) -> str:
     d3 = dists[2] if len(dists) > 2 else ""
     return f"""\
 You are a quality reviewer for educational MCQ training data.
-Evaluate the quality of these three distractors.
 
 Question: {question}
 Correct answer: {answer}
@@ -1771,23 +1803,68 @@ D1: {d1}
 D2: {d2}
 D3: {d3}
 
-Check each:
-1. Is D1 clearly different from the correct answer? YES/NO
-2. Is D2 clearly different from the correct answer? YES/NO
-3. Is D3 clearly different from the correct answer? YES/NO
-4. Are all three distractors meaningfully different from each other? YES/NO
-5. Could each distractor plausibly be chosen by a student who partially
-   understands the topic? YES/NO
-6. Are all distractors in the same format/length as the correct answer? YES/NO
+For each check below, FIRST write one sentence of reasoning, THEN
+answer YES or NO.
 
-If ANY of 1-3 is NO → REJECT (distractor equals correct answer)
-If 4 is NO → REJECT (duplicates)
-If 5 is NO → REJECT (implausible)
-6 is advisory only — note but do not reject
+CHECK_D1_DIFFERENT_REASONING: [is D1 clearly different from the
+  correct answer? why or why not?]
+CHECK_D1_DIFFERENT: [YES/NO]
 
-Respond: ACCEPT or REJECT
-If REJECT: REASON: [which check failed]
+CHECK_D2_DIFFERENT_REASONING: [is D2 clearly different from the
+  correct answer? why or why not?]
+CHECK_D2_DIFFERENT: [YES/NO]
+
+CHECK_D3_DIFFERENT_REASONING: [is D3 clearly different from the
+  correct answer? why or why not?]
+CHECK_D3_DIFFERENT: [YES/NO]
+
+CHECK_MUTUAL_DIVERSITY_REASONING: [are D1, D2, D3 meaningfully
+  different from each other, or do two or more say the same thing
+  in different words?]
+CHECK_MUTUAL_DIVERSITY: [YES/NO]
+
+CHECK_PLAUSIBILITY_REASONING: [could a student with partial
+  understanding of this specific topic plausibly choose each
+  distractor? are any of them absurd or unrelated to the topic?]
+CHECK_PLAUSIBILITY: [YES/NO]
+
+CHECK_FORMAT_CONSISTENCY_REASONING: [are all distractors similar
+  in length and structure to the correct answer?]
+CHECK_FORMAT_CONSISTENCY: [YES/NO — advisory only]
 """
+
+
+def _parse_judge_c_response(raw: str) -> JudgeCResult:
+    """Parse Judge C's response into a JudgeCResult.
+
+    All 5 hard check answers are extracted by regex; verdict computed in Python.
+    """
+    def _yn(key: str, default: str = "NO") -> str:
+        m = re.search(rf'^{key}:\s*(YES|NO)', raw, re.MULTILINE | re.IGNORECASE)
+        return m.group(1).upper() if m else default
+
+    sub_checks = {
+        "check_d1_different":      _yn("CHECK_D1_DIFFERENT"),
+        "check_d2_different":      _yn("CHECK_D2_DIFFERENT"),
+        "check_d3_different":      _yn("CHECK_D3_DIFFERENT"),
+        "check_mutual_diversity":  _yn("CHECK_MUTUAL_DIVERSITY"),
+        "check_plausibility":      _yn("CHECK_PLAUSIBILITY"),
+        # advisory — stored but not used for rejection
+        "check_format_consistency": _yn("CHECK_FORMAT_CONSISTENCY", default="YES"),
+    }
+
+    hard_names = [
+        ("check_d1_different",     "d1_equals_answer"),
+        ("check_d2_different",     "d2_equals_answer"),
+        ("check_d3_different",     "d3_equals_answer"),
+        ("check_mutual_diversity", "low_diversity"),
+        ("check_plausibility",     "implausible"),
+    ]
+    failed = [label for key, label in hard_names if sub_checks[key] == "NO"]
+
+    if failed:
+        return JudgeCResult(verdict="REJECT", reason=",".join(failed), sub_checks=sub_checks)
+    return JudgeCResult(verdict="ACCEPT", reason="NONE", sub_checks=sub_checks)
 
 
 def _run_judge_c(
@@ -1802,33 +1879,30 @@ def _run_judge_c(
             temperature=0.2,
             timeout_override=90,
         )
-        raw_upper = raw.upper()
-        if "ACCEPT" in raw_upper:
-            verdict = "ACCEPT"
-            reason = ""
-        else:
-            verdict = "REJECT"
-            m = re.search(r'REASON:\s*(.+)', raw, re.IGNORECASE)
-            reason = m.group(1).strip() if m else "unknown check failed"
-        return JudgeCResult(verdict=verdict, reason=reason)
+        return _parse_judge_c_response(raw)
     except Exception as exc:
         logger.warning("judge_c_failed", error=str(exc)[:100])
-        return JudgeCResult(verdict="ACCEPT", reason="judge_c_exception")
+        return JudgeCResult(verdict="ACCEPT", reason="judge_c_exception", sub_checks={})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # JUDGE D — FACTUAL CORRECTNESS  (JUDGE_D_KEY, JUDGE_MODEL)
+# G-Eval: reasoning before each check.
+# HD-Eval: decomposes factual correctness into per-claim verification +
+#          answerability + ambiguity + explanation; verdict computed in Python.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 @dataclass
 class JudgeDResult:
     verdict: str       # "ACCEPT" or "REJECT"
-    reason: str = ""   # which check failed
+    reason:  str = ""  # which check failed, or "NONE"
+    # Raw sub-check answers for pass-rate reporting
+    sub_checks: dict = field(default_factory=dict)
 
 
 def _build_judge_d_prompt(mcq: dict) -> str:
-    """Build the Judge D factual correctness prompt."""
+    """Build the Judge D factual correctness prompt (G-Eval + HD-Eval restructured)."""
     chunk       = mcq.get("chunk", "")
     question    = mcq.get("question", "")
     answer      = mcq.get("correct_answer", "")
@@ -1843,20 +1917,77 @@ Question: {question}
 Stated correct answer: {answer}
 Explanation: {explanation}
 
-Check:
-1. Is the stated correct answer actually correct? YES/NO
-2. Is the question answerable based on general CS knowledge
-   (not requiring outside trivia)? YES/NO
-3. Does the explanation correctly justify the answer? YES/NO
-4. Is the question free of ambiguity (only one defensibly
-   correct answer)? YES/NO
+STEP 1 — Decompose the correct answer into its core factual claims.
+List each distinct claim made by the correct answer, numbered.
 
-If ANY answer is NO → REJECT
-If ALL are YES → ACCEPT
+CLAIMS: [list each claim, e.g. "1. A hash table provides O(1)
+  average-case lookup. 2. Collisions degrade this to O(n) worst case."]
 
-Respond: ACCEPT or REJECT
-If REJECT: REASON: [which check failed]
+STEP 2 — For EACH claim listed above, verify it against general CS
+knowledge and the chunk. Write one sentence of reasoning per claim,
+then YES (claim is true) or NO (claim is false or unsupported).
+
+CLAIM_1_REASONING: [...]
+CLAIM_1_VERIFIED: [YES/NO]
+CLAIM_2_REASONING: [...]  (omit if only one claim)
+CLAIM_2_VERIFIED: [YES/NO]
+(continue for each claim)
+
+STEP 3 — Answerability and ambiguity.
+
+ANSWERABILITY_REASONING: [can this be answered using general CS
+  knowledge of the concept, without needing this specific textbook
+  or outside trivia?]
+ANSWERABILITY_CHECK: [YES/NO]
+
+AMBIGUITY_REASONING: [is there exactly one defensibly correct
+  answer, or could a reasonable student argue for more than one?]
+AMBIGUITY_CHECK: [YES — only one correct answer / NO — ambiguous]
+
+STEP 4 — Explanation correctness.
+
+EXPLANATION_REASONING: [does the explanation correctly justify
+  the answer using the claims verified above?]
+EXPLANATION_CHECK: [YES/NO]
 """
+
+
+def _parse_judge_d_response(raw: str) -> JudgeDResult:
+    """Parse Judge D's structured response into a JudgeDResult.
+
+    Extracts all CLAIM_N_VERIFIED fields by regex (handles any number
+    of claims); derives verdict in Python.
+    """
+    def _yn(key: str, default: str = "NO") -> str:
+        m = re.search(rf'^{key}:\s*(YES|NO)', raw, re.MULTILINE | re.IGNORECASE)
+        return m.group(1).upper() if m else default
+
+    # Extract all CLAIM_N_VERIFIED entries (1, 2, 3, ...)
+    claim_results: dict[str, str] = {}
+    for m in re.finditer(r'^(CLAIM_\d+_VERIFIED):\s*(YES|NO)', raw, re.MULTILINE | re.IGNORECASE):
+        claim_results[m.group(1).lower()] = m.group(2).upper()
+
+    # If no claims found at all, treat as unverified (parser fault → soft reject)
+    if not claim_results:
+        claim_results["claim_1_verified"] = "NO"
+
+    sub_checks = {
+        **claim_results,
+        "answerability_check": _yn("ANSWERABILITY_CHECK"),
+        "ambiguity_check":     _yn("AMBIGUITY_CHECK", default="YES"),
+        "explanation_check":   _yn("EXPLANATION_CHECK"),
+    }
+
+    # Verdict: any NO anywhere is a reject
+    if any(v == "NO" for v in claim_results.values()):
+        return JudgeDResult(verdict="REJECT", reason="unverified_claim", sub_checks=sub_checks)
+    if sub_checks["answerability_check"] == "NO":
+        return JudgeDResult(verdict="REJECT", reason="requires_outside_knowledge", sub_checks=sub_checks)
+    if sub_checks["ambiguity_check"] == "NO":
+        return JudgeDResult(verdict="REJECT", reason="ambiguous_correct_answer", sub_checks=sub_checks)
+    if sub_checks["explanation_check"] == "NO":
+        return JudgeDResult(verdict="REJECT", reason="explanation_incorrect", sub_checks=sub_checks)
+    return JudgeDResult(verdict="ACCEPT", reason="NONE", sub_checks=sub_checks)
 
 
 def _run_judge_d(
@@ -1871,18 +2002,10 @@ def _run_judge_d(
             temperature=0.2,
             timeout_override=90,
         )
-        raw_upper = raw.upper()
-        if "ACCEPT" in raw_upper:
-            verdict = "ACCEPT"
-            reason = ""
-        else:
-            verdict = "REJECT"
-            m = re.search(r'REASON:\s*(.+)', raw, re.IGNORECASE)
-            reason = m.group(1).strip() if m else "unknown check failed"
-        return JudgeDResult(verdict=verdict, reason=reason)
+        return _parse_judge_d_response(raw)
     except Exception as exc:
         logger.warning("judge_d_failed", error=str(exc)[:100])
-        return JudgeDResult(verdict="ACCEPT", reason="judge_d_exception")
+        return JudgeDResult(verdict="ACCEPT", reason="judge_d_exception", sub_checks={})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2105,7 +2228,12 @@ def _worker(
 
 
 class EvalStats:
-    """Thread-safe counters for the evaluation pipeline."""
+    """Thread-safe counters for the evaluation pipeline.
+
+    In addition to the high-level reject/accept counts, accumulates
+    per-sub-check YES/total tallies from Judges B, C, D so that
+    _print_quality_report can compute pass rates for every atomic check.
+    """
 
     def __init__(self):
         self.generated:               int   = 0
@@ -2115,6 +2243,9 @@ class EvalStats:
         self.judge_d_rejected:        int   = 0
         self.accepted:                int   = 0
         self.personalization_score_sum: float = 0.0
+        # Sub-check pass-rate accumulators: key → (total_seen, yes_count)
+        self.sub_check_totals: dict[str, int] = {}
+        self.sub_check_yes:    dict[str, int] = {}
         self._lock = threading.Lock()
 
     def add_generated(self):
@@ -2137,6 +2268,19 @@ class EvalStats:
             self.accepted += 1
             self.personalization_score_sum += personalization_score
 
+    def record_sub_checks(self, sub_checks: dict) -> None:
+        """Accumulate YES/NO answers from a judge result into pass-rate counters.
+
+        Called once per sample that reaches any LLM judge (B, C, or D).
+        ``sub_checks`` is the flat dict of {field_name: "YES"|"NO"} stored
+        on each JudgeXResult dataclass.
+        """
+        with self._lock:
+            for key, val in sub_checks.items():
+                self.sub_check_totals[key] = self.sub_check_totals.get(key, 0) + 1
+                if val == "YES":
+                    self.sub_check_yes[key] = self.sub_check_yes.get(key, 0) + 1
+
     def avg_personalization_score(self) -> float:
         with self._lock:
             if self.accepted == 0:
@@ -2157,6 +2301,8 @@ def _evaluation_worker(
 
     Judge A (regex pre-filter) runs synchronously in Python — no LLM call.
     Judges B, C, D fire in parallel via ThreadPoolExecutor.
+    After each judge fires, its sub_checks dict is recorded into EvalStats
+    for per-sub-check pass-rate reporting at the end of the run.
     The worker blocks only on evaluation of the current item, not on
     generation workers — they continue filling the queue independently.
     """
@@ -2193,6 +2339,11 @@ def _evaluation_worker(
             b_result = fb.result()
             c_result = fc.result()
             d_result = fd.result()
+
+        # Record every sub-check answer for pass-rate reporting
+        eval_stats.record_sub_checks(b_result.sub_checks)
+        eval_stats.record_sub_checks(c_result.sub_checks)
+        eval_stats.record_sub_checks(d_result.sub_checks)
 
         accepted, reason = _decide(b_result, c_result, d_result, mcq)
 
@@ -2268,9 +2419,9 @@ def _print_quality_report(
     all_stats: list,
     elapsed: float = 0.0,
 ):
-    """Print the post-evaluation quality report."""
-    W = 47
-    gen  = eval_stats.generated
+    """Print the post-evaluation quality report, including per-sub-check pass rates."""
+    W = 55
+    gen   = eval_stats.generated
     rej_a = eval_stats.regex_rejected
     rej_b = eval_stats.judge_b_rejected
     rej_c = eval_stats.judge_c_rejected
@@ -2279,24 +2430,86 @@ def _print_quality_report(
     avg_p = eval_stats.avg_personalization_score()
 
     pct = lambda n: f"({100 * n / max(gen, 1):.1f}%)"
+    sc_pct = lambda yes, total: f"{100 * yes / max(total, 1):.0f}%" if total > 0 else "N/A"
 
     print("\n" + "═" * W)
     print("  DATA GENERATION — QUALITY REPORT")
     print("═" * W)
-    print(f"  Generated:                {gen:>6}")
-    print(f"  Pattern filter rejects:   {rej_a:>6}  {pct(rej_a):>8}")
-    print(f"  Judge B rejects:          {rej_b:>6}  {pct(rej_b):>8}  [personalization, 20B]")
-    print(f"  Judge C rejects:          {rej_c:>6}  {pct(rej_c):>8}  [distractor quality, 20B]")
-    print(f"  Judge D rejects:          {rej_d:>6}  {pct(rej_d):>8}  [factual correctness, 20B]")
-    print(f"  Final accepted:           {acc:>6}  {pct(acc):>8}")
-    print(f"  Avg personalization score: {avg_p:.2f} / 3.0")
+    print(f"  Generated:                     {gen:>6}")
+    print(f"  Pattern filter rejects:        {rej_a:>6}  {pct(rej_a):>8}")
+    print(f"  Judge B rejects:               {rej_b:>6}  {pct(rej_b):>8}  [personalization, 20B]")
+    print(f"  Judge C rejects:               {rej_c:>6}  {pct(rej_c):>8}  [distractor quality, 20B]")
+    print(f"  Judge D rejects:               {rej_d:>6}  {pct(rej_d):>8}  [factual correctness, 20B]")
+    print(f"  Final accepted:                {acc:>6}  {pct(acc):>8}")
+    print(f"  Avg personalization score:     {avg_p:.2f} / 3.0")
     if elapsed > 0:
-        print(f"  Elapsed:                  {elapsed/60:.1f} min")
+        print(f"  Elapsed:                       {elapsed/60:.1f} min")
+
+    # ── Judge B sub-check pass rates ─────────────────────────────────
+    sc = eval_stats.sub_check_totals
+    sc_yes = eval_stats.sub_check_yes
+    if sc.get("mastery_check_vocabulary", 0) > 0:
+        print()
+        print("  Judge B sub-check pass rates (of samples that reached Judge B):")
+        b_checks = [
+            ("mastery_check_vocabulary",              "mastery_vocabulary"),
+            ("mastery_check_framing",                 "mastery_framing"),
+            ("mastery_check_distractor_sophistication", "mastery_distractor_soph"),
+            ("score_category_check_type_override",    "very_weak_type_override  ← watch"),
+            ("score_category_check_difficulty",       "score_category_difficulty"),
+            ("score_category_check_distractor_difficulty", "score_category_distr_diff"),
+            ("misconception_check_new_angle",         "misconception_new_angle"),
+            ("misconception_check_distractor_targets", "misconception_distr_target"),
+            ("misconception_check_answer_addresses_gap", "misconception_answer_gap"),
+        ]
+        for raw_key, label in b_checks:
+            total = sc.get(raw_key, 0)
+            yes   = sc_yes.get(raw_key, 0)
+            print(f"    {label:<40} {sc_pct(yes, total):>4}  ({yes}/{total})")
+
+    # ── Judge C sub-check pass rates ─────────────────────────────────
+    if sc.get("check_d1_different", 0) > 0:
+        print()
+        print("  Judge C sub-check pass rates:")
+        c_checks = [
+            ("check_d1_different",     "d1_different_from_answer"),
+            ("check_d2_different",     "d2_different_from_answer"),
+            ("check_d3_different",     "d3_different_from_answer"),
+            ("check_mutual_diversity", "mutual_diversity"),
+            ("check_plausibility",     "plausibility"),
+            ("check_format_consistency", "format_consistency (advisory)"),
+        ]
+        for raw_key, label in c_checks:
+            total = sc.get(raw_key, 0)
+            yes   = sc_yes.get(raw_key, 0)
+            print(f"    {label:<40} {sc_pct(yes, total):>4}  ({yes}/{total})")
+
+    # ── Judge D sub-check pass rates ─────────────────────────────────
+    if sc.get("answerability_check", 0) > 0:
+        print()
+        print("  Judge D sub-check pass rates:")
+        d_fixed = [
+            ("answerability_check", "answerability"),
+            ("ambiguity_check",     "ambiguity (only one correct answer)"),
+            ("explanation_check",   "explanation_correctness"),
+        ]
+        for raw_key, label in d_fixed:
+            total = sc.get(raw_key, 0)
+            yes   = sc_yes.get(raw_key, 0)
+            print(f"    {label:<40} {sc_pct(yes, total):>4}  ({yes}/{total})")
+        # Claim checks (variable count)
+        claim_keys = sorted(k for k in sc if k.startswith("claim_") and k.endswith("_verified"))
+        for raw_key in claim_keys:
+            total = sc.get(raw_key, 0)
+            yes   = sc_yes.get(raw_key, 0)
+            label = raw_key.replace("_", " ")
+            print(f"    {label:<40} {sc_pct(yes, total):>4}  ({yes}/{total})")
+
     print()
     print("  Worker key events:")
-    print(f"    Primary keys active:      {len(worker_pool.active_keys)}")
-    print(f"    Fallback keys consumed:   {len(FALLBACK_KEYS) - len(worker_pool.fallback_keys)}")
-    print(f"    Hard failures:            {len(worker_pool.failed_keys)}")
+    print(f"    Primary keys active:           {len(worker_pool.active_keys)}")
+    print(f"    Fallback keys consumed:        {len(FALLBACK_KEYS) - len(worker_pool.fallback_keys)}")
+    print(f"    Hard failures:                 {len(worker_pool.failed_keys)}")
     print("═" * W + "\n")
 
 
