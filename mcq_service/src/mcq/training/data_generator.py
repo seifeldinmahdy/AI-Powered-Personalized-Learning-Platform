@@ -55,12 +55,12 @@ logger = structlog.get_logger(__name__)
 # KEY ASSIGNMENT (hard-coded — do not swap roles):
 #   GENERATION_KEYS  = [key_1, key_2, key_3, key_4]   — primary generation workers
 #   FALLBACK_KEYS    = [key_8, key_9]                  — cycling fallback on hard failure
-#   JUDGE_B_KEY      = key_5                           — personalization judge (20B)
-#   JUDGE_C_KEY      = key_6                           — distractor quality judge (20B)
-#   JUDGE_D_KEY      = key_7                           — factual correctness judge (20B)
+#   JUDGE_B_KEY      = key_5                           — personalization judge
+#   JUDGE_C_KEY      = key_6                           — distractor quality judge
+#   JUDGE_D_KEY      = key_7                           — factual correctness judge
 #
-# GENERATION_MODEL = small model (speed); JUDGE_MODEL = 20B model (accuracy).
-# NEVER swap: do not use 20B for generation or small for judging.
+# GENERATION_MODEL & JUDGE_MODEL = gpt-oss:120b for both generation and judging.
+# Both use the same model; judges get dedicated API keys for throughput.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Key resolution — each role has a named env var ──────────────────────────
@@ -1041,7 +1041,7 @@ def _make_ollama_client(api_key: str, model: str | None = None):
         The API key for the request.
     model :
         Model name.  Defaults to ``GENERATION_MODEL`` (small, fast).
-        Pass ``JUDGE_MODEL`` to create a 20B judge client.
+        Pass ``JUDGE_MODEL`` to create a judge client.
     """
     pathway_src = str(
         Path(__file__).resolve().parent.parent.parent.parent.parent / "course_pathway" / "src"
@@ -1550,7 +1550,7 @@ def _passes_regex_filter(mcq: dict) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# JUDGE B — FULL PERSONALIZATION ADHERENCE  (JUDGE_B_KEY, JUDGE_MODEL)
+# JUDGE B — FULL PERSONALIZATION ADHERENCE  (JUDGE_B_KEY, gpt-oss:120b)
 # G-Eval: reasoning written BEFORE each sub-check answer.
 # HD-Eval: 9 atomic YES/NO sub-checks; score derived in Python, never by LLM.
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1889,7 +1889,7 @@ def _run_judge_b(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# JUDGE C — DISTRACTOR QUALITY  (JUDGE_C_KEY, JUDGE_MODEL)
+# JUDGE C — DISTRACTOR QUALITY  (JUDGE_C_KEY, gpt-oss:120b)
 # G-Eval: reasoning before each YES/NO.
 # HD-Eval: 5 atomic hard checks + 1 advisory; verdict computed in Python.
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2012,7 +2012,7 @@ def _run_judge_c(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# JUDGE D — FACTUAL CORRECTNESS  (JUDGE_D_KEY, JUDGE_MODEL)
+# JUDGE D — FACTUAL CORRECTNESS  (JUDGE_D_KEY, gpt-oss:120b)
 # G-Eval: reasoning before each check.
 # HD-Eval: decomposes factual correctness into per-claim verification +
 #          answerability + ambiguity + explanation; verdict computed in Python.
@@ -2575,9 +2575,9 @@ def _print_quality_report(
     print("═" * W)
     print(f"  Generated:                     {gen:>6}")
     print(f"  Pattern filter rejects:        {rej_a:>6}  {pct(rej_a):>8}")
-    print(f"  Judge B rejects:               {rej_b:>6}  {pct(rej_b):>8}  [personalization, 20B]")
-    print(f"  Judge C rejects:               {rej_c:>6}  {pct(rej_c):>8}  [distractor quality, 20B]")
-    print(f"  Judge D rejects:               {rej_d:>6}  {pct(rej_d):>8}  [factual correctness, 20B]")
+    print(f"  Judge B rejects:               {rej_b:>6}  {pct(rej_b):>8}  [personalization]")
+    print(f"  Judge C rejects:               {rej_c:>6}  {pct(rej_c):>8}  [distractor quality]")
+    print(f"  Judge D rejects:               {rej_d:>6}  {pct(rej_d):>8}  [factual correctness]")
     print(f"  Final accepted:                {acc:>6}  {pct(acc):>8}")
     print(f"  Avg personalization score:     {avg_p:.2f} / 3.0")
     if elapsed > 0:
@@ -2924,7 +2924,7 @@ def main():
     )
     print(f"  Workers: {num_workers}")
 
-    # ── Build judge clients (20B model, one per dedicated key) ───────────
+    # ── Build judge clients (one per dedicated key) ──────────── ───────────
     if not args.skip_judges:
         judge_b_client = _make_ollama_client(JUDGE_B_KEY, model=JUDGE_MODEL)
         judge_c_client = _make_ollama_client(JUDGE_C_KEY, model=JUDGE_MODEL)
