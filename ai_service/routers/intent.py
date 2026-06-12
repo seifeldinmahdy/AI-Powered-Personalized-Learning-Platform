@@ -6,8 +6,9 @@ empty the context is auto-populated from the shared session state.
 """
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 import logging
-from services.intent_service import get_intent_service
+from services.intent_service import get_intent_service, reload_intent_service
 from services.session_store import get_session_store
 from schemas.intent import IntentRequest, IntentResponse, ChatRequest, ChatResponse
 
@@ -163,6 +164,34 @@ async def chat_intent(request: ChatRequest):
             status_code=500,
             detail=f"Failed to process chat: {str(e)}"
         )
+
+class ReloadModelRequest(BaseModel):
+    model_path: str = Field(default="prod_tinybert.pt", description="Checkpoint filename inside intent_model/")
+
+
+@router.post("/reload")
+async def reload_model(request: ReloadModelRequest):
+    """Reload the production intent classifier checkpoint without restarting the service."""
+    try:
+        service = reload_intent_service(model_path=request.model_path)
+        return {
+            "success": True,
+            "model_path": service.model_path,
+            "model_loaded": service.classifier is not None and getattr(service.classifier, 'model', None) is not None,
+        }
+    except FileNotFoundError as e:
+        logger.error(f"Model file missing: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Intent model is currently unavailable (model file missing)."
+        )
+    except Exception as e:
+        logger.error(f"Model reload error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to reload intent model: {str(e)}"
+        )
+
 
 @router.get("/health")
 async def intent_health():

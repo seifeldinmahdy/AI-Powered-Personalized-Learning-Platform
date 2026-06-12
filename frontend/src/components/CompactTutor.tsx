@@ -1,4 +1,4 @@
-import { Mic, MicOff, Volume2, VolumeX, MessageCircle, Pause, Play, Send, Loader2, Code2, GripHorizontal, Maximize2, Minimize2 } from 'lucide-react';
+import { Mic, MicOff, Volume2, VolumeX, MessageCircle, Pause, Play, Send, Loader2, Code2, GripHorizontal, Maximize2, Minimize2, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import {
@@ -13,7 +13,10 @@ import {
   synthesizeAudio,
   setTutorPace,
   persistChatLog,
+  submitFeedback,
   type SERResult,
+  type IntentPrediction,
+  type FeedbackValue,
 } from '../services/tutor';
 
 import { fuseEmotions } from '../services/emotionFusion';
@@ -25,6 +28,9 @@ interface TranscriptEntry {
   text: string;
   topic?: string;
   sources?: { book: string; page_start: number; page_end: number }[];
+  chatLogId?: number;
+  feedback?: FeedbackValue | null;
+  intent?: IntentPrediction | null;
 }
 
 interface CompactTutorProps {
@@ -75,6 +81,7 @@ export function CompactTutor({
   const [started, setStarted] = useState(false);
   const [tutorEmotion, setTutorEmotion] = useState('calm');
   const [currentBlendshapes, setCurrentBlendshapes] = useState<BlendshapeData | null>(null);
+  const [sessionContext, setSessionContext] = useState('');
 
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -332,7 +339,8 @@ export function CompactTutor({
       const paceKeywords = ['slow down', 'too fast', 'speed up', 'faster', 'slower', 'skip'];
       const emotionKeywords = ['confused', 'lost', 'frustrated', 'don\'t understand', 'hard', 'difficult', 'give up', 'struggling'];
       const lower = q.toLowerCase();
-      let intent: import('../services/tutor').IntentName = 'On-Topic Question';
+      let intent: string = 'On-Topic Question';
+      let intentPrediction: IntentPrediction | null = null;
 
       if (!isAutoTrigger) {
         if (repeatKeywords.some(k => lower.includes(k))) {
@@ -344,10 +352,12 @@ export function CompactTutor({
         } else {
           // Format context to match the model's training format so it can
           // correctly judge what is on-topic vs off-topic for this lesson.
-          const sessionContext = lessonTitle
+          const ctx = lessonTitle
             ? `topic:${lessonTitle} | prev:${lessonTitle} | emotion:neutral | pace:normal`
             : '';
-          intent = await classifyIntent(q, sessionContext);
+          setSessionContext(ctx);
+          intentPrediction = await classifyIntent(q, ctx);
+          intent = intentPrediction?.intent_name ?? 'On-Topic Question';
         }
       }
 
@@ -507,14 +517,31 @@ export function CompactTutor({
         return;
       }
 
+      let chatLogId: number | undefined;
+      if (lessonId) {
+        const chatLog = await persistChatLog({
+          lesson: lessonId,
+          transcript_text: q,
+          ai_response_text: res.answer,
+          session_id: sessionIdRef.current ?? undefined,
+          session_context: sessionContext,
+          predicted_intent: intentPrediction?.intent_name,
+          confidence: intentPrediction?.confidence,
+          intent_probabilities: intentPrediction?.probabilities,
+        });
+        chatLogId = chatLog?.id;
+      }
+
       setTranscript((prev) => [...prev, {
         role: 'tutor',
         text: res.answer,
         topic: 'Answer',
         sources: ragSources.length > 0 ? ragSources : undefined,
+        chatLogId,
+        intent: intentPrediction,
+        feedback: null,
       }]);
 
-      if (lessonId) persistChatLog(lessonId, q, res.answer);
       logInteraction(res.answer);
       setTutorEmotion('happy');
 
@@ -532,6 +559,23 @@ export function CompactTutor({
       }]);
     } finally {
       setIsAsking(false);
+    }
+  };
+
+  const handleFeedback = async (index: number, feedback: FeedbackValue) => {
+    const entry = transcript[index];
+    if (!entry?.chatLogId || entry.feedback) return;
+
+    const result = await submitFeedback(entry.chatLogId, feedback);
+    if (result) {
+      setTranscript((prev) => {
+        const updated = [...prev];
+        updated[index] = { ...updated[index], feedback };
+        return updated;
+      });
+      if (result.retraining_recommended) {
+        console.log('[Intent Feedback] Retraining threshold reached.');
+      }
     }
   };
 
@@ -858,6 +902,27 @@ export function CompactTutor({
                       📖 {s.book} p.{s.page_start}–{s.page_end}
                     </span>
                   ))}
+                </div>
+              )}
+              {entry.role === 'tutor' && entry.chatLogId && (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-[10px] text-muted-foreground">Was this helpful?</span>
+                  <button
+                    onClick={() => handleFeedback(i, 'thumbs_up')}
+                    disabled={entry.feedback === 'thumbs_down'}
+                    className={`p-1 rounded transition-colors ${entry.feedback === 'thumbs_up' ? 'bg-green-100 text-green-600' : 'hover:bg-muted text-muted-foreground'}`}
+                    title="Helpful"
+                  >
+                    <ThumbsUp size={12} />
+                  </button>
+                  <button
+                    onClick={() => handleFeedback(i, 'thumbs_down')}
+                    disabled={entry.feedback === 'thumbs_up'}
+                    className={`p-1 rounded transition-colors ${entry.feedback === 'thumbs_down' ? 'bg-red-100 text-red-600' : 'hover:bg-muted text-muted-foreground'}`}
+                    title="Not helpful"
+                  >
+                    <ThumbsDown size={12} />
+                  </button>
                 </div>
               )}
             </div>

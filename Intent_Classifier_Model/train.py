@@ -6,6 +6,8 @@ comprehensive per-class/epoch metric tracking.
 
 import os
 import shutil
+import random
+import argparse
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -167,10 +169,28 @@ def evaluate_model_full(classifier, loader):
 # ─────────────────────────────────────────────────────────────────────
 
 def main():
+    # ── Reproducibility ──────────────────────────────────────────────────────────
+    torch.manual_seed(42)
+    random.seed(42)
+    np.random.seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(42)
+    # ─────────────────────────────────────────────────────────────────────────────
+    # ── CLI / env overrides ─────────────────────────────────────────
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--train-csv', default=os.getenv('INTENT_TRAIN_CSV', str(BASE_DIR / 'data' / 'train.csv')))
+    parser.add_argument('--val-csv', default=os.getenv('INTENT_VAL_CSV', str(BASE_DIR / 'data' / 'val.csv')))
+    parser.add_argument('--test-csv', default=os.getenv('INTENT_TEST_CSV', str(BASE_DIR / 'data' / 'test.csv')))
+    parser.add_argument('--best-model-path', default=os.getenv('INTENT_BEST_MODEL_PATH', 'best_model.pt'))
+    parser.add_argument('--results-path', default=os.getenv('INTENT_RESULTS_PATH', 'training_results.json'))
+    parser.add_argument('--feedback-test-csv', default=os.getenv('INTENT_FEEDBACK_TEST_CSV', ''))
+    args = parser.parse_args()
+
     # ── Hyperparameters ─────────────────────────────────────────────
-    TRAIN_PATH  = str(BASE_DIR / 'data' / 'train.csv')
-    VAL_PATH    = str(BASE_DIR / 'data' / 'val.csv')
-    TEST_PATH   = str(BASE_DIR / 'data' / 'test.csv')
+    TRAIN_PATH  = args.train_csv
+    VAL_PATH    = args.val_csv
+    TEST_PATH   = args.test_csv
+    best_model_path = args.best_model_path
     BATCH_SIZE  = 32
     EPOCHS      = 20
     BERT_LR     = 2e-5       # Lower LR for BERT backbone
@@ -239,6 +259,26 @@ def main():
     )
     print(f"Training on device: {device}")
 
+    import logging
+    logger = logging.getLogger(__name__)
+    # ── GroupNorm verification ────────────────────────────────────────────────────
+    norm_types = {}
+    for name, module in classifier.model.named_modules():
+        t = type(module).__name__
+        if t in ('BatchNorm1d', 'GroupNorm', 'LayerNorm'):
+            norm_types[name] = t
+    
+    if any(t == 'BatchNorm1d' for t in norm_types.values()):
+        logger.warning(
+            "BatchNorm1d detected in model. GroupNorm should have replaced it. "
+            "Layers: %s",
+            {k: v for k, v in norm_types.items() if v == 'BatchNorm1d'},
+        )
+    else:
+        logger.info("GroupNorm confirmed — no BatchNorm layers found. Norm types: %s",
+                    set(norm_types.values()))
+    # ─────────────────────────────────────────────────────────────────────────────
+
     train_dataset = IntentDataset(train_df.to_dict('records'), classifier.tokenizer, max_length=MAX_LENGTH)
     val_dataset   = IntentDataset(val_df.to_dict('records'),   classifier.tokenizer, max_length=MAX_LENGTH)
     test_dataset  = IntentDataset(test_df.to_dict('records'),  classifier.tokenizer, max_length=MAX_LENGTH)
@@ -249,7 +289,8 @@ def main():
 
     # ── Optimizer with discriminative fine-tuning ───────────────────
     class_weights = compute_class_weights(train_df['label'].values, num_classes, classifier.device)
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1, weight=class_weights)
+    label_smoothing = 0.1
+    criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing, weight=class_weights)
 
     bert_params = list(classifier.model.bert.parameters())
     head_params = [p for n, p in classifier.model.named_parameters() if not n.startswith('bert.')]
@@ -265,11 +306,11 @@ def main():
     early_stopping = EarlyStopping(patience=PATIENCE, mode='max')
 
     best_val_f1 = 0.0
-    best_model_path = "best_model.pt"
 
     # ── Training history ────────────────────────────────────────────
     history = {
         'train_loss': [],
+        'train_acc': [],
         'val_loss': [],
         'val_acc': [],
         'val_f1': []
@@ -349,27 +390,37 @@ def main():
         classifier.model.train()
         train_loss = 0
         train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS}")
+        train_correct = 0
+        train_total = 0
 
         for batch in train_pbar:
-            loss = classifier.train_step_amp(batch, optimizer, criterion, scaler=scaler)
+            loss, correct, total = classifier.train_step_amp(batch, optimizer, criterion, scaler=scaler)
             scheduler.step()
             train_loss += loss
-            train_pbar.set_postfix({'loss': f'{loss:.4f}'})
+            train_correct += correct
+            train_total += total
+            train_pbar.set_postfix({
+                'loss': f'{loss:.4f}',
+                'acc':  f'{train_correct / train_total:.4f}',
+            })
 
         avg_train_loss = train_loss / len(train_loader)
+        train_acc = train_correct / train_total
         val_loss, val_acc, val_prec, val_rec, val_f1, all_preds, all_labels = evaluate_model_full(classifier, val_loader)
 
         history['train_loss'].append(round(avg_train_loss, 4))
+        history['train_acc'].append(round(train_acc, 4))
         history['val_loss'].append(round(val_loss, 4))
         history['val_acc'].append(round(val_acc, 4))
         history['val_f1'].append(round(val_f1, 4))
 
-        print(f"Epoch {epoch+1}: Train Loss: {avg_train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f} | Val F1: {val_f1:.4f}")
+        print(f"Epoch {epoch+1}: Train Loss: {avg_train_loss:.4f} | Train Acc: {train_acc:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f} | Val F1: {val_f1:.4f}")
 
         # ── wandb per-epoch logging ──────────────────────────────────
         metrics_to_log = {
             'epoch': epoch + 1,
             'train_loss': float(avg_train_loss),
+            'train_accuracy': float(train_acc),
             'val_loss': float(val_loss),
             'val_accuracy': float(val_acc),
             'val_precision': float(val_prec),
@@ -418,17 +469,18 @@ def main():
             print(f"LRs halved — BERT: {optimizer.param_groups[0]['lr']:.2e}  HEAD: {optimizer.param_groups[-1]['lr']:.2e}")
 
             # 4. Reduce label smoothing
-            if hasattr(criterion, 'label_smoothing'):
-                criterion.label_smoothing = max(criterion.label_smoothing * 0.5, 0.01)
-                print(f"Label smoothing -> {criterion.label_smoothing:.3f}")
+            label_smoothing = max(label_smoothing * 0.5, 0.01)
+            criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing,
+                                            weight=class_weights)
+            logger.info("Label smoothing reduced to %.3f — criterion recreated", label_smoothing)
 
             # 5. Reset scheduler with short warmup from new lower LR
             remaining = EPOCHS - (epoch + 1)
             warmup    = min(200, remaining * len(train_loader) // 10)
-            scheduler = get_linear_schedule_with_warmup(
+            scheduler = WarmupCosineScheduler(
                 optimizer,
-                num_warmup_steps=warmup,
-                num_training_steps=remaining * len(train_loader),
+                warmup_steps=warmup,
+                total_steps=remaining * len(train_loader),
             )
             print(f"Scheduler reset — {warmup} warmup / {remaining * len(train_loader)} total steps")
 
@@ -543,7 +595,46 @@ def main():
     else:
         print(f"\n[!] No real utterance file at {REAL_UTTERANCE_PATH} — skipping.")
 
-    with open('training_results.json', 'w') as f:
+    # ── Feedback test-set evaluation ────────────────────────────────
+    feedback_test_metrics = None
+    if args.feedback_test_csv and os.path.exists(args.feedback_test_csv):
+        print(f"\n{'='*60}")
+        print("FEEDBACK TEST-SET EVALUATION")
+        print(f"{'='*60}")
+        try:
+            fb_test_df = pd.read_csv(args.feedback_test_csv)
+            fb_test_df['session_context'] = fb_test_df['session_context'].apply(normalize_context)
+            fb_dataset = IntentDataset(fb_test_df.to_dict('records'), classifier.tokenizer, max_length=MAX_LENGTH)
+            fb_loader = DataLoader(fb_dataset, batch_size=BATCH_SIZE, shuffle=False)
+            fb_loss, fb_acc, fb_prec, fb_rec, fb_f1, fb_preds, fb_labels = evaluate_model_full(classifier, fb_loader)
+
+            fb_per_class_p, fb_per_class_r, fb_per_class_f1, fb_support = precision_recall_fscore_support(
+                fb_labels, fb_preds, average=None, zero_division=0
+            )
+            fb_per_class = {}
+            for i, name in enumerate(INTENT_NAMES):
+                if i < len(fb_per_class_f1):
+                    fb_per_class[name] = {
+                        'precision': round(float(fb_per_class_p[i]), 4),
+                        'recall': round(float(fb_per_class_r[i]), 4),
+                        'f1_score': round(float(fb_per_class_f1[i]), 4),
+                        'support': int(fb_support[i]),
+                    }
+
+            feedback_test_metrics = {
+                'accuracy': round(fb_acc, 4),
+                'f1_score': round(fb_f1, 4),
+                'precision': round(fb_prec, 4),
+                'recall': round(fb_rec, 4),
+                'test_loss': round(fb_loss, 4),
+                'per_class': fb_per_class,
+            }
+            results['feedback_test_metrics'] = feedback_test_metrics
+            print(f"Feedback Test Acc: {fb_acc:.4f} | F1: {fb_f1:.4f}")
+        except Exception as e:
+            print(f"[!] Feedback test eval failed: {e}")
+
+    with open(args.results_path, 'w') as f:
         json.dump(results, f, indent=4)
 
     # ── wandb final logging ──────────────────────────────────────────
@@ -557,7 +648,7 @@ def main():
         'epochs_trained': float(len(history['train_loss'])),
         'temperature': float(best_T),
     })
-    wandb.save('training_results.json')
+    wandb.save(args.results_path)
     if os.path.exists(best_model_path):
         wandb.save(best_model_path)
     wandb.finish()

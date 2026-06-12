@@ -6,13 +6,17 @@ from rest_framework.response import Response
 from .models import (
     LessonCompletion, SystemActivityLog, AIChatLog,
     StudentLearningProfile, Bookmark,
+    IntentFeedbackBuffer, IntentRetrainingCounter,
 )
 from .serializers import (
     LessonCompletionSerializer,
     SystemActivityLogSerializer,
     AIChatLogSerializer,
-    StudentLearningProfileSerializer,
+    AIChatLogFeedbackSerializer,
+    IntentFeedbackBufferSerializer,
+    IntentRetrainingCounterSerializer,
     BookmarkSerializer,
+    StudentLearningProfileSerializer,
 )
 
 
@@ -83,7 +87,7 @@ class AIChatLogViewSet(viewsets.ModelViewSet):
     """AI chat logs for the authenticated user. Filter by ?lesson_id=<id>. Supports GET + POST."""
     serializer_class = AIChatLogSerializer
     permission_classes = [permissions.IsAuthenticated]
-    http_method_names = ["get", "post", "head", "options"]
+    http_method_names = ["get", "post", "head", "options", "patch"]
 
     def get_queryset(self):
         qs = AIChatLog.objects.filter(user=self.request.user).order_by("created_at")
@@ -95,8 +99,124 @@ class AIChatLogViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
+    @action(detail=True, methods=["patch"], url_path="feedback")
+    def submit_feedback(self, request, pk=None):
+        """
+        Submit 👍/👎 feedback for a tutor response.
+
+        Body: {"feedback": "thumbs_up" | "thumbs_down"}
+        Adds the chat log to the IntentFeedbackBuffer and increments the
+        retraining counter. If the counter threshold is reached, the response
+        includes "retraining_recommended": true.
+        """
+        chat_log = self.get_object()
+        serializer = AIChatLogFeedbackSerializer(chat_log, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        feedback_value = serializer.validated_data.get("feedback")
+        if feedback_value not in ("thumbs_up", "thumbs_down"):
+            return Response(
+                {"detail": "feedback must be 'thumbs_up' or 'thumbs_down'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        chat_log.feedback = feedback_value
+        chat_log.feedback_at = timezone.now()
+        chat_log.save(update_fields=["feedback", "feedback_at"])
+
+        # Upsert into the dedicated feedback buffer
+        buffer_entry, created = IntentFeedbackBuffer.objects.update_or_create(
+            chat_log=chat_log,
+            defaults={
+                "student_input": chat_log.transcript_text,
+                "session_context": chat_log.session_context,
+                "predicted_intent": chat_log.predicted_intent or "On-Topic Question",
+                "confidence": chat_log.confidence,
+                "feedback": feedback_value,
+                "status": "pending",
+            },
+        )
+
+        # Increment the retraining counter
+        counter = IntentRetrainingCounter.increment()
+
+        return Response(
+            {
+                "id": chat_log.id,
+                "feedback": chat_log.feedback,
+                "feedback_at": chat_log.feedback_at,
+                "retraining_counter": counter.reviews_since_last_train,
+                "threshold": counter.threshold,
+                "retraining_recommended": counter.threshold_reached(),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
+class IntentFeedbackBufferViewSet(viewsets.ModelViewSet):
+    """
+    Admin/operator view for the reviewed utterance buffer.
+
+    Allows relabelling thumbs-down entries via PATCH corrected_intent.
+    """
+    serializer_class = IntentFeedbackBufferSerializer
+    permission_classes = [permissions.IsAdminUser]
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_queryset(self):
+        return IntentFeedbackBuffer.objects.select_related("chat_log__user", "chat_log__lesson")
+
+    def partial_update(self, request, *args, **kwargs):
+        """Permit admins to set corrected_intent on a buffer entry."""
+        instance = self.get_object()
+        corrected = request.data.get("corrected_intent")
+        if corrected:
+            if corrected == instance.predicted_intent:
+                return Response(
+                    {"detail": "Corrected intent must differ from predicted intent."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            instance.corrected_intent = corrected
+            instance.status = "relabelled"
+            instance.save(update_fields=["corrected_intent", "status"])
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+
+class IntentRetrainingCounterViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only view of the retraining counter. Admins may PATCH threshold."""
+    serializer_class = IntentRetrainingCounterSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_queryset(self):
+        # Only the singleton row exists
+        return IntentRetrainingCounter.objects.filter(pk=1)
+
+    def list(self, request, *args, **kwargs):
+        counter = IntentRetrainingCounter.get()
+        serializer = self.get_serializer(counter)
+        return Response(serializer.data)
+
+    def partial_update(self, request, *args, **kwargs):
+        if not request.user.is_staff:
+            return Response(
+                {"detail": "Only staff can update the threshold."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        counter = IntentRetrainingCounter.get()
+        threshold = request.data.get("threshold")
+        if threshold is not None:
+            try:
+                counter.threshold = max(1, int(threshold))
+                counter.save(update_fields=["threshold"])
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": "threshold must be a positive integer."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        serializer = self.get_serializer(counter)
+        return Response(serializer.data)
 
 
 class BookmarkViewSet(viewsets.ModelViewSet):
