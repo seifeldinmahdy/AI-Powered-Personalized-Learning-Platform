@@ -169,13 +169,21 @@ export interface FeedbackResponse {
   retraining_recommended: boolean;
 }
 
-export async function submitFeedback(chatLogId: number, feedback: FeedbackValue): Promise<FeedbackResponse | null> {
+export async function submitFeedback(
+  chatLogId: number,
+  feedback: FeedbackValue,
+  correctedIntent?: string,
+): Promise<FeedbackResponse | null> {
   const token = localStorage.getItem('access_token');
   if (!token) return null;
+  const body: Record<string, unknown> = { feedback };
+  if (correctedIntent) {
+    body.corrected_intent = correctedIntent;
+  }
   const res = await fetch(`${API_URL}/progress/chat-logs/${chatLogId}/feedback/`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ feedback }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) return null;
   return res.json() as Promise<FeedbackResponse>;

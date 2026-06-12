@@ -125,11 +125,17 @@ class AIChatLogViewSet(viewsets.ModelViewSet):
         """
         Submit 👍/👎 feedback for a tutor response.
 
-        Body: {"feedback": "thumbs_up" | "thumbs_down"}
+        Body:
+          {"feedback": "thumbs_up" | "thumbs_down"}
+          For thumbs_down optionally include:
+          {"corrected_intent": "On-Topic Question" | ...}
+
         Adds the chat log to the IntentFeedbackBuffer and increments the
         retraining counter. If the counter threshold is reached, the response
         includes "retraining_recommended": true.
         """
+        from .models import INTENT_CHOICES
+
         chat_log = self.get_object()
         serializer = AIChatLogFeedbackSerializer(chat_log, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
@@ -141,21 +147,39 @@ class AIChatLogViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        corrected_intent = request.data.get("corrected_intent")
+        valid_intents = {name for name, _ in INTENT_CHOICES}
+        if corrected_intent and corrected_intent not in valid_intents:
+            return Response(
+                {"detail": f"corrected_intent must be one of {sorted(valid_intents)}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if corrected_intent and corrected_intent == chat_log.predicted_intent:
+            return Response(
+                {"detail": "corrected_intent must differ from the predicted intent."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         chat_log.feedback = feedback_value
         chat_log.feedback_at = timezone.now()
         chat_log.save(update_fields=["feedback", "feedback_at"])
 
         # Upsert into the dedicated feedback buffer
+        buffer_defaults = {
+            "student_input": chat_log.transcript_text,
+            "session_context": chat_log.session_context,
+            "predicted_intent": chat_log.predicted_intent or "On-Topic Question",
+            "confidence": chat_log.confidence,
+            "feedback": feedback_value,
+            "status": "pending",
+        }
+        if corrected_intent:
+            buffer_defaults["corrected_intent"] = corrected_intent
+            buffer_defaults["status"] = "relabelled"
+
         buffer_entry, created = IntentFeedbackBuffer.objects.update_or_create(
             chat_log=chat_log,
-            defaults={
-                "student_input": chat_log.transcript_text,
-                "session_context": chat_log.session_context,
-                "predicted_intent": chat_log.predicted_intent or "On-Topic Question",
-                "confidence": chat_log.confidence,
-                "feedback": feedback_value,
-                "status": "pending",
-            },
+            defaults=buffer_defaults,
         )
 
         # Increment the retraining counter
