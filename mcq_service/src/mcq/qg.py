@@ -1,7 +1,8 @@
 """Question Generator (QG) — generates a single MCQ question from a chunk.
 
-Uses Ollama during development.  When QG_LORA_PATH is set in settings,
-loads the Llama base model + QG LoRA adapter via Unsloth for inference.
+Uses Ollama during development.  When QG_MODEL_PATH is set in settings,
+loads the Qwen3-4B base model + QG LoRA adapter via Unsloth for inference.
+Falls back to QG_LORA_PATH for legacy Llama-3.2-3B adapters.
 """
 
 from __future__ import annotations
@@ -24,8 +25,8 @@ logger = structlog.get_logger(__name__)
 
 # Lazy-loaded singletons — loaded once, reused for every call
 _ollama_client = None
-_llama_model = None
-_llama_tokenizer = None
+_model = None
+_tokenizer = None
 
 
 def _get_ollama_client(settings):
@@ -53,42 +54,46 @@ def _get_ollama_client(settings):
     return _ollama_client
 
 
-def _load_llama_model(settings):
-    """Load the Llama base model + QG LoRA adapter once at startup.
+def _load_model(settings):
+    """Load the base model + QG LoRA adapter once at startup.
 
     Uses Unsloth's FastLanguageModel for optimized inference.
-    The base model is loaded with the same quantization settings used
-    during training, and the LoRA adapter is applied on top.
+    Prefers ``QG_MODEL_PATH`` (Qwen3-4B adapter); falls back to the
+    legacy ``QG_LORA_PATH`` for Llama-3.2-3B adapters.
     """
-    global _llama_model, _llama_tokenizer
-    if _llama_model is not None:
-        return _llama_model, _llama_tokenizer
+    global _model, _tokenizer
+    if _model is not None:
+        return _model, _tokenizer
 
     from unsloth import FastLanguageModel
 
+    # Prefer the new path field; fall back to the legacy one
+    adapter_path = settings.QG_MODEL_PATH or settings.QG_LORA_PATH
+    max_seq = getattr(settings, 'MAX_SEQ_LENGTH_QG', settings.MAX_SEQ_LENGTH)
+
     logger.info(
-        "qg_loading_llama_model",
+        "qg_loading_model",
         base_model=settings.LLAMA_BASE_MODEL,
-        lora_path=settings.QG_LORA_PATH,
+        adapter_path=adapter_path,
         load_in_4bit=settings.LOAD_IN_4BIT,
     )
 
     # Load base model + LoRA adapter in one call
-    _llama_model, _llama_tokenizer = FastLanguageModel.from_pretrained(
-        model_name=settings.QG_LORA_PATH,
-        max_seq_length=settings.MAX_SEQ_LENGTH,
+    _model, _tokenizer = FastLanguageModel.from_pretrained(
+        model_name=adapter_path,
+        max_seq_length=max_seq,
         load_in_4bit=settings.LOAD_IN_4BIT,
     )
 
     # Optimize for inference speed (Unsloth-specific)
-    FastLanguageModel.for_inference(_llama_model)
+    FastLanguageModel.for_inference(_model)
 
     logger.info(
-        "qg_llama_model_loaded",
+        "qg_model_loaded",
         base_model=settings.LLAMA_BASE_MODEL,
-        lora_path=settings.QG_LORA_PATH,
+        adapter_path=adapter_path,
     )
-    return _llama_model, _llama_tokenizer
+    return _model, _tokenizer
 
 
 def generate_question(
@@ -121,8 +126,8 @@ def generate_question(
     GeneratedQuestion or None
         None if generation fails after all retry attempts.
     """
-    use_llama = bool(settings.QG_LORA_PATH)
-    generation_mode = "llama_lora" if use_llama else "ollama"
+    use_llama = bool(settings.QG_MODEL_PATH or settings.QG_LORA_PATH)
+    generation_mode = "lora" if use_llama else "ollama"
 
     for attempt in range(1, settings.MCQ_MAX_REGENERATION_ATTEMPTS + 1):
         try:
@@ -217,14 +222,14 @@ def _generate_with_llama(
     settings,
     attempt: int,
 ) -> dict | None:
-    """Generate question via Llama + QG LoRA adapter.
+    """Generate question via Qwen3-4B (or Llama) + QG LoRA adapter.
 
     Uses greedy decoding for deterministic output.  On retry (attempt > 1),
     adds a format-enforcement hint to the system message.
     """
     import torch
 
-    model, tokenizer = _load_llama_model(settings)
+    model, tokenizer = _load_model(settings)
 
     messages = build_qg_chat_prompt(
         chunk_text, question_type, mastery_level, score_category,

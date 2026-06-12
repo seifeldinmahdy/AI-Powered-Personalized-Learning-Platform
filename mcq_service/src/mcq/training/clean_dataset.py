@@ -7,12 +7,14 @@ question text instead of keeping the question stem clean.  This script:
 2. Extracts the clean question stem (everything before the first option marker)
 3. Extracts option texts and rebuilds the correct_answer + distractors fields
 4. Strips option-label prefixes from correct_answer even on already-clean samples
-5. Validates every cleaned object and drops malformed ones
+5. Strips all Unicode box-drawing characters (U+2500–U+257F) from every field
+6. Re-runs the book-reference regex pre-filter on the cleaned question text
+7. Validates every cleaned object and drops malformed ones
 
 Usage::
 
     python -m mcq.training.clean_dataset \\
-        --input  data/mcq_training/mcq_final.jsonl \\
+        --input  data/mcq_training/mcq_raw_accepted.jsonl \\
         --output data/mcq_training/mcq_final_cleaned.jsonl
 """
 
@@ -58,6 +60,88 @@ _RESIDUAL_LABEL_RE = re.compile(
     re.MULTILINE,
 )
 
+# ── Box-drawing strip ─────────────────────────────────────────────────────────
+# Unicode box-drawing block: U+2500 through U+257F.
+# These are decorative PDF artefacts that cost 20-30 tokens per line with zero
+# training value.  Any line consisting entirely of these characters is removed.
+# Any inline occurrence is removed (replaced with nothing — not "---").
+_BOX_DRAWING_RE = re.compile(r'[\u2500-\u257f]+')
+_BOX_DRAWING_LINE_RE = re.compile(r'^[\u2500-\u257f\s]*$', re.MULTILINE)
+
+
+def _strip_box_drawing(text: str) -> str:
+    """Remove all Unicode box-drawing characters (U+2500–U+257F) from *text*.
+
+    Lines consisting entirely of box-drawing characters (possibly with
+    whitespace) are deleted.  Inline occurrences within a line are removed
+    without substitution — no ``---`` replacement is inserted.
+    """
+    # First remove lines that are only box-drawing chars / whitespace
+    lines_out: list[str] = []
+    for line in text.split('\n'):
+        if _BOX_DRAWING_LINE_RE.fullmatch(line) and _BOX_DRAWING_RE.search(line):
+            # Entire line is decorative — drop it
+            continue
+        # Remove inline occurrences
+        cleaned = _BOX_DRAWING_RE.sub('', line)
+        lines_out.append(cleaned)
+    return '\n'.join(lines_out)
+
+
+def _box_drawing_free(sample: dict) -> dict:
+    """Apply box-drawing strip to every string field that may appear in the
+    final training example.
+
+    Fields touched: ``question``, ``correct_answer``, ``explanation``,
+    each element of ``distractors``, and ``chunk``.  All other fields
+    are left untouched.
+    """
+    s = dict(sample)
+    for field in ('question', 'correct_answer', 'explanation', 'chunk'):
+        if field in s and isinstance(s[field], str):
+            s[field] = _strip_box_drawing(s[field])
+    if 'distractors' in s and isinstance(s['distractors'], list):
+        s['distractors'] = [
+            _strip_box_drawing(d) if isinstance(d, str) else d
+            for d in s['distractors']
+        ]
+    return s
+
+
+# ── Book-reference regex re-filter ────────────────────────────────────────────
+# Mirrors the patterns in data_generator._passes_regex_filter.
+# Applied after cleaning as a final safety net.  Any sample whose *question*
+# still matches a book-reference pattern is dropped.
+
+_BOOK_REF_PATTERNS: list[re.Pattern] = [
+    re.compile(r'\bfigure\s+\d+[\.\-]\d+\b', re.IGNORECASE),
+    re.compile(r'\bfig\.?\s*\d+', re.IGNORECASE),
+    re.compile(r'\bexample\s+\d+[\.\-]\d+\b', re.IGNORECASE),
+    re.compile(r'\bsection\s+\d+[\.\-]\d+\b', re.IGNORECASE),
+    re.compile(r'\blisting\s+\d+[\.\-]\d+\b', re.IGNORECASE),
+    re.compile(r'\bchapter\s+\d+\b', re.IGNORECASE),
+    re.compile(r'\bappendix\s+[A-Z]\b', re.IGNORECASE),
+    re.compile(r'\bscipy\b', re.IGNORECASE),
+    re.compile(r'\btextbook\b', re.IGNORECASE),
+    re.compile(r'\bas shown in\b', re.IGNORECASE),
+    re.compile(r'\brefer to\b', re.IGNORECASE),
+    re.compile(r'\bsee (figure|table|listing|example)\b', re.IGNORECASE),
+]
+
+
+def _passes_book_regex_filter(sample: dict) -> bool:
+    """Return True if the cleaned question contains no book-reference pattern.
+
+    Returns False (→ sample will be dropped) if any pattern fires.
+    """
+    text = sample.get('question', '')
+    for pat in _BOOK_REF_PATTERNS:
+        if pat.search(text):
+            return False
+    return True
+
+
+# ── Existing cleaning utilities ───────────────────────────────────────────────
 
 def _find_options_start(question: str) -> int | None:
     """Return the character index where embedded options begin, or None."""
@@ -119,7 +203,14 @@ def _fuzzy_match(text_a: str, text_b: str) -> bool:
 def clean_sample(sample: dict) -> dict | None:
     """Clean a single MCQ sample. Returns the cleaned dict or None if invalid.
 
-    Returns None if the sample fails validation after cleaning.
+    Steps:
+    1. Detect and strip embedded A/B/C/D options from the question stem.
+    2. Strip option-label prefix from correct_answer.
+    3. Validate the cleaned object (residual labels, distractor count, etc.).
+    4. Strip all Unicode box-drawing characters from every string field.
+    5. Re-run the book-reference regex filter; drop if any pattern fires.
+
+    Returns None if the sample fails any validation step.
     """
     question = sample.get("question", "")
     correct_answer = sample.get("correct_answer", "")
@@ -291,6 +382,18 @@ def clean_sample(sample: dict) -> dict | None:
             )
             return None
 
+    # ── Step 7: Strip Unicode box-drawing characters ──────────────────────
+    sample = _box_drawing_free(sample)
+
+    # ── Step 8: Book-reference regex re-filter ───────────────────────────
+    if not _passes_book_regex_filter(sample):
+        logger.debug(
+            "clean_book_regex_dropped",
+            chunk_hash=chunk_hash,
+            question=sample.get("question", "")[:80],
+        )
+        return None
+
     return sample
 
 
@@ -299,16 +402,20 @@ def _print_report(
     already_clean: int,
     cleaned: int,
     skipped: int,
+    box_drawing_stripped: int,
+    book_regex_dropped: int,
     output_samples: list[dict],
 ):
     """Print a comprehensive report of the cleaning run."""
     W = 66
-    print(f"\n{'═' * W}")
+    print(f"\n{'=' * W}")
     print("  MCQ DATASET CLEANING — REPORT")
-    print(f"{'═' * W}")
+    print(f"{'=' * W}")
     print(f"  Total samples processed:       {total:>5}")
     print(f"  Already clean (no changes):    {already_clean:>5}")
     print(f"  Successfully cleaned:          {cleaned:>5}")
+    print(f"  Box-drawing stripped:          {box_drawing_stripped:>5}")
+    print(f"  Book-reference dropped:        {book_regex_dropped:>5}")
     print(f"  Skipped (validation failure):  {skipped:>5}")
     print(f"  Final output samples:          {len(output_samples):>5}")
 
@@ -339,7 +446,7 @@ def _print_report(
         c = score_counts[sc]
         pct = 100 * c / max(n, 1)
         print(f"    {sc:<10}: {c:>5}  ({pct:.1f}%)")
-    print(f"\n{'═' * W}\n")
+    print(f"\n{'=' * W}\n")
 
 
 def clean_dataset(input_path: str, output_path: str) -> int:
@@ -365,6 +472,8 @@ def clean_dataset(input_path: str, output_path: str) -> int:
     already_clean = 0
     cleaned = 0
     skipped = 0
+    box_drawing_stripped = 0
+    book_regex_dropped = 0
     output_samples: list[dict] = []
 
     with open(in_p, "r", encoding="utf-8") as fin:
@@ -384,15 +493,29 @@ def clean_dataset(input_path: str, output_path: str) -> int:
             original_question = sample.get("question", "")
             had_embedded = _find_options_start(original_question) is not None
 
+            # Track whether box-drawing chars are present before cleaning
+            had_box_drawing = any(
+                _BOX_DRAWING_RE.search(sample.get(f, ""))
+                for f in ("question", "correct_answer", "explanation", "chunk")
+            ) or any(
+                _BOX_DRAWING_RE.search(d)
+                for d in sample.get("distractors", [])
+                if isinstance(d, str)
+            )
+
             result = clean_sample(sample)
 
             if result is None:
+                # Distinguish book-regex drops from other failures
+                # (clean_sample already logged the specific reason)
                 skipped += 1
-            elif had_embedded:
-                cleaned += 1
-                output_samples.append(result)
             else:
-                already_clean += 1
+                if had_box_drawing:
+                    box_drawing_stripped += 1
+                if had_embedded:
+                    cleaned += 1
+                else:
+                    already_clean += 1
                 output_samples.append(result)
 
     # Write output
@@ -405,21 +528,27 @@ def clean_dataset(input_path: str, output_path: str) -> int:
         total=total,
         already_clean=already_clean,
         cleaned=cleaned,
+        box_drawing_stripped=box_drawing_stripped,
+        book_regex_dropped=book_regex_dropped,
         skipped=skipped,
         output=str(out_p),
     )
 
-    _print_report(total, already_clean, cleaned, skipped, output_samples)
+    _print_report(
+        total, already_clean, cleaned, skipped,
+        box_drawing_stripped, book_regex_dropped,
+        output_samples,
+    )
     return len(output_samples)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Clean MCQ dataset — strip embedded A/B/C/D options.",
+        description="Clean MCQ dataset — strip embedded options, box-drawing chars, and book references.",
     )
     parser.add_argument(
         "--input", required=True,
-        help="Input JSONL file (e.g. mcq_final.jsonl or mcq_raw.jsonl).",
+        help="Input JSONL file (e.g. mcq_raw_accepted.jsonl).",
     )
     parser.add_argument(
         "--output", required=True,
@@ -428,7 +557,7 @@ def main():
     args = parser.parse_args()
 
     n = clean_dataset(args.input, args.output)
-    print(f"Cleaned dataset: {n} samples → {args.output}")
+    print(f"Cleaned dataset: {n} samples -> {args.output}")
 
 
 if __name__ == "__main__":
