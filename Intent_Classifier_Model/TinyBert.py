@@ -174,10 +174,9 @@ class CompoundSentenceSplitter:
                     part1 = text[:split_pos].strip()
                     part2 = text[split_pos:].strip()
                     
-                    # Remove leading conjunction from part2
+                    # Remove leading conjunction from part2 (English only)
                     for c in self.conjunctions:
-                        is_arabic_c = any(ch in 'أبتثجحخدذرزسشصضطظعغفقكلمنهويىةؤإآ' for ch in c)
-                        part2 = re.sub(r'^\s*' + re.escape(c) + r'\s+', '', part2, flags=re.IGNORECASE if not is_arabic_c else 0)
+                        part2 = re.sub(r'^\s*' + re.escape(c) + r'\s+', '', part2, flags=re.IGNORECASE)
                     
                     # Ensure both parts are questions
                     if part1 and part2 and self._is_question(part1):
@@ -547,39 +546,6 @@ class IntentClassifier:
         
         return all_predictions, all_probabilities, split_info
     
-    def train_step(self, batch, optimizer, criterion):
-        """
-        Single training step
-        
-        Args:
-            batch: Dictionary with 'input_ids', 'attention_mask', 'labels'
-            optimizer: Optimizer
-            criterion: Loss function
-            
-        Returns:
-            loss: Training loss
-        """
-        self.model.train()
-        
-        input_ids = batch['input_ids'].to(self.device)
-        attention_mask = batch['attention_mask'].to(self.device)
-        labels = batch['labels'].to(self.device)
-        token_type_ids = batch.get('token_type_ids')
-        if token_type_ids is not None:
-            token_type_ids = token_type_ids.to(self.device)
-        
-        # Forward pass
-        logits = self.model(input_ids, attention_mask, token_type_ids=token_type_ids)
-        loss = criterion(logits, labels)
-        
-        # Backward pass
-        optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-        optimizer.step()
-        
-        return loss.item()
-    
     def train_step_amp(self, batch, optimizer, criterion, scaler=None):
         """
         Single training step with AMP mixed-precision support.
@@ -619,111 +585,12 @@ class IntentClassifier:
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             optimizer.step()
-        
-        return loss.item()
-    
-    def predict_with_confidence(self, student_inputs, session_contexts=None,
-                                max_length=128, split_compound=False,
-                                thresholds=None):
-        """
-        Predict intents with per-class confidence thresholds.
-        
-        Args:
-            student_inputs: list of input strings
-            session_contexts: list of context strings (optional)
-            max_length: tokenization max length
-            split_compound: whether to split compound sentences
-            thresholds: dict mapping class_index -> threshold float, or None for defaults
-                       Defaults: {0: 0.55, 1: 0.70, 2: 0.50, 3: 0.60, 4: 0.60, 5: 0.60}
-        
-        Returns:
-            results: list of dicts, each with keys:
-                'label': predicted class index (or -1 if below threshold)
-                'intent_name': class name string (or 'Low Confidence')
-                'confidence': float probability of top class
-                'probabilities': np.array of all 6 class probs
-                'below_threshold': bool
-        """
-        import numpy as np
-        
-        INTENT_NAMES = ['On-Topic Question', 'Off-Topic Question', 'Emotional-State',
-                        'Pace-Related', 'Repeat/clarification', 'Debugging/Code-Sharing']
-        
-        default_thresholds = {0: 0.55, 1: 0.70, 2: 0.50, 3: 0.60, 4: 0.60, 5: 0.60}
-        if thresholds is None:
-            thresholds = default_thresholds
-        
-        predictions, probabilities = self.predict(
-            student_inputs, session_contexts, max_length, split_compound
-        )
-        
-        results = []
-        for i in range(len(predictions)):
-            pred = int(predictions[i])
-            probs = probabilities[i]
-            confidence = float(probs[pred])
-            threshold = thresholds.get(pred, 0.60)
             
-            if confidence >= threshold:
-                results.append({
-                    'label': pred,
-                    'intent_name': INTENT_NAMES[pred] if pred < len(INTENT_NAMES) else f'Class-{pred}',
-                    'confidence': confidence,
-                    'probabilities': probs,
-                    'below_threshold': False
-                })
-            else:
-                results.append({
-                    'label': -1,
-                    'intent_name': 'Low Confidence',
-                    'confidence': confidence,
-                    'probabilities': probs,
-                    'below_threshold': True
-                })
+        preds = torch.argmax(logits, dim=1)
+        correct = (preds == labels).sum().item()
+        total = labels.size(0)
         
-        return results
-    
-    def evaluate(self, dataloader, criterion):
-        """
-        Evaluate model on validation/test set
-        
-        Args:
-            dataloader: DataLoader for evaluation
-            criterion: Loss function
-            
-        Returns:
-            avg_loss: Average loss
-            accuracy: Classification accuracy
-        """
-        self.model.eval()
-        
-        total_loss = 0
-        total_correct = 0
-        total_samples = 0
-        
-        with torch.no_grad():
-            for batch in dataloader:
-                input_ids = batch['input_ids'].to(self.device)
-                attention_mask = batch['attention_mask'].to(self.device)
-                labels = batch['labels'].to(self.device)
-                token_type_ids = batch.get('token_type_ids')
-                if token_type_ids is not None:
-                    token_type_ids = token_type_ids.to(self.device)
-                
-                # Forward pass
-                logits = self.model(input_ids, attention_mask, token_type_ids=token_type_ids)
-                loss = criterion(logits, labels)
-                
-                # Calculate metrics
-                predictions = torch.argmax(logits, dim=1)
-                total_loss += loss.item() * labels.size(0)
-                total_correct += (predictions == labels).sum().item()
-                total_samples += labels.size(0)
-        
-        avg_loss = total_loss / total_samples
-        accuracy = total_correct / total_samples
-        
-        return avg_loss, accuracy
+        return loss.item(), correct, total
     
     def save_model(self, path, temperature=None):
         """Save model checkpoint with full architecture config."""
@@ -736,7 +603,14 @@ class IntentClassifier:
             'hidden_dim': self.model.fc_hidden.out_features,
             'dropout': self.model.dropout.p,
             'temperature': temperature or self.model.temperature,
-            'label_map': IntentDataset({}).label_map if hasattr(IntentDataset, 'label_map') else {},
+            'label_map': {
+                'On-Topic Question':      0,
+                'Off-Topic Question':     1,
+                'Emotional-State':        2,
+                'Pace-Related':           3,
+                'Repeat/clarification':   4,
+                'Debugging/Code-Sharing': 5,
+            },
         }
         torch.save(checkpoint, path)
         print(f"Model saved to {path}")

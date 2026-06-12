@@ -5,7 +5,6 @@ comprehensive per-class/epoch metric tracking.
 """
 
 import os
-import shutil
 import random
 import argparse
 import torch
@@ -15,7 +14,6 @@ from torch.cuda.amp import GradScaler
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
-from transformers import get_linear_schedule_with_warmup
 import time
 import json
 import math
@@ -35,7 +33,7 @@ from TinyBert import IntentClassifier, IntentDataset
 INTENT_NAMES = ['On-Topic Question', 'Off-Topic Question', 'Emotional-State', 'Pace-Related', 'Repeat/clarification', 'Debugging/Code-Sharing']
 DEFAULT_CONFIDENCE_THRESHOLD = 0.65
 BASE_DIR = Path(__file__).resolve().parent
-REAL_UTTERANCE_PATH = str(BASE_DIR / 'data' / 'real_utterances.csv')
+DEFAULT_REAL_UTTERANCE_PATH = str(BASE_DIR / 'data' / 'real_utterances.csv')
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -184,6 +182,7 @@ def main():
     parser.add_argument('--best-model-path', default=os.getenv('INTENT_BEST_MODEL_PATH', 'best_model.pt'))
     parser.add_argument('--results-path', default=os.getenv('INTENT_RESULTS_PATH', 'training_results.json'))
     parser.add_argument('--feedback-test-csv', default=os.getenv('INTENT_FEEDBACK_TEST_CSV', ''))
+    parser.add_argument('--real-utterance-csv', default=os.getenv('INTENT_REAL_UTTERANCE_CSV', DEFAULT_REAL_UTTERANCE_PATH))
     args = parser.parse_args()
 
     # ── Hyperparameters ─────────────────────────────────────────────
@@ -224,19 +223,26 @@ def main():
     train_df, val_df, test_df = load_data(TRAIN_PATH, VAL_PATH, TEST_PATH)
 
     # ── Mix real utterances into training ───────────────────────────
-    if os.path.exists(REAL_UTTERANCE_PATH):
-        real_df = pd.read_csv(REAL_UTTERANCE_PATH)
-        real_df = real_df.sample(frac=1, random_state=42).reset_index(drop=True)
-        split_idx = int(len(real_df) * 0.70)
-        real_train_df = real_df.iloc[:split_idx]
-        real_eval_df  = real_df.iloc[split_idx:]
-        # Oversample real training data 2x so model learns from it
-        real_train_oversampled = pd.concat([real_train_df] * 2, ignore_index=True)
-        train_df = pd.concat([train_df, real_train_oversampled], ignore_index=True)
-        train_df = train_df.sample(frac=1, random_state=42).reset_index(drop=True)
-        print(f"[+] Mixed {len(real_train_oversampled)} real utterance rows into training. Train total: {len(train_df)}")
+    real_utterance_path = args.real_utterance_csv
+    real_eval_df = None
+    if os.path.exists(real_utterance_path):
+        try:
+            real_df = pd.read_csv(real_utterance_path)
+            real_df = real_df.sample(frac=1, random_state=42).reset_index(drop=True)
+            split_idx = int(len(real_df) * 0.70)
+            real_train_df = real_df.iloc[:split_idx]
+            real_eval_df  = real_df.iloc[split_idx:]
+            # Oversample real training data 2x so model learns from it
+            real_train_oversampled = pd.concat([real_train_df] * 2, ignore_index=True)
+            train_df = pd.concat([train_df, real_train_oversampled], ignore_index=True)
+            train_df = train_df.sample(frac=1, random_state=42).reset_index(drop=True)
+            print(f"[+] Mixed {len(real_train_oversampled)} real utterance rows from {real_utterance_path} into training. Train total: {len(train_df)}")
+            print(f"[+] Real eval split size: {len(real_eval_df)}")
+        except Exception as exc:
+            print(f"[!] Failed to load real utterances from {real_utterance_path}: {exc}")
+            real_eval_df = None
     else:
-        real_eval_df = None
+        print(f"[!] No real utterance file at {real_utterance_path} — training without real data.")
 
     for df in [train_df, val_df, test_df]:
         df['session_context'] = df['session_context'].apply(normalize_context)
@@ -536,64 +542,79 @@ def main():
         'per_class_metrics': per_class_metrics,
         'confusion_matrix': cm,
         'training_history': history,
-        'classification_report': cls_report
+        'classification_report': cls_report,
+        'real_utterance_metrics': None,
+        'real_utterance_per_class': None,
+        'real_utterance_report': None,
+        'feedback_test_metrics': None,
+        'model_checkpoint_path': None,
     }
 
     # ── Real-utterance evaluation split ─────────────────────────────
-    if os.path.exists(REAL_UTTERANCE_PATH):
-        print(f"\n{'='*60}")
-        print("REAL-UTTERANCE EVALUATION")
-        print(f"{'='*60}")
-        try:
-            if real_eval_df is None or len(real_eval_df) == 0:
-                print("[!] No real eval split available — skipping.")
-                raise ValueError("Skip")
-            real_df = real_eval_df
-            real_dataset = IntentDataset(
-                real_df.to_dict('records'), classifier.tokenizer, max_length=MAX_LENGTH
-            )
-            real_loader = DataLoader(real_dataset, batch_size=BATCH_SIZE, shuffle=False)
-            (
-                real_loss, real_acc, real_prec, real_rec, real_f1,
-                real_preds, real_labels,
-            ) = evaluate_model_full(classifier, real_loader)
+    print(f"\n{'='*60}")
+    print("REAL-UTTERANCE EVALUATION")
+    print(f"{'='*60}")
+    print(f"Looking for real utterances at: {real_utterance_path}")
+    print(f"Real eval split available: {real_eval_df is not None and len(real_eval_df) > 0}")
 
-            real_per_class_p, real_per_class_r, real_per_class_f1, real_support = (
-                precision_recall_fscore_support(
-                    real_labels, real_preds, average=None, zero_division=0
-                )
-            )
-            real_per_class = {}
-            for i, name in enumerate(INTENT_NAMES):
-                if i < len(real_per_class_f1):
-                    real_per_class[name] = {
-                        'precision': round(float(real_per_class_p[i]), 4),
-                        'recall': round(float(real_per_class_r[i]), 4),
-                        'f1_score': round(float(real_per_class_f1[i]), 4),
-                        'support': int(real_support[i]),
-                    }
-
-            real_cls_report = classification_report(
-                real_labels, real_preds, target_names=INTENT_NAMES, zero_division=0
-            )
-
+    if os.path.exists(real_utterance_path):
+        if real_eval_df is None or len(real_eval_df) == 0:
+            print("[!] Real utterance file exists but eval split is empty — skipping eval.")
             results['real_utterance_metrics'] = {
-                'accuracy': round(real_acc, 4),
-                'f1_score': round(real_f1, 4),
-                'precision': round(real_prec, 4),
-                'recall': round(real_rec, 4),
-                'test_loss': round(real_loss, 4),
+                'error': 'Real eval split is empty (file loaded but no eval rows)',
             }
-            results['real_utterance_per_class'] = real_per_class
-            results['real_utterance_report'] = real_cls_report
+        else:
+            try:
+                real_df = real_eval_df
+                real_dataset = IntentDataset(
+                    real_df.to_dict('records'), classifier.tokenizer, max_length=MAX_LENGTH
+                )
+                real_loader = DataLoader(real_dataset, batch_size=BATCH_SIZE, shuffle=False)
+                (
+                    real_loss, real_acc, real_prec, real_rec, real_f1,
+                    real_preds, real_labels,
+                ) = evaluate_model_full(classifier, real_loader)
 
-            print(f"Real Acc: {real_acc:.4f} | Real F1: {real_f1:.4f}")
-            print(f"\nPer-class (real utterances):")
-            print(real_cls_report)
-        except Exception as e:
-            print(f"[!] Real-utterance eval failed: {e}")
+                real_per_class_p, real_per_class_r, real_per_class_f1, real_support = (
+                    precision_recall_fscore_support(
+                        real_labels, real_preds, average=None, zero_division=0
+                    )
+                )
+                real_per_class = {}
+                for i, name in enumerate(INTENT_NAMES):
+                    if i < len(real_per_class_f1):
+                        real_per_class[name] = {
+                            'precision': round(float(real_per_class_p[i]), 4),
+                            'recall': round(float(real_per_class_r[i]), 4),
+                            'f1_score': round(float(real_per_class_f1[i]), 4),
+                            'support': int(real_support[i]),
+                        }
+
+                real_cls_report = classification_report(
+                    real_labels, real_preds, target_names=INTENT_NAMES, zero_division=0
+                )
+
+                results['real_utterance_metrics'] = {
+                    'accuracy': round(real_acc, 4),
+                    'f1_score': round(real_f1, 4),
+                    'precision': round(real_prec, 4),
+                    'recall': round(real_rec, 4),
+                    'test_loss': round(real_loss, 4),
+                }
+                results['real_utterance_per_class'] = real_per_class
+                results['real_utterance_report'] = real_cls_report
+
+                print(f"Real Acc: {real_acc:.4f} | Real F1: {real_f1:.4f}")
+                print("\nPer-class (real utterances):")
+                print(real_cls_report)
+            except Exception as e:
+                print(f"[!] Real-utterance eval failed: {e}")
+                results['real_utterance_metrics'] = {'error': str(e)}
     else:
-        print(f"\n[!] No real utterance file at {REAL_UTTERANCE_PATH} — skipping.")
+        print(f"[!] No real utterance file at {real_utterance_path} — skipping.")
+        results['real_utterance_metrics'] = {
+            'error': f'No real utterance file at {real_utterance_path}',
+        }
 
     # ── Feedback test-set evaluation ────────────────────────────────
     feedback_test_metrics = None
@@ -634,6 +655,25 @@ def main():
         except Exception as e:
             print(f"[!] Feedback test eval failed: {e}")
 
+    # ── Verify checkpoint exists and record path ────────────────────
+    if os.path.exists(best_model_path):
+        results['model_checkpoint_path'] = str(Path(best_model_path).resolve())
+        print(f"[+] Model checkpoint saved at: {best_model_path}")
+    else:
+        print(f"[!] Expected checkpoint not found at {best_model_path}")
+
+    # ── Promotion gate ──────────────────────────────────────────────
+    real_f1 = None
+    if isinstance(results.get('real_utterance_metrics'), dict):
+        real_f1 = results['real_utterance_metrics'].get('f1_score')
+    results['promotion_ready'] = (
+        isinstance(real_f1, (int, float)) and real_f1 >= 0.75
+    )
+    if results['promotion_ready']:
+        print(f"\n[READY] Real-utterance F1 {real_f1:.4f} >= 0.75 — model is eligible for promotion.")
+    else:
+        print(f"\n[NOT READY] Real-utterance F1 {real_f1} below 0.75 — do not promote yet.")
+
     with open(args.results_path, 'w') as f:
         json.dump(results, f, indent=4)
 
@@ -658,12 +698,12 @@ def main():
     print(f"{'='*60}")
     print(f"Test Acc: {test_acc:.4f} | Test F1: {test_f1:.4f} | Test Loss: {test_loss:.4f}")
     print(f"Confidence threshold: {DEFAULT_CONFIDENCE_THRESHOLD}")
-    print(f"\nPer-class results (synthetic test):")
+    print("\nPer-class results (synthetic test):")
     print(cls_report)
-    print(f"Confusion Matrix:")
+    print("Confusion Matrix:")
     for row in cm:
         print(f"  {row}")
-    print(f"\n[+] Results saved to 'training_results.json'")
+    print("\n[+] Results saved to 'training_results.json'")
 
 
 if __name__ == '__main__':

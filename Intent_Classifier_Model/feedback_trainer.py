@@ -22,7 +22,6 @@ import os
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pandas as pd
@@ -68,16 +67,15 @@ def load_feedback(csv_path: Path) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Feedback CSV missing columns: {missing}")
 
-    # Use corrected_intent label if available, otherwise label_id
+    # Start from the original predicted label, then overwrite with any
+    # human-provided corrected_intent.
+    df["label"] = df["label_id"].astype(int)
     if "corrected_intent" in df.columns:
         corrected_map = {name: idx for name, idx in INTENT_LABEL_MAP.items()}
         mask = df["corrected_intent"].notna() & (df["corrected_intent"] != "")
         df.loc[mask, "label"] = df.loc[mask, "corrected_intent"].map(corrected_map)
-    df["label"] = df["label_id"].astype(int)
     df["intent_name"] = df["label"].map(lambda i: INTENT_NAMES[i])
 
-    # Rename for consistency with the existing dataset schema
-    df = df.rename(columns={"student_input": "student_input"}).copy()
     return df[["student_input", "session_context", "label", "intent_name"]]
 
 

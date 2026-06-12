@@ -14,10 +14,8 @@ import random
 import pandas as pd
 import os
 import re
-import logging
 import time
 
-logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────
 # CONSTANTS & METADATA
@@ -67,38 +65,44 @@ CONTEXT_DROPOUT_BY_CLASS = {
 # CONTEXT GENERATION (Compact key-value format)
 # ─────────────────────────────────────────────────────────────────────
 
-def generate_session_context(current_topic_idx):
-    """Generates a compact session context string."""
-    current_topic = PYTHON_TOPICS[current_topic_idx]
+EMOTION_CONTEXT_MAP = {
+    "frustrated": "frustrated", "confus":    "confused",
+    "excit":      "excited",    "bored":     "bored",
+    "anxious":    "anxious",    "overwhelm": "overwhelmed",
+    "tired":      "tired",      "lost":      "confused",
+    "cooked":     "overwhelmed","ngl":       "neutral",
+}
 
-    if current_topic_idx > 0:
-        prev_count = min(3, current_topic_idx)
-        prev_topics = PYTHON_TOPICS[current_topic_idx - prev_count : current_topic_idx]
-    else:
-        prev_topics = []
+def _infer_emotion(utterance: str) -> str | None:
+    lower = utterance.lower()
+    for signal, emotion in EMOTION_CONTEXT_MAP.items():
+        if signal in lower:
+            return emotion
+    return None
 
-    # Ability scores for previous topics
-    abilities = []
-    for pt in prev_topics:
-        short_name = pt.split("(")[0].strip().replace(" and ", "&")
-        score = random.randint(30, 100)
-        abilities.append(f"{short_name}:{score}%")
-
-    ability_str = ",".join(abilities) if abilities else "N/A"
-    prev_str = ",".join([t.split("(")[0].strip() for t in prev_topics]) if prev_topics else "None"
-    emotion = random.choice(EMOTIONS)
-    pace = random.choice(PACES)
-    slide = random.randint(5, 60)
-
-    context = (
-        f"topic:{current_topic} | "
-        f"prev:{prev_str} | "
-        f"ability:{ability_str} | "
-        f"emotion:{emotion} | "
-        f"pace:{pace} | "
-        f"slides:{slide-1},{slide},{slide+1}"
+def generate_context(
+    emotion_override: str | None = None,
+    pace_override:    str | None = None,
+    repeats_override: int | None = None,
+) -> str:
+    """Generate a session context string.
+    Overrides correlate context fields with the utterance content so the
+    model learns that emotion/pace/repeats fields are reliable signals.
+    """
+    topic_idx = random.randint(0, len(PYTHON_TOPICS) - 1)
+    topic     = PYTHON_TOPICS[topic_idx]
+    prev      = PYTHON_TOPICS[topic_idx - 1] if topic_idx > 0 else "None"
+    emotion   = emotion_override  if emotion_override  else random.choice(EMOTIONS)
+    pace      = pace_override     if pace_override     else random.choice(PACES)
+    repeats   = repeats_override  if repeats_override is not None else random.randint(0, 2)
+    time_min  = random.randint(1, 15)
+    slide     = random.randint(3, 50)
+    return (
+        f"topic:{topic} | prev:{prev} | "
+        f"emotion:{emotion} | pace:{pace} | "
+        f"slides:{slide},{slide+1},{slide+2} | "
+        f"repeats:{repeats} | time_on_topic:{time_min}min"
     )
-    return context, current_topic, prev_topics
 
 
 # ── Template authoring rule ──────────────────────────────────────────
@@ -125,12 +129,10 @@ def generate_session_context(current_topic_idx):
 ON_TOPIC_TEMPLATES = [
     # Direct questions
     "How do I use {topic} in my code?",
-    # MOVED to REPEAT: "Can you explain {topic} again?"
     "What are the best practices for {topic}?",
     "Can you show me an example of {topic}?",
     "Why is {topic} giving me a syntax error?",
     "Is there a different way to write {topic}?",
-    # REMOVED: "I don't get the part about {topic}." → Emotional-State (expresses confusion)
     "Can we do another exercise for {topic}?",
     "What happens if I forget to close the bracket in {topic}?",
     "How is {topic} different from the previous topic?",
@@ -142,7 +144,6 @@ ON_TOPIC_TEMPLATES = [
     "Can you give me a real-world example of {topic}?",
     "Does {topic} work the same way in other languages?",
     # Problem-solving
-    # REMOVED: "I'm stuck on this challenge about {topic}." → Emotional-State (expresses being stuck)
     "My code for {topic} isn't working, can you help?",
     "I keep getting an error with {topic}.",
     "Why does my {topic} code print the wrong output?",
@@ -164,13 +165,8 @@ ON_TOPIC_TEMPLATES = [
     # Short/informal
     "Tell me more about {topic}",
     "What's {topic} again?",
-    # REMOVED: "{topic} is confusing" → Emotional-State (expresses confusion)
-    # REMOVED: "Help me with {topic}" → Emotional-State (ambiguous plea)
-    # REMOVED: "I need help understanding {topic}" → Emotional-State (ambiguous plea)
     "So how does {topic} actually work?",
-    # MOVED from OFF_TOPIC_FUTURE_TOPIC_TEMPLATES → On-Topic (asks about Python concept)
     "How does {topic} work in Python?",
-    # MOVED from OFF_TOPIC_FUTURE_TOPIC_TEMPLATES → On-Topic (curriculum-relevant, T1-A)
     "Are we going to learn about {topic} soon?",
     "Will {topic} be on the exam?",
     "Is {topic} related to what we are doing now?",
@@ -242,21 +238,15 @@ OFF_TOPIC_GENERAL = [
 ]
 
 OFF_TOPIC_FUTURE_TOPIC_TEMPLATES = [
-    # MOVED to ON_TOPIC_TEMPLATES (T1-A): "Are we going to learn about {topic} soon?" (curriculum-relevant)
     "What is {topic} exactly?",
     "I heard about {topic}, can you explain it to me?",
-    # MOVED to ON_TOPIC_TEMPLATES: "How does {topic} work in Python?" (asks about concept)
-    # MOVED to PACE_TEMPLATES: "Can we skip ahead to {topic}?" (pace control)
     "Is {topic} hard to learn?",
     "I saw someone using {topic}, what does it do?",
     "Do we need to know about {topic}?",
     "When will we cover {topic}?",
     "My friend told me {topic} is important, is that true?",
-    # MOVED to ON_TOPIC_TEMPLATES (T1-A): "Will {topic} be on the exam?" (curriculum-relevant)
     "Can you give me a sneak peek of {topic}?",
-    # MOVED to PACE_TEMPLATES: "I already know a bit about {topic}, can we jump to it?" (pace control)
     "How long until we get to {topic}?",
-    # MOVED to ON_TOPIC_TEMPLATES (T1-A): "Is {topic} related to what we are doing now?" (curriculum-relevant)
 ]
 
 # ── Authoring rule — Emotional-State ────────────────────────────────────────
@@ -268,7 +258,6 @@ EMOTIONAL_TEMPLATES = [
     # Frustration
     "I am so frustrated right now.",
     "This is making me really angry.",
-    # REMOVED: "I can't take this anymore." (Ambiguous with Pace/Break requests)
     "I feel like giving up.",
     "Nothing makes sense to me.",
     "I'm losing my patience.",
@@ -291,7 +280,6 @@ EMOTIONAL_TEMPLATES = [
     "I don't understand anything.",
     "This is so confusing it hurts.",
     # Boredom / tiredness
-    # REMOVED: "This is getting boring." (Ambiguous with Pace/Speed up requests)
     "I'm feeling super tired today.",
     "My head hurts from all this information.",
     "I feel like I'm not making any progress.",
@@ -369,7 +357,6 @@ PACE_TEMPLATES = [
     "Can we skip this?",
     "I think I got this, let's speed up.",
     "Can we go through the next part faster?",
-    # REMOVED: "Let's speed up the pace, I'm bored." (Ambiguous with Emotional/Boredom)
     "I already know this, can we move on?",
     "This part is easy, let's go faster.",
     "Skip ahead please.",
@@ -377,18 +364,14 @@ PACE_TEMPLATES = [
     "We're spending too long on this.",
     "Can we pick up the pace?",
     # Break / timing
-    # REMOVED: "Can we take a break?" (Ambiguous: is it Pace or Emotional exhaustion?)
     "How much time do we have left?",
     "When does this session end?",
-    # REMOVED: "I need a 5 minute break." (Ambiguous)
-    # REMOVED: "Let's take a quick breather." (Ambiguous)
     # General pacing
     "The pace feels about right.",
     "Can you adjust the speed a bit?",
     "I think the pacing is off.",
     "Are we on schedule?",
     "How many more slides do we have?",
-    # MOVED from OFF_TOPIC_FUTURE_TOPIC_TEMPLATES → Pace (requesting to skip/jump ahead)
     "Can we skip ahead to {topic}?",
     "I already know a bit about {topic}, can we jump to it?",
 ]
@@ -441,7 +424,7 @@ PACE_REAL = [
     "one sec", "wait up", "can we stop for a sec", "slow tf down",
     "hol up", "chill for a sec", "can you slow down", "ur going too fast",
     "speed it up", "go faster", "i already know this go faster",
-    "too slow", "skip this", "can we skip", # REMOVED "im bored speed up"
+    "too slow", "skip this", "can we skip",
     "next slide", "next", "hurry up", "wait go back", "slow down im typing",
     "pause pls", "give me a sec", "wait a minute", "hang on",
     "stop going so fast", "i need a minute", "can we pause",
@@ -485,11 +468,9 @@ ON_TOPIC_REAL = [
     "i dont get it", "what does this do", "why does it break",
     "show me", "example pls", "what's the difference",
     "how does that work",
-    # REMOVED: "im confused about this part" → Emotional-State
     "can you show me with code", "what does {topic} even mean",
     "how do i use {topic}", "give me an example of {topic}",
     "why use {topic}",
-    # REMOVED: "im stuck on {topic}" → Emotional-State
     "my {topic} code is broken",
     "what am i doing wrong", "how is this useful", "can u show another example",
     "is this important", "do we need to know this", "whats the syntax",
@@ -507,8 +488,8 @@ EMOTIONAL_REAL = [
     "i quit", "make it stop", "i am so mad right now",
     "yay i did it", "this is fun", "i love coding",
     "omg it works", "i feel smart", "let's goooo",
-    "im so tired", "im exhausted", # REMOVED "can we stop" (Ambiguous with Pace)
-    "my eyes hurt", "i need to sleep" # REMOVED "this is boring" (Ambiguous with Pace check)
+    "im so tired", "im exhausted",
+    "my eyes hurt", "i need to sleep"
 ]
 
 HELD_OUT_PACE = ["wait up", "STOP", "too fast omg", "one moment"]
@@ -618,7 +599,6 @@ HELD_OUT_DEBUGGING = [
     "help me debug this: `def f(x=[]): x.append(1); return x`",
 ]
 
-# REMOVED extend() calls that injected *_REAL directly into main lists.
 # They will be injected later specifically into the _TRAIN partitions.
 
 # ─────────────────────────────────────────────────────────────────────
@@ -713,7 +693,39 @@ def augment_word_delete(text):
     words.pop(idx)
     return " ".join(words)
 
-def augment_text(text):
+
+ERROR_TYPES = [
+    'IndexError', 'ValueError', 'TypeError', 'KeyError',
+    'AttributeError', 'NameError', 'ZeroDivisionError',
+    'SyntaxError', 'RuntimeError', 'StopIteration',
+]
+
+VAR_NAMES = [
+    'x', 'i', 'n', 'val', 'result', 'data', 'item',
+    'count', 'temp', 'output', 'lst', 'nums', 'arr', 'score',
+]
+
+def augment_error_type(text: str) -> str:
+    """Substitute one Python error name for another (Debugging samples only)."""
+    for err in ERROR_TYPES:
+        if err in text:
+            return text.replace(
+                err,
+                random.choice([e for e in ERROR_TYPES if e != err]),
+                1,
+            )
+    return text
+
+def augment_variable_name(text: str) -> str:
+    """Substitute a common variable name (On-Topic and Debugging samples only)."""
+    for var in VAR_NAMES:
+        if f'`{var}`' in text or f' {var} ' in text or f'({var})' in text:
+            replacement = random.choice([v for v in VAR_NAMES if v != var])
+            return text.replace(var, replacement, 1)
+    return text
+
+
+def augment_text(text: str, intent: str | None = None) -> str:
     """Apply a random combination of augmentation strategies."""
     strategies = [augment_synonym, augment_case, augment_punctuation,
                   augment_filler, augment_typo, augment_word_swap, augment_word_delete]
@@ -721,6 +733,14 @@ def augment_text(text):
     chosen = random.sample(strategies, k=random.randint(1, 3))
     for fn in chosen:
         text = fn(text)
+        
+    # Programming-specific augmentations (intent-gated)
+    if intent in ('Debugging/Code-Sharing',) and random.random() < 0.30:
+        text = augment_error_type(text)
+
+    if intent in ('On-Topic Question', 'Debugging/Code-Sharing') and random.random() < 0.25:
+        text = augment_variable_name(text)
+        
     return text.strip()
 
 
@@ -909,24 +929,25 @@ def get_debugging_question(split_name='train', current_topic=None):
 # ─────────────────────────────────────────────────────────────────────
 
 def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, test_ratio=0.15):
+    random.seed(42)
     print(f"Starting Dataset Generation ({num_samples_per_class} per class)...")
 
     train_samples = int(num_samples_per_class * train_ratio)
     val_samples = int(num_samples_per_class * val_ratio)
     test_samples = num_samples_per_class - train_samples - val_samples
 
-    def generate_split(samples_per_class, split_name, is_test):
+    def generate_split(samples_per_class, split_name):
         dataset = []
         apply_augmentation = split_name == 'train'
         for intent, label_id in LABEL_MAP.items():
             for _ in range(samples_per_class):
                 topic_idx = random.randint(0, len(PYTHON_TOPICS) - 1)
-                context_str, current_topic, prev_topics = generate_session_context(topic_idx)
-                
-                # Class-aware context dropout — lower rate for classes that rely on context fields
-                dropout_rate = CONTEXT_DROPOUT_BY_CLASS.get(intent, 0.15)
-                if random.random() < dropout_rate:
-                    context_str = ""
+                current_topic = PYTHON_TOPICS[topic_idx]
+                if topic_idx > 0:
+                    prev_count = min(3, topic_idx)
+                    prev_topics = PYTHON_TOPICS[topic_idx - prev_count : topic_idx]
+                else:
+                    prev_topics = []
 
                 if intent == 'On-Topic Question':
                     student_input = get_on_topic_question(current_topic, prev_topics, split_name=split_name)
@@ -943,8 +964,36 @@ def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, 
                 else:
                     student_input = get_off_topic_question(topic_idx, split_name=split_name)
 
+                emotion_override = None
+                pace_override    = None
+                repeats_override = None
+
+                if intent == 'Emotional-State':
+                    emotion_override = _infer_emotion(student_input)
+
+                elif intent == 'Pace-Related':
+                    lower = student_input.lower()
+                    if any(w in lower for w in ['too fast', 'slow down', 'slow', 'wait', 'hold on']):
+                        pace_override = 'fast'     # student perceives pace as fast
+                    elif any(w in lower for w in ['speed up', 'faster', 'move on', 'skip', 'next']):
+                        pace_override = 'slow'     # student perceives pace as slow
+
+                elif intent == 'Repeat/clarification':
+                    repeats_override = random.randint(1, 4)  # repeats > 0 = prior coverage exists
+
+                # Apply class-aware dropout
+                dropout_rate = CONTEXT_DROPOUT_BY_CLASS.get(intent, 0.15)
+                if random.random() < dropout_rate:
+                    context_str = ""
+                else:
+                    context_str = generate_context(
+                        emotion_override=emotion_override,
+                        pace_override=pace_override,
+                        repeats_override=repeats_override,
+                    )
+
                 if apply_augmentation:
-                    student_input = augment_text(student_input)
+                    student_input = augment_text(student_input, intent=intent)
 
                 dataset.append({
                     'student_input': student_input,
@@ -955,9 +1004,9 @@ def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, 
         df = pd.DataFrame(dataset)
         return df.sample(frac=1, random_state=42).reset_index(drop=True)
 
-    train_df = generate_split(train_samples, split_name='train', is_test=False)
-    val_df = generate_split(val_samples, split_name='val', is_test=False)
-    test_df = generate_split(test_samples, split_name='test', is_test=True)
+    train_df = generate_split(train_samples, split_name='train')
+    val_df = generate_split(val_samples, split_name='val')
+    test_df = generate_split(test_samples, split_name='test')
 
     output_dir = 'data'
     os.makedirs(output_dir, exist_ok=True)
@@ -974,143 +1023,14 @@ def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, 
     return train_df, val_df, test_df
 
 
-# ─────────────────────────────────────────────────────────────────────
-# LLM-BASED PARAPHRASE AUGMENTATION
-# ─────────────────────────────────────────────────────────────────────
-
-PARAPHRASE_CACHE_PATH = os.path.join('data', 'paraphrase_cache.json')
-
-def _load_paraphrase_cache() -> dict:
-    """Load cached paraphrases from disk."""
-    if os.path.exists(PARAPHRASE_CACHE_PATH):
-        with open(PARAPHRASE_CACHE_PATH, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {}
-
-def _save_paraphrase_cache(cache: dict) -> None:
-    """Save paraphrase cache to disk."""
-    os.makedirs(os.path.dirname(PARAPHRASE_CACHE_PATH), exist_ok=True)
-    with open(PARAPHRASE_CACHE_PATH, 'w', encoding='utf-8') as f:
-        json.dump(cache, f, indent=2, ensure_ascii=False)
-
-def paraphrase_with_llm(
-    samples: list[str],
-    label_name: str,
-    n_paraphrases: int = 3,
-    batch_size: int = 10,
-) -> list[str]:
-    """Generate paraphrases for training samples using the Groq API."""
-    from dotenv import load_dotenv
-    load_dotenv()
-    api_key = os.getenv('GROQ_API_KEY', '')
-    if not api_key:
-        logger.warning('GROQ_API_KEY not set — skipping LLM paraphrase augmentation')
-        return []
-
-    from groq import Groq
-    client = Groq(api_key=api_key)
-
-    cache = _load_paraphrase_cache()
-    all_paraphrases: list[str] = []
-
-    for i in range(0, len(samples), batch_size):
-        batch = samples[i:i + batch_size]
-        uncached = [s for s in batch if s not in cache]
-
-        if uncached:
-            numbered = '\n'.join(f'{j+1}. {s}' for j, s in enumerate(uncached))
-            prompt = (
-                f'You are a data augmentation assistant. For each student utterance below '
-                f'(intent class: "{label_name}"), generate exactly {n_paraphrases} realistic '
-                f'paraphrases that a real student might say. Vary formality, slang, and length. '
-                f'Return ONLY a JSON object: {{"paraphrases": [[p1,p2,p3], ...]}}\n\n{numbered}'
-            )
-
-            # Retry with exponential backoff for Groq 429 rate limits
-            max_retries = 5
-            backoff = 2.0  # seconds — doubles each retry
-            success = False
-            for attempt in range(max_retries):
-                try:
-                    resp = client.chat.completions.create(
-                        model='llama-3.1-8b-instant',
-                        messages=[{'role': 'user', 'content': prompt}],
-                        temperature=0.8,
-                        max_tokens=2048,
-                        response_format={'type': 'json_object'},
-                    )
-                    text = resp.choices[0].message.content.strip()
-                    data = json.loads(text)
-                    groups = data.get('paraphrases', [])
-                    for s, group in zip(uncached, groups):
-                        cache[s] = group if isinstance(group, list) else []
-                    success = True
-                    break
-                except Exception as e:
-                    err_str = str(e)
-                    if '429' in err_str or 'rate_limit' in err_str:
-                        wait = backoff * (2 ** attempt)
-                        logger.warning(
-                            'Rate limited (attempt %d/%d) — waiting %.1fs before retry',
-                            attempt + 1, max_retries, wait,
-                        )
-                        time.sleep(wait)
-                    else:
-                        logger.error('LLM paraphrase batch failed: %s', e)
-                        break  # non-retryable error
-
-            if not success:
-                for s in uncached:
-                    cache[s] = []
-
-            # Throttle between batches to stay under Groq TPM limit
-            time.sleep(3)
-
-        for s in batch:
-            all_paraphrases.extend(cache.get(s, []))
-
-    _save_paraphrase_cache(cache)
-    print(f'[+] LLM paraphrase augmentation: {len(all_paraphrases)} new samples for "{label_name}"')
-    return all_paraphrases
-
-def augment_dataset_with_llm(df: pd.DataFrame, n_paraphrases: int = 3) -> pd.DataFrame:
-    """Augment every class in the dataset with LLM-generated paraphrases."""
-    intent_names = {v: k for k, v in LABEL_MAP.items()}
-    new_rows = []
-
-    for label_id in sorted(df['label'].unique()):
-        label_name = intent_names.get(label_id, f'label_{label_id}')
-        subset = df[df['label'] == label_id]
-        texts = subset['student_input'].tolist()
-        contexts = subset['session_context'].tolist()
-
-        paraphrases = paraphrase_with_llm(texts, label_name, n_paraphrases)
-
-        for j, para in enumerate(paraphrases):
-            ctx = contexts[j % len(contexts)] if contexts else ''
-            new_rows.append({
-                'student_input': para,
-                'session_context': ctx,
-                'label': label_id,
-                'intent_name': label_name,
-            })
-
-    aug_df = pd.DataFrame(new_rows)
-    combined = pd.concat([df, aug_df], ignore_index=True)
-    combined = combined.sample(frac=1, random_state=42).reset_index(drop=True)
-    print(f'[+] Dataset augmented: {len(df)} -> {len(combined)} rows')
-    return combined
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate intent classifier training data')
     parser.add_argument('--samples', type=int, default=2000, help='Samples per class')
-    parser.add_argument('--augment-llm', action='store_true', help='Enable LLM paraphrase augmentation (requires GROQ_API_KEY)')
     args = parser.parse_args()
 
     train_df, val_df, test_df = build_dataset(num_samples_per_class=args.samples)
-
-    if args.augment_llm:
-        print('\n[*] Running LLM paraphrase augmentation on training set...')
-        train_df = augment_dataset_with_llm(train_df, n_paraphrases=3)
-        train_df.to_csv(os.path.join('data', 'train.csv'), index=False)
-        print(f'[+] Augmented training set saved ({len(train_df)} rows)')
+    train_df.to_csv(os.path.join('data', 'train.csv'), index=False)
+    val_df.to_csv(os.path.join('data', 'val.csv'), index=False)
+    test_df.to_csv(os.path.join('data', 'test.csv'), index=False)
+    print(f'[+] Saved train/val/test CSVs to data/')
