@@ -1771,19 +1771,15 @@ def _parse_judge_b_response(raw: str) -> JudgeBResult:
     scores in Python.  The LLM is never asked to produce a score directly.
     """
     def _yn(key: str, default: str = "NO") -> str:
-        """Extract a YES/NO answer for a given field key.
-
-        Tolerates markdown decoration: the model may wrap the key in **bold**,
-        prefix with '-' or spaces, or omit the ^ anchor alignment.
-        Pattern: optional leading non-word chars, then KEY: YES/NO.
-        """
-        # Match KEY: YES/NO with optional leading decoration on the same line.
-        m = re.search(
-            rf'(?:^|[^\w]){re.escape(key)}[:\s]+\*?\*?(YES|NO)\*?\*?',
-            raw, re.MULTILINE | re.IGNORECASE
-        )
-        if m:
-            return m.group(1).upper()
+        # Scan each line for the key (case-insensitive) then extract YES/NO.
+        # This is decoration-agnostic: handles **KEY:** YES, - KEY: YES,
+        # KEY: **YES**, KEY — YES, or any other formatting the LLM may use.
+        key_upper = key.upper()
+        for line in raw.splitlines():
+            if key_upper in line.upper():
+                m = re.search(r'\b(YES|NO)\b', line, re.IGNORECASE)
+                if m:
+                    return m.group(1).upper()
         return default
 
     def _str(key: str, default: str = "") -> str:
@@ -1954,11 +1950,15 @@ def _parse_judge_c_response(raw: str) -> JudgeCResult:
     All 5 hard check answers are extracted by regex; verdict computed in Python.
     """
     def _yn(key: str, default: str = "NO") -> str:
-        m = re.search(
-            rf'(?:^|[^\w]){re.escape(key)}[:\s]+\*?\*?(YES|NO)\*?\*?',
-            raw, re.MULTILINE | re.IGNORECASE
-        )
-        return m.group(1).upper() if m else default
+        # Scan each line for the key (case-insensitive) then extract YES/NO.
+        # Decoration-agnostic: handles **KEY:** YES, - KEY: YES, KEY — YES, etc.
+        key_upper = key.upper()
+        for line in raw.splitlines():
+            if key_upper in line.upper():
+                m = re.search(r'\b(YES|NO)\b', line, re.IGNORECASE)
+                if m:
+                    return m.group(1).upper()
+        return default
 
     sub_checks = {
         "check_d1_different":      _yn("CHECK_D1_DIFFERENT"),
@@ -2076,11 +2076,15 @@ def _parse_judge_d_response(raw: str) -> JudgeDResult:
     of claims); derives verdict in Python.
     """
     def _yn(key: str, default: str = "NO") -> str:
-        m = re.search(
-            rf'(?:^|[^\w]){re.escape(key)}[:\s]+\*?\*?(YES|NO)\*?\*?',
-            raw, re.MULTILINE | re.IGNORECASE
-        )
-        return m.group(1).upper() if m else default
+        # Scan each line for the key (case-insensitive) then extract YES/NO.
+        # Decoration-agnostic: handles **KEY:** YES, - KEY: YES, KEY — YES, etc.
+        key_upper = key.upper()
+        for line in raw.splitlines():
+            if key_upper in line.upper():
+                m = re.search(r'\b(YES|NO)\b', line, re.IGNORECASE)
+                if m:
+                    return m.group(1).upper()
+        return default
 
     # Extract all CLAIM_N_VERIFIED entries (1, 2, 3, ...)
     claim_results: dict[str, str] = {}
