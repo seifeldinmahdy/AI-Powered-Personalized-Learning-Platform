@@ -84,6 +84,16 @@ venv/Scripts/python.exe manage.py check_intent_retraining --force --dry-run
 | Model not reloading after retrain | Check AI service logs for `POST /intent/reload` and that `prod_tinybert.pt` exists. |
 | Thumbs-down rows not useful | Admin must relabel via `/intent-feedback-buffer/<id>/` with `corrected_intent`. |
 
+## Security Hardening
+
+| Risk | Mitigation |
+|------|------------|
+| Unauthorized model reload | `POST /intent/reload` requires `X-Service-Key` matching `INTERNAL_SERVICE_KEY` and validates the filename stays inside `intent_model/`. |
+| Chat logs created for arbitrary lessons | `AIChatLogViewSet.perform_create` now checks the user is enrolled in the lesson's course. |
+| Review spam / feedback abuse | `PATCH /chat-logs/<id>/feedback/` uses a dedicated `feedback` throttle: 30/hour per user. |
+| Concurrent retraining jobs | Management command uses an atomic file lock (`Intent_Classifier_Model/.feedback_retraining.lock`) with stale-lock cleanup. |
+| Secrets in `.env` | `INTERNAL_SERVICE_KEY` added to both backend and AI service `.env.example` files. |
+
 ## Files Modified
 
 - `backend/apps/progress/models.py`

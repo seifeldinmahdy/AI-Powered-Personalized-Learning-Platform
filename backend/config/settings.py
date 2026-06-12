@@ -132,6 +132,8 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "30/minute",
         "user": "120/minute",
+        "feedback": "30/hour",
+        "anon_feedback": "0/minute",
     },
 }
 
@@ -159,3 +161,15 @@ CORS_ALLOW_CREDENTIALS = True
 
 # ---------- FastAPI AI Service ----------
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
+
+# Intent classifier retraining paths
+# Absolute path to the Intent_Classifier_Model directory on the host running
+# the Django backend (used by check_intent_retraining to export feedback CSV).
+INTENT_CLASSIFIER_MODEL_DIR = os.getenv(
+    "INTENT_CLASSIFIER_MODEL_DIR",
+    str(BASE_DIR.parent / "Intent_Classifier_Model"),
+)
+
+# Shared secret for service-to-service calls from Django to the AI service.
+# Must match the AI service's INTERNAL_SERVICE_KEY env var.
+AI_SERVICE_KEY = os.getenv("INTERNAL_SERVICE_KEY", "")

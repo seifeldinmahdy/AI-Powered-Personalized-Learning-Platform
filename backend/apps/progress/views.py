@@ -1,7 +1,10 @@
+from django.apps import apps
 from django.utils import timezone
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
+
+from .throttles import FeedbackThrottle, AnonFeedbackThrottle
 
 from .models import (
     LessonCompletion, SystemActivityLog, AIChatLog,
@@ -97,9 +100,27 @@ class AIChatLogViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
+        """Save chat log, ensuring the user is enrolled in the lesson's course."""
+        lesson = serializer.validated_data.get("lesson")
+        if lesson and not self._user_has_access(lesson):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("You are not enrolled in this lesson.")
         serializer.save(user=self.request.user)
 
-    @action(detail=True, methods=["patch"], url_path="feedback")
+    def _user_has_access(self, lesson):
+        """Check whether the authenticated user is enrolled in the lesson's course."""
+        Enrollment = apps.get_model("courses", "Enrollment")
+        return Enrollment.objects.filter(
+            student=self.request.user,
+            course=lesson.module.course,
+        ).exists()
+
+    @action(
+        detail=True,
+        methods=["patch"],
+        url_path="feedback",
+        throttle_classes=[FeedbackThrottle, AnonFeedbackThrottle],
+    )
     def submit_feedback(self, request, pk=None):
         """
         Submit 👍/👎 feedback for a tutor response.

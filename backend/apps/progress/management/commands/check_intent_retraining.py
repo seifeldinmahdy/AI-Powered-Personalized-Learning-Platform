@@ -8,6 +8,7 @@ classifier. If the ``IntentRetrainingCounter`` threshold is reached, it:
    ``Intent_Classifier_Model/data/feedback_utterances.csv``.
 2. Spawns the feedback-aware retraining pipeline in the model directory.
 3. On success, marks the exported rows as used and resets the counter.
+4. Notifies the AI service to reload the promoted checkpoint.
 
 Usage:
     python manage.py check_intent_retraining [--force]
@@ -17,6 +18,7 @@ Cron example (every 15 minutes):
 """
 
 import csv
+import errno
 import logging
 import os
 import subprocess
@@ -32,10 +34,12 @@ from apps.progress.models import IntentFeedbackBuffer, IntentRetrainingCounter
 
 logger = logging.getLogger(__name__)
 
-# Path to the intent classifier model directory, relative to the backend root.
-BACKEND_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
-MODEL_DIR = BACKEND_DIR.parent / "Intent_Classifier_Model"
+# ------------------------------------------------------------------------------
+# Paths
+# ------------------------------------------------------------------------------
+MODEL_DIR = Path(settings.INTENT_CLASSIFIER_MODEL_DIR).resolve()
 FEEDBACK_CSV = MODEL_DIR / "data" / "feedback_utterances.csv"
+LOCK_FILE = MODEL_DIR / ".feedback_retraining.lock"
 
 INTENT_LABEL_MAP = {
     "On-Topic Question": 0,
@@ -45,6 +49,56 @@ INTENT_LABEL_MAP = {
     "Repeat/clarification": 4,
     "Debugging/Code-Sharing": 5,
 }
+
+
+# ------------------------------------------------------------------------------
+# Simple cross-platform file lock to prevent concurrent retraining runs.
+# ------------------------------------------------------------------------------
+class RetrainingLock:
+    """Atomic file lock that auto-removes stale locks older than ``stale_seconds``."""
+
+    def __init__(self, lock_path: Path, stale_seconds: int = 7200):
+        self.lock_path = lock_path
+        self.stale_seconds = stale_seconds
+        self._acquired = False
+
+    def _is_stale(self) -> bool:
+        try:
+            mtime = self.lock_path.stat().st_mtime
+            return (timezone.now().timestamp() - mtime) > self.stale_seconds
+        except OSError:
+            return False
+
+    def __enter__(self):
+        # If a previous run crashed and left a stale lock, clean it up.
+        if self.lock_path.exists() and self._is_stale():
+            logger.warning("Removing stale retraining lock file: %s", self.lock_path)
+            try:
+                self.lock_path.unlink()
+            except OSError:
+                pass
+
+        try:
+            # O_CREAT | O_EXCL is atomic on both Unix and Windows.
+            fd = os.open(str(self.lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            with os.fdopen(fd, "w") as f:
+                f.write(f"pid={os.getpid()}\nstarted={timezone.now().isoformat()}\n")
+            self._acquired = True
+        except OSError as exc:
+            if exc.errno == errno.EEXIST:
+                raise RuntimeError(
+                    f"Another retraining process is already running (lock file: {self.lock_path})"
+                ) from exc
+            raise
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._acquired:
+            try:
+                self.lock_path.unlink()
+            except OSError:
+                pass
+        return False
 
 
 class Command(BaseCommand):
@@ -80,6 +134,10 @@ class Command(BaseCommand):
             self.stdout.write(self.style.NOTICE("No pending feedback rows. Exiting."))
             return
 
+        with RetrainingLock(LOCK_FILE):
+            self._run_export_and_train(pending, dry_run)
+
+    def _run_export_and_train(self, pending, dry_run: bool):
         # Ensure the target directory exists
         FEEDBACK_CSV.parent.mkdir(parents=True, exist_ok=True)
 
@@ -178,11 +236,27 @@ class Command(BaseCommand):
         )
 
         # Notify the AI service to reload the promoted checkpoint
+        self._notify_ai_service_reload()
+
+    def _notify_ai_service_reload(self):
         ai_service_url = getattr(settings, "AI_SERVICE_URL", "http://localhost:8001").rstrip("/")
+        service_key = getattr(settings, "AI_SERVICE_KEY", "")
+        headers = {}
+        if service_key:
+            headers["X-Service-Key"] = service_key
+        else:
+            self.stdout.write(
+                self.style.WARNING(
+                    "AI_SERVICE_KEY not configured; skipping AI service reload notification."
+                )
+            )
+            return
+
         try:
             reload_resp = requests.post(
                 f"{ai_service_url}/intent/reload",
                 json={"model_path": "prod_tinybert.pt"},
+                headers=headers,
                 timeout=120,
             )
             if reload_resp.status_code == 200:
