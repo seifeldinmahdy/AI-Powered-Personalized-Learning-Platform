@@ -49,38 +49,59 @@ load_dotenv(dotenv_path=_ENV_PATH, override=False)
 logger = structlog.get_logger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# NINE-KEY PIPELINE ARCHITECTURE
+# TEN-KEY PIPELINE ARCHITECTURE
 # ═══════════════════════════════════════════════════════════════════════════════
 #
 # KEY ASSIGNMENT (hard-coded — do not swap roles):
-#   GENERATION_KEYS  = [key_1, key_2, key_3, key_4]   — primary generation workers
-#   FALLBACK_KEYS    = [key_8, key_9]                  — cycling fallback on hard failure
-#   JUDGE_B_KEY      = key_5                           — personalization judge
-#   JUDGE_C_KEY      = key_6                           — distractor quality judge
-#   JUDGE_D_KEY      = key_7                           — factual correctness judge
+#   GENERATION_KEYS  = [key_1, key_2]           — 2 parallel generation workers
+#   JUDGE_B_KEYS     = [key_3, key_4]           — personalization judge (2 keys)
+#   JUDGE_C_KEYS     = [key_5, key_6]           — distractor quality judge (2 keys)
+#   JUDGE_D_KEYS     = [key_7, key_8]           — factual correctness judge (2 keys)
+#   FALLBACK_KEYS    = [key_9, key_10]          — cycling fallback on hard failure
 #
+# Total: 2 gen + 6 judge (2 per judge) + 2 fallback = 10 keys.
 # GENERATION_MODEL & JUDGE_MODEL = gpt-oss:120b for both generation and judging.
-# Both use the same model; judges get dedicated API keys for throughput.
+# All 10 keys are registered in one SharedKeyManager; each role prefers its own
+# keys, then borrows any idle key from another role, then shares a single key
+# (no parallelism), and the run stops only when every key is permanently dead.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# ── Key resolution — each role has a named env var ──────────────────────────
+# ── Key resolution — each role has named env vars ───────────────────────────
 GENERATION_KEYS: list[str] = [
     k for k in [
         os.getenv("OLLAMA_API_KEY_1"),
         os.getenv("OLLAMA_API_KEY_2"),
+    ] if k
+]
+JUDGE_B_KEYS: list[str] = [
+    k for k in [
         os.getenv("OLLAMA_API_KEY_3"),
         os.getenv("OLLAMA_API_KEY_4"),
     ] if k
 ]
-FALLBACK_KEYS: list[str] = [
+JUDGE_C_KEYS: list[str] = [
     k for k in [
-        os.getenv("OLLAMA_API_KEY_8"),
-        os.getenv("OLLAMA_API_KEY_9"),
+        os.getenv("OLLAMA_API_KEY_5"),
+        os.getenv("OLLAMA_API_KEY_6"),
     ] if k
 ]
-JUDGE_B_KEY: str | None = os.getenv("OLLAMA_API_KEY_5")
-JUDGE_C_KEY: str | None = os.getenv("OLLAMA_API_KEY_6")
-JUDGE_D_KEY: str | None = os.getenv("OLLAMA_API_KEY_7")
+JUDGE_D_KEYS: list[str] = [
+    k for k in [
+        os.getenv("OLLAMA_API_KEY_7"),
+        os.getenv("OLLAMA_API_KEY_8"),
+    ] if k
+]
+FALLBACK_KEYS: list[str] = [
+    k for k in [
+        os.getenv("OLLAMA_API_KEY_9"),
+        os.getenv("OLLAMA_API_KEY_10"),
+    ] if k
+]
+
+# Backward-compat aliases (used by legacy checks; map to first key of each set)
+JUDGE_B_KEY: str | None = JUDGE_B_KEYS[0] if JUDGE_B_KEYS else None
+JUDGE_C_KEY: str | None = JUDGE_C_KEYS[0] if JUDGE_C_KEYS else None
+JUDGE_D_KEY: str | None = JUDGE_D_KEYS[0] if JUDGE_D_KEYS else None
 
 # Model names — set via env vars with safe defaults
 GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "gpt-oss:120b")
@@ -88,7 +109,7 @@ JUDGE_MODEL:      str = os.getenv("JUDGE_MODEL", "gpt-oss:120b")
 
 # ── Unified CONFIG dict — preserved for internal use ────────────────────────
 CONFIG = {
-    # Aggregate key lists for KeyPool (used by generation workers)
+    # Aggregate key lists (registered into the SharedKeyManager)
     "api_keys_primary": GENERATION_KEYS,
     "api_keys_backup":  FALLBACK_KEYS,
     "ollama_host": os.getenv("OLLAMA_HOST", "https://ollama.com"),
@@ -99,7 +120,12 @@ CONFIG = {
     "chunk_overlap": 80,
     "max_retries": 3,
     "retry_delay": 2,
-    "num_workers": 4,
+    "num_workers": 2,  # matches the 2 generation keys
+    # How many TOTAL judging rounds an MCQ gets before it is given up on.
+    # 1 = original behaviour (judge once, discard on reject). 2 = judge, and on
+    # reject regenerate ONCE with the judges' feedback and re-judge. Each extra
+    # round costs ~1 generation + up to 3 judge calls, so keep this small.
+    "max_eval_retries": 2,
     # How many consecutive API errors on a key before marking it failed
     "key_fail_threshold": 3,
     # Seconds to wait before re-trying a failed key
@@ -941,6 +967,11 @@ def _build_tasks(
             qtype = assigned
             score_category = _weighted_sample(SCORE_CATEGORY_WEIGHTS)
 
+            # very_weak HARD override: type MUST be 4a regardless of mastery
+            # (matches the prompt's very_weak block and Judge B's type gate).
+            if score_category == "very_weak":
+                qtype = "4a"
+
             compatible_masteries = [
                 m for m, types in MASTERY_TYPE_ELIGIBILITY.items()
                 if qtype in types
@@ -954,10 +985,15 @@ def _build_tasks(
             else:
                 mastery = _weighted_sample(MASTERY_WEIGHTS)
 
+            mastery_types = set(MASTERY_TYPE_ELIGIBILITY.get(mastery, ["4a"]))
             misconception_context = None
-            if random.random() < 0.20:
+            # Skip escalation for very_weak; otherwise escalate only when the
+            # escalated type stays eligible for the chosen mastery.
+            if score_category != "very_weak" and random.random() < 0.20:
                 original_type = qtype
-                qtype = _ESCALATION_MAP.get(qtype, qtype)
+                escalated = _ESCALATION_MAP.get(qtype, qtype)
+                if escalated in mastery_types:
+                    qtype = escalated
                 misconception_context = (
                     f"student chose a wrong answer for a Type {original_type} "
                     f"question on this topic"
@@ -997,10 +1033,23 @@ def _build_tasks(
                 pool = list(mastery_types)
             question_type = random.choice(pool)
 
+            # very_weak HARD override: type MUST be 4a regardless of mastery,
+            # matching the prompt's very_weak block and Judge B's type-override
+            # gate. Without this the metadata keeps the sampled type and Judge B
+            # rejects every very_weak sample as very_weak_type_override.
+            if score_category == "very_weak":
+                question_type = "4a"
+
             misconception_context = None
-            if random.random() < 0.20:
+            # Skip escalation for very_weak (it must stay 4a). Otherwise escalate
+            # only when the escalated type is still eligible for this mastery —
+            # an out-of-ceiling type would be rejected by Judge B as
+            # type_not_eligible.
+            if score_category != "very_weak" and random.random() < 0.20:
                 original_type = question_type
-                question_type = _ESCALATION_MAP.get(question_type, question_type)
+                escalated = _ESCALATION_MAP.get(question_type, question_type)
+                if escalated in mastery_types:
+                    question_type = escalated
                 misconception_context = (
                     f"student chose a wrong answer for a Type {original_type} "
                     f"question on this topic"
@@ -1321,189 +1370,280 @@ def _validate_response(data: dict) -> str | None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# KEY POOL  — thread-safe primary ↔ backup rotation (generation workers)
+# SHARED KEY MANAGER  — one global registry every role draws from
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# A single manager holds the health (cooldown) and live load (in-use count) of
+# EVERY API key.  Generation workers and all three judges draw keys from it.
+#
+# When a role needs a key it calls ``pick(preferred)``.  The manager returns the
+# best key using this priority, so the run keeps going as long as ANY key works:
+#   1. One of the role's own preferred keys that is healthy and idle
+#   2. One of the role's preferred keys that is healthy (even if busy)
+#   3. ANY healthy key that is idle — i.e. borrow a non-utilized key that some
+#      other role isn't using right now
+#   4. ANY healthy key at all — share a single key, losing parallelism
+#      (this is the "continue on one key, no parallelization" last resort)
+#
+# Only when EVERY key has been in cooldown continuously for ``grace_period``
+# seconds (default 30 min) does ``all_dead`` flip True and the pipeline stops
+# gracefully.  A single recovering key resets the outage clock, because there is
+# still a way to continue.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class KeyPool:
-    """Thread-safe API key pool with primary→backup→primary rotation.
+def _is_quota_error(exc: Exception) -> bool:
+    """Heuristic: does this exception look like a rate-limit / quota error?"""
+    s = str(exc).lower()
+    return any(w in s for w in ("quota", "429", "rate limit", "exceeded", "too many"))
 
-    Used by generation workers only.  Judge keys are dedicated singletons
-    and never go through this pool.
 
-    Each worker owns one key at a time. When it reports an API error the pool
-    immediately gives it the next available key (cycling through primary first,
-    then backup, then primary again).  A key is marked "cooling down" for
-    ``cooldown`` seconds after ``fail_threshold`` consecutive errors so
-    transiently-bad keys can recover.  If every key in both sets is cooling
-    down simultaneously, ``all_failed`` is set and workers stop cleanly.
+class AllKeysDeadError(RuntimeError):
+    """Raised by RoleClient when every API key is permanently unavailable."""
+
+
+class SharedKeyManager:
+    """Global, thread-safe registry of every API key's health and live load.
+
+    Shared across generation workers and all judges so any role can borrow an
+    idle key from any other role, share a single surviving key when nothing
+    else is free, and never stop until every key is genuinely dead.
     """
 
     def __init__(
         self,
-        primary: list[str],
-        backup: list[str],
+        role_keys: dict[str, list[str]],
         fail_threshold: int = 3,
-        cooldown: float = 60.0,
+        base_cooldown: float = 60.0,
+        quota_cooldown: float = 120.0,
+        grace_period: float = 1800.0,
     ):
-        self._primary  = list(primary)
-        self._backup   = list(backup)
-        self._all_keys = self._primary + self._backup
+        # Union of every key across all roles, de-duplicated, order preserved.
+        self._all_keys: list[str] = []
+        seen: set[str] = set()
+        for keys in role_keys.values():
+            for k in keys:
+                if k and k not in seen:
+                    seen.add(k)
+                    self._all_keys.append(k)
         if not self._all_keys:
-            raise ValueError("KeyPool requires at least one API key.")
+            raise ValueError("SharedKeyManager requires at least one API key.")
 
         self._fail_threshold = fail_threshold
-        self._cooldown       = cooldown
-        self._lock           = threading.Lock()
+        self._base_cd        = base_cooldown
+        self._quota_cd       = quota_cooldown
+        self._grace          = grace_period
+        self._lock           = threading.RLock()
 
-        # Per-key state
-        self._consecutive_errors: dict[str, int]   = {k: 0 for k in self._all_keys}
-        self._cooling_until:      dict[str, float]  = {k: 0.0 for k in self._all_keys}
+        self._errors:        dict[str, int]   = {k: 0 for k in self._all_keys}
+        self._cooling_until: dict[str, float] = {k: 0.0 for k in self._all_keys}
+        self._in_use:        dict[str, int]   = {k: 0 for k in self._all_keys}
 
-        # Round-robin index across all keys
-        self._rr_idx = 0
+        self._outage_start: float | None = None
+        self._last_pause_print: float = 0.0
+        self.all_dead = False
 
-        # Set to True when every key is in cooldown simultaneously
-        self.all_failed = False
+    # ── introspection ────────────────────────────────────────────────────────
 
-    # ── public API ────────────────────────────────────────────────────────────
+    def num_keys(self) -> int:
+        return len(self._all_keys)
 
-    def get_initial_key(self) -> str:
-        """Return the first available key for a new worker."""
+    def status(self) -> dict:
+        """Snapshot of key health for the final report."""
         with self._lock:
-            return self._next_available_key_locked()
+            now = time.time()
+            cooling = [k for k in self._all_keys if now < self._cooling_until[k]]
+            in_use  = [k for k in self._all_keys if self._in_use[k] > 0]
+            return {
+                "total":   len(self._all_keys),
+                "healthy": len(self._all_keys) - len(cooling),
+                "cooling": len(cooling),
+                "in_use":  len(in_use),
+                "all_dead": self.all_dead,
+            }
+
+    # ── selection ─────────────────────────────────────────────────────────────
+
+    def pick(self, preferred: list[str]) -> str | None:
+        """Acquire the best available key for a caller (increments its in-use).
+
+        Blocks (sleeping in small increments) while every key is cooling down,
+        printing a pause notice.  Returns the chosen key, or ``None`` once every
+        key has been dead continuously past the grace period — the caller should
+        then stop.  Always pair a non-None result with ``release(key)``.
+        """
+        pref = [k for k in preferred if k in self._cooling_until]
+        pref_set = set(pref)
+
+        while True:
+            wait_s = 0.0
+            with self._lock:
+                if self.all_dead:
+                    return None
+                now = time.time()
+                healthy = [k for k in self._all_keys if now >= self._cooling_until[k]]
+
+                if healthy:
+                    self._outage_start = None
+
+                    def rank(k: str) -> tuple:
+                        # Tier 0: my preferred keys (idle ones sort first via in_use)
+                        # Tier 1: someone else's idle key (borrow non-utilized)
+                        # Tier 2: someone else's busy key (share — no parallelism)
+                        if k in pref_set:
+                            return (0, self._in_use[k], pref.index(k))
+                        return (1 if self._in_use[k] == 0 else 2, self._in_use[k], 0)
+
+                    best = min(healthy, key=rank)
+                    self._in_use[best] += 1
+                    return best
+
+                # ── No healthy keys anywhere — global outage ──────────────────
+                if self._outage_start is None:
+                    self._outage_start = now
+                outage = now - self._outage_start
+                soonest = min(self._cooling_until[k] for k in self._all_keys)
+                wait_s = min(max(1.0, soonest - now), 30.0)
+
+                if outage >= self._grace:
+                    self.all_dead = True
+                    logger.error(
+                        "all_keys_dead",
+                        outage_min=round(outage / 60, 1),
+                        keys=len(self._all_keys),
+                    )
+                    print(
+                        f"\n  ✗  All {len(self._all_keys)} API keys have been "
+                        f"unavailable for {outage / 60:.0f} min straight. No way to "
+                        "continue — stopping gracefully. Re-run to resume from the "
+                        "saved checkpoint.",
+                        flush=True,
+                    )
+                    return None
+
+                # Throttle the pause banner to once every ~15 s
+                if now - self._last_pause_print > 15.0:
+                    self._last_pause_print = now
+                    logger.warning(
+                        "all_keys_cooling",
+                        wait_s=round(wait_s, 1),
+                        outage_min=round(outage / 60, 1),
+                    )
+                    print(
+                        f"\n  ⏸  All API keys in cooldown — pausing (checkpoint "
+                        f"saved, auto-resuming). [outage {outage / 60:.1f} min / "
+                        f"30 min limit]",
+                        flush=True,
+                    )
+
+            # Sleep OUTSIDE the lock so other threads can release/recover keys.
+            time.sleep(wait_s)
+
+    def release(self, key: str) -> None:
+        """Mark one in-use slot of ``key`` as freed."""
+        with self._lock:
+            if self._in_use.get(key, 0) > 0:
+                self._in_use[key] -= 1
 
     def report_success(self, key: str) -> None:
-        """Reset the error counter for ``key``."""
+        """Clear the error count and any cooldown for a key that just worked."""
         with self._lock:
-            self._consecutive_errors[key] = 0
+            self._errors[key] = 0
+            self._cooling_until[key] = 0.0
 
-    def report_api_error(self, key: str) -> str:
-        """Record an API error for ``key`` and return the next key to use.
-
-        If the error count reaches the threshold the key enters cooldown.
-        Returns the same key if it is still usable.
-        """
+    def report_error(self, key: str, is_quota: bool = False) -> None:
+        """Record an error; cool the key down once it crosses the threshold."""
         with self._lock:
-            self._consecutive_errors[key] = self._consecutive_errors.get(key, 0) + 1
-            if self._consecutive_errors[key] >= self._fail_threshold:
-                self._cooling_until[key] = time.time() + self._cooldown
-                self._consecutive_errors[key] = 0
+            self._errors[key] = self._errors.get(key, 0) + 1
+            if self._errors[key] >= self._fail_threshold:
+                cd = self._quota_cd if is_quota else self._base_cd
+                self._cooling_until[key] = time.time() + cd
+                self._errors[key] = 0
                 logger.warning(
                     "key_cooling_down",
                     key=key[:8] + "...",
-                    cooldown_s=self._cooldown,
+                    cooldown_s=cd,
+                    reason="quota" if is_quota else "error",
                 )
-            return self._next_available_key_locked()
-
-    # ── internals ─────────────────────────────────────────────────────────────
-
-    def _next_available_key_locked(self) -> str:
-        """Return next non-cooling key. Sets all_failed if none available."""
-        now = time.time()
-        # Try primary first, then backup — pure round-robin within each tier
-        for tier in (self._primary, self._backup, self._primary):
-            for _ in range(len(tier)):
-                key = tier[self._rr_idx % len(tier)] if tier else None
-                self._rr_idx += 1
-                if key and now >= self._cooling_until.get(key, 0.0):
-                    return key
-        # All keys are cooling — pick the one that cools down soonest
-        candidates = [
-            (self._cooling_until.get(k, 0.0), k)
-            for k in self._all_keys
-        ]
-        soonest_time, soonest_key = min(candidates)
-        wait = max(0.0, soonest_time - now)
-        if wait > 0:
-            logger.error(
-                "all_keys_cooling",
-                wait_s=round(wait, 1),
-                msg="All API keys are in cooldown — waiting for recovery.",
-            )
-            # Check if all keys have been cooling for too long (give up)
-            max_cooling = max(t for t, _ in candidates)
-            if max_cooling - now > self._cooldown * 3:
-                self.all_failed = True
-            time.sleep(min(wait, 10.0))  # wait in small increments
-        return soonest_key
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# WORKER POOL  — generation key management with hard-failure fallback cycling
+# ROLE CLIENT  — resilient .chat()/.chat_json() backed by SharedKeyManager
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class WorkerPool:
-    """Manages 4 primary generation keys with fallback cycling on hard failure.
+class RoleClient:
+    """Drop-in for OllamaClient that draws a key from SharedKeyManager per call.
 
-    A "hard failure" is: connection refused, auth error (401/403), or
-    5 consecutive timeouts from the same key.  A single timeout or rate
-    limit is NOT a hard failure — the caller should retry once before
-    calling ``mark_failed``.
-
-    When a key is hard-failed, it is permanently removed from the active
-    set and replaced by the next fallback key.  If no fallbacks remain the
-    active pool shrinks.  ``available()`` returns False only when the active
-    pool is completely empty.
+    Mirrors ``OllamaClient.chat()`` and ``.chat_json()`` so generation workers,
+    judges, and the regeneration path can all use it unchanged.  On every call
+    it picks the best available key (its own keys first, then any idle key, then
+    a shared key), and on an API error it cools that key and rotates to another.
+    It only raises ``AllKeysDeadError`` once every key is permanently dead.
     """
 
-    def __init__(self, primary_keys: list[str], fallback_keys: list[str]):
-        self._lock = threading.Lock()
-        self.active_keys: list[str]  = list(primary_keys)
-        self.fallback_keys: list[str] = list(fallback_keys)
-        self.failed_keys: set[str]   = set()
+    def __init__(
+        self,
+        manager: SharedKeyManager,
+        preferred_keys: list[str],
+        model: str,
+        role_name: str,
+        max_rotations: int | None = None,
+    ):
+        self._mgr = manager
+        self._preferred = [k for k in preferred_keys if k]
+        self._model = model
+        self._role = role_name
+        self._max_rot = max_rotations
+        self._clients: dict[str, Any] = {}
 
-        # Per-key consecutive timeout counter (resets on success)
-        self._timeout_count: dict[str, int] = {
-            k: 0 for k in primary_keys + fallback_keys
-        }
-        self._TIMEOUT_HARD_LIMIT = 5
+    def _client_for(self, key: str):
+        c = self._clients.get(key)
+        if c is None:
+            c = _make_ollama_client(key, model=self._model)
+            self._clients[key] = c
+        return c
 
-    def get_active_keys(self) -> list[str]:
-        """Return a snapshot of the currently active key list."""
-        with self._lock:
-            return list(self.active_keys)
+    def _invoke(self, method: str, messages: list[dict],
+                temperature: float, timeout_override: int):
+        max_rot = self._max_rot or (self._mgr.num_keys() * 3)
+        last_exc: Exception | None = None
+        for _ in range(max_rot):
+            key = self._mgr.pick(self._preferred)
+            if key is None:
+                raise AllKeysDeadError(f"{self._role}: all API keys dead")
+            try:
+                fn = getattr(self._client_for(key), method)
+                result = fn(
+                    messages=messages,
+                    temperature=temperature,
+                    timeout_override=timeout_override,
+                )
+                self._mgr.report_success(key)
+                return result
+            except AllKeysDeadError:
+                raise
+            except Exception as exc:
+                self._mgr.report_error(key, _is_quota_error(exc))
+                last_exc = exc
+                logger.warning(
+                    f"{self._role}_api_error",
+                    key=key[:8] + "...",
+                    error=str(exc)[:100],
+                )
+            finally:
+                self._mgr.release(key)
+        # Exhausted rotations without a permanent-death signal — surface the
+        # last error so the caller (worker retry loop / judge except) can react.
+        raise last_exc or RuntimeError(f"{self._role}: exhausted key rotations")
 
-    def report_success(self, key: str) -> None:
-        """Reset the timeout counter for a key after a successful call."""
-        with self._lock:
-            self._timeout_count[key] = 0
+    def chat(self, messages: list[dict], temperature: float = 0.2,
+             timeout_override: int = 120) -> str:
+        return self._invoke("chat", messages, temperature, timeout_override)
 
-    def report_timeout(self, key: str) -> bool:
-        """Record a timeout for ``key``.  Returns True if this becomes a hard failure."""
-        with self._lock:
-            self._timeout_count[key] = self._timeout_count.get(key, 0) + 1
-            if self._timeout_count[key] >= self._TIMEOUT_HARD_LIMIT:
-                return True  # caller should call mark_failed
-            return False
-
-    def mark_failed(self, key: str) -> None:
-        """Permanently remove ``key`` from the active pool and replace with next fallback."""
-        with self._lock:
-            if key in self.active_keys:
-                self.active_keys.remove(key)
-                self.failed_keys.add(key)
-                if self.fallback_keys:
-                    replacement = self.fallback_keys.pop(0)
-                    self.active_keys.append(replacement)
-                    logger.info(
-                        "worker_key_replaced",
-                        failed=key[:8] + "...",
-                        replacement=replacement[:8] + "...",
-                        active_count=len(self.active_keys),
-                    )
-                else:
-                    logger.warning(
-                        "worker_key_failed_no_fallback",
-                        failed=key[:8] + "...",
-                        active_count=len(self.active_keys),
-                    )
-
-    def available(self) -> bool:
-        """Return True if there is at least one active key."""
-        with self._lock:
-            return len(self.active_keys) > 0
+    def chat_json(self, messages: list[dict], temperature: float = 0.7,
+                  timeout_override: int = 180):
+        return self._invoke("chat_json", messages, temperature, timeout_override)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1764,19 +1904,36 @@ def _score_misconception_signal(parsed: dict) -> int:
     return sum(1 for c in checks if c == "YES")
 
 
-def _parse_judge_b_response(raw: str) -> JudgeBResult:
+def _parse_judge_b_response(raw: str, score_category: str = "moderate") -> JudgeBResult:
     """Parse Judge B's structured text response into a JudgeBResult.
 
     Extracts all atomic YES/NO sub-checks by regex; derives numeric
     scores in Python.  The LLM is never asked to produce a score directly.
+
+    ``score_category`` is needed to resolve the very_weak override: when the
+    score category is very_weak, the question is FORCED to a Type 4a definition
+    regardless of mastery, so the cognitive *framing* is dictated by the
+    override, not by mastery. In that case the framing sub-check must not count
+    against the mastery score (mastery still governs vocabulary and distractor
+    sophistication). Without this, every Intermediate/Expert + very_weak sample
+    is rejected as mastery_mismatch because a plain definition "doesn't match"
+    Intermediate/Expert framing.
     """
     def _yn(key: str, default: str = "NO") -> str:
         # Scan each line for the key (case-insensitive) then extract YES/NO.
         # This is decoration-agnostic: handles **KEY:** YES, - KEY: YES,
         # KEY: **YES**, KEY — YES, or any other formatting the LLM may use.
         key_upper = key.upper()
+        # Match the key as a whole token — NOT as a prefix of a longer
+        # identifier. Without this, scanning for "CHECK_D3_DIFFERENT" also
+        # matches the earlier "CHECK_D3_DIFFERENT_REASONING:" line and grabs a
+        # stray "yes"/"no" word out of the reasoning prose (e.g. "no notion"),
+        # which silently inverts the verdict.
+        key_pat = re.compile(
+            r'(?<![A-Z0-9_])' + re.escape(key_upper) + r'(?![A-Z0-9_])'
+        )
         for line in raw.splitlines():
-            if key_upper in line.upper():
+            if key_pat.search(line.upper()):
                 m = re.search(r'\b(YES|NO)\b', line, re.IGNORECASE)
                 if m:
                     return m.group(1).upper()
@@ -1807,6 +1964,12 @@ def _parse_judge_b_response(raw: str) -> JudgeBResult:
         "misconception_check_distractor_targets": _yn("MISCONCEPTION_CHECK_DISTRACTOR_TARGETS", default="YES"),
         "misconception_check_answer_addresses_gap": _yn("MISCONCEPTION_CHECK_ANSWER_ADDRESSES_GAP", default="YES"),
     }
+
+    # very_weak forces a Type 4a definition: framing is dictated by the override,
+    # not mastery, so do not let a "framing doesn't match mastery" NO sink the
+    # sample. Mastery still governs vocabulary + distractor sophistication.
+    if score_category == "very_weak":
+        parsed["mastery_check_framing"] = "YES"
 
     mastery_score       = _score_mastery_signal(parsed)
     score_cat_score     = _score_category_signal(parsed)
@@ -1874,7 +2037,7 @@ def _run_judge_b(
             temperature=0.2,
             timeout_override=120,
         )
-        return _parse_judge_b_response(raw)
+        return _parse_judge_b_response(raw, mcq.get("score_category", "moderate"))
     except Exception as exc:
         logger.warning("judge_b_failed", error=str(exc)[:100])
         # On failure: ACCEPT with score 0 so the sample is not silently lost;
@@ -1962,8 +2125,16 @@ def _parse_judge_c_response(raw: str) -> JudgeCResult:
         # Scan each line for the key (case-insensitive) then extract YES/NO.
         # Decoration-agnostic: handles **KEY:** YES, - KEY: YES, KEY — YES, etc.
         key_upper = key.upper()
+        # Match the key as a whole token — NOT as a prefix of a longer
+        # identifier. Without this, scanning for "CHECK_D3_DIFFERENT" also
+        # matches the earlier "CHECK_D3_DIFFERENT_REASONING:" line and grabs a
+        # stray "yes"/"no" word out of the reasoning prose (e.g. "no notion"),
+        # which silently inverts the verdict.
+        key_pat = re.compile(
+            r'(?<![A-Z0-9_])' + re.escape(key_upper) + r'(?![A-Z0-9_])'
+        )
         for line in raw.splitlines():
-            if key_upper in line.upper():
+            if key_pat.search(line.upper()):
                 m = re.search(r'\b(YES|NO)\b', line, re.IGNORECASE)
                 if m:
                     return m.group(1).upper()
@@ -2036,7 +2207,7 @@ def _build_judge_d_prompt(mcq: dict) -> str:
     return f"""\
 You are a fact-checker for educational MCQ training data.
 
-Chunk:
+Chunk (background context only — the answer need NOT be restated here):
 {chunk}
 
 Question: {question}
@@ -2046,18 +2217,14 @@ Explanation: {explanation}
 STEP 1 — Decompose the correct answer into its core factual claims.
 List each distinct claim made by the correct answer, numbered.
 
-CLAIMS: [list each claim, e.g. "1. A hash table provides O(1)
-  average-case lookup. 2. Collisions degrade this to O(n) worst case."]
+STEP 2 — For EACH claim, judge it against established, general computer
+science knowledge. A claim is FALSE only if it is factually incorrect by
+general CS knowledge. IMPORTANT: a claim that is correct but simply not
+restated word-for-word in the chunk is still TRUE — do NOT penalize a
+claim merely for being absent from the chunk. The chunk is background,
+not the sole source of truth.
 
-STEP 2 — For EACH claim listed above, verify it against general CS
-knowledge and the chunk. Write one sentence of reasoning per claim,
-then YES (claim is true) or NO (claim is false or unsupported).
-
-CLAIM_1_REASONING: [...]
-CLAIM_1_VERIFIED: [YES/NO]
-CLAIM_2_REASONING: [...]  (omit if only one claim)
-CLAIM_2_VERIFIED: [YES/NO]
-(continue for each claim)
+Write one short line of reasoning per claim, then state TRUE or FALSE.
 
 STEP 3 — Answerability and ambiguity.
 
@@ -2073,8 +2240,13 @@ AMBIGUITY_CHECK: [YES — only one correct answer / NO — ambiguous]
 STEP 4 — Explanation correctness.
 
 EXPLANATION_REASONING: [does the explanation correctly justify
-  the answer using the claims verified above?]
+  the answer? It is correct unless it contains a factual error.]
 EXPLANATION_CHECK: [YES/NO]
+
+STEP 5 — FINAL VERDICT.
+Output exactly ONE of the following two lines verbatim:
+FACTUAL_VERDICT: PASS   (every claim is factually correct)
+FACTUAL_VERDICT: FAIL   (at least one claim is factually incorrect)
 """
 
 
@@ -2088,36 +2260,49 @@ def _parse_judge_d_response(raw: str) -> JudgeDResult:
         # Scan each line for the key (case-insensitive) then extract YES/NO.
         # Decoration-agnostic: handles **KEY:** YES, - KEY: YES, KEY — YES, etc.
         key_upper = key.upper()
+        # Match the key as a whole token — NOT as a prefix of a longer
+        # identifier. Without this, scanning for "CHECK_D3_DIFFERENT" also
+        # matches the earlier "CHECK_D3_DIFFERENT_REASONING:" line and grabs a
+        # stray "yes"/"no" word out of the reasoning prose (e.g. "no notion"),
+        # which silently inverts the verdict.
+        key_pat = re.compile(
+            r'(?<![A-Z0-9_])' + re.escape(key_upper) + r'(?![A-Z0-9_])'
+        )
         for line in raw.splitlines():
-            if key_upper in line.upper():
+            if key_pat.search(line.upper()):
                 m = re.search(r'\b(YES|NO)\b', line, re.IGNORECASE)
                 if m:
                     return m.group(1).upper()
         return default
 
-    # Extract all CLAIM_N_VERIFIED entries (1, 2, 3, ...) — line-scan approach
-    claim_results: dict[str, str] = {}
+    # ── Factual verdict — read the single explicit FACTUAL_VERDICT line ──
+    # The model decomposes/verifies claims in free-form text (often a markdown
+    # table), so we DO NOT scrape per-claim tokens — that format is too varied
+    # and previously defaulted every sample to a reject. Instead the prompt
+    # ends with one machine-readable verdict line. PASS unless an explicit
+    # FAIL is found; parse failure defaults to PASS so a formatting quirk can
+    # never silently reject a factually-correct sample.
+    factual_fail = False
     for line in raw.splitlines():
-        line_upper = line.upper()
-        cm = re.search(r'(CLAIM_\d+_VERIFIED)', line_upper)
-        if cm:
-            yn_m = re.search(r'\b(YES|NO)\b', line, re.IGNORECASE)
-            if yn_m:
-                claim_results[cm.group(1).lower()] = yn_m.group(1).upper()
-
-    # If no claims found at all, treat as unverified (parser fault → soft reject)
-    if not claim_results:
-        claim_results["claim_1_verified"] = "NO"
+        if "FACTUAL_VERDICT" in line.upper():
+            if re.search(r'\bFAIL\b', line, re.IGNORECASE):
+                factual_fail = True
+            break
 
     sub_checks = {
-        **claim_results,
-        "answerability_check": _yn("ANSWERABILITY_CHECK"),
+        # YES = every claim factually correct; stored as YES/NO so the
+        # sub-check pass-rate reporter (which counts "YES") tallies it.
+        "factual_verdict":     "NO" if factual_fail else "YES",
+        # Default these to YES: FACTUAL_VERDICT is the primary factual gate, so a
+        # formatting quirk that hides one of these secondary checks must not by
+        # itself reject a sample. A genuine model "NO" is still read and honored.
+        "answerability_check": _yn("ANSWERABILITY_CHECK", default="YES"),
         "ambiguity_check":     _yn("AMBIGUITY_CHECK", default="YES"),
-        "explanation_check":   _yn("EXPLANATION_CHECK"),
+        "explanation_check":   _yn("EXPLANATION_CHECK", default="YES"),
     }
 
-    # Verdict: any NO anywhere is a reject
-    if any(v == "NO" for v in claim_results.values()):
+    # Verdict: an explicit factual FAIL is a reject
+    if factual_fail:
         return JudgeDResult(verdict="REJECT", reason="unverified_claim", sub_checks=sub_checks)
     if sub_checks["answerability_check"] == "NO":
         return JudgeDResult(verdict="REJECT", reason="requires_outside_knowledge", sub_checks=sub_checks)
@@ -2161,31 +2346,228 @@ def _decide(
 
     Returns (accepted: bool, reason: str).
     On accept, attaches personalization_score to mcq in-place.
-
-    Thresholds are intentionally permissive for training data generation.
-    Post-hoc filtering can tighten quality later; the goal here is to
-    produce a large, diverse dataset without burning API budget on
-    near-100% rejection rates.
     """
-    # Hard gate: very_weak type override — this is a design rule, not opinion
-    if b.primary_failure == "very_weak_type_override_violated":
-        return False, "judge_b:very_weak_type_override"
-
-    # Hard gate: Judge C — distractor is identical to answer (objective check)
+    if not b.type_eligible:
+        return False, f"judge_b:type_not_eligible"
+    if b.mastery_score < 2:
+        return False, f"judge_b:mastery_score_{b.mastery_score}"
+    if b.score_cat_score < 2:
+        return False, f"judge_b:score_category_{b.score_cat_score}"
+    if mcq.get("misconception_context") and b.misconception_score < 2:
+        return False, f"judge_b:misconception_{b.misconception_score}"
+    if b.depth_calibration == "TOO_HARD":
+        return False, "judge_b:too_hard"
+    if b.verdict == "REJECT":
+        return False, f"judge_b:{b.primary_failure}"
     if c.verdict == "REJECT":
         return False, f"judge_c:{c.reason}"
-
-    # Hard gate: Judge D — factual incorrectness (objective check)
     if d.verdict == "REJECT":
         return False, f"judge_d:{d.reason}"
-
-    # Soft scoring: mastery, score_category, misconception, type eligibility,
-    # and depth calibration are stored as metadata but NOT used for rejection.
-    # The personalization_score captures overall quality for post-hoc filtering.
+    # All passed — attach personalization score metadata
     mcq["personalization_score"] = b.overall_score
-    mcq["type_eligible"] = b.type_eligible
-    mcq["depth_calibration"] = b.depth_calibration
     return True, "accepted"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# JUDGE-FEEDBACK REGENERATION  — turn a rejection into actionable guidance and
+# ask the generator to try the SAME chunk again, so no chunk is left behind.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _build_judge_feedback(reason: str, mcq: dict) -> str:
+    """Translate a machine reason code into a concrete instruction for the LLM.
+
+    The string is shown to the generation model verbatim, so it must read as a
+    direct, actionable correction — not an error code.
+    """
+    mastery   = mcq.get("mastery_level", "the target")
+    score_cat = mcq.get("score_category", "the target")
+
+    # Judge A — regex pre-filter (textbook/figure/code references)
+    if reason.startswith("judge_a"):
+        return (
+            "The question referred to the source material directly (e.g. "
+            "'according to the passage', a figure, or a pasted code block). Ask "
+            "about the underlying concept so the question is answerable WITHOUT "
+            "seeing this specific text, figure, or code."
+        )
+
+    # Judge B — personalization adherence
+    if reason.startswith("judge_b"):
+        if "very_weak_type_override" in reason:
+            return (
+                "score_category is very_weak, so the question MUST be a Type 4a "
+                "definition/recall question. Ask simply what the concept IS."
+            )
+        if "type_not_eligible" in reason or "type_ineligible" in reason:
+            return (
+                f"The question type is not appropriate for a {mastery} student. "
+                f"Re-frame it within the allowed types for {mastery}."
+            )
+        if "mastery_score" in reason or "mastery_mismatch" in reason:
+            return (
+                f"The vocabulary, cognitive framing, and distractor sophistication "
+                f"did not match a {mastery} student. Re-frame the question and "
+                f"distractors to fit the {mastery} level precisely."
+            )
+        if "score_category" in reason:
+            return (
+                f"The difficulty did not match score_category '{score_cat}'. "
+                f"Adjust how hard the question and distractors are to match "
+                f"'{score_cat}'."
+            )
+        if "misconception" in reason:
+            return (
+                "The question did not properly address the misconception context. "
+                "Approach the concept from a new angle and make at least one "
+                "distractor appeal to the same wrong mental model."
+            )
+        if "too_hard" in reason:
+            return (
+                f"The cognitive depth was too high for a {mastery} + {score_cat} "
+                f"student. Make the question and distractors easier."
+            )
+        return (
+            f"The question did not fit the {mastery} / {score_cat} student "
+            f"profile. Re-frame it to match both signals."
+        )
+
+    # Judge C — distractor quality
+    if reason.startswith("judge_c"):
+        if "low_diversity" in reason:
+            return (
+                "Two or more distractors expressed the same idea. Make all three "
+                "distractors target DIFFERENT misconceptions, each clearly distinct."
+            )
+        if "equals_answer" in reason:
+            return (
+                "One distractor was effectively the same as the correct answer. "
+                "Every distractor must be genuinely WRONG and distinct from the "
+                "correct answer."
+            )
+        if "implausible" in reason:
+            return (
+                "At least one distractor was absurd or unrelated to the topic. "
+                "Make every distractor a plausible, wrong-but-tempting answer that "
+                "a student with partial understanding might actually pick."
+            )
+        return (
+            "Improve the distractors: three distinct, plausible, wrong answers, "
+            "each targeting a different misconception."
+        )
+
+    # Judge D — factual correctness
+    if reason.startswith("judge_d"):
+        if "unverified_claim" in reason:
+            return (
+                "The correct answer or explanation contained a factually INCORRECT "
+                "claim. Ensure the correct answer is unambiguously true by general "
+                "CS knowledge, and that the explanation contains no factual errors."
+            )
+        if "requires_outside_knowledge" in reason:
+            return (
+                "The question could not be answered from general CS knowledge of "
+                "the concept alone. Make it answerable by anyone who understands "
+                "the concept, without outside trivia or this specific source."
+            )
+        if "ambiguous" in reason:
+            return (
+                "More than one answer could be defended as correct. Make exactly "
+                "ONE option unambiguously correct and the other three clearly wrong."
+            )
+        if "explanation_incorrect" in reason:
+            return (
+                "The explanation did not correctly justify the answer. Rewrite the "
+                "explanation so it accurately explains why the correct answer is "
+                "right."
+            )
+        return (
+            "Fix factual correctness: the correct answer and explanation must be "
+            "true and the question must have exactly one defensible answer."
+        )
+
+    return (
+        "The question was rejected for quality. Regenerate a clearly correct, "
+        "well-personalized question with three distinct, plausible distractors."
+    )
+
+
+def _regenerate_with_feedback(
+    mcq: dict,
+    feedback: str,
+    client,
+    max_retries: int = 2,
+) -> dict | None:
+    """Regenerate an MCQ for the SAME chunk, given the judges' feedback.
+
+    Rebuilds the original generation task from the rejected ``mcq`` (all the
+    personalization signals are preserved on it), shows the model its rejected
+    attempt plus the concrete feedback, and asks for a corrected question.
+
+    Returns a new mcq dict with the same metadata but fresh
+    question/answer/explanation/distractors, or ``None`` if regeneration failed
+    to produce a structurally-valid response.
+    """
+    task = {
+        "text":                  mcq.get("chunk", ""),
+        "topic":                 mcq.get("topic", "General"),
+        "book":                  mcq.get("_book", "unknown"),
+        "chunk_hash":            mcq.get("_chunk_hash", ""),
+        "mastery":               mcq.get("mastery_level", "Intermediate"),
+        "score_category":        mcq.get("score_category", "moderate"),
+        "question_type":         mcq.get("question_type", "4a"),
+        "misconception_context": mcq.get("misconception_context"),
+    }
+
+    base_prompt = _build_generation_prompt(task)
+    rejected = json.dumps({
+        "question":       mcq.get("question", ""),
+        "correct_answer": mcq.get("correct_answer", ""),
+        "explanation":    mcq.get("explanation", ""),
+        "distractors":    mcq.get("distractors", []),
+    })
+    correction = (
+        "Your previous question was REJECTED by quality reviewers.\n\n"
+        f"REJECTION FEEDBACK: {feedback}\n\n"
+        "Generate a NEW, corrected multiple-choice question for the SAME concept "
+        "and source content, fixing exactly the problem above. Do not repeat the "
+        "rejected question. Return ONLY valid JSON in the required schema."
+    )
+    messages: list[dict] = [
+        {"role": "user",      "content": base_prompt},
+        {"role": "assistant", "content": rejected},
+        {"role": "user",      "content": correction},
+    ]
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            data = client.chat_json(
+                messages=messages,
+                temperature=0.8,  # higher temp to avoid repeating the rejected text
+                timeout_override=180,
+            )
+        except Exception as exc:
+            logger.warning("regen_api_error", error=str(exc)[:120])
+            return None
+
+        error_msg = _validate_response(data)
+        if error_msg is None:
+            new_mcq = dict(mcq)  # preserve all metadata
+            new_mcq["question"]       = str(data["question"]).strip()
+            new_mcq["correct_answer"] = str(data["correct_answer"]).strip()
+            new_mcq["explanation"]    = str(data.get("explanation", "")).strip()
+            new_mcq["distractors"]    = [str(d).strip() for d in data["distractors"]]
+            new_mcq.pop("personalization_score", None)  # stale — recomputed on accept
+            return new_mcq
+
+        if attempt < max_retries:
+            messages.append({"role": "assistant", "content": json.dumps(data)
+                             if isinstance(data, dict) else str(data)})
+            messages.append({"role": "user", "content":
+                             f"Your response was invalid. Error: {error_msg}\n"
+                             "Return corrected JSON only."})
+
+    return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2212,7 +2594,9 @@ class WorkerStats:
 
 def _worker(
     worker_id: int,
-    key_pool: KeyPool,
+    gen_client: "RoleClient",
+    key_mgr: SharedKeyManager,
+    stop_event: threading.Event,
     task_queue: queue.Queue,
     eval_queue: queue.Queue,
     stats: WorkerStats,
@@ -2227,18 +2611,19 @@ def _worker(
     Does NOT write directly to disk — that is the responsibility of the
     evaluation worker which runs the three LLM judges.
 
-    Owns one active API key at a time. On any API/network error the key
-    is reported to KeyPool which returns the next best key.
-    Validation errors (bad JSON structure) keep the current key and
-    append feedback to the conversation for self-correction.
-    """
-    current_key = key_pool.get_initial_key()
-    client = _make_ollama_client(current_key, model=GENERATION_MODEL)
+    Key selection/rotation/borrowing is handled entirely by ``gen_client``
+    (a RoleClient backed by the shared SharedKeyManager): the client prefers
+    the generation keys, borrows any idle key when those are exhausted, shares
+    a single surviving key as a last resort, and raises AllKeysDeadError only
+    when every key is permanently dead — at which point the worker trips the
+    shared ``stop_event`` so the whole run halts gracefully.
 
+    Validation errors (bad JSON structure) keep the conversation going and
+    append feedback for self-correction; they do not rotate keys.
+    """
     while True:
-        # Stop if KeyPool has determined that all keys are permanently dead
-        if key_pool.all_failed:
-            logger.error("worker_stopping_all_keys_failed", worker=worker_id)
+        # Stop if every key is permanently dead, or another worker tripped stop.
+        if key_mgr.all_dead or stop_event.is_set():
             break
 
         # Stop if target reached (for --target mode)
@@ -2260,13 +2645,11 @@ def _worker(
 
         for attempt in range(1, CONFIG["max_retries"] + 1):
             try:
-                data = client.chat_json(
+                data = gen_client.chat_json(
                     messages=messages,
                     temperature=0.7,
                     timeout_override=180,
                 )
-                # Successful API call — reset key error counter
-                key_pool.report_success(current_key)
 
                 # ── Validate the response ─────────────────────────────
                 error_msg = _validate_response(data)
@@ -2289,11 +2672,10 @@ def _worker(
                         "_worker_id": worker_id,
                         "_book": task["book"],
                         "_attempts": attempt,
-                        "_api_key_prefix": current_key[:8],
                     }
                     break
 
-                # ── Validation failed — feedback, keep same key ────────
+                # ── Validation failed — feedback, same conversation ────
                 logger.warning(
                     "worker_validation_failed",
                     worker=worker_id,
@@ -2311,33 +2693,28 @@ def _worker(
                     )
                     messages.append({"role": "user", "content": feedback})
 
+            except AllKeysDeadError:
+                # Every key is permanently dead — stop the whole run gracefully.
+                logger.error("worker_stopping_all_keys_dead", worker=worker_id)
+                stop_event.set()
+                break
+
             except Exception as exc:
-                # ── API / network error — rotate to next key ──────────
+                # RoleClient already rotated/cooled keys internally; this is the
+                # final error after exhausting rotations for this attempt.
                 logger.warning(
                     "worker_api_error",
                     worker=worker_id,
                     attempt=attempt,
-                    key_prefix=current_key[:8] + "...",
                     error=str(exc)[:120],
                 )
-                new_key = key_pool.report_api_error(current_key)
-                if new_key != current_key:
-                    logger.info(
-                        "worker_key_rotated",
-                        worker=worker_id,
-                        old=current_key[:8] + "...",
-                        new=new_key[:8] + "...",
-                    )
-                    current_key = new_key
-                    client = _make_ollama_client(current_key, model=GENERATION_MODEL)
-
-                if key_pool.all_failed:
-                    break
-
                 if attempt < CONFIG["max_retries"]:
-                    # Reset conversation history — start fresh with new key
+                    # Fresh conversation, brief backoff before the next attempt.
                     messages = [{"role": "user", "content": prompt}]
                     time.sleep(CONFIG["retry_delay"])
+
+        if stop_event.is_set() and result is None:
+            break
 
         if result is not None:
             # Push to eval queue — evaluation worker handles judging + writing
@@ -2360,7 +2737,12 @@ def _worker(
             total_success = sum(s.success for s in all_stats)
             total_fail    = sum(s.failure for s in all_stats)
             pbar.update(1)
-            pbar.set_postfix(success=total_success, fail=total_fail, refresh=False)
+            pbar.set_postfix(
+                success=total_success,
+                fail=total_fail,
+                eval_q=eval_queue.qsize(),
+                refresh=False,
+            )
 
         task_queue.task_done()
 
@@ -2385,6 +2767,9 @@ class EvalStats:
         self.judge_c_rejected:        int   = 0
         self.judge_d_rejected:        int   = 0
         self.accepted:                int   = 0
+        # Judge-feedback regeneration telemetry
+        self.regen_attempts:          int   = 0   # total regeneration calls made
+        self.recovered:               int   = 0   # accepted only after a regen
         self.personalization_score_sum: float = 0.0
         # Sub-check pass-rate accumulators: key → (total_seen, yes_count)
         self.sub_check_totals: dict[str, int] = {}
@@ -2393,6 +2778,12 @@ class EvalStats:
 
     def add_generated(self):
         with self._lock: self.generated += 1
+
+    def add_regen_attempt(self):
+        with self._lock: self.regen_attempts += 1
+
+    def add_recovered(self):
+        with self._lock: self.recovered += 1
 
     def add_regex_reject(self):
         with self._lock: self.regex_rejected += 1
@@ -2439,19 +2830,53 @@ def _evaluation_worker(
     judge_c_client,
     judge_d_client,
     eval_stats: EvalStats,
+    regen_client=None,
+    max_eval_retries: int = 1,
+    key_mgr: "SharedKeyManager | None" = None,
 ):
-    """Evaluation worker: drains eval_queue, runs 3 parallel judges, writes accepted.
+    """Evaluation worker: drains eval_queue, judges, and writes accepted samples.
 
     Judge A (regex pre-filter) runs synchronously in Python — no LLM call.
     Judges B, C, D fire in parallel via ThreadPoolExecutor.
-    After each judge fires, its sub_checks dict is recorded into EvalStats
-    for per-sub-check pass-rate reporting at the end of the run.
-    The worker blocks only on evaluation of the current item, not on
-    generation workers — they continue filling the queue independently.
+
+    Judge-feedback loop: when an MCQ is rejected and ``max_eval_retries`` > 1
+    (and a ``regen_client`` is available), the rejection reason is translated
+    into concrete feedback and sent back to the generator, which regenerates a
+    corrected MCQ for the SAME chunk. The new MCQ is re-judged. This repeats up
+    to ``max_eval_retries`` total rounds, so a chunk is never silently discarded
+    on its first rejection.
+
+    The worker blocks only on the current item, not on generation workers —
+    they continue filling the queue independently.
     """
     rejected_log: list[dict] = []
+    can_regen = regen_client is not None and max_eval_retries > 1
+
+    def _judge_once(mcq: dict) -> tuple[bool, str]:
+        """Run Judge A then B/C/D on one MCQ. Returns (accepted, reason)."""
+        if not _passes_regex_filter(mcq):
+            return False, "judge_a:regex"
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            fb = ex.submit(_run_judge_b, mcq, judge_b_client)
+            fc = ex.submit(_run_judge_c, mcq, judge_c_client)
+            fd = ex.submit(_run_judge_d, mcq, judge_d_client)
+            b_result = fb.result()
+            c_result = fc.result()
+            d_result = fd.result()
+        # Record every sub-check answer for pass-rate reporting
+        eval_stats.record_sub_checks(b_result.sub_checks)
+        eval_stats.record_sub_checks(c_result.sub_checks)
+        eval_stats.record_sub_checks(d_result.sub_checks)
+        return _decide(b_result, c_result, d_result, mcq)
 
     while True:
+        # If every key is permanently dead, stop judging and leave the rest of
+        # the queue intact — main() dumps it to the pending-eval file so nothing
+        # is lost and the next run can resume.
+        if key_mgr is not None and key_mgr.all_dead:
+            logger.error("evaluation_worker_stopping_all_keys_dead")
+            break
+
         try:
             item = eval_queue.get(timeout=10)
         except queue.Empty:
@@ -2466,32 +2891,29 @@ def _evaluation_worker(
         mcq = item
         eval_stats.add_generated()
 
-        # ── Judge A: regex pre-filter ───────────────────────────────────
-        if not _passes_regex_filter(mcq):
-            eval_stats.add_regex_reject()
-            rejected_log.append({"reason": "judge_a_regex", "question": mcq.get("question", "")[:100]})
-            logger.debug("eval_rejected_judge_a", question=mcq.get("question", "")[:80])
-            eval_queue.task_done()
-            continue
-
-        # ── Judges B, C, D: fire in parallel ───────────────────────────
-        with ThreadPoolExecutor(max_workers=3) as ex:
-            fb = ex.submit(_run_judge_b, mcq, judge_b_client)
-            fc = ex.submit(_run_judge_c, mcq, judge_c_client)
-            fd = ex.submit(_run_judge_d, mcq, judge_d_client)
-            b_result = fb.result()
-            c_result = fc.result()
-            d_result = fd.result()
-
-        # Record every sub-check answer for pass-rate reporting
-        eval_stats.record_sub_checks(b_result.sub_checks)
-        eval_stats.record_sub_checks(c_result.sub_checks)
-        eval_stats.record_sub_checks(d_result.sub_checks)
-
-        accepted, reason = _decide(b_result, c_result, d_result, mcq)
+        accepted = False
+        reason = ""
+        rounds = 0
+        for rounds in range(1, max_eval_retries + 1):
+            accepted, reason = _judge_once(mcq)
+            if accepted:
+                break
+            # Rejected — regenerate with feedback if there is budget left.
+            if rounds < max_eval_retries and can_regen:
+                feedback = _build_judge_feedback(reason, mcq)
+                logger.debug("eval_regenerating", reason=reason, round=rounds)
+                eval_stats.add_regen_attempt()
+                regen = _regenerate_with_feedback(mcq, feedback, regen_client)
+                if regen is None:
+                    break  # regeneration failed structurally — give up on chunk
+                mcq = regen
+                continue
+            break  # out of budget — terminal reject
 
         if accepted:
             eval_stats.add_accepted(mcq.get("personalization_score", 0.0))
+            if rounds > 1:
+                eval_stats.add_recovered()
             with file_lock:
                 with open(output_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(mcq) + "\n")
@@ -2499,17 +2921,20 @@ def _evaluation_worker(
                 "eval_accepted",
                 personalization_score=mcq.get("personalization_score"),
                 question_type=mcq.get("question_type"),
+                rounds=rounds,
             )
         else:
-            # Track which judge caused the rejection
-            if reason.startswith("judge_b"):
+            # Track which judge caused the final rejection
+            if reason.startswith("judge_a"):
+                eval_stats.add_regex_reject()
+            elif reason.startswith("judge_b"):
                 eval_stats.add_judge_b_reject()
             elif reason.startswith("judge_c"):
                 eval_stats.add_judge_c_reject()
             elif reason.startswith("judge_d"):
                 eval_stats.add_judge_d_reject()
             rejected_log.append({"reason": reason, "question": mcq.get("question", "")[:100]})
-            logger.debug("eval_rejected", reason=reason)
+            logger.debug("eval_rejected", reason=reason, rounds=rounds)
 
         eval_queue.task_done()
 
@@ -2528,26 +2953,55 @@ def _evaluation_worker(
 
 
 def _load_existing_hashes(output_path: str) -> set[str]:
-    """Load chunk hashes already present in the output file."""
+    """Load chunk hashes already present in the output or pending-eval files.
+
+    Reads two sources:
+    - ``output_path`` (mcq_raw.jsonl) — accepted samples from previous runs.
+    - ``<output_dir>/mcq_eval_pending.jsonl`` — MCQs that were generated but
+      not yet evaluated when the last run was interrupted.  These are excluded
+      from the task queue so they are not re-generated; they are loaded into
+      the eval queue directly by ``main()`` instead.
+    """
     hashes: set[str] = set()
     path = Path(output_path)
-    if not path.exists():
-        return hashes
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    h = obj.get("_chunk_hash")
+                    if h:
+                        hashes.add(h)
+                except json.JSONDecodeError:
+                    pass
 
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-                h = obj.get("_chunk_hash")
-                if h:
-                    hashes.add(h)
-            except json.JSONDecodeError:
-                pass
+    # Also mark pending-eval hashes as "done" so we don't re-generate them
+    pending_path = Path(output_path).parent / "mcq_eval_pending.jsonl"
+    pending_count = 0
+    if pending_path.exists():
+        with open(pending_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    h = obj.get("_chunk_hash")
+                    if h:
+                        hashes.add(h)
+                        pending_count += 1
+                except json.JSONDecodeError:
+                    pass
 
-    logger.info("existing_hashes_loaded", count=len(hashes))
+    logger.info(
+        "existing_hashes_loaded",
+        accepted=len(hashes) - pending_count,
+        pending_eval=pending_count,
+        total_skipped=len(hashes),
+    )
     return hashes
 
 
@@ -2558,7 +3012,7 @@ def _load_existing_hashes(output_path: str) -> set[str]:
 
 def _print_quality_report(
     eval_stats: EvalStats,
-    worker_pool: WorkerPool,
+    key_mgr: "SharedKeyManager",
     all_stats: list,
     elapsed: float = 0.0,
 ):
@@ -2584,6 +3038,10 @@ def _print_quality_report(
     print(f"  Judge C rejects:               {rej_c:>6}  {pct(rej_c):>8}  [distractor quality]")
     print(f"  Judge D rejects:               {rej_d:>6}  {pct(rej_d):>8}  [factual correctness]")
     print(f"  Final accepted:                {acc:>6}  {pct(acc):>8}")
+    if eval_stats.regen_attempts > 0:
+        rec = eval_stats.recovered
+        print(f"  Regeneration attempts:         {eval_stats.regen_attempts:>6}  [judge-feedback loop]")
+        print(f"  Recovered after regen:         {rec:>6}  {pct(rec):>8}  [accepted on a later round]")
     print(f"  Avg personalization score:     {avg_p:.2f} / 3.0")
     if elapsed > 0:
         print(f"  Elapsed:                       {elapsed/60:.1f} min")
@@ -2632,6 +3090,7 @@ def _print_quality_report(
         print()
         print("  Judge D sub-check pass rates:")
         d_fixed = [
+            ("factual_verdict",     "all claims factually correct"),
             ("answerability_check", "answerability"),
             ("ambiguity_check",     "ambiguity (only one correct answer)"),
             ("explanation_check",   "explanation_correctness"),
@@ -2640,19 +3099,14 @@ def _print_quality_report(
             total = sc.get(raw_key, 0)
             yes   = sc_yes.get(raw_key, 0)
             print(f"    {label:<40} {sc_pct(yes, total):>4}  ({yes}/{total})")
-        # Claim checks (variable count)
-        claim_keys = sorted(k for k in sc if k.startswith("claim_") and k.endswith("_verified"))
-        for raw_key in claim_keys:
-            total = sc.get(raw_key, 0)
-            yes   = sc_yes.get(raw_key, 0)
-            label = raw_key.replace("_", " ")
-            print(f"    {label:<40} {sc_pct(yes, total):>4}  ({yes}/{total})")
 
     print()
-    print("  Worker key events:")
-    print(f"    Primary keys active:           {len(worker_pool.active_keys)}")
-    print(f"    Fallback keys consumed:        {len(FALLBACK_KEYS) - len(worker_pool.fallback_keys)}")
-    print(f"    Hard failures:                 {len(worker_pool.failed_keys)}")
+    print("  Shared key pool status:")
+    ks = key_mgr.status()
+    print(f"    Total keys:                    {ks['total']}")
+    print(f"    Healthy at shutdown:           {ks['healthy']}")
+    print(f"    Cooling down at shutdown:      {ks['cooling']}")
+    print(f"    All keys dead (forced stop):   {ks['all_dead']}")
     print("═" * W + "\n")
 
 
@@ -2662,7 +3116,7 @@ def _print_report(
     total_tasks: int,
     elapsed: float = 0.0,
     eval_stats: EvalStats | None = None,
-    worker_pool: WorkerPool | None = None,
+    key_mgr: "SharedKeyManager | None" = None,
 ):
     """Print comprehensive final generation + quality report to terminal."""
     total_success = sum(s.success for s in all_stats)
@@ -2801,8 +3255,8 @@ def _print_report(
     print("═" * W + "\n")
 
     # ── Quality report (evaluation pipeline) ──────────────────────────
-    if eval_stats is not None and worker_pool is not None:
-        _print_quality_report(eval_stats, worker_pool, all_stats, elapsed)
+    if eval_stats is not None and key_mgr is not None:
+        _print_quality_report(eval_stats, key_mgr, all_stats, elapsed)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2866,6 +3320,15 @@ def main():
             "judge keys are unavailable."
         ),
     )
+    parser.add_argument(
+        "--max-eval-retries", type=int, default=CONFIG["max_eval_retries"],
+        help=(
+            "Total judging rounds per MCQ before giving up. 1 = judge once and "
+            "discard on reject. 2 (default) = on reject, send the judges' "
+            "feedback back to the generator, regenerate for the SAME chunk, and "
+            "re-judge — so a chunk is never silently discarded on the first try."
+        ),
+    )
     args = parser.parse_args()
 
     # ── Validate key availability ────────────────────────────────────────
@@ -2881,7 +3344,7 @@ def main():
         )
         sys.exit(1)
 
-    judge_keys_available = bool(JUDGE_B_KEY and JUDGE_C_KEY and JUDGE_D_KEY)
+    judge_keys_available = bool(JUDGE_B_KEYS and JUDGE_C_KEYS and JUDGE_D_KEYS)
     if not judge_keys_available and not args.skip_judges:
         print(
             "WARNING: One or more judge keys missing "
@@ -2898,29 +3361,35 @@ def main():
     if args.skip_judges:
         print("  Judges:           SKIPPED")
     else:
-        print(f"  Judge B key:      {'SET' if JUDGE_B_KEY else 'MISSING'}")
-        print(f"  Judge C key:      {'SET' if JUDGE_C_KEY else 'MISSING'}")
-        print(f"  Judge D key:      {'SET' if JUDGE_D_KEY else 'MISSING'}")
+        print(f"  Judge B keys:     {len(JUDGE_B_KEYS)} key(s) {'SET' if JUDGE_B_KEYS else 'MISSING'}")
+        print(f"  Judge C keys:     {len(JUDGE_C_KEYS)} key(s) {'SET' if JUDGE_C_KEYS else 'MISSING'}")
+        print(f"  Judge D keys:     {len(JUDGE_D_KEYS)} key(s) {'SET' if JUDGE_D_KEYS else 'MISSING'}")
 
-    # ── Build generation key pool ────────────────────────────────────────
-    key_pool = KeyPool(
-        primary=gen_keys,
-        backup=fallback,
+    # ── Build the ONE shared key manager every role draws from ────────────
+    # Every key (generation, all judges, fallback) is registered here so any
+    # role can borrow an idle key from any other role, share a single surviving
+    # key with no parallelism, and only stop when every key is truly dead.
+    key_mgr = SharedKeyManager(
+        role_keys={
+            "generation": gen_keys,
+            "judge_b":    JUDGE_B_KEYS,
+            "judge_c":    JUDGE_C_KEYS,
+            "judge_d":    JUDGE_D_KEYS,
+            "fallback":   fallback,
+        },
         fail_threshold=CONFIG["key_fail_threshold"],
-        cooldown=CONFIG["key_cooldown"],
+        base_cooldown=CONFIG["key_cooldown"],
     )
+    # Trips when every key is permanently dead — stops the whole run gracefully.
+    stop_event = threading.Event()
 
-    # WorkerPool tracks hard failures and manages fallback cycling
-    worker_pool = WorkerPool(
-        primary_keys=gen_keys,
-        fallback_keys=list(fallback),  # copy — WorkerPool mutates it
-    )
-
-    num_workers = min(args.workers, max(len(all_gen_keys), 1))
+    num_workers = min(args.workers, max(len(gen_keys), 1))
     logger.info(
         "data_generator_starting",
         workers=num_workers,
+        total_keys=key_mgr.num_keys(),
         generation_keys=len(gen_keys),
+        judge_keys=len(JUDGE_B_KEYS) + len(JUDGE_C_KEYS) + len(JUDGE_D_KEYS),
         fallback_keys=len(fallback),
         generation_model=GENERATION_MODEL,
         judge_model=JUDGE_MODEL,
@@ -2929,16 +3398,60 @@ def main():
     )
     print(f"  Workers: {num_workers}")
 
-    # ── Build judge clients (one per dedicated key) ──────────── ───────────
+    # ── Per-role resilient clients — all share the one SharedKeyManager ────
+    # Preference order encodes the user's policy: own keys → fallback → (borrow
+    # any idle key) → (share one key, no parallelism). The "borrow/share" tiers
+    # are handled inside SharedKeyManager.pick, so we only list the role's own
+    # keys + fallback here as the explicit preference.
+    regen_client = None
     if not args.skip_judges:
-        judge_b_client = _make_ollama_client(JUDGE_B_KEY, model=JUDGE_MODEL)
-        judge_c_client = _make_ollama_client(JUDGE_C_KEY, model=JUDGE_MODEL)
-        judge_d_client = _make_ollama_client(JUDGE_D_KEY, model=JUDGE_MODEL)
+        judge_b_client = RoleClient(
+            key_mgr, JUDGE_B_KEYS + fallback, JUDGE_MODEL, "judge_b")
+        judge_c_client = RoleClient(
+            key_mgr, JUDGE_C_KEYS + fallback, JUDGE_MODEL, "judge_c")
+        judge_d_client = RoleClient(
+            key_mgr, JUDGE_D_KEYS + fallback, JUDGE_MODEL, "judge_d")
+        print(
+            "  Failover policy: own keys → fallback → borrow any idle key → "
+            "share one key (no parallelism) → stop only if all keys dead"
+        )
+        # Judge-feedback regeneration uses a generation-flavoured RoleClient.
+        if args.max_eval_retries > 1:
+            regen_client = RoleClient(
+                key_mgr, fallback + gen_keys, GENERATION_MODEL, "regen")
+            print(
+                f"  Judge-feedback loop: up to {args.max_eval_retries} rounds "
+                f"(regenerate-on-reject enabled)"
+            )
     else:
         judge_b_client = judge_c_client = judge_d_client = None
 
     # ── Ensure output directory exists ──────────────────────────────────
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+
+    # ── Load pending-eval items from a previous interrupted run ─────────
+    # These are MCQs that were generated but not yet judged when the last run
+    # was Ctrl-C'd.  They are pushed directly into the eval queue so we don't
+    # re-generate them, and their chunk hashes are excluded from task building.
+    pending_eval_path = Path(args.output).parent / "mcq_eval_pending.jsonl"
+    pending_eval_items: list[dict] = []
+    if pending_eval_path.exists():
+        with open(pending_eval_path, "r", encoding="utf-8") as _pf:
+            for _line in _pf:
+                _line = _line.strip()
+                if not _line:
+                    continue
+                try:
+                    pending_eval_items.append(json.loads(_line))
+                except json.JSONDecodeError:
+                    pass
+        if pending_eval_items:
+            print(
+                f"\n  ▶ Resume: loading {len(pending_eval_items)} pending MCQs "
+                f"from previous interrupted run → eval queue "
+                f"(no re-generation needed)"
+            )
+            pending_eval_path.unlink()  # remove now; will recreate on next interrupt
 
     # ── Load chunks from PDFs (Scipy excluded automatically) ─────────────
     chunks = _load_chunks_from_pdfs(args.books, args.chunk_size, args.chunk_overlap)
@@ -3030,6 +3543,28 @@ def main():
             "lock": threading.Lock(),
         }
 
+    # ── Monitor thread — updates tqdm postfix with live eval queue depth ────
+    # Runs every 1.5 s independently of when generation workers complete tasks,
+    # so the queue counter stays current even when workers are waiting for keys.
+    monitor_stop = threading.Event()
+
+    def _monitor() -> None:
+        while not monitor_stop.is_set():
+            q_size = eval_queue.qsize()
+            acc    = eval_stats.accepted
+            regen  = eval_stats.regen_attempts
+            with pbar_lock:
+                pbar.set_postfix(
+                    accepted=acc,
+                    eval_q=q_size,
+                    regens=regen,
+                    refresh=True,
+                )
+            monitor_stop.wait(timeout=1.5)
+
+    monitor_thread = threading.Thread(target=_monitor, daemon=True, name="monitor")
+    monitor_thread.start()
+
     # ── Launch evaluation worker first ───────────────────────────────────
     # The evaluation worker drains eval_queue and applies judges.
     # If judges are skipped, it writes all items directly.
@@ -3058,21 +3593,33 @@ def main():
             args=(
                 eval_queue, args.output, file_lock,
                 judge_b_client, judge_c_client, judge_d_client,
-                eval_stats,
+                eval_stats, regen_client, args.max_eval_retries, key_mgr,
             ),
             daemon=True,
         )
     eval_thread.start()
 
+    # Push any recovered pending MCQs into the eval queue now that the thread
+    # is running (so it can drain them alongside freshly generated ones).
+    for _pending_item in pending_eval_items:
+        eval_queue.put(_pending_item)
+    if pending_eval_items:
+        logger.info("pending_eval_items_queued", count=len(pending_eval_items))
+
     # ── Launch generation workers ────────────────────────────────────────
+    # Each worker gets its own generation RoleClient (preferring the gen keys,
+    # then fallback) backed by the shared key manager.
     gen_threads: list[threading.Thread] = []
     for i in range(num_workers):
         stats = WorkerStats()
         all_stats.append(stats)
+        gen_client = RoleClient(
+            key_mgr, gen_keys + fallback, GENERATION_MODEL, f"gen{i}")
         t = threading.Thread(
             target=_worker,
             args=(
-                i, key_pool, task_queue, eval_queue,
+                i, gen_client, key_mgr, stop_event,
+                task_queue, eval_queue,
                 stats, all_stats, pbar, pbar_lock,
                 target_counter,
             ),
@@ -3088,15 +3635,54 @@ def main():
     except KeyboardInterrupt:
         print("\n\nInterrupted — partial results saved. Run again to resume.")
     finally:
+        # Stop the monitor thread
+        monitor_stop.set()
+        monitor_thread.join(timeout=3)
         elapsed = time.time() - t_start
         success_total = sum(s.success for s in all_stats)
         failure_total = sum(s.failure for s in all_stats)
-        pbar.set_postfix(success=success_total, fail=failure_total)
+        pbar.set_postfix(
+            accepted=eval_stats.accepted,
+            eval_q=eval_queue.qsize(),
+            regens=eval_stats.regen_attempts,
+        )
         pbar.close()
 
-    # Signal evaluation worker to stop and wait for it to drain
+    # Signal evaluation worker to stop, then wait for it to drain.
+    # Give it up to 60 s; if a second Ctrl-C interrupts the join, dump the
+    # remaining queue to disk so nothing is lost and the next run can recover.
     eval_queue.put(None)
-    eval_thread.join()
+    interrupted_during_drain = False
+    try:
+        eval_thread.join(timeout=60)
+        if eval_thread.is_alive():
+            # Timed out — worker didn't drain in 60 s (very large backlog)
+            interrupted_during_drain = True
+    except KeyboardInterrupt:
+        interrupted_during_drain = True
+
+    # Dump whatever is still in the queue to the pending-eval file so the
+    # next run can recover it without re-generating.
+    _pending_dump: list[dict] = []
+    while True:
+        try:
+            _item = eval_queue.get_nowait()
+            if _item is not None:  # skip the poison pill
+                _pending_dump.append(_item)
+        except queue.Empty:
+            break
+
+    if _pending_dump:
+        pending_eval_path = Path(args.output).parent / "mcq_eval_pending.jsonl"
+        with open(pending_eval_path, "w", encoding="utf-8") as _pf:
+            for _item in _pending_dump:
+                _pf.write(json.dumps(_item) + "\n")
+        print(
+            f"\n  💾 {len(_pending_dump)} unevaluated MCQs saved to "
+            f"{pending_eval_path.name} — re-run to evaluate them (no re-generation)."
+        )
+    elif interrupted_during_drain:
+        print("\n  All queued MCQs were evaluated before shutdown.")
 
     _print_report(
         all_stats,
@@ -3104,7 +3690,7 @@ def main():
         total_tasks,
         elapsed=elapsed,
         eval_stats=eval_stats,
-        worker_pool=worker_pool,
+        key_mgr=key_mgr,
     )
 
 
