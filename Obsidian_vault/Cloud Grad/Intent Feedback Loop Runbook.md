@@ -19,6 +19,8 @@
 - `CompactTutor.tsx` now captures the full intent prediction before answering.
 - `persistChatLog` stores prediction + context + session id.
 - Tutor response bubbles show 👍/👎 buttons.
+- Clicking 👎 opens a class-selection modal with an info hover on each intent.
+- Selected corrected intent is sent to the backend via `submitFeedback(..., correctedIntent)`.
 - `submitFeedback()` sends feedback to backend.
 
 ### AI Service (`ai_service/`)
