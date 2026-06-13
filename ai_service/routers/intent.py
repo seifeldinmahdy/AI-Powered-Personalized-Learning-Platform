@@ -21,7 +21,7 @@ router = APIRouter(
 @router.post("/classify", response_model=IntentResponse)
 async def classify_intent(request: IntentRequest):
     """
-    Classify a student's text input into one of 5 pedagogical intents.
+    Classify a student's text input into one of 6 pedagogical intents.
     Supports compound sentence splitting.
 
     When ``session_context`` is empty and a ``session_id`` is provided,
@@ -130,6 +130,9 @@ async def chat_intent(request: ChatRequest):
                 "Of course! I'll explain that again in a simpler way. "
                 "[ACTION: POST /tutor/repeat {\"mode\": \"rephrase\"}]"
             ),
+            'Debugging/Code-Sharing': (
+                "I can see you're sharing some code. Let me take a look and help you debug it."
+            ),
             'Unknown': (
                 "I'm not quite sure what you mean. Could you rephrase that? "
                 "I want to make sure I understand you correctly."
@@ -137,6 +140,14 @@ async def chat_intent(request: ChatRequest):
         }
         
         response_text = responses.get(intent, f"I understood your intent as: {intent}.")
+        
+        # Prepend profanity warning if detected
+        if top_prediction.get('contains_profanity'):
+            profanity_warning = (
+                "I can see you might be frustrated. "
+                "Let's keep things respectful and focus on the code. "
+            )
+            response_text = profanity_warning + response_text
         
         return ChatResponse(
             response=response_text,

@@ -27,13 +27,13 @@ class TestModelInit(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.classifier = IntentClassifier(num_classes=5)
+        cls.classifier = IntentClassifier(num_classes=6)
 
     def test_model_instance(self):
         self.assertIsInstance(self.classifier.model, TinyBertCNN)
 
     def test_num_classes(self):
-        self.assertEqual(self.classifier.num_classes, 5)
+        self.assertEqual(self.classifier.num_classes, 6)
 
     def test_device_assigned(self):
         self.assertIsNotNone(self.classifier.device)
@@ -42,9 +42,9 @@ class TestModelInit(unittest.TestCase):
         self.assertIsNotNone(self.classifier.tokenizer)
 
     def test_model_has_batchnorm(self):
-        """Verify BatchNorm layers were added."""
+        """Verify GroupNorm layers were added (kept as self.batchnorms for compat)."""
         self.assertTrue(hasattr(self.classifier.model, 'batchnorms'))
-        self.assertEqual(len(self.classifier.model.batchnorms), 3)  # 3 filter sizes
+        self.assertEqual(len(self.classifier.model.batchnorms), 4)  # 4 filter sizes
 
     def test_model_has_hidden_fc(self):
         """Verify hidden FC layer exists."""
@@ -61,7 +61,7 @@ class TestIntentDataset(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.classifier = IntentClassifier(num_classes=5)
+        cls.classifier = IntentClassifier(num_classes=6)
         cls.sample_data = [
             {'student_input': 'How do I use for loops?',
              'session_context': 'topic:For Loops | prev:If/Else | ability:If/Else:85% | emotion:engaged | pace:normal | slides:14,15,16',
@@ -112,7 +112,7 @@ class TestForwardPass(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.classifier = IntentClassifier(num_classes=5)
+        cls.classifier = IntentClassifier(num_classes=6)
 
     def test_output_shape(self):
         batch_size = 4
@@ -123,7 +123,7 @@ class TestForwardPass(unittest.TestCase):
         self.classifier.model.eval()
         with torch.no_grad():
             logits = self.classifier.model(input_ids, attention_mask)
-        self.assertEqual(logits.shape, torch.Size([batch_size, 5]))
+        self.assertEqual(logits.shape, torch.Size([batch_size, 6]))
 
     def test_output_with_token_type_ids(self):
         batch_size = 2
@@ -135,7 +135,7 @@ class TestForwardPass(unittest.TestCase):
         self.classifier.model.eval()
         with torch.no_grad():
             logits = self.classifier.model(input_ids, attention_mask, token_type_ids=token_type_ids)
-        self.assertEqual(logits.shape, torch.Size([batch_size, 5]))
+        self.assertEqual(logits.shape, torch.Size([batch_size, 6]))
 
     def test_single_sample(self):
         """Ensure single-sample batches don't crash (important for BatchNorm)."""
@@ -145,7 +145,7 @@ class TestForwardPass(unittest.TestCase):
         self.classifier.model.eval()
         with torch.no_grad():
             logits = self.classifier.model(input_ids, attention_mask)
-        self.assertEqual(logits.shape, torch.Size([1, 5]))
+        self.assertEqual(logits.shape, torch.Size([1, 6]))
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -157,7 +157,7 @@ class TestPredict(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.classifier = IntentClassifier(num_classes=5)
+        cls.classifier = IntentClassifier(num_classes=6)
 
     def test_predict_with_context(self):
         preds, probs = self.classifier.predict(
@@ -165,7 +165,7 @@ class TestPredict(unittest.TestCase):
             ["topic:For Loops | prev:None | ability:N/A | emotion:neutral | pace:normal | slides:10,11,12"]
         )
         self.assertEqual(len(preds), 1)
-        self.assertEqual(probs.shape[1], 5)
+        self.assertEqual(probs.shape[1], 6)
 
     def test_predict_without_context(self):
         preds, probs = self.classifier.predict(["I'm feeling frustrated"])
@@ -252,7 +252,7 @@ class TestDatasetGenerator(unittest.TestCase):
 
     def test_all_classes_present(self):
         all_labels = set(self.train_df['label'].unique())
-        self.assertEqual(all_labels, {0, 1, 2, 3, 4})
+        self.assertEqual(all_labels, {0, 1, 2, 3, 4, 5})
 
     def test_compact_context_format(self):
         # Find a row where context was not dropped out
@@ -353,7 +353,7 @@ class TestRepeatIntentCoverage(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.classifier = IntentClassifier(num_classes=5)
+        cls.classifier = IntentClassifier(num_classes=6)
         # Attempt to load a production checkpoint
         import glob
         pt_files = glob.glob(os.path.join(os.path.dirname(__file__), "*.pt"))
@@ -389,13 +389,13 @@ class TestRepeatIntentCoverage(unittest.TestCase):
         row_sum = float(probs[0].sum())
         self.assertAlmostEqual(row_sum, 1.0, places=4)
 
-    def test_predict_returns_five_probs(self):
-        """Each prediction should have exactly 5 class probabilities."""
+    def test_predict_returns_six_probs(self):
+        """Each prediction should have exactly 6 class probabilities."""
         self._skip_if_no_model()
         preds, probs = self.classifier.predict(
             [self.REPEAT_UTTERANCES[0]], [self.CONTEXT]
         )
-        self.assertEqual(probs.shape[1], 5)
+        self.assertEqual(probs.shape[1], 6)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -408,7 +408,7 @@ class TestConfidenceThresholdGate(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.classifier = IntentClassifier(num_classes=5)
+        cls.classifier = IntentClassifier(num_classes=6)
 
     def _service_classify(self, text: str, threshold: float) -> str:
         """Minimal classification helper replicating IntentService logic."""
@@ -418,7 +418,7 @@ class TestConfidenceThresholdGate(unittest.TestCase):
             return "Low Confidence"
         intent_names = [
             'On-Topic Question', 'Off-Topic Question', 'Emotional-State',
-            'Pace-Related', 'Repeat/clarification',
+            'Pace-Related', 'Repeat/clarification', 'Debugging/Code-Sharing',
         ]
         return intent_names[preds[0]]
 
@@ -488,11 +488,16 @@ class TestIntentServiceWrapper(unittest.TestCase):
             "topic:Inheritance | prev:Classes | ability:N/A | emotion:confused | pace:slow | slides:40,41,42",
             "Repeat/clarification",
         ),
+        (
+            "my code `x = int('hello')` throws ValueError why",
+            "topic:Variables | prev:None | ability:N/A | emotion:frustrated | pace:normal | slides:5,6,7",
+            "Debugging/Code-Sharing",
+        ),
     ]
 
     @classmethod
     def setUpClass(cls):
-        cls.classifier = IntentClassifier(num_classes=5)
+        cls.classifier = IntentClassifier(num_classes=6)
 
     def _classify(self, text: str, context: str):
         """Run a single prediction and return (label_id, confidence, probs)."""
@@ -503,7 +508,7 @@ class TestIntentServiceWrapper(unittest.TestCase):
         """All predictions should have label_id in [0, 4]."""
         for text, context, _ in self.CASES:
             label_id, _, _ = self._classify(text, context)
-            self.assertIn(label_id, range(5), f"Invalid label_id for: {text!r}")
+            self.assertIn(label_id, range(6), f"Invalid label_id for: {text!r}")
 
     def test_classify_confidence_in_range(self):
         """Confidence should always be in [0.0, 1.0]."""
@@ -513,10 +518,10 @@ class TestIntentServiceWrapper(unittest.TestCase):
             self.assertLessEqual(confidence, 1.0)
 
     def test_classify_probs_shape(self):
-        """Probability vector should have exactly 5 elements."""
+        """Probability vector should have exactly 6 elements."""
         for text, context, _ in self.CASES:
             _, _, probs = self._classify(text, context)
-            self.assertEqual(len(probs), 5, f"Unexpected probs shape for: {text!r}")
+            self.assertEqual(len(probs), 6, f"Unexpected probs shape for: {text!r}")
 
     def test_classify_probs_sum_to_one(self):
         """Softmax probabilities should sum to ~1.0."""
@@ -572,10 +577,10 @@ class TestDatasetBalanceValidation(unittest.TestCase):
                 "exceeds 40% balance threshold."
             )
 
-    def test_all_five_classes_present_in_train(self):
-        """All five intent classes must appear in the training split."""
+    def test_all_six_classes_present_in_train(self):
+        """All six intent classes must appear in the training split."""
         labels = set(self.train_df['label'].unique())
-        self.assertEqual(labels, {0, 1, 2, 3, 4})
+        self.assertEqual(labels, {0, 1, 2, 3, 4, 5})
 
     def test_repeat_class_not_underrepresented(self):
         """Repeat/clarification (label 4) should constitute at least 10% of training data."""
@@ -586,6 +591,15 @@ class TestDatasetBalanceValidation(unittest.TestCase):
             f"Repeat/clarification makes up only {repeat_fraction:.0%} of training data."
         )
 
+    def test_debugging_class_not_underrepresented(self):
+        """Debugging/Code-Sharing (label 5) should constitute at least 10% of training data."""
+        counts = self.train_df['label'].value_counts(normalize=True)
+        debug_fraction = counts.get(5, 0.0)
+        self.assertGreaterEqual(
+            debug_fraction, 0.10,
+            f"Debugging/Code-Sharing makes up only {debug_fraction:.0%} of training data."
+        )
+
     def test_intent_name_column_matches_label(self):
         """intent_name column should be consistent with the label column."""
         intent_map = {
@@ -594,6 +608,7 @@ class TestDatasetBalanceValidation(unittest.TestCase):
             2: 'Emotional-State',
             3: 'Pace-Related',
             4: 'Repeat/clarification',
+            5: 'Debugging/Code-Sharing',
         }
         for _, row in self.train_df.iterrows():
             expected_name = intent_map[int(row['label'])]

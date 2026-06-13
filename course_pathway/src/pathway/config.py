@@ -42,6 +42,17 @@ class PathwaySettings(BaseSettings):
     chroma_collection_name: str = "course_chunks"
 
     # ── Session grouping ─────────────────────────────────────────
+    # The number of sessions reflects the course's conceptual structure,
+    # NOT the source book's text volume. The curriculum designer aims for
+    # ``target_session_count`` sessions (within [min_sessions, max_sessions]),
+    # and ``max_sessions`` is a hard cap enforced by the grouper so big books
+    # can never explode the session count.
+    target_session_count: int = 15
+    min_sessions: int = 8
+    max_sessions: int = 25
+
+    # Deprecated: retained for backward compatibility only. Session sizing is
+    # no longer driven by a raw-text token budget.
     session_min_tokens: int = 3000
     session_max_tokens: int = 5000
 

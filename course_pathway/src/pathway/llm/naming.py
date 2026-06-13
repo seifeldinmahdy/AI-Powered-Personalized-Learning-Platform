@@ -50,13 +50,18 @@ class OllamaClient:
         temperature: float = 0.3,
         json_mode: bool = False,
         timeout_override: int | None = None,
+        num_predict: int | None = None,
     ) -> str:
         """Send a chat completion and return the raw content string."""
+        options: dict[str, Any] = {"temperature": temperature}
+        if num_predict is not None:
+            options["num_predict"] = num_predict
+
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
             "stream": False,
-            "options": {"temperature": temperature},
+            "options": options,
         }
         if json_mode:
             payload["format"] = "json"
@@ -95,19 +100,51 @@ class OllamaClient:
         messages: list[dict[str, str]],
         temperature: float = 0.3,
         timeout_override: int | None = None,
+        num_predict: int | None = None,
     ) -> dict[str, Any]:
-        """Chat expecting a JSON response, parsed into a dict."""
-        raw = self.chat(messages, temperature=temperature, json_mode=True, timeout_override=timeout_override)
+        """Chat expecting a JSON response, parsed into a dict.
+
+        Three-tier parsing to handle small-model JSON quirks:
+        1. Strict json.loads
+        2. Extract bare JSON object from markdown fences
+        3. json-repair for missing commas, unescaped quotes, etc.
+        """
+        raw = self.chat(
+            messages,
+            temperature=temperature,
+            json_mode=True,
+            timeout_override=timeout_override,
+            num_predict=num_predict,
+        )
+        # Tier 1 — strict parse
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
-            # Try to extract JSON from markdown fences
-            if "```" in raw:
-                start = raw.find("{")
-                end = raw.rfind("}") + 1
-                if start >= 0 and end > start:
-                    return json.loads(raw[start:end])
-            raise
+            pass
+
+        # Tier 2 — extract bare JSON object (strip markdown fences / extra text)
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start >= 0 and end > start:
+            candidate = raw[start:end]
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+
+            # Tier 3 — repair: fixes missing commas, unescaped quotes, truncation
+            try:
+                from json_repair import repair_json  # type: ignore
+                repaired = repair_json(candidate, return_objects=True)
+                if isinstance(repaired, dict):
+                    logger.warning("json_repaired", original_len=len(raw))
+                    return repaired
+            except Exception:
+                pass
+
+        raise json.JSONDecodeError(
+            f"Could not parse JSON from model output (len={len(raw)})", raw, 0
+        )
 
 
 # ── Sequence Validation ──────────────────────────────────────────

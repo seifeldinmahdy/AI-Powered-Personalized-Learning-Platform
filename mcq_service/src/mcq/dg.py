@@ -1,7 +1,8 @@
 """Distractor Generator (DG) — generates wrong-but-plausible answer options.
 
-Uses Ollama during development.  When DG_LORA_PATH is set in settings,
-loads the Llama base model + DG LoRA adapter via Unsloth for inference.
+Uses Ollama during development.  When DG_MODEL_PATH is set in settings,
+loads the Qwen3-4B base model + DG LoRA adapter via Unsloth for inference.
+Falls back to DG_LORA_PATH for legacy Llama-3.2-3B adapters.
 """
 
 from __future__ import annotations
@@ -25,8 +26,8 @@ logger = structlog.get_logger(__name__)
 
 # Lazy-loaded singletons — loaded once, reused for every call
 _ollama_client = None
-_llama_model = None
-_llama_tokenizer = None
+_model = None
+_tokenizer = None
 
 
 def _get_ollama_client(settings):
@@ -53,40 +54,46 @@ def _get_ollama_client(settings):
     return _ollama_client
 
 
-def _load_llama_model(settings):
-    """Load the Llama base model + DG LoRA adapter once at startup.
+def _load_model(settings):
+    """Load the base model + DG LoRA adapter once at startup.
 
     Uses Unsloth's FastLanguageModel for optimized inference.
+    Prefers ``DG_MODEL_PATH`` (Qwen3-4B adapter); falls back to the
+    legacy ``DG_LORA_PATH`` for Llama-3.2-3B adapters.
     """
-    global _llama_model, _llama_tokenizer
-    if _llama_model is not None:
-        return _llama_model, _llama_tokenizer
+    global _model, _tokenizer
+    if _model is not None:
+        return _model, _tokenizer
 
     from unsloth import FastLanguageModel
 
+    # Prefer the new path field; fall back to the legacy one
+    adapter_path = settings.DG_MODEL_PATH or settings.DG_LORA_PATH
+    max_seq = getattr(settings, 'MAX_SEQ_LENGTH_DG', settings.MAX_SEQ_LENGTH)
+
     logger.info(
-        "dg_loading_llama_model",
+        "dg_loading_model",
         base_model=settings.LLAMA_BASE_MODEL,
-        lora_path=settings.DG_LORA_PATH,
+        adapter_path=adapter_path,
         load_in_4bit=settings.LOAD_IN_4BIT,
     )
 
     # Load base model + LoRA adapter
-    _llama_model, _llama_tokenizer = FastLanguageModel.from_pretrained(
-        model_name=settings.DG_LORA_PATH,
-        max_seq_length=settings.MAX_SEQ_LENGTH,
+    _model, _tokenizer = FastLanguageModel.from_pretrained(
+        model_name=adapter_path,
+        max_seq_length=max_seq,
         load_in_4bit=settings.LOAD_IN_4BIT,
     )
 
     # Optimize for inference speed (Unsloth-specific)
-    FastLanguageModel.for_inference(_llama_model)
+    FastLanguageModel.for_inference(_model)
 
     logger.info(
-        "dg_llama_model_loaded",
+        "dg_model_loaded",
         base_model=settings.LLAMA_BASE_MODEL,
-        lora_path=settings.DG_LORA_PATH,
+        adapter_path=adapter_path,
     )
-    return _llama_model, _llama_tokenizer
+    return _model, _tokenizer
 
 
 def generate_mcq(
@@ -111,7 +118,7 @@ def generate_mcq(
         None if distractor generation fails completely.
     """
     num_distractors = settings.MCQ_DISTRACTOR_COUNT
-    use_llama = bool(settings.DG_LORA_PATH)
+    use_llama = bool(settings.DG_MODEL_PATH or settings.DG_LORA_PATH)
 
     distractors: list[str] = []
 
@@ -232,7 +239,7 @@ def _generate_with_llama(
     """
     import torch
 
-    model, tokenizer = _load_llama_model(settings)
+    model, tokenizer = _load_model(settings)
     distractors: list[str] = []
     correct_lower = generated_q.correct_answer.strip().lower()
 

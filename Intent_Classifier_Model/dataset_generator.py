@@ -15,6 +15,7 @@ import pandas as pd
 import os
 import re
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,8 @@ LABEL_MAP = {
     'Off-Topic Question': 1,
     'Emotional-State': 2,
     'Pace-Related': 3,
-    'Repeat/clarification': 4
+    'Repeat/clarification': 4,
+    'Debugging/Code-Sharing': 5,
 }
 
 EMOTIONS = ["neutral", "engaged", "focused", "frustrated", "confused", "bored", "tired", "anxious", "excited", "overwhelmed"]
@@ -58,6 +60,7 @@ CONTEXT_DROPOUT_BY_CLASS = {
     'Emotional-State':      0.05,   # emotion: field is highly informative
     'Pace-Related':         0.05,   # pace: field is highly informative
     'Repeat/clarification': 0.15,
+    'Debugging/Code-Sharing': 0.20, # code context less dependent on session metadata
 }
 
 # ─────────────────────────────────────────────────────────────────────
@@ -109,6 +112,16 @@ def generate_session_context(current_topic_idx):
 # EXPANDED TEMPLATE BANKS (40+ per class)
 # ─────────────────────────────────────────────────────────────────────
 
+# ── ON_TOPIC vs DEBUGGING boundary ──────────────────────────────────────────
+# On-Topic     = conceptual question WITHOUT a specific code artifact.
+#   YES: "how does enumerate() work?"  "what does IndexError mean in general?"
+#   NO:  "my loop `for i in range(10)` skips a number"  <-- Debugging
+#
+# Debugging    = student shares a broken code artifact (backticks, traceback,
+#                specific error with surrounding code context).
+#   YES: "`for i in range(10): print(i)` — why does it skip the last number?"
+#   NO:  "what causes IndexError in general?"  <-- On-Topic
+
 ON_TOPIC_TEMPLATES = [
     # Direct questions
     "How do I use {topic} in my code?",
@@ -157,15 +170,52 @@ ON_TOPIC_TEMPLATES = [
     "So how does {topic} actually work?",
     # MOVED from OFF_TOPIC_FUTURE_TOPIC_TEMPLATES → On-Topic (asks about Python concept)
     "How does {topic} work in Python?",
+    # MOVED from OFF_TOPIC_FUTURE_TOPIC_TEMPLATES → On-Topic (curriculum-relevant, T1-A)
+    "Are we going to learn about {topic} soon?",
+    "Will {topic} be on the exam?",
+    "Is {topic} related to what we are doing now?",
+    # Conceptual questions (pure concept, no code artifacts)
+    "what is the difference between a list and a tuple",
+    "when would i use a dictionary instead of a list",
+    "why do we need functions if i can just write the code inline",
+    "what does immutable mean in Python",
+    "how does python handle memory management",
+    "what is the difference between a method and a function",
+    "when should i use a class instead of just variables and functions",
+    "what is recursion and when is it useful",
+    "how do generators work and why are they memory efficient",
+    "what is the difference between deep copy and shallow copy",
+    "why does python use indentation instead of braces",
+    "what are decorators and when would i use one",
 ]
 
 ON_TOPIC_CONTEXT_TEMPLATES = [
+    # Prior-knowledge bridging (original 6)
     "You said I scored low on {prev_topic}, does that affect how I should approach {topic}?",
     "Since I did well on {prev_topic}, is {topic} going to be similar?",
     "How does {prev_topic} relate to {topic}?",
     "I understood {prev_topic} but {topic} feels completely different, why?",
     "Can we review {prev_topic} briefly before diving deeper into {topic}?",
     "My score on {prev_topic} was not great, will I need it for {topic}?",
+    # Students referencing a previous error (T1-D)
+    "last time we did {prev_topic} i was confused by the syntax, does {topic} work similarly?",
+    "i kept getting errors with {prev_topic}, will {topic} have the same issues?",
+    "when we did {prev_topic} i mixed up the order of arguments, is {topic} the same?",
+    "i remember struggling with {prev_topic} — is {topic} going to be just as tricky?",
+    # Students connecting new material to what they just learned (T1-D)
+    "wait so {topic} is like {prev_topic} but for different data types?",
+    "is {topic} basically an extension of {prev_topic}?",
+    "does {topic} replace {prev_topic} or do we use both together?",
+    "so if i already know {prev_topic}, does that make {topic} easier?",
+    # Students asking about progression (T1-D)
+    "now that i understand {prev_topic}, how does {topic} build on that?",
+    "are we done with {prev_topic} forever or does {topic} bring it back?",
+    "will i need everything from {prev_topic} for {topic}?",
+    # Students referencing code they wrote before (T1-D)
+    "i used {prev_topic} in my homework — will {topic} change how that works?",
+    "my project uses {prev_topic} a lot, how does adding {topic} affect it?",
+    "i wrote a function using {prev_topic} last week, can i reuse it with {topic}?",
+    "the code i wrote for {prev_topic} broke when i tried to add {topic}, why?",
 ]
 
 OFF_TOPIC_GENERAL = [
@@ -192,7 +242,7 @@ OFF_TOPIC_GENERAL = [
 ]
 
 OFF_TOPIC_FUTURE_TOPIC_TEMPLATES = [
-    "Are we going to learn about {topic} soon?",
+    # MOVED to ON_TOPIC_TEMPLATES (T1-A): "Are we going to learn about {topic} soon?" (curriculum-relevant)
     "What is {topic} exactly?",
     "I heard about {topic}, can you explain it to me?",
     # MOVED to ON_TOPIC_TEMPLATES: "How does {topic} work in Python?" (asks about concept)
@@ -202,12 +252,17 @@ OFF_TOPIC_FUTURE_TOPIC_TEMPLATES = [
     "Do we need to know about {topic}?",
     "When will we cover {topic}?",
     "My friend told me {topic} is important, is that true?",
-    "Will {topic} be on the exam?",
+    # MOVED to ON_TOPIC_TEMPLATES (T1-A): "Will {topic} be on the exam?" (curriculum-relevant)
     "Can you give me a sneak peek of {topic}?",
     # MOVED to PACE_TEMPLATES: "I already know a bit about {topic}, can we jump to it?" (pace control)
     "How long until we get to {topic}?",
-    "Is {topic} related to what we are doing now?",
+    # MOVED to ON_TOPIC_TEMPLATES (T1-A): "Is {topic} related to what we are doing now?" (curriculum-relevant)
 ]
+
+# ── Authoring rule — Emotional-State ────────────────────────────────────────
+# Templates express a FEELING or internal state only.
+# MUST NOT contain pace vocabulary (too fast, slow down, speed, keep up).
+# Test: if the utterance could appear in PACE_TEMPLATES, it does not belong here.
 
 EMOTIONAL_TEMPLATES = [
     # Frustration
@@ -462,6 +517,107 @@ HELD_OUT_EMOTION = ["wtf", "i give up", "bruh", "this is pointless"]
 HELD_OUT_ON_TOPIC = ["show me an example", "why does it break", "i don't get it"]
 HELD_OUT_OFF_TOPIC = ["are you an AI", "what time is it", "tell me a joke"]
 
+# ─────────────────────────────────────────────────────────────────────
+# DEBUGGING / CODE-SHARING TEMPLATES (T2-A-2)
+# Signal: presence of code artifacts (backticks, error names, tracebacks,
+# variable names, inline code). Distinguishes from On-Topic by containing
+# actual code, not just a conceptual question about programming.
+# ─────────────────────────────────────────────────────────────────────
+
+# ── ON_TOPIC vs DEBUGGING boundary ──────────────────────────────────────────
+# On-Topic     = conceptual question WITHOUT a specific code artifact.
+#   YES: "how does enumerate() work?"  "what does IndexError mean in general?"
+#   NO:  "my loop `for i in range(10)` skips a number"  <-- Debugging
+#
+# Debugging    = student shares a broken code artifact (backticks, traceback,
+#                specific error with surrounding code context).
+#   YES: "`for i in range(10): print(i)` — why does it skip the last number?"
+#   NO:  "what causes IndexError in general?"  <-- On-Topic
+
+DEBUGGING_TEMPLATES = [
+    # Moved from ON_TOPIC_TEMPLATES — these contain code artifacts
+    "why does `def {topic}():` give me a SyntaxError?",
+    "my code keeps throwing IndexError on line 3, what am i doing wrong",
+    "i wrote a for loop but it prints None every iteration",
+    "what does self mean inside a class method",
+    "why is my function returning None instead of the value",
+    "i get a NameError when i call {topic}, what does that mean",
+    "can you look at this: `for i in range(len(lst))` is this right",
+    "TypeError: unsupported operand — what is that",
+    "my if statement isnt working even though the condition is true",
+    "how do i fix IndentationError",
+    "why does `print({topic})` show something unexpected",
+    "i pasted my code but it wont run, where is the bug",
+    # Inline code + error type
+    "`for i in range(10): print(i)` — why does this skip the last number",
+    "i get `ValueError: invalid literal for int()` what does that mean",
+    "here is my function: `def add(a,b): return a+b` why does it fail on strings",
+    "NameError: name 'x' is not defined — but i defined x at the top?",
+    "my loop: `while True: x += 1` never stops, how do i fix it",
+    "TypeError: can only concatenate str not int — which line is wrong",
+    "here is my class: `class Dog: def __init__(self): self.name = name` what is wrong",
+    # Error messages with context
+    "i get `IndexError: list index out of range` when i do `my_list[5]` but it has 5 items",
+    "my code: `x = int('hello')` throws ValueError, why?",
+    "`print(my_dict['key'])` gives KeyError even though i added it",
+    "ZeroDivisionError on line 4: `result = 10 / count` — count is supposed to be non-zero",
+    "AttributeError: 'NoneType' object has no attribute 'append' — what does that mean",
+    "SyntaxError: unexpected EOF while parsing — where is the problem?",
+    "RecursionError: maximum recursion depth exceeded in `def fib(n): return fib(n-1) + fib(n-2)`",
+    # Code blocks / snippets
+    "here is my code: `nums = [1,2,3]; nums.append([4,5])` why does it look weird",
+    "`x = [1,2,3]; y = x; y.append(4)` — why did x change too?",
+    "my list comprehension `[x for x in range(10) if x % 2]` gives wrong results",
+    "look at this: `def greet(name='World'): print('Hello ' + name)` it works but `greet(123)` crashes",
+    "`try: x = 1/0 except: pass` — is this bad practice?",
+    "i wrote `if x = 5:` and it gives SyntaxError, why?",
+    "my dictionary: `d = {[1,2]: 'value'}` crashes with TypeError",
+    "`open('file.txt', 'r').read()` — do i need to close it?",
+    # Traceback / stack trace references
+    "i get this traceback: File 'main.py', line 5, in <module> — what does that mean",
+    "the error says `Traceback (most recent call last)` and points to my function",
+    "my program crashes with `ModuleNotFoundError: No module named 'numpy'`",
+    "i see `IndentationError: unexpected indent` on line 3 but it looks fine to me",
+    # Variable / logic debugging
+    "my variable `count` keeps resetting to 0 inside the loop, why?",
+    "i set `total = 0` before the loop but after the loop it's still 0",
+    "`result = []` and then `result = result.append(x)` — result becomes None?",
+    "my function returns `None` even though i have `return result` inside an if block",
+    "why does `'hello' == 'Hello'` return False?",
+    "`len(my_string)` gives 5 but i see 6 characters, what's going on",
+    # Common Python-specific debugging
+    "my `for i in range(len(lst)):` loop modifies the list and skips elements",
+    "i used `global x` but the value doesn't change outside the function",
+    "f-string: `f'Value is {x:.2f}'` gives TypeError when x is a string",
+    "`import random; random.seed(42)` — my results are still different each run",
+    "my `while` loop runs forever even though i update the counter",
+    "i'm comparing with `is` instead of `==` and getting weird results",
+    "my except block catches everything — how do i catch only `ValueError`?",
+    "`sorted(my_list, key=lambda x: x[1])` doesn't sort correctly",
+    "i wrote `class Car: def __init__(self, color): color = color` but self.color is missing",
+    "why does `{topic}` give me an error when I run `{topic}()`?",
+]
+
+DEBUGGING_REAL = [
+    "my code is broken can u look at it", "i get TypeError what do i do",
+    "heres my code its not working", "NameError help",
+    "why does print give None", "my loop is infinite help",
+    "index out of range again", "SyntaxError on line 1 why",
+    "my function returns nothing", "ValueError what is that",
+    "the error message says KeyError", "IndentationError where",
+    "my variable is None but it shouldnt be", "traceback error help",
+    "AttributeError on my object", "look at my code pls",
+    "i get an error when i run this", "my list comprehension is wrong",
+]
+
+HELD_OUT_DEBUGGING = [
+    "`x = 5; print(X)` gives NameError — why is it case sensitive",
+    "UnboundLocalError: local variable 'x' referenced before assignment",
+    "my code: `for i in list: list.remove(i)` skips elements",
+    "TypeError: 'int' object is not iterable — i used `for i in 5:`",
+    "help me debug this: `def f(x=[]): x.append(1); return x`",
+]
+
 # REMOVED extend() calls that injected *_REAL directly into main lists.
 # They will be injected later specifically into the _TRAIN partitions.
 
@@ -491,7 +647,7 @@ FILLERS = ["umm", "so", "like", "hey", "well", "basically", "honestly", "actuall
 def augment_synonym(text):
     """Replace one random word with a synonym."""
     for word, synonyms in SYNONYM_MAP.items():
-        if word in text.lower() and random.random() < 0.35:
+        if word in text.lower() and random.random() < 0.20:  # Reduced from 0.35 (T1-C)
             pattern = re.compile(re.escape(word), re.IGNORECASE)
             text = pattern.sub(random.choice(synonyms), text, count=1)
             break
@@ -523,7 +679,7 @@ def augment_filler(text):
         return random.choice(FILLERS) + " " + text
     return text
 
-def augment_typo(text, prob=0.08):
+def augment_typo(text, prob=0.04):  # Reduced from 0.08 (T1-C)
     """Inject character-level typos."""
     if random.random() > 0.35:
         return text
@@ -589,10 +745,11 @@ OFF_TOPIC_FUT_TRAIN, OFF_TOPIC_FUT_VAL, OFF_TOPIC_FUT_TEST = partition_bank(OFF_
 EMOTIONAL_TRAIN, EMOTIONAL_VAL, EMOTIONAL_TEST = partition_bank(EMOTIONAL_TEMPLATES)
 PACE_TRAIN, PACE_VAL, PACE_TEST = partition_bank(PACE_TEMPLATES)
 REPEAT_TRAIN, REPEAT_VAL, REPEAT_TEST = partition_bank(REPEAT_TEMPLATES)
+DEBUGGING_TRAIN, DEBUGGING_VAL, DEBUGGING_TEST = partition_bank(DEBUGGING_TEMPLATES)
 
 # 80/20 split for REAL lists
 _held_out_all = set(HELD_OUT_PACE + HELD_OUT_REPEAT + HELD_OUT_EMOTION +
-                    HELD_OUT_ON_TOPIC + HELD_OUT_OFF_TOPIC)
+                    HELD_OUT_ON_TOPIC + HELD_OUT_OFF_TOPIC + HELD_OUT_DEBUGGING)
 
 def split_real(real_list, seed: int = 42):
     rng = random.Random(seed)
@@ -627,6 +784,11 @@ og_train, og_val, og_test = split_real(OFF_TOPIC_REAL)
 OFF_TOPIC_GEN_TRAIN.extend(og_train)
 OFF_TOPIC_GEN_VAL.extend(og_val)
 OFF_TOPIC_GEN_TEST.extend(og_test)
+
+db_train, db_val, db_test = split_real(DEBUGGING_REAL)
+DEBUGGING_TRAIN.extend(db_train)
+DEBUGGING_VAL.extend(db_val)
+DEBUGGING_TEST.extend(db_test)
 
 # ─────────────────────────────────────────────────────────────────────
 # INTENT GENERATORS
@@ -721,6 +883,27 @@ def get_repeat_clarification(split_name='train', current_topic=None):
         template = template.replace('{topic}', 'that last concept')
     return template
 
+def get_debugging_question(split_name='train', current_topic=None):
+    """Generate a Debugging/Code-Sharing utterance containing code artifacts."""
+    if split_name == 'test' and random.random() < 0.5:
+        template = random.choice(HELD_OUT_DEBUGGING)
+        if '{topic}' in template and current_topic:
+            template = template.replace('{topic}', current_topic)
+        return template
+
+    if split_name == 'val':
+        template = random.choice(DEBUGGING_VAL)
+    elif split_name == 'test':
+        template = random.choice(DEBUGGING_TEST)
+    else:
+        template = random.choice(DEBUGGING_TRAIN)
+    # Fill {topic} slot if present
+    if '{topic}' in template and current_topic:
+        template = template.replace('{topic}', current_topic)
+    elif '{topic}' in template:
+        template = template.replace('{topic}', 'my_func')
+    return template
+
 # ─────────────────────────────────────────────────────────────────────
 # PIPELINE GENERATION (3-way split: train/val/test)
 # ─────────────────────────────────────────────────────────────────────
@@ -755,6 +938,8 @@ def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, 
                     student_input = get_pace_related(split_name=split_name)
                 elif intent == 'Repeat/clarification':
                     student_input = get_repeat_clarification(split_name=split_name, current_topic=current_topic)
+                elif intent == 'Debugging/Code-Sharing':
+                    student_input = get_debugging_question(split_name=split_name, current_topic=current_topic)
                 else:
                     student_input = get_off_topic_question(topic_idx, split_name=split_name)
 
@@ -840,23 +1025,46 @@ def paraphrase_with_llm(
                 f'paraphrases that a real student might say. Vary formality, slang, and length. '
                 f'Return ONLY a JSON object: {{"paraphrases": [[p1,p2,p3], ...]}}\n\n{numbered}'
             )
-            try:
-                resp = client.chat.completions.create(
-                    model='llama-3.1-8b-instant',
-                    messages=[{'role': 'user', 'content': prompt}],
-                    temperature=0.8,
-                    max_tokens=2048,
-                    response_format={'type': 'json_object'},
-                )
-                text = resp.choices[0].message.content.strip()
-                data = json.loads(text)
-                groups = data.get('paraphrases', [])
-                for s, group in zip(uncached, groups):
-                    cache[s] = group if isinstance(group, list) else []
-            except Exception as e:
-                logger.error('LLM paraphrase batch failed: %s', e)
+
+            # Retry with exponential backoff for Groq 429 rate limits
+            max_retries = 5
+            backoff = 2.0  # seconds — doubles each retry
+            success = False
+            for attempt in range(max_retries):
+                try:
+                    resp = client.chat.completions.create(
+                        model='llama-3.1-8b-instant',
+                        messages=[{'role': 'user', 'content': prompt}],
+                        temperature=0.8,
+                        max_tokens=2048,
+                        response_format={'type': 'json_object'},
+                    )
+                    text = resp.choices[0].message.content.strip()
+                    data = json.loads(text)
+                    groups = data.get('paraphrases', [])
+                    for s, group in zip(uncached, groups):
+                        cache[s] = group if isinstance(group, list) else []
+                    success = True
+                    break
+                except Exception as e:
+                    err_str = str(e)
+                    if '429' in err_str or 'rate_limit' in err_str:
+                        wait = backoff * (2 ** attempt)
+                        logger.warning(
+                            'Rate limited (attempt %d/%d) — waiting %.1fs before retry',
+                            attempt + 1, max_retries, wait,
+                        )
+                        time.sleep(wait)
+                    else:
+                        logger.error('LLM paraphrase batch failed: %s', e)
+                        break  # non-retryable error
+
+            if not success:
                 for s in uncached:
                     cache[s] = []
+
+            # Throttle between batches to stay under Groq TPM limit
+            time.sleep(3)
 
         for s in batch:
             all_paraphrases.extend(cache.get(s, []))

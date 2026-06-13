@@ -5,6 +5,11 @@ objects (question + correct answer + 3 distractors) for each chunk sampled
 with weighted mastery/score_category distributions.  Workers write results
 thread-safely to a single JSONL output file.
 
+Synthetic chunks (replacing the removed Scipy PDF) are generated on demand
+from clean, book-agnostic CS educational paragraphs via ``generate_synthetic_chunks``.
+All chunks — PDF-sourced and synthetic alike — pass through ``sanitize_chunk``
+before being sent to the teacher LLM.
+
 Usage::
 
     python -m mcq.training.data_generator \\
@@ -26,7 +31,10 @@ import sys
 import threading
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import structlog
 from dotenv import load_dotenv
@@ -41,42 +49,122 @@ load_dotenv(dotenv_path=_ENV_PATH, override=False)
 logger = structlog.get_logger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CONFIGURATION
+# TEN-KEY PIPELINE ARCHITECTURE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# KEY ASSIGNMENT (hard-coded — do not swap roles):
+#   GENERATION_KEYS  = [key_1, key_2]           — 2 parallel generation workers
+#   JUDGE_B_KEYS     = [key_3, key_4]           — personalization judge (2 keys)
+#   JUDGE_C_KEYS     = [key_5, key_6]           — distractor quality judge (2 keys)
+#   JUDGE_D_KEYS     = [key_7, key_8]           — factual correctness judge (2 keys)
+#   FALLBACK_KEYS    = [key_9, key_10]          — cycling fallback on hard failure
+#
+# Total: 2 gen + 6 judge (2 per judge) + 2 fallback = 10 keys.
+# GENERATION_MODEL & JUDGE_MODEL = gpt-oss:120b for both generation and judging.
+# All 10 keys are registered in one SharedKeyManager; each role prefers its own
+# keys, then borrows any idle key from another role, then shares a single key
+# (no parallelism), and the run stops only when every key is permanently dead.
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ── Key resolution — each role has named env vars ───────────────────────────
+GENERATION_KEYS: list[str] = [
+    k for k in [
+        os.getenv("OLLAMA_API_KEY_1"),
+        os.getenv("OLLAMA_API_KEY_2"),
+    ] if k
+]
+JUDGE_B_KEYS: list[str] = [
+    k for k in [
+        os.getenv("OLLAMA_API_KEY_3"),
+        os.getenv("OLLAMA_API_KEY_4"),
+    ] if k
+]
+JUDGE_C_KEYS: list[str] = [
+    k for k in [
+        os.getenv("OLLAMA_API_KEY_5"),
+        os.getenv("OLLAMA_API_KEY_6"),
+    ] if k
+]
+JUDGE_D_KEYS: list[str] = [
+    k for k in [
+        os.getenv("OLLAMA_API_KEY_7"),
+        os.getenv("OLLAMA_API_KEY_8"),
+    ] if k
+]
+FALLBACK_KEYS: list[str] = [
+    k for k in [
+        os.getenv("OLLAMA_API_KEY_9"),
+        os.getenv("OLLAMA_API_KEY_10"),
+    ] if k
+]
+
+# Backward-compat aliases (used by legacy checks; map to first key of each set)
+JUDGE_B_KEY: str | None = JUDGE_B_KEYS[0] if JUDGE_B_KEYS else None
+JUDGE_C_KEY: str | None = JUDGE_C_KEYS[0] if JUDGE_C_KEYS else None
+JUDGE_D_KEY: str | None = JUDGE_D_KEYS[0] if JUDGE_D_KEYS else None
+
+# Model names — set via env vars with safe defaults
+GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "gpt-oss:120b")
+JUDGE_MODEL:      str = os.getenv("JUDGE_MODEL", "gpt-oss:120b")
+
+# ── Unified CONFIG dict — preserved for internal use ────────────────────────
 CONFIG = {
-    # Primary key set — used first
-    "api_keys_primary": [
-        k for k in [
-            os.getenv("OLLAMA_API_KEY_1"),
-            os.getenv("OLLAMA_API_KEY_2"),
-            os.getenv("OLLAMA_API_KEY_3"),
-            os.getenv("OLLAMA_API_KEY_4"),
-        ] if k
-    ],
-    # Backup key set — activated when primary keys fail
-    "api_keys_backup": [
-        k for k in [
-            os.getenv("OLLAMA_API_KEY_B1"),
-            os.getenv("OLLAMA_API_KEY_B2"),
-            os.getenv("OLLAMA_API_KEY_B3"),
-            os.getenv("OLLAMA_API_KEY_B4"),
-            os.getenv("OLLAMA_API_KEY_B5"),
-        ] if k
-    ],
+    # Aggregate key lists (registered into the SharedKeyManager)
+    "api_keys_primary": GENERATION_KEYS,
+    "api_keys_backup":  FALLBACK_KEYS,
     "ollama_host": os.getenv("OLLAMA_HOST", "https://ollama.com"),
-    "model": os.getenv("OLLAMA_MODEL", "gpt-oss:120b"),
+    "model": GENERATION_MODEL,
     "output": "data/mcq_training/mcq_raw.jsonl",
     "raw_books_dir": "data/raw_books",
     "chunk_size": 800,
     "chunk_overlap": 80,
     "max_retries": 3,
     "retry_delay": 2,
-    "num_workers": 4,
+    "num_workers": 2,  # matches the 2 generation keys
+    # Parallel evaluation workers draining the judge queue. Evaluation is the
+    # bottleneck (3 judge calls + ~50% regeneration per item vs 1 cheap call per
+    # draft), so it needs more threads than generation. They borrow idle
+    # gen/fallback keys via the SharedKeyManager.
+    "num_eval_workers": 4,
+    # How many TOTAL judging rounds an MCQ gets before it is given up on.
+    # 1 = judge once, discard on reject. N = on reject, regenerate with the
+    # judges' feedback and re-judge, up to N rounds total. Each extra round
+    # costs ~1 generation + up to 3 judge calls. 3 = two regeneration attempts,
+    # which recovers more borderline chunks at a modest throughput cost.
+    "max_eval_retries": 3,
     # How many consecutive API errors on a key before marking it failed
     "key_fail_threshold": 3,
     # Seconds to wait before re-trying a failed key
     "key_cooldown": 60,
+    # Books to exclude from PDF loading (noisy, code-heavy, or book-reference-polluted)
+    "excluded_books": {
+        "ScipyLectures-simple.pdf",
+    },
+    # How many synthetic chunks to generate when the generator is invoked
+    "n_synthetic_chunks": 180,
+    # Evaluation queue capacity — 0 = unbounded so generation workers never
+    # block waiting for judges to drain the queue.
+    "eval_queue_maxsize": 0,
+}
+
+# ── Data targets (Action 5) ──────────────────────────────────────────────────
+# Because judges reject ~50%, we generate 2× the clean target.
+DATA_TARGETS = {
+    # QG
+    "qg_raw_target":   12_000,   # raw generations before judging
+    "qg_clean_target":  6_000,   # post-judge accepted samples
+    # DG — 3 examples per QG sample
+    "dg_raw_target":   36_000,
+    "dg_clean_target": 18_000,
+    # Stratified cap within any type: no (mastery × score_cat) combo > 40%
+    "max_combo_pct_within_type": 0.40,
+    # Mandatory minimums in the FINAL accepted dataset
+    "min_very_weak_novice_4a":        150,
+    "min_very_weak_intermediate_4a":  150,
+    "min_very_weak_expert_4a":        150,
+    "min_novice_intermediate_pairs":  200,
+    "min_code_type_each":             150,   # types 1, 2, 3
+    "min_conceptual_type_each":       200,   # types 4a, 4b, 4c, 4d, 4e
 }
 
 MASTERY_WEIGHTS = {
@@ -268,12 +356,488 @@ def _clean_chunk_text(text: str, book_stem: str) -> str:
     return "\n".join(cleaned).strip()
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# CHUNK SANITIZER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Compiled patterns for sanitize_chunk — applied to every chunk, PDF and synthetic.
+_SANITIZE_FIGURE_RE = re.compile(
+    r'(?i)'
+    r'(?:figure|fig\.?)\s*[\d.]+'
+    r'|\bsee figure\b'
+    r'|\bas shown above\b'
+    r'|\bthe diagram above\b'
+    r'|\bthe table below\b',
+)
+_SANITIZE_SOURCE_RE = re.compile(
+    r'(?i)'
+    r'from the \w[^.,]{0,40} lecture notes'
+    r'|\bin this book\b'
+    r'|\bthe author\b'
+    r'|\bthe text states\b'
+    r'|\bthe passage\b'
+    r'|\bthis chapter\b'
+    r'|\bthis section\b',
+)
+_SANITIZE_FORWARD_RE = re.compile(
+    r'(?i)'
+    r'as discussed in chapter \w+'
+    r'|\bwe saw earlier\b'
+    r'|\bin the next section\b'
+    r'|\bpreviously\b'
+    r'|\blater in this\b',
+)
+# Unicode box-drawing characters U+2500–U+257F
+_SANITIZE_BOX_CHARS_RE = re.compile(r'[\u2500-\u257f]+')
+# A line consisting entirely of box-drawing chars and whitespace
+_SANITIZE_BOX_LINE_RE = re.compile(r'^[\u2500-\u257f\s]+$')
+# PDF page-number prefix at start of line: "55 " with no other digits following
+_SANITIZE_PAGE_PREFIX_RE = re.compile(r'^\d{1,4} +(?=[A-Z])', re.MULTILINE)
+
+
+def sanitize_chunk(text: str) -> str | None:
+    """Strip book-specific artifacts from any chunk before sending to the teacher LLM.
+
+    Applies to both real PDF chunks and synthetic chunks as a safety net.
+
+    Strips:
+    - Figure/diagram references
+    - Book/source/passage references
+    - Forward/backward cross-references
+    - Code blocks longer than 10 lines (truncated with note)
+    - PDF extraction artifacts: page-number prefixes, header repetitions
+    - Unicode box-drawing characters (decorative PDF separators)
+    - Normalises whitespace
+
+    Returns
+    -------
+    str or None
+        Cleaned text, or None if the cleaned text is fewer than 40 words
+        (too little content for a meaningful question).
+    """
+    if not text or not text.strip():
+        return None
+
+    lines = text.splitlines()
+    result_lines: list[str] = []
+    in_code_block = False
+    code_block_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # ── Box-drawing lines: drop entirely ──────────────────────────
+        if _SANITIZE_BOX_LINE_RE.match(stripped):
+            continue
+
+        # ── Track fenced code blocks ───────────────────────────────────
+        if stripped.startswith("```"):
+            if not in_code_block:
+                in_code_block = True
+                code_block_lines = [line]
+            else:
+                # Closing fence
+                in_code_block = False
+                code_block_lines.append(line)
+                # Truncate if too long
+                content_lines = code_block_lines[1:-1]  # strip fence markers
+                if len(content_lines) > 10:
+                    trimmed = code_block_lines[:11]  # opening fence + 10 content lines
+                    trimmed.append("# ... [code truncated — focus on the concept]")
+                    trimmed.append("```")
+                    result_lines.extend(trimmed)
+                else:
+                    result_lines.extend(code_block_lines)
+                code_block_lines = []
+            continue
+
+        if in_code_block:
+            code_block_lines.append(line)
+            continue
+
+        # ── Strip page-number prefixes ("55 Some Heading") ─────────────
+        line = _SANITIZE_PAGE_PREFIX_RE.sub("", line)
+        stripped = line.strip()
+        if not stripped:
+            result_lines.append("")
+            continue
+
+        # ── Remove inline box-drawing chars ────────────────────────────
+        stripped = _SANITIZE_BOX_CHARS_RE.sub("", stripped).strip()
+        if not stripped:
+            continue
+
+        # ── Remove figure references ────────────────────────────────────
+        stripped = _SANITIZE_FIGURE_RE.sub("", stripped).strip()
+
+        # ── Remove source/book references ───────────────────────────────
+        stripped = _SANITIZE_SOURCE_RE.sub("", stripped).strip()
+
+        # ── Remove forward/backward references ─────────────────────────
+        stripped = _SANITIZE_FORWARD_RE.sub("", stripped).strip()
+
+        if stripped:
+            result_lines.append(stripped)
+
+    # Flush any unterminated code block
+    if in_code_block and code_block_lines:
+        content_lines = code_block_lines[1:]
+        if len(content_lines) > 10:
+            trimmed = code_block_lines[:11]
+            trimmed.append("# ... [code truncated — focus on the concept]")
+            result_lines.extend(trimmed)
+        else:
+            result_lines.extend(code_block_lines)
+
+    # Normalise: collapse runs of blank lines to one
+    cleaned_lines: list[str] = []
+    prev_blank = False
+    for ln in result_lines:
+        is_blank = not ln.strip()
+        if is_blank and prev_blank:
+            continue
+        cleaned_lines.append(ln)
+        prev_blank = is_blank
+
+    cleaned = "\n".join(cleaned_lines).strip()
+
+    # Discard if too short after cleaning
+    if len(cleaned.split()) < 40:
+        return None
+
+    return cleaned
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SYNTHETIC CHUNK GENERATOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Topic distribution for synthetic chunk generation.
+# Tuple format: (topic_tag, subtopics_list)
+# Subtopics are cycled through evenly to fill the per-topic chunk quota.
+_SYNTHETIC_TOPIC_DISTRIBUTION: list[tuple[str, list[str]]] = [
+    ("data_structures", [
+        "arrays",
+        "linked lists",
+        "binary trees",
+        "general trees",
+        "graphs",
+        "hash tables",
+        "heaps",
+        "tries",
+        "stacks",
+        "queues",
+    ]),
+    ("algorithms", [
+        "sorting algorithms",
+        "binary search",
+        "recursion",
+        "dynamic programming",
+        "greedy algorithms",
+        "breadth-first search (BFS)",
+        "depth-first search (DFS)",
+        "divide and conquer",
+    ]),
+    ("complexity", [
+        "Big-O notation",
+        "time vs space tradeoffs",
+        "amortized analysis",
+        "best average and worst case complexity",
+    ]),
+    ("python_fundamentals", [
+        "Python functions and scope",
+        "mutability and pass-by-object-reference in Python",
+        "Python generators",
+        "list comprehensions and dict comprehensions",
+        "Python decorators",
+    ]),
+    ("oop_concepts", [
+        "inheritance in object-oriented programming",
+        "polymorphism",
+        "encapsulation",
+        "composition vs inheritance",
+        "abstraction and method resolution order",
+    ]),
+    ("functional_concepts", [
+        "map filter and reduce",
+        "closures in Python",
+        "higher-order functions",
+        "lambda expressions",
+        "immutability in functional programming",
+    ]),
+    ("error_handling", [
+        "exceptions and try/except in Python",
+        "custom exception classes",
+        "the finally block and cleanup",
+        "context managers and the with statement",
+    ]),
+    ("file_and_io", [
+        "file handling in Python",
+        "serialization with JSON and pickle",
+        "buffering and file modes",
+    ]),
+    ("basic_ml_concepts", [
+        "overfitting and underfitting",
+        "bias-variance tradeoff",
+        "cross-validation",
+        "loss functions",
+        "gradient descent",
+        "regularization in machine learning",
+    ]),
+    ("statistics_basics", [
+        "mean variance and standard deviation",
+        "probability distributions",
+        "hypothesis testing",
+        "correlation vs causation",
+        "sampling and sampling bias",
+    ]),
+]
+
+
+def generate_synthetic_chunks(
+    n_chunks: int,
+    api_keys: list[str],
+    cache_path: str | None = None,
+) -> list[dict]:
+    """Generate clean, reference-free CS educational paragraphs via the teacher LLM.
+
+    All API keys run in parallel — one persistent worker thread per key.  Tasks
+    are drawn from a shared queue so every key stays busy until all targets are
+    processed.  Each successful chunk is written to ``cache_path`` immediately
+    (with a threading lock) so a Ctrl-C loses at most one in-flight request per
+    key.
+
+    On restart the cache is loaded; already-generated chunks are skipped by
+    count (same deterministic shuffle seed) so the function resumes from where
+    it left off.
+
+    Parameters
+    ----------
+    n_chunks :
+        Target number of synthetic chunks to generate.
+    api_keys :
+        API keys to run in parallel.  One thread is spawned per key; all threads
+        work simultaneously on different tasks pulled from a shared queue.
+    cache_path :
+        Optional path to a JSONL file.  Chunks are appended as they complete.
+        If the file exists on startup its contents are loaded and those targets
+        are skipped.  Pass ``None`` to disable caching.
+
+    Returns
+    -------
+    list[dict]
+        Each dict has ``text``, ``topic``, ``book`` keys compatible with the
+        standard chunk format expected by ``_build_tasks``.
+    """
+    if not api_keys:
+        logger.error("generate_synthetic_chunks_no_keys")
+        return []
+
+    # ── Load cache (resume support) ──────────────────────────────────────
+    result_lock: threading.Lock = threading.Lock()
+    synthetic_chunks: list[dict] = []
+    seen_hashes: set[str] = set()
+
+    cache_file: Path | None = Path(cache_path) if cache_path else None
+    if cache_file and cache_file.exists():
+        with open(cache_file, "r", encoding="utf-8") as _cf:
+            for _line in _cf:
+                _line = _line.strip()
+                if not _line:
+                    continue
+                try:
+                    _entry = json.loads(_line)
+                    _h = _chunk_hash(_entry.get("text", ""))
+                    if _h not in seen_hashes:
+                        seen_hashes.add(_h)
+                        synthetic_chunks.append(_entry)
+                except (json.JSONDecodeError, KeyError):
+                    pass
+        if synthetic_chunks:
+            print(
+                f"  Synthetic chunk cache: {len(synthetic_chunks)} chunks loaded "
+                f"from {cache_file} (resuming)"
+            )
+            if len(synthetic_chunks) >= n_chunks:
+                print("  Cache already at target. Skipping generation.")
+                return synthetic_chunks
+
+    already_have = len(synthetic_chunks)
+    still_needed = n_chunks - already_have
+
+    # ── Build target list ────────────────────────────────────────────────
+    n_topics = len(_SYNTHETIC_TOPIC_DISTRIBUTION)
+    base_per_topic = n_chunks // n_topics
+    remainder = n_chunks % n_topics
+
+    targets: list[tuple[str, str]] = []
+    for i, (tag, subtopics) in enumerate(_SYNTHETIC_TOPIC_DISTRIBUTION):
+        count = base_per_topic + (1 if i < remainder else 0)
+        for j in range(count):
+            targets.append((tag, subtopics[j % len(subtopics)]))
+
+    rng = random.Random(99)
+    rng.shuffle(targets)
+
+    # Skip already-cached targets (same deterministic seed = same order)
+    targets_remaining = targets[already_have:]
+
+    n_keys = len(api_keys)
+    logger.info(
+        "synthetic_chunk_generation_start",
+        target=n_chunks,
+        cached=already_have,
+        still_needed=still_needed,
+        actual_targets=len(targets_remaining),
+        parallel_keys=n_keys,
+    )
+    print(
+        f"\n  Generating {len(targets_remaining)} synthetic chunks in parallel "
+        f"({n_keys} keys, need {still_needed} more, have {already_have} cached)..."
+    )
+
+    # ── One Ollama client per key ─────────────────────────────────────────
+    clients = [_make_ollama_client(k) for k in api_keys]
+
+    # ── Shared task queue — all threads drain this ────────────────────────
+    task_queue: queue.Queue = queue.Queue()
+    for item in targets_remaining:
+        task_queue.put(item)
+
+    # ── Open cache file for appending (shared across threads via lock) ────
+    cache_fh = open(cache_file, "a", encoding="utf-8") if cache_file else None
+
+    # ── Progress bar driven from worker threads ───────────────────────────
+    pbar = tqdm(
+        total=len(targets_remaining),
+        desc="Synthetic chunks",
+        unit="chunk",
+        dynamic_ncols=True,
+        colour="cyan",
+    )
+
+    def _syn_worker(key_idx: int, client: Any) -> None:
+        """Worker pinned to one API key — keeps pulling tasks until queue empty."""
+        while True:
+            try:
+                tag, subtopic = task_queue.get_nowait()
+            except queue.Empty:
+                return  # nothing left — this thread is done
+
+            prompt = (
+                f"Write a self-contained educational paragraph (100-150 words) about "
+                f"the computer science concept: {subtopic}\n\n"
+                "Rules:\n"
+                "- No figure references, no 'as shown above', no 'in this example'\n"
+                "- No reference to any specific book, lecture, author, or publication\n"
+                "- No 'we', no 'the student', no 'you will learn'\n"
+                "- State the concept directly and precisely\n"
+                "- Include one concrete illustrative sentence\n"
+                "- End with a consequence or implication of the concept\n\n"
+                "Output only the paragraph, nothing else."
+            )
+
+            try:
+                response = client.chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.8,
+                    timeout_override=60,
+                )
+
+                raw_text: str = ""
+                if isinstance(response, str):
+                    raw_text = response
+                elif isinstance(response, dict):
+                    raw_text = (
+                        response.get("content")
+                        or response.get("text")
+                        or response.get("message", {}).get("content", "")
+                        or ""
+                    )
+
+                raw_text = raw_text.strip()
+                if not raw_text:
+                    logger.warning(
+                        "synthetic_chunk_empty_response",
+                        subtopic=subtopic, key_idx=key_idx,
+                    )
+                    task_queue.task_done()
+                    pbar.update(1)
+                    continue
+
+                cleaned = sanitize_chunk(raw_text)
+                if cleaned is None:
+                    logger.warning(
+                        "synthetic_chunk_too_short_after_sanitize",
+                        subtopic=subtopic, key_idx=key_idx,
+                    )
+                    task_queue.task_done()
+                    pbar.update(1)
+                    continue
+
+                chunk_h = _chunk_hash(cleaned)
+                entry = {"text": cleaned, "topic": tag, "book": f"synthetic:{tag}"}
+
+                with result_lock:
+                    if chunk_h not in seen_hashes:
+                        seen_hashes.add(chunk_h)
+                        synthetic_chunks.append(entry)
+                        if cache_fh:
+                            cache_fh.write(json.dumps(entry) + "\n")
+                            cache_fh.flush()
+                    else:
+                        logger.debug("synthetic_chunk_duplicate", subtopic=subtopic)
+
+            except Exception as exc:
+                logger.warning(
+                    "synthetic_chunk_failed",
+                    subtopic=subtopic,
+                    key_idx=key_idx,
+                    error=str(exc)[:120],
+                )
+            finally:
+                task_queue.task_done()
+                pbar.update(1)
+
+    # ── Launch all key-threads simultaneously ─────────────────────────────
+    try:
+        with ThreadPoolExecutor(max_workers=n_keys, thread_name_prefix="syn") as pool:
+            futures = [
+                pool.submit(_syn_worker, idx, clients[idx])
+                for idx in range(n_keys)
+            ]
+            for fut in as_completed(futures):
+                exc = fut.exception()
+                if exc:
+                    logger.error(
+                        "synthetic_worker_thread_crashed",
+                        error=str(exc)[:200],
+                    )
+    finally:
+        pbar.close()
+        if cache_fh:
+            cache_fh.close()
+
+    logger.info(
+        "synthetic_chunk_generation_done",
+        requested=n_chunks,
+        generated=len(synthetic_chunks),
+    )
+    print(
+        f"  Synthetic chunks done: {len(synthetic_chunks)} / {n_chunks} target "
+        f"({already_have} from cache + {len(synthetic_chunks) - already_have} new)"
+    )
+    return synthetic_chunks
+
 def _load_chunks_from_pdfs(books_dir: str, chunk_size: int, chunk_overlap: int) -> list[dict]:
     """Load and chunk all PDFs from the books directory.
 
     Books are processed in **alphabetical order** so the task queue always
     starts from the first book, first chunk.  Chunk artifacts (headers,
-    page numbers, edition lines) are stripped before returning.
+    page numbers, edition lines) are stripped, then every chunk passes
+    through ``sanitize_chunk`` to remove book-specific references.
+
+    Books listed in ``CONFIG["excluded_books"]`` are skipped entirely.
     """
     from langchain_community.document_loaders import PyPDFLoader
     from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -283,6 +847,7 @@ def _load_chunks_from_pdfs(books_dir: str, chunk_size: int, chunk_overlap: int) 
         logger.error("books_dir_not_found", path=books_dir)
         return []
 
+    excluded = CONFIG.get("excluded_books", set())
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -293,27 +858,45 @@ def _load_chunks_from_pdfs(books_dir: str, chunk_size: int, chunk_overlap: int) 
     # Sort alphabetically for deterministic, book-ordered processing
     pdf_files = sorted(books_path.glob("*.pdf"), key=lambda p: p.name.lower())
     logger.info("found_pdf_files", count=len(pdf_files), dir=books_dir)
+
     for i, p in enumerate(pdf_files):
+        if p.name in excluded:
+            logger.info("book_excluded", index=i + 1, name=p.name)
+            print(f"  Skipping excluded book: {p.name}")
+            continue
         logger.info("book_order", index=i + 1, name=p.name)
 
     for pdf_path in pdf_files:
+        if pdf_path.name in excluded:
+            continue
         try:
             loader = PyPDFLoader(str(pdf_path))
             pages = loader.load()
             splits = splitter.split_documents(pages)
             book_stem = pdf_path.stem
+            skipped = 0
             for doc in splits:
                 raw_text = doc.page_content.strip()
                 text = _clean_chunk_text(raw_text, book_stem)
-                if len(text) < 50:
+                # Run through the full sanitizer — removes figure refs, source
+                # refs, cross-refs, over-long code blocks, and box-drawing chars
+                sanitized = sanitize_chunk(text)
+                if sanitized is None:
+                    skipped += 1
                     continue
                 # Use the PDF filename stem as topic — ignore langchain's
                 # metadata.topic which leaks page-level noise.
                 all_chunks.append({
-                    "text": text,
+                    "text": sanitized,
                     "topic": book_stem,
                     "book": pdf_path.name,
                 })
+            if skipped:
+                logger.info(
+                    "pdf_chunks_sanitized_out",
+                    book=pdf_path.name,
+                    skipped=skipped,
+                )
         except Exception:
             logger.exception("pdf_load_failed", path=str(pdf_path))
 
@@ -390,17 +973,33 @@ def _build_tasks(
             qtype = assigned
             score_category = _weighted_sample(SCORE_CATEGORY_WEIGHTS)
 
+            # very_weak HARD override: type MUST be 4a regardless of mastery
+            # (matches the prompt's very_weak block and Judge B's type gate).
+            if score_category == "very_weak":
+                qtype = "4a"
+
             compatible_masteries = [
                 m for m, types in MASTERY_TYPE_ELIGIBILITY.items()
                 if qtype in types
             ]
-            mastery = random.choice(compatible_masteries) if compatible_masteries \
-                else _weighted_sample(MASTERY_WEIGHTS)
+            if compatible_masteries:
+                # Filter MASTERY_WEIGHTS to only compatible levels, re-normalize
+                filtered = {m: MASTERY_WEIGHTS[m] for m in compatible_masteries
+                            if m in MASTERY_WEIGHTS}
+                mastery = _weighted_sample(filtered) if filtered \
+                    else random.choice(compatible_masteries)
+            else:
+                mastery = _weighted_sample(MASTERY_WEIGHTS)
 
+            mastery_types = set(MASTERY_TYPE_ELIGIBILITY.get(mastery, ["4a"]))
             misconception_context = None
-            if random.random() < 0.20:
+            # Skip escalation for very_weak; otherwise escalate only when the
+            # escalated type stays eligible for the chosen mastery.
+            if score_category != "very_weak" and random.random() < 0.20:
                 original_type = qtype
-                qtype = _ESCALATION_MAP.get(qtype, qtype)
+                escalated = _ESCALATION_MAP.get(qtype, qtype)
+                if escalated in mastery_types:
+                    qtype = escalated
                 misconception_context = (
                     f"student chose a wrong answer for a Type {original_type} "
                     f"question on this topic"
@@ -440,10 +1039,23 @@ def _build_tasks(
                 pool = list(mastery_types)
             question_type = random.choice(pool)
 
+            # very_weak HARD override: type MUST be 4a regardless of mastery,
+            # matching the prompt's very_weak block and Judge B's type-override
+            # gate. Without this the metadata keeps the sampled type and Judge B
+            # rejects every very_weak sample as very_weak_type_override.
+            if score_category == "very_weak":
+                question_type = "4a"
+
             misconception_context = None
-            if random.random() < 0.20:
+            # Skip escalation for very_weak (it must stay 4a). Otherwise escalate
+            # only when the escalated type is still eligible for this mastery —
+            # an out-of-ceiling type would be rejected by Judge B as
+            # type_not_eligible.
+            if score_category != "very_weak" and random.random() < 0.20:
                 original_type = question_type
-                question_type = _ESCALATION_MAP.get(question_type, question_type)
+                escalated = _ESCALATION_MAP.get(question_type, question_type)
+                if escalated in mastery_types:
+                    question_type = escalated
                 misconception_context = (
                     f"student chose a wrong answer for a Type {original_type} "
                     f"question on this topic"
@@ -475,8 +1087,17 @@ def _build_tasks(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _make_ollama_client(api_key: str):
-    """Create an OllamaClient with a specific API key."""
+def _make_ollama_client(api_key: str, model: str | None = None):
+    """Create an OllamaClient with a specific API key and optional model override.
+
+    Parameters
+    ----------
+    api_key :
+        The API key for the request.
+    model :
+        Model name.  Defaults to ``GENERATION_MODEL`` (small, fast).
+        Pass ``JUDGE_MODEL`` to create a judge client.
+    """
     pathway_src = str(
         Path(__file__).resolve().parent.parent.parent.parent.parent / "course_pathway" / "src"
     )
@@ -487,7 +1108,7 @@ def _make_ollama_client(api_key: str):
 
     return OllamaClient(
         host=CONFIG["ollama_host"],
-        model=CONFIG["model"],
+        model=model or GENERATION_MODEL,
         api_key=api_key,
         max_retries=3,
         timeout=180,
@@ -499,8 +1120,136 @@ def _make_ollama_client(api_key: str):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+_PROMPT_CONTEXT_SCOPE = """\
+CRITICAL INSTRUCTION — QUESTION SCOPE:
+The student answering this question will NOT have access to:
+- The source textbook or lecture notes
+- Any figures, diagrams, or images referenced in the text
+- Any specific code snippets from the chunk below
+
+You MUST generate a question that tests the underlying CS concept
+or principle described in the chunk — NOT a question about the
+specific example, figure, or code that appears in the text.
+
+BAD (never generate):
+  "In the following code snippet from the Scipy lecture notes..."
+  "According to the passage, what does Figure 3.2 show?"
+  "As shown in the example above..."
+
+GOOD (generate these instead):
+  "What does the boxplot() function visualize?"
+  "Which data structure provides O(1) average-case lookup time?"
+  "What happens when a recursive function has no base case?"
+
+The question must be answerable by any student who understands
+the concept — even without having read this specific textbook."""
+
+
+_PROMPT_CODE_LENGTH = """\
+If your question needs to reference code, limit it to a MAXIMUM
+of 5 lines. Never reproduce a full code block from the chunk in
+your question stem. Prefer to describe what the code does in words."""
+
+
+_PROMPT_SIGNAL_SEPARATION = """\
+TWO SIGNALS — TWO DIFFERENT JOBS:
+
+MASTERY LEVEL controls HOW you frame the question — vocabulary,
+cognitive register, and distractor sophistication:
+
+  Novice:
+    - Vocabulary: everyday language matching the chunk exactly
+    - Frame: "What is X?" / "What does X do?"
+    - Distractors: clearly wrong to anyone who read carefully
+    - No cross-concept reasoning required
+    - Example: "What is a stack?"
+    - Example distractor: a wrong but obviously unrelated answer
+
+  Intermediate:
+    - Vocabulary: standard CS terminology assumed known
+    - Frame: connect two ideas or apply to a simple scenario
+    - Distractors: require careful reasoning to eliminate
+    - NEVER a pure definition (unless score_category overrides)
+    - Example: "What is the difference between a stack and a queue?"
+    - Example distractor: plausible-sounding but subtly wrong
+
+  Expert:
+    - Vocabulary: precise technical language, assume mastery
+    - Frame: WHY it works, edge cases, tradeoffs
+    - Distractors: sophisticated, plausible to partial knowers
+    - Synthesis across concepts is appropriate
+    - Example: "Why does a hash table degrade to O(n) lookup in
+      the worst case?"
+    - Example distractor: technically accurate but misses the point
+
+SCORE CATEGORY controls HOW HARD the question is — difficulty
+and whether mastery type is overridden:
+
+  very_weak:
+    - OVERRIDES mastery on TYPE ONLY — always generate Type 4a
+    - Mastery still controls vocabulary and distractor sophistication
+    - Even for Expert students: simple definition question
+    - Distractors: easy to eliminate, student needs confidence
+    - Goal: rebuild the foundation before anything else
+
+  weak:
+    - One cognitive level easier than mastery alone would suggest
+    - An Intermediate student gets a Novice-difficulty question
+    - Distractors: plausible but distinguishable with careful reading
+
+  moderate:
+    - Standard difficulty for the mastery level, no adjustment
+
+  strong:
+    - Hardest difficulty mastery allows
+    - Distractors: as subtle and challenging as mastery permits
+
+IMPORTANT: mastery and score_category are independent dimensions.
+A Novice + strong student gets a hard Novice-framed question.
+An Expert + very_weak student gets a Type 4a — but written with
+Expert vocabulary, not dumbed-down language. Same type, different
+register."""
+
+
+_PROMPT_DISTRACTOR_LABELS = """\
+Generate exactly 3 distractors, each targeting a DIFFERENT
+misconception. Label each:
+  - wrong_concept: student confuses this with a different concept
+  - wrong_application: student understands but applies incorrectly
+  - partial_knowledge: student knows part but misses a key detail
+
+Each distractor must be meaningfully different from the other two
+and from the correct answer. Output one distractor per category."""
+
+
+def _build_very_weak_override_block(question_type: str) -> str:
+    """Return the very_weak hard override injection block.
+
+    Only injected when score_category is 'very_weak'.
+    """
+    return (
+        "score_category is very_weak. You MUST generate a Type 4a "
+        "(Definition/Recall) question REGARDLESS of whether the chunk "
+        "contains code. If the chunk contains code, identify the concept "
+        "the code demonstrates and ask a definition question about that "
+        "concept — not about the syntax or output of the code.\n\n"
+        "Example: chunk shows a recursive function →\n"
+        "BAD:  \"What does this recursive function return?\"\n"
+        "GOOD: \"What is the purpose of a base case in a recursive function?\""
+    )
+
+
 def _build_generation_prompt(task: dict) -> str:
-    """Build a combined QG+DG generation prompt for a single MCQ."""
+    """Build a combined QG+DG generation prompt for a single MCQ.
+
+    Incorporates five blocks beyond the taxonomy:
+    1. Context-scope restriction (no figure/textbook questions)
+    2. very_weak hard type override (injected only when applicable)
+    3. Code length restriction (max 5 lines in question stem)
+    4. Explicit mastery vs score_category separation with examples
+    5. Distractor category labeling (wrong_concept / wrong_application /
+       partial_knowledge)
+    """
     mcq_src = str(Path(__file__).resolve().parent.parent.parent)
     if mcq_src not in sys.path:
         sys.path.insert(0, mcq_src)
@@ -509,21 +1258,31 @@ def _build_generation_prompt(task: dict) -> str:
     from mcq.scoring_categories import score_category_description
 
     category_desc = score_category_description(task["score_category"])
+
     misconception_block = ""
     if task["misconception_context"]:
-        misconception_block = f"""
-MISCONCEPTION CONTEXT:
-Previously, {task['misconception_context']}.
-Generate a question that approaches this topic from a different angle to
-address the underlying gap.  One distractor should target the same
-misconception from a new perspective.
-"""
+        misconception_block = (
+            f"\nMISCONCEPTION CONTEXT:\n"
+            f"Previously, {task['misconception_context']}.\n"
+            f"Generate a question that approaches this topic from a different angle to\n"
+            f"address the underlying gap.  One distractor should target the same\n"
+            f"misconception from a new perspective.\n"
+        )
+
+    # Inject the very_weak override block only when applicable
+    very_weak_block = ""
+    if task["score_category"] == "very_weak":
+        very_weak_block = f"\n{_build_very_weak_override_block(task['question_type'])}\n"
 
     return f"""\
 You are an expert educational question writer.
 
 {QUESTION_TYPE_TAXONOMY}
 
+{_PROMPT_CONTEXT_SCOPE}
+
+{_PROMPT_SIGNAL_SEPARATION}
+{very_weak_block}
 TASK: Generate a complete multiple-choice question of Type {task['question_type']} \
 for the topic "{task['topic']}".
 
@@ -532,17 +1291,22 @@ STUDENT PROFILE:
 - Topic score category: {task['score_category']}
 - {category_desc}
 {misconception_block}
+{_PROMPT_CODE_LENGTH}
+
 SOURCE CONTENT:
 \"\"\"
 {task['text']}
 \"\"\"
+
+{_PROMPT_DISTRACTOR_LABELS}
 
 Generate exactly ONE question with the correct answer, explanation, and exactly \
 3 wrong-but-plausible distractors.
 
 REQUIREMENTS:
 1. The question MUST be Type {task['question_type']} as defined in the taxonomy.
-2. The question must be answerable from the source content alone.
+2. The question must be answerable from the source content alone without
+   needing the textbook, any figures, or any code block.
 3. Each distractor must be plausible but incorrect.
 4. No distractor should match the correct answer.
 5. No two distractors should be identical.
@@ -612,109 +1376,1249 @@ def _validate_response(data: dict) -> str | None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# KEY POOL  — thread-safe primary ↔ backup rotation
+# SHARED KEY MANAGER  — one global registry every role draws from
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# A single manager holds the health (cooldown) and live load (in-use count) of
+# EVERY API key.  Generation workers and all three judges draw keys from it.
+#
+# When a role needs a key it calls ``pick(preferred)``.  The manager returns the
+# best key using this priority, so the run keeps going as long as ANY key works:
+#   1. One of the role's own preferred keys that is healthy and idle
+#   2. One of the role's preferred keys that is healthy (even if busy)
+#   3. ANY healthy key that is idle — i.e. borrow a non-utilized key that some
+#      other role isn't using right now
+#   4. ANY healthy key at all — share a single key, losing parallelism
+#      (this is the "continue on one key, no parallelization" last resort)
+#
+# Only when EVERY key has been in cooldown continuously for ``grace_period``
+# seconds (default 30 min) does ``all_dead`` flip True and the pipeline stops
+# gracefully.  A single recovering key resets the outage clock, because there is
+# still a way to continue.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class KeyPool:
-    """Thread-safe API key pool with primary→backup→primary rotation.
+def _is_quota_error(exc: Exception) -> bool:
+    """Heuristic: does this exception look like a rate-limit / quota error?"""
+    s = str(exc).lower()
+    return any(w in s for w in ("quota", "429", "rate limit", "exceeded", "too many"))
 
-    Each worker owns one key at a time. When it reports an API error the pool
-    immediately gives it the next available key (cycling through primary first,
-    then backup, then primary again).  A key is marked "cooling down" for
-    ``cooldown`` seconds after ``fail_threshold`` consecutive errors so
-    transiently-bad keys can recover.  If every key in both sets is cooling
-    down simultaneously, ``all_failed`` is set and workers stop cleanly.
+
+class AllKeysDeadError(RuntimeError):
+    """Raised by RoleClient when every API key is permanently unavailable."""
+
+
+class SharedKeyManager:
+    """Global, thread-safe registry of every API key's health and live load.
+
+    Shared across generation workers and all judges so any role can borrow an
+    idle key from any other role, share a single surviving key when nothing
+    else is free, and never stop until every key is genuinely dead.
     """
 
     def __init__(
         self,
-        primary: list[str],
-        backup: list[str],
+        role_keys: dict[str, list[str]],
         fail_threshold: int = 3,
-        cooldown: float = 60.0,
+        base_cooldown: float = 60.0,
+        quota_cooldown: float = 120.0,
+        grace_period: float = 1800.0,
     ):
-        self._primary  = list(primary)
-        self._backup   = list(backup)
-        self._all_keys = self._primary + self._backup
+        # Union of every key across all roles, de-duplicated, order preserved.
+        self._all_keys: list[str] = []
+        seen: set[str] = set()
+        for keys in role_keys.values():
+            for k in keys:
+                if k and k not in seen:
+                    seen.add(k)
+                    self._all_keys.append(k)
         if not self._all_keys:
-            raise ValueError("KeyPool requires at least one API key.")
+            raise ValueError("SharedKeyManager requires at least one API key.")
 
         self._fail_threshold = fail_threshold
-        self._cooldown       = cooldown
-        self._lock           = threading.Lock()
+        self._base_cd        = base_cooldown
+        self._quota_cd       = quota_cooldown
+        self._grace          = grace_period
+        self._lock           = threading.RLock()
 
-        # Per-key state
-        self._consecutive_errors: dict[str, int]   = {k: 0 for k in self._all_keys}
-        self._cooling_until:      dict[str, float]  = {k: 0.0 for k in self._all_keys}
+        self._errors:        dict[str, int]   = {k: 0 for k in self._all_keys}
+        self._cooling_until: dict[str, float] = {k: 0.0 for k in self._all_keys}
+        self._in_use:        dict[str, int]   = {k: 0 for k in self._all_keys}
 
-        # Round-robin index across all keys
-        self._rr_idx = 0
+        self._outage_start: float | None = None
+        self._last_pause_print: float = 0.0
+        self.all_dead = False
 
-        # Set to True when every key is in cooldown simultaneously
-        self.all_failed = False
+    # ── introspection ────────────────────────────────────────────────────────
 
-    # ── public API ────────────────────────────────────────────────────────────
+    def num_keys(self) -> int:
+        return len(self._all_keys)
 
-    def get_initial_key(self) -> str:
-        """Return the first available key for a new worker."""
+    def status(self) -> dict:
+        """Snapshot of key health for the final report."""
         with self._lock:
-            return self._next_available_key_locked()
+            now = time.time()
+            cooling = [k for k in self._all_keys if now < self._cooling_until[k]]
+            in_use  = [k for k in self._all_keys if self._in_use[k] > 0]
+            return {
+                "total":   len(self._all_keys),
+                "healthy": len(self._all_keys) - len(cooling),
+                "cooling": len(cooling),
+                "in_use":  len(in_use),
+                "all_dead": self.all_dead,
+            }
+
+    # ── selection ─────────────────────────────────────────────────────────────
+
+    def pick(self, preferred: list[str]) -> str | None:
+        """Acquire the best available key for a caller (increments its in-use).
+
+        Blocks (sleeping in small increments) while every key is cooling down,
+        printing a pause notice.  Returns the chosen key, or ``None`` once every
+        key has been dead continuously past the grace period — the caller should
+        then stop.  Always pair a non-None result with ``release(key)``.
+        """
+        pref = [k for k in preferred if k in self._cooling_until]
+        pref_set = set(pref)
+
+        while True:
+            wait_s = 0.0
+            with self._lock:
+                if self.all_dead:
+                    return None
+                now = time.time()
+                healthy = [k for k in self._all_keys if now >= self._cooling_until[k]]
+
+                if healthy:
+                    self._outage_start = None
+
+                    def rank(k: str) -> tuple:
+                        # Tier 0: my preferred keys (idle ones sort first via in_use)
+                        # Tier 1: someone else's idle key (borrow non-utilized)
+                        # Tier 2: someone else's busy key (share — no parallelism)
+                        if k in pref_set:
+                            return (0, self._in_use[k], pref.index(k))
+                        return (1 if self._in_use[k] == 0 else 2, self._in_use[k], 0)
+
+                    best = min(healthy, key=rank)
+                    self._in_use[best] += 1
+                    return best
+
+                # ── No healthy keys anywhere — global outage ──────────────────
+                if self._outage_start is None:
+                    self._outage_start = now
+                outage = now - self._outage_start
+                soonest = min(self._cooling_until[k] for k in self._all_keys)
+                wait_s = min(max(1.0, soonest - now), 30.0)
+
+                if outage >= self._grace:
+                    self.all_dead = True
+                    logger.error(
+                        "all_keys_dead",
+                        outage_min=round(outage / 60, 1),
+                        keys=len(self._all_keys),
+                    )
+                    print(
+                        f"\n  ✗  All {len(self._all_keys)} API keys have been "
+                        f"unavailable for {outage / 60:.0f} min straight. No way to "
+                        "continue — stopping gracefully. Re-run to resume from the "
+                        "saved checkpoint.",
+                        flush=True,
+                    )
+                    return None
+
+                # Throttle the pause banner to once every ~15 s
+                if now - self._last_pause_print > 15.0:
+                    self._last_pause_print = now
+                    logger.warning(
+                        "all_keys_cooling",
+                        wait_s=round(wait_s, 1),
+                        outage_min=round(outage / 60, 1),
+                    )
+                    print(
+                        f"\n  ⏸  All API keys in cooldown — pausing (checkpoint "
+                        f"saved, auto-resuming). [outage {outage / 60:.1f} min / "
+                        f"30 min limit]",
+                        flush=True,
+                    )
+
+            # Sleep OUTSIDE the lock so other threads can release/recover keys.
+            time.sleep(wait_s)
+
+    def release(self, key: str) -> None:
+        """Mark one in-use slot of ``key`` as freed."""
+        with self._lock:
+            if self._in_use.get(key, 0) > 0:
+                self._in_use[key] -= 1
 
     def report_success(self, key: str) -> None:
-        """Reset the error counter for ``key``."""
+        """Clear the error count and any cooldown for a key that just worked."""
         with self._lock:
-            self._consecutive_errors[key] = 0
+            self._errors[key] = 0
+            self._cooling_until[key] = 0.0
 
-    def report_api_error(self, key: str) -> str:
-        """Record an API error for ``key`` and return the next key to use.
-
-        If the error count reaches the threshold the key enters cooldown.
-        Returns the same key if it is still usable.
-        """
+    def report_error(self, key: str, is_quota: bool = False) -> None:
+        """Record an error; cool the key down once it crosses the threshold."""
         with self._lock:
-            self._consecutive_errors[key] = self._consecutive_errors.get(key, 0) + 1
-            if self._consecutive_errors[key] >= self._fail_threshold:
-                self._cooling_until[key] = time.time() + self._cooldown
-                self._consecutive_errors[key] = 0
+            self._errors[key] = self._errors.get(key, 0) + 1
+            if self._errors[key] >= self._fail_threshold:
+                cd = self._quota_cd if is_quota else self._base_cd
+                self._cooling_until[key] = time.time() + cd
+                self._errors[key] = 0
                 logger.warning(
                     "key_cooling_down",
                     key=key[:8] + "...",
-                    cooldown_s=self._cooldown,
+                    cooldown_s=cd,
+                    reason="quota" if is_quota else "error",
                 )
-            return self._next_available_key_locked()
 
-    # ── internals ─────────────────────────────────────────────────────────────
 
-    def _next_available_key_locked(self) -> str:
-        """Return next non-cooling key. Sets all_failed if none available."""
-        now = time.time()
-        # Try primary first, then backup — pure round-robin within each tier
-        for tier in (self._primary, self._backup, self._primary):
-            for _ in range(len(tier)):
-                key = tier[self._rr_idx % len(tier)] if tier else None
-                self._rr_idx += 1
-                if key and now >= self._cooling_until.get(key, 0.0):
-                    return key
-        # All keys are cooling — pick the one that cools down soonest
-        candidates = [
-            (self._cooling_until.get(k, 0.0), k)
-            for k in self._all_keys
-        ]
-        soonest_time, soonest_key = min(candidates)
-        wait = max(0.0, soonest_time - now)
-        if wait > 0:
-            logger.error(
-                "all_keys_cooling",
-                wait_s=round(wait, 1),
-                msg="All API keys are in cooldown — waiting for recovery.",
+# ═══════════════════════════════════════════════════════════════════════════════
+# ROLE CLIENT  — resilient .chat()/.chat_json() backed by SharedKeyManager
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class RoleClient:
+    """Drop-in for OllamaClient that draws a key from SharedKeyManager per call.
+
+    Mirrors ``OllamaClient.chat()`` and ``.chat_json()`` so generation workers,
+    judges, and the regeneration path can all use it unchanged.  On every call
+    it picks the best available key (its own keys first, then any idle key, then
+    a shared key), and on an API error it cools that key and rotates to another.
+    It only raises ``AllKeysDeadError`` once every key is permanently dead.
+    """
+
+    def __init__(
+        self,
+        manager: SharedKeyManager,
+        preferred_keys: list[str],
+        model: str,
+        role_name: str,
+        max_rotations: int | None = None,
+    ):
+        self._mgr = manager
+        self._preferred = [k for k in preferred_keys if k]
+        self._model = model
+        self._role = role_name
+        self._max_rot = max_rotations
+        self._clients: dict[str, Any] = {}
+        self._clients_lock = threading.Lock()
+
+    def _client_for(self, key: str):
+        # Thread-safe lazy client creation — a single RoleClient may be shared
+        # across several evaluation-worker threads judging in parallel.
+        with self._clients_lock:
+            c = self._clients.get(key)
+            if c is None:
+                c = _make_ollama_client(key, model=self._model)
+                self._clients[key] = c
+            return c
+
+    def _invoke(self, method: str, messages: list[dict],
+                temperature: float, timeout_override: int):
+        max_rot = self._max_rot or (self._mgr.num_keys() * 3)
+        last_exc: Exception | None = None
+        for _ in range(max_rot):
+            key = self._mgr.pick(self._preferred)
+            if key is None:
+                raise AllKeysDeadError(f"{self._role}: all API keys dead")
+            try:
+                fn = getattr(self._client_for(key), method)
+                result = fn(
+                    messages=messages,
+                    temperature=temperature,
+                    timeout_override=timeout_override,
+                )
+                self._mgr.report_success(key)
+                return result
+            except AllKeysDeadError:
+                raise
+            except Exception as exc:
+                self._mgr.report_error(key, _is_quota_error(exc))
+                last_exc = exc
+                logger.warning(
+                    f"{self._role}_api_error",
+                    key=key[:8] + "...",
+                    error=str(exc)[:100],
+                )
+            finally:
+                self._mgr.release(key)
+        # Exhausted rotations without a permanent-death signal — surface the
+        # last error so the caller (worker retry loop / judge except) can react.
+        raise last_exc or RuntimeError(f"{self._role}: exhausted key rotations")
+
+    def chat(self, messages: list[dict], temperature: float = 0.2,
+             timeout_override: int = 120) -> str:
+        return self._invoke("chat", messages, temperature, timeout_override)
+
+    def chat_json(self, messages: list[dict], temperature: float = 0.7,
+                  timeout_override: int = 180):
+        return self._invoke("chat_json", messages, temperature, timeout_override)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# JUDGE A — REGEX PRE-FILTER  (no LLM, no key, instant)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Compiled once at import time.
+_JUDGE_A_PATTERNS: list[re.Pattern] = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r'the following code snippet',
+        r'the code above',
+        r'the code below',
+        r'from the \w[^.,]{0,40} lecture',
+        r'from the \w[^.,]{0,40} notes',
+        r'\bfigure\s+[\d.]+',
+        r'\bfig\.?\s+[\d.]+',
+        r'\bthe diagram\b',
+        r'the table above',
+        r'according to the passage',
+        r'according to the text',
+        r'the author states',
+        r'\bas shown\b',
+        r'as described above',
+    ]
+]
+# Code block longer than 5 lines: fence open + 5+ content lines + fence close
+_JUDGE_A_CODE_BLOCK_RE = re.compile(r'```[^`]*\n(?:[^\n]*\n){6,}[^`]*```', re.DOTALL)
+
+
+def _passes_regex_filter(mcq: dict) -> bool:
+    """Judge A: fast regex pre-filter. No LLM call.
+
+    Returns True (passes) if the generated question is free of
+    textbook-reference patterns and does not include a code block
+    longer than 5 lines in the question stem.
+    """
+    question = mcq.get("question", "")
+    for pat in _JUDGE_A_PATTERNS:
+        if pat.search(question):
+            return False
+    if _JUDGE_A_CODE_BLOCK_RE.search(question):
+        return False
+    return True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# JUDGE B — FULL PERSONALIZATION ADHERENCE  (JUDGE_B_KEY, gpt-oss:120b)
+# G-Eval: reasoning written BEFORE each sub-check answer.
+# HD-Eval: 9 atomic YES/NO sub-checks; score derived in Python, never by LLM.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class JudgeBResult:
+    verdict: str                    # "ACCEPT" or "REJECT"
+    overall_score: float            # (mastery + score_cat + misconception) / 3
+    primary_failure: str            # which sub-check failed first, or "NONE"
+    mastery_score: int   = 0        # count of YES from 3 mastery sub-checks
+    score_cat_score: int = 0        # count of YES from 3 score_cat sub-checks
+    misconception_score: int = 0    # count of YES from 3 misconception sub-checks
+    type_eligible: bool  = True
+    depth_calibration: str = "CORRECT"
+    # Raw sub-check answers stored for sub-check pass-rate reporting
+    sub_checks: dict = field(default_factory=dict)
+    raw_response: str = ""
+
+
+# ── Misconception block (substituted in Python before sending) ─────────────
+_JUDGE_B_MISCONCEPTION_NONE_BLOCK = """\
+SIGNAL 3 — MISCONCEPTION CONTEXT
+─────────────────────────────────────────────────────
+MISCONCEPTION_REASONING: Not applicable — no misconception context.
+MISCONCEPTION_CHECK_NEW_ANGLE: YES
+MISCONCEPTION_CHECK_DISTRACTOR_TARGETS: YES
+MISCONCEPTION_CHECK_ANSWER_ADDRESSES_GAP: YES"""
+
+
+def _build_judge_b_misconception_block(mc: str | None) -> str:
+    """Build Signal 3 block — auto-YES when no misconception context."""
+    if not mc:
+        return _JUDGE_B_MISCONCEPTION_NONE_BLOCK
+    return f"""\
+SIGNAL 3 — MISCONCEPTION CONTEXT
+─────────────────────────────────────────────────────
+Misconception: {mc}
+
+MISCONCEPTION_REASONING: [1-2 sentences: does this question approach
+  the same conceptual gap from a new angle? Does a distractor target
+  the misconception?]
+
+MISCONCEPTION_CHECK_NEW_ANGLE: [YES/NO — different scenario than
+  the one the student previously failed?]
+MISCONCEPTION_CHECK_DISTRACTOR_TARGETS: [YES/NO — does at least
+  one distractor appeal to the same wrong mental model?]
+MISCONCEPTION_CHECK_ANSWER_ADDRESSES_GAP: [YES/NO — does the
+  correct answer implicitly address why the misconception is wrong?]"""
+
+
+def _build_judge_b_prompt(mcq: dict) -> str:
+    """Build the full Judge B prompt (G-Eval + HD-Eval restructured)."""
+    mastery    = mcq.get("mastery_level", "Intermediate")
+    score_cat  = mcq.get("score_category", "moderate")
+    qtype      = mcq.get("question_type", "4a")
+    mc         = mcq.get("misconception_context") or None
+    chunk      = mcq.get("chunk", "")
+    question   = mcq.get("question", "")
+    answer     = mcq.get("correct_answer", "")
+    explanation = mcq.get("explanation", "")
+
+    misconception_block = _build_judge_b_misconception_block(mc)
+
+    return f"""\
+You are a strict personalization quality reviewer for an adaptive
+learning platform.
+
+PERSONALIZATION SIGNALS:
+  mastery_level:    {mastery}
+  score_category:   {score_cat}
+  question_type:    {qtype}
+  misconception:    {mc or "NONE"}
+
+SOURCE CHUNK:
+{chunk}
+
+GENERATED QUESTION:
+{question}
+
+CORRECT ANSWER:
+{answer}
+
+EXPLANATION:
+{explanation}
+
+─────────────────────────────────────────────────────
+SIGNAL RESPONSIBILITIES
+─────────────────────────────────────────────────────
+MASTERY controls HOW the question is framed: vocabulary, cognitive
+register, distractor sophistication.
+
+SCORE CATEGORY controls HOW HARD the question is: difficulty, and
+whether mastery is overridden on type (very_weak forces Type 4a but
+mastery still governs vocabulary and distractor sophistication).
+
+Evaluate each signal below. For each, FIRST write one to two
+sentences of reasoning addressing the sub-checks, THEN answer each
+sub-check YES or NO. Do not answer the sub-checks before writing
+your reasoning.
+
+─────────────────────────────────────────────────────
+SIGNAL 1 — MASTERY: {mastery}
+─────────────────────────────────────────────────────
+Reference framing rules:
+  Novice: vocabulary matches chunk exactly, asks what something IS
+    or DOES, no cross-concept reasoning, distractors clearly wrong
+    to a careful reader
+  Intermediate: standard CS terminology, connects two ideas or
+    applies to a scenario, never a pure definition (unless
+    score_category forces 4a), distractors require careful reasoning
+  Expert: precise technical vocabulary, reasons about WHY/edge
+    cases/tradeoffs, may synthesize concepts, distractors plausible
+    to partial knowers
+
+MASTERY_REASONING: [1-2 sentences: does the vocabulary and cognitive
+  register in this question match {mastery}? Reference specific
+  words or phrasing from the question.]
+
+MASTERY_CHECK_VOCABULARY: [YES/NO — does vocabulary depth match
+  {mastery}?]
+MASTERY_CHECK_FRAMING: [YES/NO — does the cognitive demand
+  (recall/connect/reason) match {mastery}?]
+MASTERY_CHECK_DISTRACTOR_SOPHISTICATION: [YES/NO — does distractor
+  sophistication match {mastery}?]
+
+─────────────────────────────────────────────────────
+SIGNAL 2 — SCORE CATEGORY: {score_cat}
+─────────────────────────────────────────────────────
+Reference difficulty rules:
+  very_weak: TYPE must be 4a regardless of mastery; simplest
+    possible question; distractors easy to eliminate; mastery
+    vocabulary/sophistication still applies
+  weak: one level easier than mastery standard; distractors
+    plausible but distinguishable with effort
+  moderate: standard difficulty for mastery, no adjustment
+  strong: hardest difficulty mastery allows; distractors as subtle
+    as mastery permits
+
+SCORE_CATEGORY_REASONING: [1-2 sentences: does the question and
+  distractor difficulty match {score_cat}?]
+
+SCORE_CATEGORY_CHECK_DIFFICULTY: [YES/NO — does question difficulty
+  match {score_cat}?]
+SCORE_CATEGORY_CHECK_DISTRACTOR_DIFFICULTY: [YES/NO — does
+  distractor difficulty match {score_cat}?]
+
+─────────────────────────────────────────────────────
+{misconception_block}
+
+─────────────────────────────────────────────────────
+SIGNAL 4 — COGNITIVE DEPTH
+─────────────────────────────────────────────────────
+DEPTH_REASONING: [1-2 sentences: given all signals combined, is the
+  cognitive depth of this question too easy, correct, or too hard?]
+DEPTH_CALIBRATION: [TOO_EASY / CORRECT / TOO_HARD]
+
+─────────────────────────────────────────────────────
+END OF EVALUATION — do not compute a final score or verdict.
+The numeric score and accept/reject decision are computed
+separately from your sub-check answers above.
+─────────────────────────────────────────────────────
+"""
+
+
+# ── HD-Eval Python scoring functions ─────────────────────────────────────
+# The LLM provides atomic YES/NO sub-checks; Python counts them.
+# The LLM never picks "2 vs 3" directly — the arithmetic is deterministic.
+
+def _score_mastery_signal(parsed: dict) -> int:
+    checks = [
+        parsed.get("mastery_check_vocabulary", "NO"),
+        parsed.get("mastery_check_framing", "NO"),
+        parsed.get("mastery_check_distractor_sophistication", "NO"),
+    ]
+    return sum(1 for c in checks if c == "YES")
+
+
+def _score_category_signal(parsed: dict) -> int:
+    checks = [
+        parsed.get("score_category_check_type_override", "NO"),
+        parsed.get("score_category_check_difficulty", "NO"),
+        parsed.get("score_category_check_distractor_difficulty", "NO"),
+    ]
+    return sum(1 for c in checks if c == "YES")
+
+
+def _score_misconception_signal(parsed: dict) -> int:
+    checks = [
+        parsed.get("misconception_check_new_angle", "NO"),
+        parsed.get("misconception_check_distractor_targets", "NO"),
+        parsed.get("misconception_check_answer_addresses_gap", "NO"),
+    ]
+    return sum(1 for c in checks if c == "YES")
+
+
+def _is_type_eligible(mastery: str, score_category: str, question_type: str) -> bool:
+    """Deterministic type-eligibility lookup — no LLM required.
+
+    A type is eligible iff it is in the mastery tier's allowed set, OR the
+    score_category is very_weak (which forces Type 4a regardless of mastery).
+    This is a pure table lookup, so we never ask an LLM to compute it: the LLM
+    repeatedly got ``Intermediate + very_weak → 4a`` wrong (4a is absent from
+    Intermediate's base list even though the override makes it valid), throwing
+    away ~1 in 8 valid chunks.
+    """
+    if score_category == "very_weak":
+        return True
+    try:
+        from mcq.question_types import MASTERY_TYPE_ELIGIBILITY
+        return question_type in MASTERY_TYPE_ELIGIBILITY.get(mastery, [])
+    except Exception:
+        return True  # fail-open: never reject on an import error
+
+
+def _parse_judge_b_response(
+    raw: str,
+    score_category: str = "moderate",
+    mastery: str = "Intermediate",
+    question_type: str = "4a",
+) -> JudgeBResult:
+    """Parse Judge B's structured text response into a JudgeBResult.
+
+    Extracts all atomic YES/NO sub-checks by regex; derives numeric
+    scores in Python.  The LLM is never asked to produce a score directly.
+
+    ``score_category`` is needed to resolve the very_weak override: when the
+    score category is very_weak, the question is FORCED to a Type 4a definition
+    regardless of mastery, so the cognitive *framing* is dictated by the
+    override, not by mastery. In that case the framing sub-check must not count
+    against the mastery score (mastery still governs vocabulary and distractor
+    sophistication). Without this, every Intermediate/Expert + very_weak sample
+    is rejected as mastery_mismatch because a plain definition "doesn't match"
+    Intermediate/Expert framing.
+
+    ``mastery`` and ``question_type`` make type eligibility DETERMINISTIC: it is
+    a pure lookup against ``MASTERY_TYPE_ELIGIBILITY`` plus the very_weak→4a
+    override, so we compute it in Python rather than trusting the LLM's
+    ``TYPE_ELIGIBLE`` line. The LLM frequently answered NO for valid
+    ``Intermediate + very_weak → 4a`` samples (4a is absent from Intermediate's
+    base list even though the override makes it valid), which discarded ~1 in 8
+    chunks for no reason.
+    """
+    def _yn(key: str, default: str = "NO") -> str:
+        # Scan each line for the key (case-insensitive) then extract YES/NO.
+        # This is decoration-agnostic: handles **KEY:** YES, - KEY: YES,
+        # KEY: **YES**, KEY — YES, or any other formatting the LLM may use.
+        key_upper = key.upper()
+        # Match the key as a whole token — NOT as a prefix of a longer
+        # identifier. Without this, scanning for "CHECK_D3_DIFFERENT" also
+        # matches the earlier "CHECK_D3_DIFFERENT_REASONING:" line and grabs a
+        # stray "yes"/"no" word out of the reasoning prose (e.g. "no notion"),
+        # which silently inverts the verdict.
+        key_pat = re.compile(
+            r'(?<![A-Z0-9_])' + re.escape(key_upper) + r'(?![A-Z0-9_])'
+        )
+        for line in raw.splitlines():
+            if key_pat.search(line.upper()):
+                m = re.search(r'\b(YES|NO)\b', line, re.IGNORECASE)
+                if m:
+                    return m.group(1).upper()
+        return default
+
+    def _str(key: str, default: str = "") -> str:
+        # Line-scan: find any line containing key (case-insensitive), return
+        # the text after the first colon.  Decoration-agnostic.
+        key_upper = key.upper()
+        for line in raw.splitlines():
+            if key_upper in line.upper():
+                # Grab everything after the first colon
+                idx = line.find(":")
+                if idx >= 0:
+                    return line[idx + 1:].strip().strip("*").strip()
+                return line.strip()
+        return default
+
+    # The very_weak→4a type override is a deterministic metadata check (is the
+    # type 4a when score_category is very_weak?), NOT something to ask the LLM.
+    # The task builder forces 4a for very_weak, so this is YES by construction;
+    # for non-very_weak it is "not applicable → YES". Computed, never parsed.
+    type_override_ok = "YES"
+    if score_category == "very_weak" and question_type != "4a":
+        type_override_ok = "NO"
+
+    # Collect all sub-check answers into a flat dict for score functions
+    parsed: dict = {
+        "mastery_check_vocabulary":              _yn("MASTERY_CHECK_VOCABULARY"),
+        "mastery_check_framing":                 _yn("MASTERY_CHECK_FRAMING"),
+        "mastery_check_distractor_sophistication": _yn("MASTERY_CHECK_DISTRACTOR_SOPHISTICATION"),
+        "score_category_check_type_override":    type_override_ok,
+        "score_category_check_difficulty":       _yn("SCORE_CATEGORY_CHECK_DIFFICULTY"),
+        "score_category_check_distractor_difficulty": _yn("SCORE_CATEGORY_CHECK_DISTRACTOR_DIFFICULTY"),
+        "misconception_check_new_angle":         _yn("MISCONCEPTION_CHECK_NEW_ANGLE", default="YES"),
+        "misconception_check_distractor_targets": _yn("MISCONCEPTION_CHECK_DISTRACTOR_TARGETS", default="YES"),
+        "misconception_check_answer_addresses_gap": _yn("MISCONCEPTION_CHECK_ANSWER_ADDRESSES_GAP", default="YES"),
+    }
+
+    # very_weak forces a Type 4a definition: framing is dictated by the override,
+    # not mastery, so do not let a "framing doesn't match mastery" NO sink the
+    # sample. Mastery still governs vocabulary + distractor sophistication.
+    if score_category == "very_weak":
+        parsed["mastery_check_framing"] = "YES"
+
+    mastery_score       = _score_mastery_signal(parsed)
+    score_cat_score     = _score_category_signal(parsed)
+    misconception_score = _score_misconception_signal(parsed)
+    overall_score       = round((mastery_score + score_cat_score + misconception_score) / 3.0, 2)
+
+    # Type eligibility — DETERMINISTIC, not from the LLM (pure matrix lookup).
+    type_eligible = _is_type_eligible(mastery, score_category, question_type)
+
+    depth_raw = _str("DEPTH_CALIBRATION", "CORRECT").upper()
+    if "TOO_EASY" in depth_raw:
+        depth = "TOO_EASY"
+    elif "TOO_HARD" in depth_raw:
+        depth = "TOO_HARD"
+    else:
+        depth = "CORRECT"
+
+    # ── Derive verdict + primary_failure in Python — never from LLM output ──
+    # very_weak type-override check is the first and hardest gate.
+    if parsed["score_category_check_type_override"] == "NO":
+        verdict        = "REJECT"
+        primary_failure = "very_weak_type_override_violated"
+    elif not type_eligible:
+        verdict        = "REJECT"
+        primary_failure = "type_ineligible"
+    elif mastery_score < 2:
+        verdict        = "REJECT"
+        primary_failure = "mastery_mismatch"
+    elif score_cat_score < 2:
+        verdict        = "REJECT"
+        primary_failure = "score_category_mismatch"
+    elif misconception_score < 2:
+        verdict        = "REJECT"
+        primary_failure = "misconception_mismatch"
+    elif depth == "TOO_HARD":
+        verdict        = "REJECT"
+        primary_failure = "too_hard"
+    else:
+        verdict        = "ACCEPT"
+        primary_failure = "NONE"
+
+    return JudgeBResult(
+        verdict=verdict,
+        overall_score=overall_score,
+        primary_failure=primary_failure,
+        mastery_score=mastery_score,
+        score_cat_score=score_cat_score,
+        misconception_score=misconception_score,
+        type_eligible=type_eligible,
+        depth_calibration=depth,
+        sub_checks=parsed,
+        raw_response=raw[:600],
+    )
+
+
+def _run_judge_b(
+    mcq: dict,
+    judge_b_client,
+) -> JudgeBResult:
+    """Call Judge B and return a parsed result. Never raises."""
+    try:
+        prompt = _build_judge_b_prompt(mcq)
+        raw = judge_b_client.chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            timeout_override=120,
+        )
+        return _parse_judge_b_response(
+            raw,
+            mcq.get("score_category", "moderate"),
+            mcq.get("mastery_level", "Intermediate"),
+            mcq.get("question_type", "4a"),
+        )
+    except Exception as exc:
+        logger.warning("judge_b_failed", error=str(exc)[:100])
+        # On failure: ACCEPT with score 0 so the sample is not silently lost;
+        # the low personalization_score flags it for post-hoc review.
+        return JudgeBResult(
+            verdict="ACCEPT",
+            overall_score=0.0,
+            primary_failure="judge_b_exception",
+            sub_checks={},
+            raw_response=str(exc)[:200],
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# JUDGE C — DISTRACTOR QUALITY  (JUDGE_C_KEY, gpt-oss:120b)
+# G-Eval: reasoning before each YES/NO.
+# HD-Eval: 5 atomic hard checks + 1 advisory; verdict computed in Python.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class JudgeCResult:
+    verdict: str       # "ACCEPT" or "REJECT"
+    reason:  str = ""  # comma-joined failed check names, or "NONE"
+    # Raw sub-check answers for pass-rate reporting
+    sub_checks: dict = field(default_factory=dict)
+
+
+def _build_judge_c_prompt(mcq: dict) -> str:
+    """Build the Judge C distractor quality prompt (G-Eval + HD-Eval restructured)."""
+    question = mcq.get("question", "")
+    answer   = mcq.get("correct_answer", "")
+    dists    = mcq.get("distractors", ["", "", ""])
+    d1 = dists[0] if len(dists) > 0 else ""
+    d2 = dists[1] if len(dists) > 1 else ""
+    d3 = dists[2] if len(dists) > 2 else ""
+    return f"""\
+You are a quality reviewer for educational MCQ training data.
+
+Question: {question}
+Correct answer: {answer}
+
+Distractors:
+D1: {d1}
+D2: {d2}
+D3: {d3}
+
+For each check below, FIRST write one sentence of reasoning, THEN
+answer YES or NO.
+
+CHECK_D1_DIFFERENT_REASONING: [is D1 clearly different from the
+  correct answer? why or why not?]
+CHECK_D1_DIFFERENT: [YES/NO]
+
+CHECK_D2_DIFFERENT_REASONING: [is D2 clearly different from the
+  correct answer? why or why not?]
+CHECK_D2_DIFFERENT: [YES/NO]
+
+CHECK_D3_DIFFERENT_REASONING: [is D3 clearly different from the
+  correct answer? why or why not?]
+CHECK_D3_DIFFERENT: [YES/NO]
+
+CHECK_MUTUAL_DIVERSITY_REASONING: [are D1, D2, D3 meaningfully
+  different from each other, or do two or more say the same thing
+  in different words?]
+CHECK_MUTUAL_DIVERSITY: [YES/NO]
+
+CHECK_PLAUSIBILITY_REASONING: [could a student with partial
+  understanding of this specific topic plausibly choose each
+  distractor? are any of them absurd or unrelated to the topic?]
+CHECK_PLAUSIBILITY: [YES/NO]
+
+CHECK_FORMAT_CONSISTENCY_REASONING: [are all distractors similar
+  in length and structure to the correct answer?]
+CHECK_FORMAT_CONSISTENCY: [YES/NO — advisory only]
+"""
+
+
+def _parse_judge_c_response(raw: str) -> JudgeCResult:
+    """Parse Judge C's response into a JudgeCResult.
+
+    All 5 hard check answers are extracted by regex; verdict computed in Python.
+    """
+    def _yn(key: str, default: str = "NO") -> str:
+        # Scan each line for the key (case-insensitive) then extract YES/NO.
+        # Decoration-agnostic: handles **KEY:** YES, - KEY: YES, KEY — YES, etc.
+        key_upper = key.upper()
+        # Match the key as a whole token — NOT as a prefix of a longer
+        # identifier. Without this, scanning for "CHECK_D3_DIFFERENT" also
+        # matches the earlier "CHECK_D3_DIFFERENT_REASONING:" line and grabs a
+        # stray "yes"/"no" word out of the reasoning prose (e.g. "no notion"),
+        # which silently inverts the verdict.
+        key_pat = re.compile(
+            r'(?<![A-Z0-9_])' + re.escape(key_upper) + r'(?![A-Z0-9_])'
+        )
+        for line in raw.splitlines():
+            if key_pat.search(line.upper()):
+                m = re.search(r'\b(YES|NO)\b', line, re.IGNORECASE)
+                if m:
+                    return m.group(1).upper()
+        return default
+
+    sub_checks = {
+        "check_d1_different":      _yn("CHECK_D1_DIFFERENT"),
+        "check_d2_different":      _yn("CHECK_D2_DIFFERENT"),
+        "check_d3_different":      _yn("CHECK_D3_DIFFERENT"),
+        "check_mutual_diversity":  _yn("CHECK_MUTUAL_DIVERSITY"),
+        "check_plausibility":      _yn("CHECK_PLAUSIBILITY"),
+        # advisory — stored but not used for rejection
+        "check_format_consistency": _yn("CHECK_FORMAT_CONSISTENCY", default="YES"),
+    }
+
+    hard_names = [
+        ("check_d1_different",     "d1_equals_answer"),
+        ("check_d2_different",     "d2_equals_answer"),
+        ("check_d3_different",     "d3_equals_answer"),
+        ("check_mutual_diversity", "low_diversity"),
+        ("check_plausibility",     "implausible"),
+    ]
+    failed = [label for key, label in hard_names if sub_checks[key] == "NO"]
+
+    if failed:
+        return JudgeCResult(verdict="REJECT", reason=",".join(failed), sub_checks=sub_checks)
+    return JudgeCResult(verdict="ACCEPT", reason="NONE", sub_checks=sub_checks)
+
+
+def _run_judge_c(
+    mcq: dict,
+    judge_c_client,
+) -> JudgeCResult:
+    """Call Judge C and return a parsed result. Never raises."""
+    try:
+        prompt = _build_judge_c_prompt(mcq)
+        raw = judge_c_client.chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            timeout_override=90,
+        )
+        return _parse_judge_c_response(raw)
+    except Exception as exc:
+        logger.warning("judge_c_failed", error=str(exc)[:100])
+        return JudgeCResult(verdict="ACCEPT", reason="judge_c_exception", sub_checks={})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# JUDGE D — FACTUAL CORRECTNESS  (JUDGE_D_KEY, gpt-oss:120b)
+# G-Eval: reasoning before each check.
+# HD-Eval: decomposes factual correctness into per-claim verification +
+#          answerability + ambiguity + explanation; verdict computed in Python.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class JudgeDResult:
+    verdict: str       # "ACCEPT" or "REJECT"
+    reason:  str = ""  # which check failed, or "NONE"
+    # Raw sub-check answers for pass-rate reporting
+    sub_checks: dict = field(default_factory=dict)
+
+
+def _build_judge_d_prompt(mcq: dict) -> str:
+    """Build the Judge D factual correctness prompt (G-Eval + HD-Eval restructured)."""
+    chunk       = mcq.get("chunk", "")
+    question    = mcq.get("question", "")
+    answer      = mcq.get("correct_answer", "")
+    explanation = mcq.get("explanation", "")
+    return f"""\
+You are a fact-checker for educational MCQ training data.
+
+Chunk (background context only — the answer need NOT be restated here):
+{chunk}
+
+Question: {question}
+Stated correct answer: {answer}
+Explanation: {explanation}
+
+STEP 1 — Decompose the correct answer into its core factual claims.
+List each distinct claim made by the correct answer, numbered.
+
+STEP 2 — For EACH claim, judge it against established, general computer
+science knowledge. A claim is FALSE only if it is factually incorrect by
+general CS knowledge. IMPORTANT: a claim that is correct but simply not
+restated word-for-word in the chunk is still TRUE — do NOT penalize a
+claim merely for being absent from the chunk. The chunk is background,
+not the sole source of truth.
+
+Write one short line of reasoning per claim, then state TRUE or FALSE.
+
+STEP 3 — Answerability and ambiguity.
+
+ANSWERABILITY_REASONING: [can this be answered using general CS
+  knowledge of the concept, without needing this specific textbook
+  or outside trivia?]
+ANSWERABILITY_CHECK: [YES/NO]
+
+AMBIGUITY_REASONING: [is there exactly one defensibly correct
+  answer, or could a reasonable student argue for more than one?]
+AMBIGUITY_CHECK: [YES — only one correct answer / NO — ambiguous]
+
+STEP 4 — Explanation correctness.
+
+EXPLANATION_REASONING: [does the explanation correctly justify
+  the answer? It is correct unless it contains a factual error.]
+EXPLANATION_CHECK: [YES/NO]
+
+STEP 5 — FINAL VERDICT.
+Output exactly ONE of the following two lines verbatim:
+FACTUAL_VERDICT: PASS   (every claim is factually correct)
+FACTUAL_VERDICT: FAIL   (at least one claim is factually incorrect)
+"""
+
+
+def _parse_judge_d_response(raw: str) -> JudgeDResult:
+    """Parse Judge D's structured response into a JudgeDResult.
+
+    Extracts all CLAIM_N_VERIFIED fields by regex (handles any number
+    of claims); derives verdict in Python.
+    """
+    def _yn(key: str, default: str = "NO") -> str:
+        # Scan each line for the key (case-insensitive) then extract YES/NO.
+        # Decoration-agnostic: handles **KEY:** YES, - KEY: YES, KEY — YES, etc.
+        key_upper = key.upper()
+        # Match the key as a whole token — NOT as a prefix of a longer
+        # identifier. Without this, scanning for "CHECK_D3_DIFFERENT" also
+        # matches the earlier "CHECK_D3_DIFFERENT_REASONING:" line and grabs a
+        # stray "yes"/"no" word out of the reasoning prose (e.g. "no notion"),
+        # which silently inverts the verdict.
+        key_pat = re.compile(
+            r'(?<![A-Z0-9_])' + re.escape(key_upper) + r'(?![A-Z0-9_])'
+        )
+        for line in raw.splitlines():
+            if key_pat.search(line.upper()):
+                m = re.search(r'\b(YES|NO)\b', line, re.IGNORECASE)
+                if m:
+                    return m.group(1).upper()
+        return default
+
+    # ── Factual verdict — read the single explicit FACTUAL_VERDICT line ──
+    # The model decomposes/verifies claims in free-form text (often a markdown
+    # table), so we DO NOT scrape per-claim tokens — that format is too varied
+    # and previously defaulted every sample to a reject. Instead the prompt
+    # ends with one machine-readable verdict line. PASS unless an explicit
+    # FAIL is found; parse failure defaults to PASS so a formatting quirk can
+    # never silently reject a factually-correct sample.
+    factual_fail = False
+    for line in raw.splitlines():
+        if "FACTUAL_VERDICT" in line.upper():
+            if re.search(r'\bFAIL\b', line, re.IGNORECASE):
+                factual_fail = True
+            break
+
+    sub_checks = {
+        # YES = every claim factually correct; stored as YES/NO so the
+        # sub-check pass-rate reporter (which counts "YES") tallies it.
+        "factual_verdict":     "NO" if factual_fail else "YES",
+        # Default these to YES: FACTUAL_VERDICT is the primary factual gate, so a
+        # formatting quirk that hides one of these secondary checks must not by
+        # itself reject a sample. A genuine model "NO" is still read and honored.
+        "answerability_check": _yn("ANSWERABILITY_CHECK", default="YES"),
+        "ambiguity_check":     _yn("AMBIGUITY_CHECK", default="YES"),
+        "explanation_check":   _yn("EXPLANATION_CHECK", default="YES"),
+    }
+
+    # Verdict: an explicit factual FAIL is a reject
+    if factual_fail:
+        return JudgeDResult(verdict="REJECT", reason="unverified_claim", sub_checks=sub_checks)
+    if sub_checks["answerability_check"] == "NO":
+        return JudgeDResult(verdict="REJECT", reason="requires_outside_knowledge", sub_checks=sub_checks)
+    if sub_checks["ambiguity_check"] == "NO":
+        return JudgeDResult(verdict="REJECT", reason="ambiguous_correct_answer", sub_checks=sub_checks)
+    if sub_checks["explanation_check"] == "NO":
+        return JudgeDResult(verdict="REJECT", reason="explanation_incorrect", sub_checks=sub_checks)
+    return JudgeDResult(verdict="ACCEPT", reason="NONE", sub_checks=sub_checks)
+
+
+def _run_judge_d(
+    mcq: dict,
+    judge_d_client,
+) -> JudgeDResult:
+    """Call Judge D and return a parsed result. Never raises."""
+    try:
+        prompt = _build_judge_d_prompt(mcq)
+        raw = judge_d_client.chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            timeout_override=90,
+        )
+        return _parse_judge_d_response(raw)
+    except Exception as exc:
+        logger.warning("judge_d_failed", error=str(exc)[:100])
+        return JudgeDResult(verdict="ACCEPT", reason="judge_d_exception", sub_checks={})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DECISION LOGIC
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _judge_b_reject_reason(b: JudgeBResult, mcq: dict) -> str | None:
+    """Return Judge B's rejection reason, or None if B passes.
+
+    Factored out so the evaluation worker can short-circuit: because the overall
+    decision always considers ALL of Judge B before C or D, a Judge-B rejection
+    means C and D never matter — so we can skip those two LLM calls entirely.
+    """
+    if not b.type_eligible:
+        return "judge_b:type_not_eligible"
+    if b.mastery_score < 2:
+        return f"judge_b:mastery_score_{b.mastery_score}"
+    if b.score_cat_score < 2:
+        return f"judge_b:score_category_{b.score_cat_score}"
+    if mcq.get("misconception_context") and b.misconception_score < 2:
+        return f"judge_b:misconception_{b.misconception_score}"
+    if b.depth_calibration == "TOO_HARD":
+        return "judge_b:too_hard"
+    if b.verdict == "REJECT":
+        return f"judge_b:{b.primary_failure}"
+    return None
+
+
+def _decide(
+    b: JudgeBResult,
+    c: JudgeCResult,
+    d: JudgeDResult,
+    mcq: dict,
+) -> tuple[bool, str]:
+    """Apply decision logic across all three judge verdicts.
+
+    Returns (accepted: bool, reason: str).
+    On accept, attaches personalization_score to mcq in-place.
+    """
+    b_reason = _judge_b_reject_reason(b, mcq)
+    if b_reason is not None:
+        return False, b_reason
+    if c.verdict == "REJECT":
+        return False, f"judge_c:{c.reason}"
+    if d.verdict == "REJECT":
+        return False, f"judge_d:{d.reason}"
+    # All passed — attach personalization score metadata
+    mcq["personalization_score"] = b.overall_score
+    return True, "accepted"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# JUDGE-FEEDBACK REGENERATION  — turn a rejection into actionable guidance and
+# ask the generator to try the SAME chunk again, so no chunk is left behind.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _build_judge_feedback(reason: str, mcq: dict) -> str:
+    """Translate a machine reason code into a concrete instruction for the LLM.
+
+    The string is shown to the generation model verbatim, so it must read as a
+    direct, actionable correction — not an error code.
+    """
+    mastery   = mcq.get("mastery_level", "the target")
+    score_cat = mcq.get("score_category", "the target")
+
+    # Judge A — regex pre-filter (textbook/figure/code references)
+    if reason.startswith("judge_a"):
+        return (
+            "The question referred to the source material directly (e.g. "
+            "'according to the passage', a figure, or a pasted code block). Ask "
+            "about the underlying concept so the question is answerable WITHOUT "
+            "seeing this specific text, figure, or code."
+        )
+
+    # Judge B — personalization adherence
+    if reason.startswith("judge_b"):
+        if "very_weak_type_override" in reason:
+            return (
+                "score_category is very_weak, so the question MUST be a Type 4a "
+                "definition/recall question. Ask simply what the concept IS."
             )
-            # Check if all keys have been cooling for too long (give up)
-            max_cooling = max(t for t, _ in candidates)
-            if max_cooling - now > self._cooldown * 3:
-                self.all_failed = True
-            time.sleep(min(wait, 10.0))  # wait in small increments
-        return soonest_key
+        if "type_not_eligible" in reason or "type_ineligible" in reason:
+            return (
+                f"The question type is not appropriate for a {mastery} student. "
+                f"Re-frame it within the allowed types for {mastery}."
+            )
+        if "mastery_score" in reason or "mastery_mismatch" in reason:
+            return (
+                f"The vocabulary, cognitive framing, and distractor sophistication "
+                f"did not match a {mastery} student. Re-frame the question and "
+                f"distractors to fit the {mastery} level precisely."
+            )
+        if "score_category" in reason:
+            return (
+                f"The difficulty did not match score_category '{score_cat}'. "
+                f"Adjust how hard the question and distractors are to match "
+                f"'{score_cat}'."
+            )
+        if "misconception" in reason:
+            return (
+                "The question did not properly address the misconception context. "
+                "Approach the concept from a new angle and make at least one "
+                "distractor appeal to the same wrong mental model."
+            )
+        if "too_hard" in reason:
+            return (
+                f"The cognitive depth was too high for a {mastery} + {score_cat} "
+                f"student. Make the question and distractors easier."
+            )
+        return (
+            f"The question did not fit the {mastery} / {score_cat} student "
+            f"profile. Re-frame it to match both signals."
+        )
+
+    # Judge C — distractor quality
+    if reason.startswith("judge_c"):
+        if "low_diversity" in reason:
+            return (
+                "Two or more distractors expressed the same idea. Make all three "
+                "distractors target DIFFERENT misconceptions, each clearly distinct."
+            )
+        if "equals_answer" in reason:
+            return (
+                "One distractor was effectively the same as the correct answer. "
+                "Every distractor must be genuinely WRONG and distinct from the "
+                "correct answer."
+            )
+        if "implausible" in reason:
+            return (
+                "At least one distractor was absurd or unrelated to the topic. "
+                "Make every distractor a plausible, wrong-but-tempting answer that "
+                "a student with partial understanding might actually pick."
+            )
+        return (
+            "Improve the distractors: three distinct, plausible, wrong answers, "
+            "each targeting a different misconception."
+        )
+
+    # Judge D — factual correctness
+    if reason.startswith("judge_d"):
+        if "unverified_claim" in reason:
+            return (
+                "The correct answer or explanation contained a factually INCORRECT "
+                "claim. Ensure the correct answer is unambiguously true by general "
+                "CS knowledge, and that the explanation contains no factual errors."
+            )
+        if "requires_outside_knowledge" in reason:
+            return (
+                "The question could not be answered from general CS knowledge of "
+                "the concept alone. Make it answerable by anyone who understands "
+                "the concept, without outside trivia or this specific source."
+            )
+        if "ambiguous" in reason:
+            return (
+                "More than one answer could be defended as correct. Make exactly "
+                "ONE option unambiguously correct and the other three clearly wrong."
+            )
+        if "explanation_incorrect" in reason:
+            return (
+                "The explanation did not correctly justify the answer. Rewrite the "
+                "explanation so it accurately explains why the correct answer is "
+                "right."
+            )
+        return (
+            "Fix factual correctness: the correct answer and explanation must be "
+            "true and the question must have exactly one defensible answer."
+        )
+
+    return (
+        "The question was rejected for quality. Regenerate a clearly correct, "
+        "well-personalized question with three distinct, plausible distractors."
+    )
+
+
+def _regenerate_with_feedback(
+    mcq: dict,
+    feedback: str,
+    client,
+    max_retries: int = 2,
+) -> dict | None:
+    """Regenerate an MCQ for the SAME chunk, given the judges' feedback.
+
+    Rebuilds the original generation task from the rejected ``mcq`` (all the
+    personalization signals are preserved on it), shows the model its rejected
+    attempt plus the concrete feedback, and asks for a corrected question.
+
+    Returns a new mcq dict with the same metadata but fresh
+    question/answer/explanation/distractors, or ``None`` if regeneration failed
+    to produce a structurally-valid response.
+    """
+    task = {
+        "text":                  mcq.get("chunk", ""),
+        "topic":                 mcq.get("topic", "General"),
+        "book":                  mcq.get("_book", "unknown"),
+        "chunk_hash":            mcq.get("_chunk_hash", ""),
+        "mastery":               mcq.get("mastery_level", "Intermediate"),
+        "score_category":        mcq.get("score_category", "moderate"),
+        "question_type":         mcq.get("question_type", "4a"),
+        "misconception_context": mcq.get("misconception_context"),
+    }
+
+    base_prompt = _build_generation_prompt(task)
+    rejected = json.dumps({
+        "question":       mcq.get("question", ""),
+        "correct_answer": mcq.get("correct_answer", ""),
+        "explanation":    mcq.get("explanation", ""),
+        "distractors":    mcq.get("distractors", []),
+    })
+    correction = (
+        "Your previous question was REJECTED by quality reviewers.\n\n"
+        f"REJECTION FEEDBACK: {feedback}\n\n"
+        "Generate a NEW, corrected multiple-choice question for the SAME concept "
+        "and source content, fixing exactly the problem above. Do not repeat the "
+        "rejected question. Return ONLY valid JSON in the required schema."
+    )
+    messages: list[dict] = [
+        {"role": "user",      "content": base_prompt},
+        {"role": "assistant", "content": rejected},
+        {"role": "user",      "content": correction},
+    ]
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            data = client.chat_json(
+                messages=messages,
+                temperature=0.8,  # higher temp to avoid repeating the rejected text
+                timeout_override=180,
+            )
+        except Exception as exc:
+            logger.warning("regen_api_error", error=str(exc)[:120])
+            return None
+
+        error_msg = _validate_response(data)
+        if error_msg is None:
+            new_mcq = dict(mcq)  # preserve all metadata
+            new_mcq["question"]       = str(data["question"]).strip()
+            new_mcq["correct_answer"] = str(data["correct_answer"]).strip()
+            new_mcq["explanation"]    = str(data.get("explanation", "")).strip()
+            new_mcq["distractors"]    = [str(d).strip() for d in data["distractors"]]
+            new_mcq.pop("personalization_score", None)  # stale — recomputed on accept
+            return new_mcq
+
+        if attempt < max_retries:
+            messages.append({"role": "assistant", "content": json.dumps(data)
+                             if isinstance(data, dict) else str(data)})
+            messages.append({"role": "user", "content":
+                             f"Your response was invalid. Error: {error_msg}\n"
+                             "Return corrected JSON only."})
+
+    return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -741,30 +2645,43 @@ class WorkerStats:
 
 def _worker(
     worker_id: int,
-    key_pool: KeyPool,
+    gen_client: "RoleClient",
+    key_mgr: SharedKeyManager,
+    stop_event: threading.Event,
     task_queue: queue.Queue,
-    output_path: str,
-    file_lock: threading.Lock,
+    eval_queue: queue.Queue,
     stats: WorkerStats,
     all_stats: list,
     pbar: tqdm,
     pbar_lock: threading.Lock,
+    target_counter: dict | None = None,
 ):
-    """Worker thread: pulls tasks, calls Ollama, writes results.
+    """Generation worker: pulls tasks, calls Ollama, pushes validated MCQs
+    to the evaluation queue.
 
-    Owns one active API key at a time. On any API/network error the key is
-    reported to KeyPool which returns the next best key — possibly from the
-    backup set. Validation errors (bad JSON structure) keep the current key
-    and only append feedback to the conversation.
+    Does NOT write directly to disk — that is the responsibility of the
+    evaluation worker which runs the three LLM judges.
+
+    Key selection/rotation/borrowing is handled entirely by ``gen_client``
+    (a RoleClient backed by the shared SharedKeyManager): the client prefers
+    the generation keys, borrows any idle key when those are exhausted, shares
+    a single surviving key as a last resort, and raises AllKeysDeadError only
+    when every key is permanently dead — at which point the worker trips the
+    shared ``stop_event`` so the whole run halts gracefully.
+
+    Validation errors (bad JSON structure) keep the conversation going and
+    append feedback for self-correction; they do not rotate keys.
     """
-    current_key = key_pool.get_initial_key()
-    client = _make_ollama_client(current_key)
-
     while True:
-        # Stop if KeyPool has determined that all keys are permanently dead
-        if key_pool.all_failed:
-            logger.error("worker_stopping_all_keys_failed", worker=worker_id)
+        # Stop if every key is permanently dead, or another worker tripped stop.
+        if key_mgr.all_dead or stop_event.is_set():
             break
+
+        # Stop if target reached (for --target mode)
+        if target_counter is not None:
+            with target_counter["lock"]:
+                if target_counter["count"] >= target_counter["target"]:
+                    break
 
         try:
             task = task_queue.get(timeout=5)
@@ -779,13 +2696,11 @@ def _worker(
 
         for attempt in range(1, CONFIG["max_retries"] + 1):
             try:
-                data = client.chat_json(
+                data = gen_client.chat_json(
                     messages=messages,
                     temperature=0.7,
                     timeout_override=180,
                 )
-                # Successful API call — reset key error counter
-                key_pool.report_success(current_key)
 
                 # ── Validate the response ─────────────────────────────
                 error_msg = _validate_response(data)
@@ -808,11 +2723,10 @@ def _worker(
                         "_worker_id": worker_id,
                         "_book": task["book"],
                         "_attempts": attempt,
-                        "_api_key_prefix": current_key[:8],
                     }
                     break
 
-                # ── Validation failed — feedback, keep same key ────────
+                # ── Validation failed — feedback, same conversation ────
                 logger.warning(
                     "worker_validation_failed",
                     worker=worker_id,
@@ -830,39 +2744,51 @@ def _worker(
                     )
                     messages.append({"role": "user", "content": feedback})
 
+            except AllKeysDeadError:
+                # Every key is permanently dead — stop the whole run gracefully.
+                logger.error("worker_stopping_all_keys_dead", worker=worker_id)
+                stop_event.set()
+                break
+
             except Exception as exc:
-                # ── API / network error — rotate to next key ──────────
+                # RoleClient already rotated/cooled keys internally; this is the
+                # final error after exhausting rotations for this attempt.
                 logger.warning(
                     "worker_api_error",
                     worker=worker_id,
                     attempt=attempt,
-                    key_prefix=current_key[:8] + "...",
                     error=str(exc)[:120],
                 )
-                new_key = key_pool.report_api_error(current_key)
-                if new_key != current_key:
-                    logger.info(
-                        "worker_key_rotated",
-                        worker=worker_id,
-                        old=current_key[:8] + "...",
-                        new=new_key[:8] + "...",
-                    )
-                    current_key = new_key
-                    client = _make_ollama_client(current_key)
-
-                if key_pool.all_failed:
-                    break
-
                 if attempt < CONFIG["max_retries"]:
-                    # Reset conversation history — start fresh with new key
+                    # Fresh conversation, brief backoff before the next attempt.
                     messages = [{"role": "user", "content": prompt}]
                     time.sleep(CONFIG["retry_delay"])
 
+        if stop_event.is_set() and result is None:
+            break
+
         if result is not None:
-            with file_lock:
-                with open(output_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(result) + "\n")
-            stats.record_success()
+            # Push to eval queue — evaluation worker handles judging + writing.
+            # The queue is bounded (backpressure): if evaluation has fallen
+            # behind, block here until there is room. While blocked, this worker
+            # is NOT holding an API key, so the eval workers can borrow the idle
+            # generation key to judge faster. Stay responsive to shutdown so a
+            # stopped pipeline never deadlocks on a full queue.
+            pushed = False
+            while not (key_mgr.all_dead or stop_event.is_set()):
+                try:
+                    eval_queue.put(result, timeout=2)
+                    pushed = True
+                    break
+                except queue.Full:
+                    continue
+            if pushed:
+                stats.record_success()
+                if target_counter is not None:
+                    with target_counter["lock"]:
+                        target_counter["count"] += 1
+            else:
+                break  # shutting down — drop this in-hand draft (run is ending)
         else:
             logger.error(
                 "worker_all_retries_exhausted",
@@ -877,9 +2803,239 @@ def _worker(
             total_success = sum(s.success for s in all_stats)
             total_fail    = sum(s.failure for s in all_stats)
             pbar.update(1)
-            pbar.set_postfix(success=total_success, fail=total_fail, refresh=False)
+            pbar.set_postfix(
+                success=total_success,
+                fail=total_fail,
+                eval_q=eval_queue.qsize(),
+                refresh=False,
+            )
 
         task_queue.task_done()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EVALUATION WORKER  — drains the eval queue with 3 parallel judge calls
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class EvalStats:
+    """Thread-safe counters for the evaluation pipeline.
+
+    In addition to the high-level reject/accept counts, accumulates
+    per-sub-check YES/total tallies from Judges B, C, D so that
+    _print_quality_report can compute pass rates for every atomic check.
+    """
+
+    def __init__(self):
+        self.generated:               int   = 0
+        self.regex_rejected:          int   = 0
+        self.judge_b_rejected:        int   = 0
+        self.judge_c_rejected:        int   = 0
+        self.judge_d_rejected:        int   = 0
+        self.accepted:                int   = 0
+        # Judge-feedback regeneration telemetry
+        self.regen_attempts:          int   = 0   # total regeneration calls made
+        self.recovered:               int   = 0   # accepted only after a regen
+        self.personalization_score_sum: float = 0.0
+        # Sub-check pass-rate accumulators: key → (total_seen, yes_count)
+        self.sub_check_totals: dict[str, int] = {}
+        self.sub_check_yes:    dict[str, int] = {}
+        self._lock = threading.Lock()
+
+    def add_generated(self):
+        with self._lock: self.generated += 1
+
+    def add_regen_attempt(self):
+        with self._lock: self.regen_attempts += 1
+
+    def add_recovered(self):
+        with self._lock: self.recovered += 1
+
+    def add_regex_reject(self):
+        with self._lock: self.regex_rejected += 1
+
+    def add_judge_b_reject(self):
+        with self._lock: self.judge_b_rejected += 1
+
+    def add_judge_c_reject(self):
+        with self._lock: self.judge_c_rejected += 1
+
+    def add_judge_d_reject(self):
+        with self._lock: self.judge_d_rejected += 1
+
+    def add_accepted(self, personalization_score: float):
+        with self._lock:
+            self.accepted += 1
+            self.personalization_score_sum += personalization_score
+
+    def record_sub_checks(self, sub_checks: dict) -> None:
+        """Accumulate YES/NO answers from a judge result into pass-rate counters.
+
+        Called once per sample that reaches any LLM judge (B, C, or D).
+        ``sub_checks`` is the flat dict of {field_name: "YES"|"NO"} stored
+        on each JudgeXResult dataclass.
+        """
+        with self._lock:
+            for key, val in sub_checks.items():
+                self.sub_check_totals[key] = self.sub_check_totals.get(key, 0) + 1
+                if val == "YES":
+                    self.sub_check_yes[key] = self.sub_check_yes.get(key, 0) + 1
+
+    def avg_personalization_score(self) -> float:
+        with self._lock:
+            if self.accepted == 0:
+                return 0.0
+            return round(self.personalization_score_sum / self.accepted, 2)
+
+
+def _evaluation_worker(
+    eval_queue: queue.Queue,
+    output_path: str,
+    file_lock: threading.Lock,
+    judge_b_client,
+    judge_c_client,
+    judge_d_client,
+    eval_stats: EvalStats,
+    regen_client=None,
+    max_eval_retries: int = 1,
+    key_mgr: "SharedKeyManager | None" = None,
+):
+    """Evaluation worker: drains eval_queue, judges, and writes accepted samples.
+
+    Judge A (regex pre-filter) and type eligibility run in Python — no LLM call.
+    Judge B then runs alone; only if it passes do Judge C and D fire in parallel
+    (a Judge-B reject makes C/D irrelevant, so those calls are skipped).
+
+    Judge-feedback loop: when an MCQ is rejected and ``max_eval_retries`` > 1
+    (and a ``regen_client`` is available), the rejection reason is translated
+    into concrete feedback and sent back to the generator, which regenerates a
+    corrected MCQ for the SAME chunk. The new MCQ is re-judged. This repeats up
+    to ``max_eval_retries`` total rounds, so a chunk is never silently discarded
+    on its first rejection.
+
+    The worker blocks only on the current item, not on generation workers —
+    they continue filling the queue independently.
+    """
+    rejected_log: list[dict] = []
+    can_regen = regen_client is not None and max_eval_retries > 1
+
+    def _judge_once(mcq: dict) -> tuple[bool, str]:
+        """Judge one MCQ in a SINGLE round-trip and return (accepted, reason).
+
+        Order:
+          0. Judge A regex pre-filter       — free (Python)
+          1. Deterministic type eligibility — free (metadata lookup)
+          2. Judge B + Judge C + Judge D    — 3 LLM calls fired in PARALLEL.
+
+        We deliberately run all three judges concurrently rather than gating
+        C/D behind B. Judge keys are plentiful (6 dedicated + fallback) and are
+        not the bottleneck — wall-clock latency is. Serializing B then C+D would
+        double the eval latency for the ~78% of MCQs that pass B, so the few
+        judge calls "wasted" on a B-reject are far cheaper than the round-trip
+        we would otherwise add to every accepted sample. _decide() applies the
+        exact same precedence (B reasons first, then C, then D), so the outcome
+        is identical to the serialized path.
+        """
+        if not _passes_regex_filter(mcq):
+            return False, "judge_a:regex"
+
+        # Free deterministic gate — an ineligible type costs zero LLM calls.
+        if not _is_type_eligible(
+            mcq.get("mastery_level", "Intermediate"),
+            mcq.get("score_category", "moderate"),
+            mcq.get("question_type", "4a"),
+        ):
+            return False, "judge_b:type_not_eligible"
+
+        # All three judges in one parallel round-trip.
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            fb = ex.submit(_run_judge_b, mcq, judge_b_client)
+            fc = ex.submit(_run_judge_c, mcq, judge_c_client)
+            fd = ex.submit(_run_judge_d, mcq, judge_d_client)
+            b_result = fb.result()
+            c_result = fc.result()
+            d_result = fd.result()
+        eval_stats.record_sub_checks(b_result.sub_checks)
+        eval_stats.record_sub_checks(c_result.sub_checks)
+        eval_stats.record_sub_checks(d_result.sub_checks)
+        return _decide(b_result, c_result, d_result, mcq)
+
+    while True:
+        # If every key is permanently dead, stop judging and leave the rest of
+        # the queue intact — main() dumps it to the pending-eval file so nothing
+        # is lost and the next run can resume.
+        if key_mgr is not None and key_mgr.all_dead:
+            logger.error("evaluation_worker_stopping_all_keys_dead")
+            break
+
+        try:
+            item = eval_queue.get(timeout=10)
+        except queue.Empty:
+            # Idle check — queue will be poisoned with None when gen is done
+            continue
+
+        # Poison pill signals end-of-stream
+        if item is None:
+            eval_queue.task_done()
+            break
+
+        mcq = item
+        eval_stats.add_generated()
+
+        accepted = False
+        reason = ""
+        rounds = 0
+        for rounds in range(1, max_eval_retries + 1):
+            accepted, reason = _judge_once(mcq)
+            if accepted:
+                break
+            # Rejected — regenerate with feedback if there is budget left.
+            if rounds < max_eval_retries and can_regen:
+                feedback = _build_judge_feedback(reason, mcq)
+                logger.debug("eval_regenerating", reason=reason, round=rounds)
+                eval_stats.add_regen_attempt()
+                regen = _regenerate_with_feedback(mcq, feedback, regen_client)
+                if regen is None:
+                    break  # regeneration failed structurally — give up on chunk
+                mcq = regen
+                continue
+            break  # out of budget — terminal reject
+
+        if accepted:
+            eval_stats.add_accepted(mcq.get("personalization_score", 0.0))
+            if rounds > 1:
+                eval_stats.add_recovered()
+            with file_lock:
+                with open(output_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(mcq) + "\n")
+            logger.debug(
+                "eval_accepted",
+                personalization_score=mcq.get("personalization_score"),
+                question_type=mcq.get("question_type"),
+                rounds=rounds,
+            )
+        else:
+            # Track which judge caused the final rejection
+            if reason.startswith("judge_a"):
+                eval_stats.add_regex_reject()
+            elif reason.startswith("judge_b"):
+                eval_stats.add_judge_b_reject()
+            elif reason.startswith("judge_c"):
+                eval_stats.add_judge_c_reject()
+            elif reason.startswith("judge_d"):
+                eval_stats.add_judge_d_reject()
+            rejected_log.append({"reason": reason, "question": mcq.get("question", "")[:100]})
+            logger.debug("eval_rejected", reason=reason, rounds=rounds)
+
+        eval_queue.task_done()
+
+    # Write rejection log alongside the output file
+    logger.info(
+        "evaluation_worker_done",
+        total_evaluated=eval_stats.generated,
+        accepted=eval_stats.accepted,
+        rejected=len(rejected_log),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -888,41 +3044,172 @@ def _worker(
 
 
 def _load_existing_hashes(output_path: str) -> set[str]:
-    """Load chunk hashes already present in the output file."""
+    """Load chunk hashes already present in the output or pending-eval files.
+
+    Reads two sources:
+    - ``output_path`` (mcq_raw.jsonl) — accepted samples from previous runs.
+    - ``<output_dir>/mcq_eval_pending.jsonl`` — MCQs that were generated but
+      not yet evaluated when the last run was interrupted.  These are excluded
+      from the task queue so they are not re-generated; they are loaded into
+      the eval queue directly by ``main()`` instead.
+    """
     hashes: set[str] = set()
     path = Path(output_path)
-    if not path.exists():
-        return hashes
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    h = obj.get("_chunk_hash")
+                    if h:
+                        hashes.add(h)
+                except json.JSONDecodeError:
+                    pass
 
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-                h = obj.get("_chunk_hash")
-                if h:
-                    hashes.add(h)
-            except json.JSONDecodeError:
-                pass
+    # Also mark pending-eval hashes as "done" so we don't re-generate them
+    pending_path = Path(output_path).parent / "mcq_eval_pending.jsonl"
+    pending_count = 0
+    if pending_path.exists():
+        with open(pending_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    h = obj.get("_chunk_hash")
+                    if h:
+                        hashes.add(h)
+                        pending_count += 1
+                except json.JSONDecodeError:
+                    pass
 
-    logger.info("existing_hashes_loaded", count=len(hashes))
+    logger.info(
+        "existing_hashes_loaded",
+        accepted=len(hashes) - pending_count,
+        pending_eval=pending_count,
+        total_skipped=len(hashes),
+    )
     return hashes
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# FINAL REPORT
+# REPORTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _print_quality_report(
+    eval_stats: EvalStats,
+    key_mgr: "SharedKeyManager",
+    all_stats: list,
+    elapsed: float = 0.0,
+):
+    """Print the post-evaluation quality report, including per-sub-check pass rates."""
+    W = 55
+    gen   = eval_stats.generated
+    rej_a = eval_stats.regex_rejected
+    rej_b = eval_stats.judge_b_rejected
+    rej_c = eval_stats.judge_c_rejected
+    rej_d = eval_stats.judge_d_rejected
+    acc   = eval_stats.accepted
+    avg_p = eval_stats.avg_personalization_score()
+
+    pct = lambda n: f"({100 * n / max(gen, 1):.1f}%)"
+    sc_pct = lambda yes, total: f"{100 * yes / max(total, 1):.0f}%" if total > 0 else "N/A"
+
+    print("\n" + "═" * W)
+    print("  DATA GENERATION — QUALITY REPORT")
+    print("═" * W)
+    print(f"  Generated:                     {gen:>6}")
+    print(f"  Pattern filter rejects:        {rej_a:>6}  {pct(rej_a):>8}")
+    print(f"  Judge B rejects:               {rej_b:>6}  {pct(rej_b):>8}  [personalization]")
+    print(f"  Judge C rejects:               {rej_c:>6}  {pct(rej_c):>8}  [distractor quality]")
+    print(f"  Judge D rejects:               {rej_d:>6}  {pct(rej_d):>8}  [factual correctness]")
+    print(f"  Final accepted:                {acc:>6}  {pct(acc):>8}")
+    if eval_stats.regen_attempts > 0:
+        rec = eval_stats.recovered
+        print(f"  Regeneration attempts:         {eval_stats.regen_attempts:>6}  [judge-feedback loop]")
+        print(f"  Recovered after regen:         {rec:>6}  {pct(rec):>8}  [accepted on a later round]")
+    print(f"  Avg personalization score:     {avg_p:.2f} / 3.0")
+    if elapsed > 0:
+        print(f"  Elapsed:                       {elapsed/60:.1f} min")
+
+    # ── Judge B sub-check pass rates ─────────────────────────────────
+    sc = eval_stats.sub_check_totals
+    sc_yes = eval_stats.sub_check_yes
+    if sc.get("mastery_check_vocabulary", 0) > 0:
+        print()
+        print("  Judge B sub-check pass rates (of samples that reached Judge B):")
+        b_checks = [
+            ("mastery_check_vocabulary",              "mastery_vocabulary"),
+            ("mastery_check_framing",                 "mastery_framing"),
+            ("mastery_check_distractor_sophistication", "mastery_distractor_soph"),
+            ("score_category_check_type_override",    "very_weak_type_override  ← watch"),
+            ("score_category_check_difficulty",       "score_category_difficulty"),
+            ("score_category_check_distractor_difficulty", "score_category_distr_diff"),
+            ("misconception_check_new_angle",         "misconception_new_angle"),
+            ("misconception_check_distractor_targets", "misconception_distr_target"),
+            ("misconception_check_answer_addresses_gap", "misconception_answer_gap"),
+        ]
+        for raw_key, label in b_checks:
+            total = sc.get(raw_key, 0)
+            yes   = sc_yes.get(raw_key, 0)
+            print(f"    {label:<40} {sc_pct(yes, total):>4}  ({yes}/{total})")
+
+    # ── Judge C sub-check pass rates ─────────────────────────────────
+    if sc.get("check_d1_different", 0) > 0:
+        print()
+        print("  Judge C sub-check pass rates:")
+        c_checks = [
+            ("check_d1_different",     "d1_different_from_answer"),
+            ("check_d2_different",     "d2_different_from_answer"),
+            ("check_d3_different",     "d3_different_from_answer"),
+            ("check_mutual_diversity", "mutual_diversity"),
+            ("check_plausibility",     "plausibility"),
+            ("check_format_consistency", "format_consistency (advisory)"),
+        ]
+        for raw_key, label in c_checks:
+            total = sc.get(raw_key, 0)
+            yes   = sc_yes.get(raw_key, 0)
+            print(f"    {label:<40} {sc_pct(yes, total):>4}  ({yes}/{total})")
+
+    # ── Judge D sub-check pass rates ─────────────────────────────────
+    if sc.get("answerability_check", 0) > 0:
+        print()
+        print("  Judge D sub-check pass rates:")
+        d_fixed = [
+            ("factual_verdict",     "all claims factually correct"),
+            ("answerability_check", "answerability"),
+            ("ambiguity_check",     "ambiguity (only one correct answer)"),
+            ("explanation_check",   "explanation_correctness"),
+        ]
+        for raw_key, label in d_fixed:
+            total = sc.get(raw_key, 0)
+            yes   = sc_yes.get(raw_key, 0)
+            print(f"    {label:<40} {sc_pct(yes, total):>4}  ({yes}/{total})")
+
+    print()
+    print("  Shared key pool status:")
+    ks = key_mgr.status()
+    print(f"    Total keys:                    {ks['total']}")
+    print(f"    Healthy at shutdown:           {ks['healthy']}")
+    print(f"    Cooling down at shutdown:      {ks['cooling']}")
+    print(f"    All keys dead (forced stop):   {ks['all_dead']}")
+    print("═" * W + "\n")
+
+
 def _print_report(
-    all_stats: list[WorkerStats],
+    all_stats: list,
     output_path: str,
     total_tasks: int,
     elapsed: float = 0.0,
+    eval_stats: EvalStats | None = None,
+    key_mgr: "SharedKeyManager | None" = None,
 ):
-    """Print comprehensive final generation report to terminal."""
+    """Print comprehensive final generation + quality report to terminal."""
     total_success = sum(s.success for s in all_stats)
     total_failure = sum(s.failure for s in all_stats)
 
@@ -934,6 +3221,7 @@ def _print_report(
     attempt_dist:  Counter = Counter()
     misconception_count = 0
     line_count = 0
+    pscore_sum = 0.0
 
     path = Path(output_path)
     if path.exists():
@@ -952,6 +3240,7 @@ def _print_report(
                     attempt_dist[obj.get("_attempts", 1)] += 1
                     if obj.get("misconception_context"):
                         misconception_count += 1
+                    pscore_sum += obj.get("personalization_score", 0.0)
                 except json.JSONDecodeError:
                     pass
 
@@ -960,6 +3249,7 @@ def _print_report(
     avg_attempts = (sum(k * v for k, v in attempt_dist.items()) / max(line_count, 1))
     miscon_pct   = 100 * misconception_count / max(line_count, 1)
     dg_estimate  = line_count * 3  # each MCQ yields 3 DG examples
+    avg_pscore   = pscore_sum / max(line_count, 1)
 
     W = 66
     print("\n" + "═" * W)
@@ -1031,8 +3321,33 @@ def _print_report(
     print(f"  {'File size:':<36} {file_size_mb:.1f} MB")
     print(f"  {'Misconception-context samples:':<36} {misconception_count} ({miscon_pct:.1f}%)")
     print(f"  {'Est. DG training examples (x3):':<36} {dg_estimate}")
+    print(f"  {'Avg personalization score:':<36} {avg_pscore:.2f} / 3.0")
     print(f"  {'Output file:':<36} {output_path}")
+
+    # ── Mastery distribution validation ────────────────────────────────
+    if line_count > 0:
+        target_weights = {"Expert": 0.20, "Intermediate": 0.35, "Novice": 0.45}
+        print()
+        print("  MASTERY DISTRIBUTION VALIDATION")
+        any_violation = False
+        for m, target_pct in sorted(target_weights.items()):
+            actual_count = mastery_dist.get(m, 0)
+            actual_pct = actual_count / line_count
+            diff = abs(actual_pct - target_pct)
+            status = "OK" if diff <= 0.10 else "⚠ DRIFT"
+            if diff > 0.10:
+                any_violation = True
+            print(f"    {m:<14}: actual={100*actual_pct:.1f}%  target={100*target_pct:.1f}%  [{status}]")
+        if any_violation:
+            print()
+            print("  ⚠ WARNING: Mastery distribution has drifted >10pp from target.")
+            print("    This may indicate a sampling bug or eligibility constraint.")
+
     print("═" * W + "\n")
+
+    # ── Quality report (evaluation pipeline) ──────────────────────────
+    if eval_stats is not None and key_mgr is not None:
+        _print_quality_report(eval_stats, key_mgr, all_stats, elapsed)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1054,7 +3369,16 @@ def main():
     )
     parser.add_argument(
         "--workers", type=int, default=CONFIG["num_workers"],
-        help="Number of parallel worker threads.",
+        help="Number of parallel generation worker threads (one per generation key).",
+    )
+    parser.add_argument(
+        "--eval-workers", type=int, default=CONFIG["num_eval_workers"],
+        help=(
+            "Number of parallel evaluation worker threads draining the judge "
+            "queue. Each judges one MCQ at a time (3 judges in parallel + any "
+            "regeneration). Raising this drains the eval backlog faster; the "
+            "shared key manager lets them borrow idle generation/fallback keys."
+        ),
     )
     parser.add_argument(
         "--chunk-size", type=int, default=CONFIG["chunk_size"],
@@ -1072,46 +3396,213 @@ def main():
             "Without this flag, types are sampled weighted by mastery distribution."
         ),
     )
+    parser.add_argument(
+        "--force-type", default=None, type=str,
+        help=(
+            "Force every task to use this question type, bypassing the "
+            "content-aware selector entirely. Mastery is fixed to Expert, "
+            "score_category is sampled 50/50 from moderate and strong. "
+            "Use with --target for boost generation of underrepresented types."
+        ),
+    )
+    parser.add_argument(
+        "--target", type=int, default=None,
+        help=(
+            "Stop generation after this many successful samples. "
+            "Primarily used with --force-type for boost generation."
+        ),
+    )
+    parser.add_argument(
+        "--skip-judges", action="store_true", default=False,
+        help=(
+            "Bypass all three LLM judges and write all structurally-valid MCQs "
+            "directly to the output file. Useful for fast test runs or when "
+            "judge keys are unavailable."
+        ),
+    )
+    parser.add_argument(
+        "--max-eval-retries", type=int, default=CONFIG["max_eval_retries"],
+        help=(
+            "Total judging rounds per MCQ before giving up. 1 = judge once and "
+            "discard on reject. N (default 3) = on reject, send the judges' "
+            "feedback back to the generator, regenerate for the SAME chunk, and "
+            "re-judge, up to N rounds — so a chunk gets multiple chances before "
+            "being discarded."
+        ),
+    )
     args = parser.parse_args()
 
-    # Build KeyPool from primary + backup key sets
-    primary_keys = CONFIG["api_keys_primary"]
-    backup_keys  = CONFIG["api_keys_backup"]
-    all_keys = primary_keys + backup_keys
-    if not all_keys:
-        print("ERROR: No valid API keys found. Set OLLAMA_API_KEY_1..4 in .env")
+    # ── Validate key availability ────────────────────────────────────────
+    gen_keys = GENERATION_KEYS
+    fallback = FALLBACK_KEYS
+    all_gen_keys = gen_keys + fallback
+
+    if not all_gen_keys:
+        print(
+            "ERROR: No generation keys found.\n"
+            "Set OLLAMA_API_KEY_1..4 (primary) and/or "
+            "OLLAMA_API_KEY_8..9 (fallback) in .env"
+        )
         sys.exit(1)
 
-    key_pool = KeyPool(
-        primary=primary_keys,
-        backup=backup_keys,
-        fail_threshold=CONFIG["key_fail_threshold"],
-        cooldown=CONFIG["key_cooldown"],
-    )
+    judge_keys_available = bool(JUDGE_B_KEYS and JUDGE_C_KEYS and JUDGE_D_KEYS)
+    if not judge_keys_available and not args.skip_judges:
+        print(
+            "WARNING: One or more judge keys missing "
+            "(OLLAMA_API_KEY_5/6/7). LLM judges will be skipped.\n"
+            "Use --skip-judges to silence this warning."
+        )
+        args.skip_judges = True
 
-    num_workers = min(args.workers, len(all_keys))
+    # ── Print pipeline config ────────────────────────────────────────────
+    print()
+    print(f"  Generation model: {GENERATION_MODEL}")
+    print(f"  Judge model:      {JUDGE_MODEL}")
+    print(f"  Generation keys:  {len(gen_keys)} primary + {len(fallback)} fallback")
+    if args.skip_judges:
+        print("  Judges:           SKIPPED")
+    else:
+        print(f"  Judge B keys:     {len(JUDGE_B_KEYS)} key(s) {'SET' if JUDGE_B_KEYS else 'MISSING'}")
+        print(f"  Judge C keys:     {len(JUDGE_C_KEYS)} key(s) {'SET' if JUDGE_C_KEYS else 'MISSING'}")
+        print(f"  Judge D keys:     {len(JUDGE_D_KEYS)} key(s) {'SET' if JUDGE_D_KEYS else 'MISSING'}")
+
+    # ── Build the ONE shared key manager every role draws from ────────────
+    # Every key (generation, all judges, fallback) is registered here so any
+    # role can borrow an idle key from any other role, share a single surviving
+    # key with no parallelism, and only stop when every key is truly dead.
+    key_mgr = SharedKeyManager(
+        role_keys={
+            "generation": gen_keys,
+            "judge_b":    JUDGE_B_KEYS,
+            "judge_c":    JUDGE_C_KEYS,
+            "judge_d":    JUDGE_D_KEYS,
+            "fallback":   fallback,
+        },
+        fail_threshold=CONFIG["key_fail_threshold"],
+        base_cooldown=CONFIG["key_cooldown"],
+    )
+    # Trips when every key is permanently dead — stops the whole run gracefully.
+    stop_event = threading.Event()
+
+    num_workers = min(args.workers, max(len(gen_keys), 1))
     logger.info(
         "data_generator_starting",
         workers=num_workers,
-        primary_keys=len(primary_keys),
-        backup_keys=len(backup_keys),
+        total_keys=key_mgr.num_keys(),
+        generation_keys=len(gen_keys),
+        judge_keys=len(JUDGE_B_KEYS) + len(JUDGE_C_KEYS) + len(JUDGE_D_KEYS),
+        fallback_keys=len(fallback),
+        generation_model=GENERATION_MODEL,
+        judge_model=JUDGE_MODEL,
+        skip_judges=args.skip_judges,
         books_dir=args.books,
     )
-    print(f"  Keys: {len(primary_keys)} primary + {len(backup_keys)} backup = {len(all_keys)} total")
     print(f"  Workers: {num_workers}")
 
-    # Ensure output directory exists
+    # ── Per-role resilient clients — all share the one SharedKeyManager ────
+    # Preference order encodes the user's policy: own keys → fallback → (borrow
+    # any idle key) → (share one key, no parallelism). The "borrow/share" tiers
+    # are handled inside SharedKeyManager.pick, so we only list the role's own
+    # keys + fallback here as the explicit preference.
+    regen_client = None
+    if not args.skip_judges:
+        judge_b_client = RoleClient(
+            key_mgr, JUDGE_B_KEYS + fallback, JUDGE_MODEL, "judge_b")
+        judge_c_client = RoleClient(
+            key_mgr, JUDGE_C_KEYS + fallback, JUDGE_MODEL, "judge_c")
+        judge_d_client = RoleClient(
+            key_mgr, JUDGE_D_KEYS + fallback, JUDGE_MODEL, "judge_d")
+        print(
+            "  Failover policy: own keys → fallback → borrow any idle key → "
+            "share one key (no parallelism) → stop only if all keys dead"
+        )
+        # Judge-feedback regeneration uses a generation-flavoured RoleClient.
+        if args.max_eval_retries > 1:
+            regen_client = RoleClient(
+                key_mgr, fallback + gen_keys, GENERATION_MODEL, "regen")
+            print(
+                f"  Judge-feedback loop: up to {args.max_eval_retries} rounds "
+                f"(regenerate-on-reject enabled)"
+            )
+    else:
+        judge_b_client = judge_c_client = judge_d_client = None
+
+    # ── Ensure output directory exists ──────────────────────────────────
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
 
-    # Load chunks
+    # ── Load pending-eval items from a previous interrupted run ─────────
+    # These are MCQs that were generated but not yet judged when the last run
+    # was Ctrl-C'd.  They are pushed directly into the eval queue so we don't
+    # re-generate them, and their chunk hashes are excluded from task building.
+    pending_eval_path = Path(args.output).parent / "mcq_eval_pending.jsonl"
+    pending_eval_items: list[dict] = []
+    if pending_eval_path.exists():
+        with open(pending_eval_path, "r", encoding="utf-8") as _pf:
+            for _line in _pf:
+                _line = _line.strip()
+                if not _line:
+                    continue
+                try:
+                    pending_eval_items.append(json.loads(_line))
+                except json.JSONDecodeError:
+                    pass
+        if pending_eval_items:
+            print(
+                f"\n  ▶ Resume: loading {len(pending_eval_items)} pending MCQs "
+                f"from previous interrupted run → eval queue "
+                f"(no re-generation needed)"
+            )
+            pending_eval_path.unlink()  # remove now; will recreate on next interrupt
+
+    # ── Load chunks from PDFs (Scipy excluded automatically) ─────────────
     chunks = _load_chunks_from_pdfs(args.books, args.chunk_size, args.chunk_overlap)
     if not chunks:
         print("ERROR: No chunks loaded from books directory.")
         sys.exit(1)
 
+    # Generate synthetic chunks to replace the removed Scipy PDF examples.
+    # All generation keys are passed so the function can cycle through them
+    # on per-call failures.  A JSONL cache file sits next to mcq_raw.jsonl so
+    # an interrupted run reloads completed chunks instead of regenerating them.
+    if all_gen_keys and not args.force_type:
+        n_syn = CONFIG.get("n_synthetic_chunks", 180)
+        _syn_cache = str(Path(args.output).parent / "mcq_synthetic_chunks_cache.jsonl")
+        synthetic = generate_synthetic_chunks(
+            n_chunks=n_syn,
+            api_keys=all_gen_keys,
+            cache_path=_syn_cache,
+        )
+        if synthetic:
+            chunks = chunks + synthetic
+            logger.info(
+                "synthetic_chunks_added",
+                synthetic=len(synthetic),
+                total=len(chunks),
+            )
+        else:
+            logger.warning("no_synthetic_chunks_generated")
+
     # Resumability: skip already-processed chunks
     existing_hashes = _load_existing_hashes(args.output)
-    tasks = _build_tasks(chunks, existing_hashes, balanced_types=args.balanced_types)
+
+    # ── Build task list ──────────────────────────────────────────────────
+    if args.force_type:
+        tasks = _build_tasks(chunks, existing_hashes, balanced_types=False)
+        rng = random.Random(42)
+        forced_tasks = []
+        for i, task in enumerate(tasks):
+            task["question_type"] = args.force_type
+            task["mastery"] = "Expert"
+            task["score_category"] = "moderate" if i % 2 == 0 else "strong"
+            task["misconception_context"] = None
+            forced_tasks.append(task)
+        tasks = forced_tasks
+        print(f"  Force-type mode: all tasks → Type {args.force_type}, Expert mastery")
+        print(f"  Score categories: 50% moderate, 50% strong")
+        if args.target:
+            print(f"  Target: stop after {args.target} successful samples")
+    else:
+        tasks = _build_tasks(chunks, existing_hashes, balanced_types=args.balanced_types)
 
     if args.balanced_types:
         print(f"  Balanced mode: equal quota per question type")
@@ -1120,58 +3611,221 @@ def main():
         print("All chunks already processed. Nothing to do.")
         return
 
-    # Build task queue
+    # ── Build queues ─────────────────────────────────────────────────────
     task_queue: queue.Queue = queue.Queue()
     for task in tasks:
         task_queue.put(task)
 
-    total_tasks = len(tasks)
-    logger.info("tasks_queued", total=total_tasks)
+    # Bounded eval queue = backpressure. When evaluation falls behind, the
+    # generation workers block on a full queue (releasing their API keys), which
+    # both caps the gen↔eval gap and frees generation keys for the eval workers
+    # to borrow. Sized to give a working buffer ahead of the eval workers.
+    n_eval_workers = max(1, args.eval_workers)
+    eval_queue_max = max(32, n_eval_workers * 16)
+    eval_queue: queue.Queue = queue.Queue(maxsize=eval_queue_max)
 
-    # Shared state
-    file_lock = threading.Lock()
-    pbar_lock = threading.Lock()
+    total_tasks = len(tasks)
+    logger.info(
+        "tasks_queued",
+        total=total_tasks,
+        eval_workers=n_eval_workers,
+        eval_queue_max=eval_queue_max,
+    )
+
+    # ── Shared state ─────────────────────────────────────────────────────
+    file_lock  = threading.Lock()
+    pbar_lock  = threading.Lock()
+    eval_stats = EvalStats()
     all_stats: list[WorkerStats] = []
 
-    # tqdm progress bar
+    display_total = args.target if args.target else total_tasks
     pbar = tqdm(
-        total=total_tasks,
+        total=display_total,
         desc="Generating MCQs",
         unit="task",
         dynamic_ncols=True,
         colour="green",
     )
 
-    # Start workers — all share the KeyPool, each gets its own stats
-    threads: list[threading.Thread] = []
+    target_counter = None
+    if args.target:
+        target_counter = {
+            "target": args.target,
+            "count": 0,
+            "lock": threading.Lock(),
+        }
+
+    # ── Monitor thread — updates tqdm postfix with live eval queue depth ────
+    # Runs every 1.5 s independently of when generation workers complete tasks,
+    # so the queue counter stays current even when workers are waiting for keys.
+    monitor_stop = threading.Event()
+
+    def _monitor() -> None:
+        while not monitor_stop.is_set():
+            q_size = eval_queue.qsize()
+            acc    = eval_stats.accepted
+            regen  = eval_stats.regen_attempts
+            with pbar_lock:
+                pbar.set_postfix(
+                    accepted=acc,
+                    eval_q=q_size,
+                    regens=regen,
+                    refresh=True,
+                )
+            monitor_stop.wait(timeout=1.5)
+
+    monitor_thread = threading.Thread(target=_monitor, daemon=True, name="monitor")
+    monitor_thread.start()
+
+    # ── Launch evaluation workers first ──────────────────────────────────
+    # N parallel workers drain eval_queue and apply the judges. Evaluation is
+    # the throughput bottleneck, so it gets more threads than generation; they
+    # borrow idle generation/fallback keys through the shared key manager.
+    eval_threads: list[threading.Thread] = []
+    if args.skip_judges:
+        # Fast path: bypass all judges — write directly.
+        def _direct_eval_worker():
+            while True:
+                try:
+                    item = eval_queue.get(timeout=10)
+                except queue.Empty:
+                    continue
+                if item is None:
+                    eval_queue.task_done()
+                    break
+                eval_stats.add_generated()
+                eval_stats.add_accepted(item.get("personalization_score", 0.0))
+                with file_lock:
+                    with open(args.output, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(item) + "\n")
+                eval_queue.task_done()
+
+        for _ in range(n_eval_workers):
+            t = threading.Thread(target=_direct_eval_worker, daemon=True)
+            t.start()
+            eval_threads.append(t)
+    else:
+        for _ in range(n_eval_workers):
+            t = threading.Thread(
+                target=_evaluation_worker,
+                args=(
+                    eval_queue, args.output, file_lock,
+                    judge_b_client, judge_c_client, judge_d_client,
+                    eval_stats, regen_client, args.max_eval_retries, key_mgr,
+                ),
+                daemon=True,
+            )
+            t.start()
+            eval_threads.append(t)
+    print(f"  Eval workers: {n_eval_workers}  (queue cap {eval_queue_max})")
+
+    # Backfill recovered pending MCQs from a previous interrupted run. The eval
+    # queue is bounded, so push them from a daemon feeder thread that blocks on
+    # a full queue WITHOUT stalling generation startup.
+    if pending_eval_items:
+        def _pending_feeder(items: list[dict]):
+            for it in items:
+                while not (key_mgr.all_dead or stop_event.is_set()):
+                    try:
+                        eval_queue.put(it, timeout=2)
+                        break
+                    except queue.Full:
+                        continue
+        threading.Thread(
+            target=_pending_feeder, args=(list(pending_eval_items),),
+            daemon=True, name="pending-feeder",
+        ).start()
+        logger.info("pending_eval_items_queued", count=len(pending_eval_items))
+
+    # ── Launch generation workers ────────────────────────────────────────
+    # Each worker gets its own generation RoleClient (preferring the gen keys,
+    # then fallback) backed by the shared key manager.
+    gen_threads: list[threading.Thread] = []
     for i in range(num_workers):
         stats = WorkerStats()
         all_stats.append(stats)
+        gen_client = RoleClient(
+            key_mgr, gen_keys + fallback, GENERATION_MODEL, f"gen{i}")
         t = threading.Thread(
             target=_worker,
             args=(
-                i, key_pool, task_queue, args.output,
-                file_lock, stats, all_stats, pbar, pbar_lock,
+                i, gen_client, key_mgr, stop_event,
+                task_queue, eval_queue,
+                stats, all_stats, pbar, pbar_lock,
+                target_counter,
             ),
             daemon=True,
         )
         t.start()
-        threads.append(t)
+        gen_threads.append(t)
 
     t_start = time.time()
     try:
-        for t in threads:
+        for t in gen_threads:
             t.join()
     except KeyboardInterrupt:
         print("\n\nInterrupted — partial results saved. Run again to resume.")
     finally:
+        # Stop the monitor thread
+        monitor_stop.set()
+        monitor_thread.join(timeout=3)
         elapsed = time.time() - t_start
         success_total = sum(s.success for s in all_stats)
         failure_total = sum(s.failure for s in all_stats)
-        pbar.set_postfix(success=success_total, fail=failure_total)
+        pbar.set_postfix(
+            accepted=eval_stats.accepted,
+            eval_q=eval_queue.qsize(),
+            regens=eval_stats.regen_attempts,
+        )
         pbar.close()
 
-    _print_report(all_stats, args.output, total_tasks, elapsed=elapsed)
+    # Signal every evaluation worker to stop (one poison pill each), then wait
+    # for them to FULLY drain the backlog. A Ctrl-C during the drain breaks out
+    # and dumps the remaining queue to disk so nothing is lost on resume.
+    for _ in eval_threads:
+        eval_queue.put(None)
+    interrupted_during_drain = False
+    try:
+        for _t in eval_threads:
+            while _t.is_alive():
+                _t.join(timeout=1.0)
+    except KeyboardInterrupt:
+        interrupted_during_drain = True
+        print(
+            "\n  Interrupted during evaluation — saving the unevaluated backlog…"
+        )
+
+    # Dump whatever is still in the queue to the pending-eval file so the
+    # next run can recover it without re-generating.
+    _pending_dump: list[dict] = []
+    while True:
+        try:
+            _item = eval_queue.get_nowait()
+            if _item is not None:  # skip the poison pill
+                _pending_dump.append(_item)
+        except queue.Empty:
+            break
+
+    if _pending_dump:
+        pending_eval_path = Path(args.output).parent / "mcq_eval_pending.jsonl"
+        with open(pending_eval_path, "w", encoding="utf-8") as _pf:
+            for _item in _pending_dump:
+                _pf.write(json.dumps(_item) + "\n")
+        print(
+            f"\n  💾 {len(_pending_dump)} unevaluated MCQs saved to "
+            f"{pending_eval_path.name} — re-run to evaluate them (no re-generation)."
+        )
+    elif interrupted_during_drain:
+        print("\n  All queued MCQs were evaluated before shutdown.")
+
+    _print_report(
+        all_stats,
+        args.output,
+        total_tasks,
+        elapsed=elapsed,
+        eval_stats=eval_stats,
+        key_mgr=key_mgr,
+    )
 
 
 if __name__ == "__main__":

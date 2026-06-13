@@ -9,9 +9,11 @@ import shutil
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from torch.cuda.amp import GradScaler
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+from transformers import get_linear_schedule_with_warmup
 import time
 import json
 import math
@@ -28,7 +30,7 @@ import wandb
 
 from TinyBert import IntentClassifier, IntentDataset
 
-INTENT_NAMES = ['On-Topic Question', 'Off-Topic Question', 'Emotional-State', 'Pace-Related', 'Repeat/clarification']
+INTENT_NAMES = ['On-Topic Question', 'Off-Topic Question', 'Emotional-State', 'Pace-Related', 'Repeat/clarification', 'Debugging/Code-Sharing']
 DEFAULT_CONFIDENCE_THRESHOLD = 0.65
 BASE_DIR = Path(__file__).resolve().parent
 REAL_UTTERANCE_PATH = str(BASE_DIR / 'data' / 'real_utterances.csv')
@@ -169,14 +171,14 @@ def main():
     TRAIN_PATH  = str(BASE_DIR / 'data' / 'train.csv')
     VAL_PATH    = str(BASE_DIR / 'data' / 'val.csv')
     TEST_PATH   = str(BASE_DIR / 'data' / 'test.csv')
-    BATCH_SIZE  = 16
-    EPOCHS      = 15
+    BATCH_SIZE  = 32
+    EPOCHS      = 20
     BERT_LR     = 2e-5       # Lower LR for BERT backbone
     HEAD_LR     = 2e-4   # was 5e-5 — head needs to learn faster than backbone
     WEIGHT_DECAY = 0.01
     MAX_LENGTH  = 128
-    PATIENCE    = 7
-    DROPOUT     = 0.3
+    PATIENCE    = 4
+    DROPOUT     = 0.2
     FREEZE_BERT = False
 
     hyperparams = {
@@ -208,8 +210,8 @@ def main():
         split_idx = int(len(real_df) * 0.70)
         real_train_df = real_df.iloc[:split_idx]
         real_eval_df  = real_df.iloc[split_idx:]
-        # Oversample real training data 8x so model learns from it
-        real_train_oversampled = pd.concat([real_train_df] * 8, ignore_index=True)
+        # Oversample real training data 2x so model learns from it
+        real_train_oversampled = pd.concat([real_train_df] * 2, ignore_index=True)
         train_df = pd.concat([train_df, real_train_oversampled], ignore_index=True)
         train_df = train_df.sample(frac=1, random_state=42).reset_index(drop=True)
         print(f"[+] Mixed {len(real_train_oversampled)} real utterance rows into training. Train total: {len(train_df)}")
@@ -229,6 +231,8 @@ def main():
     classifier = IntentClassifier(
         num_classes=num_classes,
         bert_model_name='distilbert-base-uncased',
+        num_filters=192,
+        filter_sizes=[3, 4, 5, 6],
         dropout=DROPOUT,
         freeze_bert=FREEZE_BERT,
         device=device
@@ -279,6 +283,10 @@ def main():
             **hyperparams,
             'model_name': 'DistilBert-CNN',
             'num_classes': num_classes,
+            'filter_sizes': [3, 4, 5, 6],
+            'num_filters': 192,
+            'norm_type': 'GroupNorm',
+            'dropout_layers': 1,
             'train_rows': len(train_df),
             'val_rows': len(val_df),
             'test_rows': len(test_df),
@@ -289,14 +297,61 @@ def main():
         },
     )
 
-    # ── Training loop ──────────────────────────────────────────────
+    class _LoopState:
+        restart_count: int = 0
+    _state = _LoopState()
+
+    # ── Temperature scaling on validation set ──────────────────────
+    def fit_temperature(clf, v_loader, max_iter=50):
+        '''Fit temperature parameter T to minimize NLL on validation set.'''
+        clf.model.eval()
+        # Collect validation logits and labels
+        all_logits, all_labels = [], []
+        with torch.no_grad():
+            for batch in v_loader:
+                input_ids = batch['input_ids'].to(clf.device)
+                attention_mask = batch['attention_mask'].to(clf.device)
+                labels_b = batch['labels'].to(clf.device)
+                token_type_ids = batch.get('token_type_ids')
+                if token_type_ids is not None:
+                    token_type_ids = token_type_ids.to(clf.device)
+                logits = clf.model(input_ids, attention_mask, token_type_ids=token_type_ids)
+                # Undo any existing temperature
+                logits = logits * clf.model.temperature
+                all_logits.append(logits)
+                all_labels.append(labels_b)
+        all_logits = torch.cat(all_logits)
+        all_labels = torch.cat(all_labels)
+        
+        # Optimize T via grid search + fine refinement
+        best_T, best_nll = 1.0, float('inf')
+        for T in [0.5, 0.7, 1.0, 1.3, 1.6, 2.0, 2.5, 3.0, 4.0, 5.0]:
+            scaled = all_logits / T
+            nll = nn.CrossEntropyLoss()(scaled, all_labels).item()
+            if nll < best_nll:
+                best_nll, best_T = nll, T
+        
+        # Fine search around best
+        for T in [best_T - 0.3, best_T - 0.15, best_T, best_T + 0.15, best_T + 0.3]:
+            if T <= 0: continue
+            scaled = all_logits / T
+            nll = nn.CrossEntropyLoss()(scaled, all_labels).item()
+            if nll < best_nll:
+                best_nll, best_T = nll, T
+        
+        clf.model.temperature = best_T
+        print(f"[+] Temperature fitted: T={best_T:.3f} (val NLL={best_nll:.4f})")
+        return best_T
+
+    # ── Training loop (AMP) ─────────────────────────────────────────
+    scaler = GradScaler()
     for epoch in range(EPOCHS):
         classifier.model.train()
         train_loss = 0
         train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS}")
 
         for batch in train_pbar:
-            loss = classifier.train_step(batch, optimizer, criterion)
+            loss = classifier.train_step_amp(batch, optimizer, criterion, scaler=scaler)
             scheduler.step()
             train_loss += loss
             train_pbar.set_postfix({'loss': f'{loss:.4f}'})
@@ -340,11 +395,54 @@ def main():
 
         early_stopping(val_f1, epoch + 1)
         if early_stopping.early_stop:
-            print("Stopping early.")
-            break
+            MAX_RESTARTS = 2
+
+            if _state.restart_count >= MAX_RESTARTS:
+                print(f"Early stopping — {MAX_RESTARTS} restarts exhausted. Terminating at epoch {epoch + 1}.")
+                break
+
+            best_epoch = early_stopping.best_epoch
+            print(f"Early stopping at epoch {epoch + 1} — rewinding to epoch {best_epoch} (best val_f1={best_val_f1:.4f})")
+
+            # 1. Rewind to best checkpoint
+            classifier.load_model(best_model_path)
+
+            # 2. Calibrate temperature
+            temperature = fit_temperature(classifier, val_loader)
+            classifier.model.temperature = temperature
+            print(f"Temperature recalibrated: T={temperature:.4f}")
+
+            # 3. Halve learning rates
+            for pg in optimizer.param_groups:
+                pg['lr'] = pg['lr'] * 0.5
+            print(f"LRs halved — BERT: {optimizer.param_groups[0]['lr']:.2e}  HEAD: {optimizer.param_groups[-1]['lr']:.2e}")
+
+            # 4. Reduce label smoothing
+            if hasattr(criterion, 'label_smoothing'):
+                criterion.label_smoothing = max(criterion.label_smoothing * 0.5, 0.01)
+                print(f"Label smoothing -> {criterion.label_smoothing:.3f}")
+
+            # 5. Reset scheduler with short warmup from new lower LR
+            remaining = EPOCHS - (epoch + 1)
+            warmup    = min(200, remaining * len(train_loader) // 10)
+            scheduler = get_linear_schedule_with_warmup(
+                optimizer,
+                num_warmup_steps=warmup,
+                num_training_steps=remaining * len(train_loader),
+            )
+            print(f"Scheduler reset — {warmup} warmup / {remaining * len(train_loader)} total steps")
+
+            # 6. Reset early stopping counter and flag
+            early_stopping.counter    = 0
+            early_stopping.early_stop = False
+
+            _state.restart_count += 1
+            print(f"Restart {_state.restart_count} / {MAX_RESTARTS} — continuing training.")
+
 
     # ── Final evaluation on TEST set ────────────────────────────────
     classifier.load_model(best_model_path)
+    best_T = fit_temperature(classifier, val_loader)
     test_loss, test_acc, test_prec, test_rec, test_f1, all_preds, all_labels = evaluate_model_full(classifier, test_loader)
 
     training_duration = round(time.time() - start_time, 2)
@@ -457,6 +555,7 @@ def main():
         'test_f1': float(test_f1),
         'training_duration_seconds': float(training_duration),
         'epochs_trained': float(len(history['train_loss'])),
+        'temperature': float(best_T),
     })
     wandb.save('training_results.json')
     if os.path.exists(best_model_path):

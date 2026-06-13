@@ -107,8 +107,8 @@ class PathwayGenerator:
 
         self._personalizer = Personalizer()
         self._grouper = SessionGrouper(
-            min_tokens=settings.session_min_tokens,
-            max_tokens=settings.session_max_tokens,
+            max_sessions=settings.max_sessions,
+            target_sessions=settings.target_session_count,
         )
         self._synthetic_gen = SyntheticContextGenerator()
 
@@ -207,11 +207,16 @@ class PathwayGenerator:
                 book_titles=book_titles,
                 max_retries=self._settings.max_retries,
                 timeout=self._settings.ollama_curriculum_timeout,
+                target_sessions=self._settings.target_session_count,
+                min_sessions=self._settings.min_sessions,
+                max_sessions=self._settings.max_sessions,
             )
         else:
             # No LLM — simple alphabetical fallback
             from pathway.llm.curriculum import _alphabetical_fallback
-            curriculum = _alphabetical_fallback(all_topics)
+            curriculum = _alphabetical_fallback(
+                all_topics, target_sessions=self._settings.target_session_count
+            )
 
         # 6. Build DiscoveredSections from the LLM curriculum
         sections, section_chunks_raw = self._build_sections_from_curriculum(

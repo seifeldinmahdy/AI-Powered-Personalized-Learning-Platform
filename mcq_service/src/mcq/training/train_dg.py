@@ -42,13 +42,18 @@ logger = structlog.get_logger(__name__)
 
 TRAIN_CONFIG = {
     "epochs": 2,
-    "batch_size": 8,
-    "gradient_accumulation_steps": 2,
+    # batch_size halved + grad_accum doubled to keep effective batch = 4 * 4 = 16
+    # while fitting 1024-token sequences in T4 VRAM.
+    "batch_size": 4,
+    "gradient_accumulation_steps": 4,
     "learning_rate": 2e-4,
     "warmup_steps": 10,
     "weight_decay": 0.01,
     "max_grad_norm": 1.0,
-    "max_seq_length": 512,
+    # Raised from 512 → 1024 so the question + correct answer + chunk context
+    # are NOT truncated. DG avg sample is ~1150 tokens; 1024 captures ~89%
+    # of the content (vs. 44% at 512).
+    "max_seq_length": 1024,
     "lora_r": 16,
     "lora_alpha": 16,
     "lora_dropout": 0.0,
@@ -356,8 +361,11 @@ def train_dg_model(
         max_grad_norm=TRAIN_CONFIG["max_grad_norm"],
         fp16=not torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False,
         bf16=torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False,
-        eval_strategy="epoch",
-        save_strategy="epoch",
+        # eval every 300 optimizer steps; with packing the eval pass is fast.
+        eval_strategy="steps",
+        eval_steps=300,
+        save_strategy="steps",
+        save_steps=300,
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
@@ -367,7 +375,10 @@ def train_dg_model(
         seed=42,
         max_seq_length=max_seq_length,
         dataset_text_field="text",
-        packing=False,
+        # packing=True pre-tokenises and packs multiple short DG samples into
+        # each 1024-token window, eliminating the per-step CPU tokenisation
+        # bottleneck that caused the 17 h wall time on Kaggle T4.
+        packing=True,
     )
 
     trainer = SFTTrainer(

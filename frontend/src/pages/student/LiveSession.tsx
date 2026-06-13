@@ -213,6 +213,24 @@ export default function LiveSession() {
                 if (chunksRes.ok) {
                   const chunks = await chunksRes.json();
                   if (chunks.length > 0) {
+                    // ── Fetch real student profile for slide personalization ──
+                    let masteryLevel = 'Novice';
+                    let compositionMode = 'visual_heavy';
+                    let languageProficiency = 'Elementary';
+                    try {
+                      const ctxRes = await fetch(
+                        `${AI_URL}/student-context/${pathwayPlan.student_id}/${pathwayPlan.course_id}`
+                      );
+                      if (ctxRes.ok) {
+                        const ctx = await ctxRes.json();
+                        masteryLevel = ctx.profile?.mastery_level || masteryLevel;
+                        compositionMode = ctx.profile?.composition_mode || compositionMode;
+                        languageProficiency = ctx.profile?.language_proficiency || languageProficiency;
+                      }
+                    } catch {
+                      // non-critical — keep defaults
+                    }
+
                     const slideResponse = await generateSlides({
                       session_number: sessionNum,
                       session_title: currentSession.session_title,
@@ -225,9 +243,9 @@ export default function LiveSession() {
                         page_start: c.page_start,
                         page_end: c.page_end,
                       })),
-                      mastery_level: 'Novice',
-                      composition_mode: 'visual_heavy',
-                      language_proficiency: 'Elementary',
+                      mastery_level: masteryLevel,
+                      composition_mode: compositionMode,
+                      language_proficiency: languageProficiency,
                     });
 
                     if (!cancelled) {

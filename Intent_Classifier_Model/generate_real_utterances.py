@@ -33,6 +33,7 @@ LABEL_MAP = {
     'Emotional-State': 2,
     'Pace-Related': 3,
     'Repeat/clarification': 4,
+    'Debugging/Code-Sharing': 5,
 }
 
 PYTHON_TOPICS = [
@@ -109,6 +110,12 @@ CLASS_DEFINITIONS = {
             "im lowkey stressed about this exam",
             "this aint it chief",
         ],
+        'adjacent_note': (
+            "CRITICAL: Do NOT generate utterances containing pace vocabulary "
+            "(too fast, slow down, speed up, keep up, the pace). "
+            "Those belong in Pace-Related. This class is for pure emotional expression "
+            "with no pace change request."
+        ),
     },
     'Pace-Related': {
         'definition': (
@@ -126,6 +133,11 @@ CLASS_DEFINITIONS = {
             "lets speed this up im bored",
             "how many slides left",
         ],
+        'adjacent_note': (
+            "CRITICAL: Do NOT generate utterances that only express a feeling without "
+            "requesting a pace change. 'I am overwhelmed' alone is Emotional-State. "
+            "'Can we slow down' and 'you are going too fast' are Pace-Related."
+        ),
     },
     'Repeat/clarification': {
         'definition': (
@@ -144,16 +156,37 @@ CLASS_DEFINITIONS = {
             "come again??",
         ],
     },
+    'Debugging/Code-Sharing': {
+        'definition': (
+            "The student is sharing actual code, pasting error messages, tracebacks, or "
+            "code snippets and asking for debugging help. The key distinction from "
+            "On-Topic Question is the PRESENCE OF CODE ARTIFACTS: backticks, inline code, "
+            "error type names (TypeError, NameError, IndexError, etc.), traceback lines, "
+            "variable names, or syntax fragments. If they mention specific error messages "
+            "or paste code, it is Debugging/Code-Sharing, NOT On-Topic Question."
+        ),
+        'examples': [
+            "my code `x = int('hello')` throws ValueError why",
+            "NameError: name 'y' is not defined but i defined it at the top",
+            "heres my function: `def add(a,b): return a+b` it crashes on strings",
+            "i get IndexError list index out of range when i do my_list[5]",
+            "`while True: x += 1` runs forever how do i stop it",
+            "TypeError: can only concatenate str not int which line is wrong",
+            "my variable count keeps resetting to 0 inside the loop",
+            "look at this traceback: File main.py line 5 — what does it mean",
+        ],
+    },
 }
 
 # DDAIR: adjacent class definitions for boundary-aware generation
 # The model generates better utterances when it knows what the confused classes look like.
 ADJACENT_CLASSES = {
-    'On-Topic Question': ['Off-Topic Question'],
+    'On-Topic Question': ['Off-Topic Question', 'Debugging/Code-Sharing'],
     'Off-Topic Question': ['On-Topic Question'],
-    'Pace-Related': ['Repeat/clarification'],
+    'Emotional-State': ['Pace-Related'],
+    'Pace-Related': ['Repeat/clarification', 'Emotional-State'],
     'Repeat/clarification': ['Pace-Related'],
-    'Emotional-State': [],  # no dominant confusion pair
+    'Debugging/Code-Sharing': ['On-Topic Question'],
 }
 
 
@@ -283,6 +316,10 @@ def generate_utterances_for_class(
             + "\n".join(adj_lines)
             + "\nMake sure every utterance you generate is clearly distinguishable from the adjacent class(es) above."
         )
+
+    adjacent_note = class_info.get('adjacent_note', '')
+    if adjacent_note:
+        adjacent_block += f"\n\nIMPORTANT: {adjacent_note}"
 
     rag_block = ''
     if rag_passages and intent_name == 'On-Topic Question':

@@ -31,10 +31,16 @@ class MCQSettings(BaseSettings):
         extra="ignore",
     )
 
-    # ── Ollama Cloud ─────────────────────────────────────────────────
+    # ── Ollama ───────────────────────────────────────────────────────
     OLLAMA_HOST: str = "https://ollama.com"
     OLLAMA_API_KEY: str = ""
-    OLLAMA_MODEL: str = "gpt-oss:120b"
+    OLLAMA_MODEL: str = "gpt-oss:120b"  # shared fallback
+
+    # Per-model overrides (empty = use OLLAMA_MODEL).
+    # Set to local Ollama model names to use fine-tuned GGUF models
+    # without touching the LoRA paths (which require CUDA/Unsloth).
+    QG_OLLAMA_MODEL: str = ""   # e.g. "mcq-qg" for local inference
+    DG_OLLAMA_MODEL: str = ""   # e.g. "mcq-dg" for local inference
 
     # ── Session checkpoints ──────────────────────────────────────────
     CHECKPOINT_INTERVAL: int = 3
@@ -51,22 +57,34 @@ class MCQSettings(BaseSettings):
     MCQ_MAX_REGENERATION_ATTEMPTS: int = 2
     MCQ_DISTRACTOR_COUNT: int = 3
 
-    # ── Llama / Unsloth base model ───────────────────────────────────
-    LLAMA_BASE_MODEL: str = "unsloth/Llama-3.2-3B-Instruct"
+    # ── Base model (Qwen3-4B-Instruct, 4-bit) ────────────────────────
+    # Unsloth quantized variant — one base model, two LoRA adapters.
+    LLAMA_BASE_MODEL: str = "unsloth/Qwen3-4B-Instruct"
 
     # ── Fine-tuned LoRA adapter paths ────────────────────────────────
+    # Primary path fields for Qwen3-4B adapters.
     # Empty = use Ollama.  Set the path when LoRA adapters are ready.
-    QG_LORA_PATH: str = ""
-    DG_LORA_PATH: str = ""
+    # QG_MODEL_PATH / DG_MODEL_PATH are preferred; QG_LORA_PATH /
+    # DG_LORA_PATH kept for backward compatibility with Llama adapters.
+    QG_MODEL_PATH: str = ""   # path to QG Qwen3-4B LoRA adapter dir
+    DG_MODEL_PATH: str = ""   # path to DG Qwen3-4B LoRA adapter dir
+    QG_LORA_PATH: str = ""    # legacy: Llama-3.2-3B QG adapter
+    DG_LORA_PATH: str = ""    # legacy: Llama-3.2-3B DG adapter
 
     # ── LoRA hyperparameters ─────────────────────────────────────────
-    LORA_R: int = 16
-    LORA_ALPHA: int = 16
-    LORA_DROPOUT: float = 0.0  # Unsloth recommends 0 for speed
+    # QG: higher rank — must adhere to conditioning AND generate content
+    QG_LORA_R: int = 32
+    QG_LORA_ALPHA: int = 64
+    # DG: simpler task, lower rank sufficient
+    DG_LORA_R: int = 16
+    DG_LORA_ALPHA: int = 32
+    LORA_DROPOUT: float = 0.05
 
-    # ── Llama tokenizer / generation ─────────────────────────────────
-    MAX_SEQ_LENGTH: int = 512
-    LOAD_IN_4BIT: bool = True  # QLoRA — 4-bit quantization
+    # ── Tokenizer / generation ───────────────────────────────────────
+    MAX_SEQ_LENGTH: int = 1024       # shared default
+    MAX_SEQ_LENGTH_QG: int = 1024    # QG-specific (inputs shorter with simplified prompt)
+    MAX_SEQ_LENGTH_DG: int = 1024    # DG-specific
+    LOAD_IN_4BIT: bool = True        # QLoRA — 4-bit quantization
 
 
 _settings: MCQSettings | None = None

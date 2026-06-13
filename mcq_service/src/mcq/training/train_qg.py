@@ -1,30 +1,31 @@
-"""Train the Question Generation (QG) LoRA adapter on Llama 3.2 3B.
+"""Train the Question Generation (QG) LoRA adapter on Qwen3-4B-Instruct.
 
-Fine-tunes ``unsloth/Llama-3.2-3B-Instruct`` with LoRA via Unsloth and
-TRL's SFTTrainer.  Saves only the LoRA adapter weights (~50-150MB),
-not the full base model.
+Fine-tunes ``unsloth/Qwen3-4B-Instruct`` with LoRA via Unsloth and
+TRL's SFTTrainer.  Saves only the LoRA adapter weights, not the full
+base model.
 
-# THESIS NOTE: Both the QG and DG models use the same frozen Llama 3.2 3B
+# THESIS NOTE: Both the QG and DG models use the same frozen Qwen3-4B
 # base model with separate task-specific LoRA adapters. This demonstrates
 # parameter-efficient multi-task adaptation — one base model, two
-# specialized capabilities, total additional parameters approximately
+# specialised capabilities, total additional parameters approximately
 # 0.1% of base model size per adapter.
 
 Usage::
 
     python -m mcq.training.train_qg \\
-        --data data/mcq_training/qg_train.jsonl \\
+        --data data/mcq_training/qg_formatted.jsonl \\
         --output models/mcq_qg/ \\
-        --base-model unsloth/Llama-3.2-3B-Instruct \\
+        --base-model unsloth/Qwen3-4B-Instruct \\
         --epochs 3 \\
         --batch-size 4 \\
-        --rank 16
+        --rank 32
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import time
 from collections import defaultdict
@@ -41,16 +42,24 @@ logger = structlog.get_logger(__name__)
 
 TRAIN_CONFIG = {
     "epochs": 3,
+    # batch_size=4 + grad_accum=4 → effective batch 16.
+    # With simplified system prompt and max_seq_length=1024, each T4 step
+    # is ~2-3 min rather than the previous 10-12 h total.
     "batch_size": 4,
     "gradient_accumulation_steps": 4,
     "learning_rate": 2e-4,
-    "warmup_steps": 10,
+    # Warmup is computed at runtime as 5% of total training steps.
+    # The literal below is overridden in train_qg_model().
+    "warmup_ratio": 0.05,
     "weight_decay": 0.01,
     "max_grad_norm": 1.0,
-    "max_seq_length": 512,
-    "lora_r": 16,
-    "lora_alpha": 16,
-    "lora_dropout": 0.0,
+    # Simplified system prompt + compact user turn → avg ~450 tokens/sample.
+    # 1024 is ample headroom and packs 2-3 samples per window.
+    "max_seq_length": 1024,
+    # QG: higher rank — must adhere to conditioning AND generate varied content
+    "lora_r": 32,
+    "lora_alpha": 64,
+    "lora_dropout": 0.05,
     "load_in_4bit": True,
 }
 
@@ -79,8 +88,8 @@ def _stratified_split(data_path: str, val_ratio: float = 0.1):
                 except json.JSONDecodeError:
                     continue
 
-    # Shuffle before splitting so the sequential book order in the source
-    # file does not bias the train/val split or batch composition.
+    # Shuffle before splitting so sequential order in the source file
+    # does not bias the train/val split or batch composition.
     random.seed(42)
     random.shuffle(samples)
 
@@ -122,14 +131,15 @@ def _evaluate_generation(
 
     Uses greedy decoding for deterministic output.
     """
+    import re
     import torch
     from rouge_score import rouge_scorer
 
     from mcq.prompts.mcq_prompts import (
-        build_qg_chat_prompt,
         extract_qg_output,
-        format_chat_for_training,
     )
+    # Import the training-format message builder (not the full inference prompt)
+    from mcq.training.format_qg import _build_qg_training_messages
 
     scorer = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=True)
 
@@ -141,24 +151,40 @@ def _evaluate_generation(
     eval_samples = val_samples[:max_samples]
 
     for sample in eval_samples:
-        # Build prompt (system + user only, no assistant)
-        messages = build_qg_chat_prompt(
-            chunk_text=sample.get("text", ""),  # chat-formatted text
-            topic="",
-            question_type=sample.get("question_type", "4a"),
-            mastery_level=sample.get("mastery_level", "Intermediate"),
-            score_category=sample.get("score_category", "moderate"),
-        )
+        # Build the prompt/user turn only (no assistant turn) using the
+        # same compact format used during training.
+        messages_full = _build_qg_training_messages(sample)
+        # Drop the assistant message to get just the prompt part
+        messages_prompt = messages_full[:-1]
 
-        input_text = format_chat_for_training(messages, tokenizer)
-        inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=512)
+        try:
+            # Qwen3: non-thinking mode for deterministic structured output
+            input_text = tokenizer.apply_chat_template(
+                messages_prompt,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        except TypeError:
+            input_text = tokenizer.apply_chat_template(
+                messages_prompt,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+
+        inputs = tokenizer(
+            input_text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=TRAIN_CONFIG["max_seq_length"],
+        )
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
         input_len = inputs["input_ids"].shape[1]
 
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=150,
+                max_new_tokens=200,
                 temperature=0.0,
                 do_sample=False,
             )
@@ -169,16 +195,19 @@ def _evaluate_generation(
         parsed = extract_qg_output(gen_text)
         if parsed:
             parse_success += 1
-            ref_text = f"QUESTION: {sample.get('question', '')} ANSWER: {sample.get('correct_answer', '')}"
-            gen_text_for_rouge = f"QUESTION: {parsed['question']} ANSWER: {parsed['correct_answer']}"
+            ref_q = sample.get("question", "")
+            ref_a = sample.get("correct_answer", "")
+            ref_text = f"QUESTION: {ref_q} ANSWER: {ref_a}"
+            gen_text_for_rouge = (
+                f"QUESTION: {parsed['question']} ANSWER: {parsed['correct_answer']}"
+            )
 
             scores = scorer.score(ref_text, gen_text_for_rouge)
             all_rouge1.append(scores["rouge1"].fmeasure)
             all_rouge2.append(scores["rouge2"].fmeasure)
             all_rougeL.append(scores["rougeL"].fmeasure)
-            type_rougeL[sample.get("question_type", "unknown")].append(
-                scores["rougeL"].fmeasure,
-            )
+            qt = sample.get("question_type", "unknown")
+            type_rougeL[qt].append(scores["rougeL"].fmeasure)
         else:
             parse_fail += 1
 
@@ -205,7 +234,7 @@ def _evaluate_generation(
 def train_qg_model(
     data_path: str,
     output_dir: str,
-    base_model: str = "unsloth/Llama-3.2-3B-Instruct",
+    base_model: str = "unsloth/Qwen3-4B-Instruct",
     epochs: int = TRAIN_CONFIG["epochs"],
     batch_size: int = TRAIN_CONFIG["batch_size"],
     learning_rate: float = TRAIN_CONFIG["learning_rate"],
@@ -220,11 +249,11 @@ def train_qg_model(
     Parameters
     ----------
     data_path :
-        Path to formatted qg_train.jsonl.
+        Path to formatted qg_formatted.jsonl.
     output_dir :
         Directory to save LoRA adapter checkpoints.
     base_model :
-        Base Llama model identifier.
+        Base Qwen3-4B model identifier.
     epochs :
         Number of training epochs.
     batch_size :
@@ -232,11 +261,11 @@ def train_qg_model(
     learning_rate :
         Peak learning rate.
     lora_r :
-        LoRA rank.
+        LoRA rank (QG default: 32).
     lora_alpha :
-        LoRA alpha scaling factor.
+        LoRA alpha scaling factor (QG default: 64).
     lora_dropout :
-        LoRA dropout rate (0.0 recommended by Unsloth).
+        LoRA dropout rate.
     max_seq_length :
         Maximum sequence length.
     load_in_4bit :
@@ -256,10 +285,13 @@ def train_qg_model(
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
+    grad_accum = TRAIN_CONFIG["gradient_accumulation_steps"]
+
     logger.info(
         "qg_training_start",
         base_model=base_model,
         lora_r=lora_r,
+        lora_alpha=lora_alpha,
         load_in_4bit=load_in_4bit,
         max_seq_length=max_seq_length,
     )
@@ -299,9 +331,9 @@ def train_qg_model(
     # ── Stratified split ────────────────────────────────────────────
     train_samples, val_samples = _stratified_split(data_path)
     train_split_path = str(out_path / "_train_split.jsonl")
-    val_split_path = str(out_path / "_val_split.jsonl")
+    val_split_path   = str(out_path / "_val_split.jsonl")
     _write_split(train_samples, train_split_path)
-    _write_split(val_samples, val_split_path)
+    _write_split(val_samples,   val_split_path)
 
     logger.info(
         "qg_split_complete",
@@ -309,24 +341,42 @@ def train_qg_model(
         val=len(val_samples),
     )
 
+    # ── Compute warmup steps (5% of total training steps) ──────────
+    steps_per_epoch = math.ceil(len(train_samples) / (batch_size * grad_accum))
+    total_steps     = steps_per_epoch * epochs
+    warmup_steps    = max(1, round(TRAIN_CONFIG["warmup_ratio"] * total_steps))
+
+    logger.info(
+        "qg_warmup_computed",
+        steps_per_epoch=steps_per_epoch,
+        total_steps=total_steps,
+        warmup_steps=warmup_steps,
+    )
+
     # ── Build HuggingFace Datasets ──────────────────────────────────
     train_dataset = Dataset.from_list(train_samples)
-    val_dataset = Dataset.from_list(val_samples)
+    val_dataset   = Dataset.from_list(val_samples)
 
     # ── SFTTrainer configuration ────────────────────────────────────
+    checkpoints_dir = str(out_path / "checkpoints")
+
     training_args = SFTConfig(
-        output_dir=str(out_path / "checkpoints"),
+        output_dir=checkpoints_dir,
         num_train_epochs=epochs,
         per_device_train_batch_size=batch_size,
-        gradient_accumulation_steps=TRAIN_CONFIG["gradient_accumulation_steps"],
+        gradient_accumulation_steps=grad_accum,
         learning_rate=learning_rate,
-        warmup_steps=TRAIN_CONFIG["warmup_steps"],
+        warmup_steps=warmup_steps,
         weight_decay=TRAIN_CONFIG["weight_decay"],
         max_grad_norm=TRAIN_CONFIG["max_grad_norm"],
         fp16=not torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False,
         bf16=torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False,
+        # Epoch-based evaluation and saving.  With packing and 1024-token
+        # sequences, one epoch is fast enough that per-epoch checkpoints are
+        # manageable without filling the disk.
         eval_strategy="epoch",
         save_strategy="epoch",
+        # Keep only the best 2 checkpoints to save disk space on Kaggle.
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
@@ -336,7 +386,10 @@ def train_qg_model(
         seed=42,
         max_seq_length=max_seq_length,
         dataset_text_field="text",
-        packing=False,
+        # packing=True pre-tokenises and packs multiple short samples into each
+        # max_seq_length window.  Viability confirmed with simplified prompts
+        # (~450 tokens/sample): 2-3 samples fit per 1024-token window.
+        packing=True,
     )
 
     trainer = SFTTrainer(
@@ -347,9 +400,25 @@ def train_qg_model(
         args=training_args,
     )
 
+    # ── Checkpoint resume ───────────────────────────────────────────
+    # Scan for existing checkpoints and resume from the latest one.
+    # This prevents load_best_model_at_end from crashing when the
+    # resumed epoch produces a worse loss than a prior checkpoint —
+    # the path must exist in the current session's output directory.
+    resume_from = None
+    ckpt_dir = Path(checkpoints_dir)
+    if ckpt_dir.exists():
+        ckpts = sorted(
+            [d for d in ckpt_dir.iterdir() if d.is_dir() and d.name.startswith("checkpoint-")],
+            key=lambda d: int(d.name.split("-")[-1]),
+        )
+        if ckpts:
+            resume_from = str(ckpts[-1])
+            logger.info("qg_resuming_from_checkpoint", checkpoint=resume_from)
+
     # ── Train ───────────────────────────────────────────────────────
     logger.info("qg_training_loop_starting", epochs=epochs)
-    train_result = trainer.train()
+    train_result = trainer.train(resume_from_checkpoint=resume_from)
 
     logger.info(
         "qg_training_loop_complete",
@@ -384,6 +453,8 @@ def train_qg_model(
         "final_eval": eval_results,
         "train_samples": len(train_samples),
         "val_samples": len(val_samples),
+        "warmup_steps": warmup_steps,
+        "total_steps": total_steps,
     }
 
     metrics_path = str(out_path / "training_metrics.json")
@@ -395,7 +466,7 @@ def train_qg_model(
     print("QG LORA TRAINING COMPLETE")
     print("=" * 60)
     print(f"  Base model:        {base_model}")
-    print(f"  LoRA rank:         {lora_r}")
+    print(f"  LoRA rank:         {lora_r}  alpha: {lora_alpha}")
     print(f"  Training time:     {elapsed}s")
     print(f"  Train loss:        {round(train_result.training_loss, 4)}")
     print(f"  Final ROUGE-1:     {eval_results['rouge1']}")
@@ -422,19 +493,19 @@ def train_qg_model(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Fine-tune Llama 3.2 3B with LoRA for MCQ question generation.",
+        description="Fine-tune Qwen3-4B-Instruct with LoRA for MCQ question generation.",
     )
     parser.add_argument(
         "--data", required=True,
-        help="Path to formatted qg_train.jsonl.",
+        help="Path to formatted qg_formatted.jsonl.",
     )
     parser.add_argument(
         "--output", required=True,
         help="Output directory for LoRA adapter and metrics.",
     )
     parser.add_argument(
-        "--base-model", default="unsloth/Llama-3.2-3B-Instruct",
-        help="Base Llama model (default: unsloth/Llama-3.2-3B-Instruct).",
+        "--base-model", default="unsloth/Qwen3-4B-Instruct",
+        help="Base model (default: unsloth/Qwen3-4B-Instruct).",
     )
     parser.add_argument(
         "--epochs", type=int, default=TRAIN_CONFIG["epochs"],

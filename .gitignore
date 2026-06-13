@@ -53,6 +53,7 @@ ai_service/models/clean_question_model/
 *.keras
 mlruns/
 Intent_Classifier_Model/mlruns/
+Intent_Classifier_Model/data/
 # HuggingFace / PyTorch cache
 .cache/
 *.lock
@@ -80,23 +81,8 @@ ai_service/static/*.glb
 # Weights & Biases
 wandb/
 Intent_Classifier_Model/wandb/
+Intent_Classifier_Model/kaggle_train.ipynb
 
-# mcq_service — raw books (large PDFs, distribute via Kaggle/GDrive)
-mcq_service/data/raw_books/
-
-# mcq_service — generated training data (large, regenerate via data_generator)
-mcq_service/data/mcq_training/mcq_raw.jsonl
-mcq_service/data/mcq_training/qg_train.jsonl
-mcq_service/data/mcq_training/dg_train.jsonl
-
-# mcq_service — trained LoRA adapters & checkpoints
-mcq_service/models/
-mcq_service/**/checkpoints/
-
-# mcq_service — train/val split caches written by training scripts
-mcq_service/**/_train_split.jsonl
-mcq_service/**/_val_split.jsonl
-
-# Jupyter notebook checkpoints
-.ipynb_checkpoints/
-**/.ipynb_checkpoints/
+# TTS/ASR benchmark testing (separate sibling project)
+TTS testing/
+.venv_benchmark/

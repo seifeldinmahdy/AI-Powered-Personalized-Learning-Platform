@@ -46,6 +46,10 @@ class IntentPrediction(BaseModel):
             "Non-null only when intent_name is 'Low Confidence'."
         ),
     )
+    contains_profanity: bool = Field(
+        default=False,
+        description="Whether the input text was flagged as containing profanity.",
+    )
 
 class IntentResponse(BaseModel):
     success: bool = Field(default=True)

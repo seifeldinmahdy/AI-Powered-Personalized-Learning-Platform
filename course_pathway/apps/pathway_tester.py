@@ -156,8 +156,12 @@ def main():
     # Settings
     st.sidebar.divider()
     st.sidebar.subheader("⚙️ Session Settings")
-    min_tok = st.sidebar.number_input("Min Tokens/Session", value=3000, step=500)
-    max_tok = st.sidebar.number_input("Max Tokens/Session", value=5000, step=500)
+    target_sessions = st.sidebar.number_input(
+        "Target Sessions", value=15, min_value=1, step=1
+    )
+    max_sessions = st.sidebar.number_input(
+        "Max Sessions", value=25, min_value=1, step=1
+    )
 
     # ── Main area ────────────────────────────────────────────────
 
@@ -185,7 +189,9 @@ def main():
         gen = _init_generator()
 
         # Override session settings
-        gen._grouper = SessionGrouper(min_tokens=min_tok, max_tokens=max_tok)
+        gen._grouper = SessionGrouper(
+            max_sessions=int(max_sessions), target_sessions=int(target_sessions)
+        )
 
         with st.spinner("Generating personalised pathway..."):
             start = time.time()

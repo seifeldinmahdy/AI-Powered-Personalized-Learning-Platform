@@ -111,6 +111,8 @@ app.include_router(session.router)
 app.include_router(assessments.router)
 app.include_router(pathway_router)
 app.include_router(a2f_health.router)
+app.include_router(student_context.router)
+app.include_router(problem_set.router)
 
 # Serve static files (3D avatar model, etc.)
 _static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
