@@ -121,11 +121,17 @@ CONFIG = {
     "max_retries": 3,
     "retry_delay": 2,
     "num_workers": 2,  # matches the 2 generation keys
+    # Parallel evaluation workers draining the judge queue. Evaluation is the
+    # bottleneck (3 judge calls + ~50% regeneration per item vs 1 cheap call per
+    # draft), so it needs more threads than generation. They borrow idle
+    # gen/fallback keys via the SharedKeyManager.
+    "num_eval_workers": 4,
     # How many TOTAL judging rounds an MCQ gets before it is given up on.
-    # 1 = original behaviour (judge once, discard on reject). 2 = judge, and on
-    # reject regenerate ONCE with the judges' feedback and re-judge. Each extra
-    # round costs ~1 generation + up to 3 judge calls, so keep this small.
-    "max_eval_retries": 2,
+    # 1 = judge once, discard on reject. N = on reject, regenerate with the
+    # judges' feedback and re-judge, up to N rounds total. Each extra round
+    # costs ~1 generation + up to 3 judge calls. 3 = two regeneration attempts,
+    # which recovers more borderline chunks at a modest throughput cost.
+    "max_eval_retries": 3,
     # How many consecutive API errors on a key before marking it failed
     "key_fail_threshold": 3,
     # Seconds to wait before re-trying a failed key
@@ -1596,13 +1602,17 @@ class RoleClient:
         self._role = role_name
         self._max_rot = max_rotations
         self._clients: dict[str, Any] = {}
+        self._clients_lock = threading.Lock()
 
     def _client_for(self, key: str):
-        c = self._clients.get(key)
-        if c is None:
-            c = _make_ollama_client(key, model=self._model)
-            self._clients[key] = c
-        return c
+        # Thread-safe lazy client creation — a single RoleClient may be shared
+        # across several evaluation-worker threads judging in parallel.
+        with self._clients_lock:
+            c = self._clients.get(key)
+            if c is None:
+                c = _make_ollama_client(key, model=self._model)
+                self._clients[key] = c
+            return c
 
     def _invoke(self, method: str, messages: list[dict],
                 temperature: float, timeout_override: int):
@@ -1831,12 +1841,8 @@ Reference difficulty rules:
     as mastery permits
 
 SCORE_CATEGORY_REASONING: [1-2 sentences: does the question and
-  distractor difficulty match {score_cat}? If very_weak, is the
-  TYPE actually 4a?]
+  distractor difficulty match {score_cat}?]
 
-SCORE_CATEGORY_CHECK_TYPE_OVERRIDE: [YES/NO — if score_category is
-  very_weak, is question_type actually 4a? If score_category is
-  NOT very_weak, answer YES automatically (not applicable).]
 SCORE_CATEGORY_CHECK_DIFFICULTY: [YES/NO — does question difficulty
   match {score_cat}?]
 SCORE_CATEGORY_CHECK_DISTRACTOR_DIFFICULTY: [YES/NO — does
@@ -1846,20 +1852,7 @@ SCORE_CATEGORY_CHECK_DISTRACTOR_DIFFICULTY: [YES/NO — does
 {misconception_block}
 
 ─────────────────────────────────────────────────────
-SIGNAL 4 — TYPE × MASTERY ELIGIBILITY
-─────────────────────────────────────────────────────
-Eligibility matrix:
-  Novice:       Types 1, 4a only
-  Intermediate: Types 1, 2, 3, 4b, 4c only
-  Expert:       All types
-Override: very_weak forces 4a regardless of mastery.
-
-TYPE_ELIGIBLE: [YES/NO — is {qtype} eligible given
-  mastery={mastery} and score_category={score_cat}?]
-TYPE_REASON: [one sentence if NO]
-
-─────────────────────────────────────────────────────
-SIGNAL 5 — COGNITIVE DEPTH
+SIGNAL 4 — COGNITIVE DEPTH
 ─────────────────────────────────────────────────────
 DEPTH_REASONING: [1-2 sentences: given all signals combined, is the
   cognitive depth of this question too easy, correct, or too hard?]
@@ -1904,7 +1897,31 @@ def _score_misconception_signal(parsed: dict) -> int:
     return sum(1 for c in checks if c == "YES")
 
 
-def _parse_judge_b_response(raw: str, score_category: str = "moderate") -> JudgeBResult:
+def _is_type_eligible(mastery: str, score_category: str, question_type: str) -> bool:
+    """Deterministic type-eligibility lookup — no LLM required.
+
+    A type is eligible iff it is in the mastery tier's allowed set, OR the
+    score_category is very_weak (which forces Type 4a regardless of mastery).
+    This is a pure table lookup, so we never ask an LLM to compute it: the LLM
+    repeatedly got ``Intermediate + very_weak → 4a`` wrong (4a is absent from
+    Intermediate's base list even though the override makes it valid), throwing
+    away ~1 in 8 valid chunks.
+    """
+    if score_category == "very_weak":
+        return True
+    try:
+        from mcq.question_types import MASTERY_TYPE_ELIGIBILITY
+        return question_type in MASTERY_TYPE_ELIGIBILITY.get(mastery, [])
+    except Exception:
+        return True  # fail-open: never reject on an import error
+
+
+def _parse_judge_b_response(
+    raw: str,
+    score_category: str = "moderate",
+    mastery: str = "Intermediate",
+    question_type: str = "4a",
+) -> JudgeBResult:
     """Parse Judge B's structured text response into a JudgeBResult.
 
     Extracts all atomic YES/NO sub-checks by regex; derives numeric
@@ -1918,6 +1935,14 @@ def _parse_judge_b_response(raw: str, score_category: str = "moderate") -> Judge
     sophistication). Without this, every Intermediate/Expert + very_weak sample
     is rejected as mastery_mismatch because a plain definition "doesn't match"
     Intermediate/Expert framing.
+
+    ``mastery`` and ``question_type`` make type eligibility DETERMINISTIC: it is
+    a pure lookup against ``MASTERY_TYPE_ELIGIBILITY`` plus the very_weak→4a
+    override, so we compute it in Python rather than trusting the LLM's
+    ``TYPE_ELIGIBLE`` line. The LLM frequently answered NO for valid
+    ``Intermediate + very_weak → 4a`` samples (4a is absent from Intermediate's
+    base list even though the override makes it valid), which discarded ~1 in 8
+    chunks for no reason.
     """
     def _yn(key: str, default: str = "NO") -> str:
         # Scan each line for the key (case-insensitive) then extract YES/NO.
@@ -1952,12 +1977,20 @@ def _parse_judge_b_response(raw: str, score_category: str = "moderate") -> Judge
                 return line.strip()
         return default
 
+    # The very_weak→4a type override is a deterministic metadata check (is the
+    # type 4a when score_category is very_weak?), NOT something to ask the LLM.
+    # The task builder forces 4a for very_weak, so this is YES by construction;
+    # for non-very_weak it is "not applicable → YES". Computed, never parsed.
+    type_override_ok = "YES"
+    if score_category == "very_weak" and question_type != "4a":
+        type_override_ok = "NO"
+
     # Collect all sub-check answers into a flat dict for score functions
     parsed: dict = {
         "mastery_check_vocabulary":              _yn("MASTERY_CHECK_VOCABULARY"),
         "mastery_check_framing":                 _yn("MASTERY_CHECK_FRAMING"),
         "mastery_check_distractor_sophistication": _yn("MASTERY_CHECK_DISTRACTOR_SOPHISTICATION"),
-        "score_category_check_type_override":    _yn("SCORE_CATEGORY_CHECK_TYPE_OVERRIDE", default="YES"),
+        "score_category_check_type_override":    type_override_ok,
         "score_category_check_difficulty":       _yn("SCORE_CATEGORY_CHECK_DIFFICULTY"),
         "score_category_check_distractor_difficulty": _yn("SCORE_CATEGORY_CHECK_DISTRACTOR_DIFFICULTY"),
         "misconception_check_new_angle":         _yn("MISCONCEPTION_CHECK_NEW_ANGLE", default="YES"),
@@ -1976,8 +2009,8 @@ def _parse_judge_b_response(raw: str, score_category: str = "moderate") -> Judge
     misconception_score = _score_misconception_signal(parsed)
     overall_score       = round((mastery_score + score_cat_score + misconception_score) / 3.0, 2)
 
-    type_eligible_raw = _str("TYPE_ELIGIBLE", "YES").upper()
-    type_eligible     = "NO" not in type_eligible_raw
+    # Type eligibility — DETERMINISTIC, not from the LLM (pure matrix lookup).
+    type_eligible = _is_type_eligible(mastery, score_category, question_type)
 
     depth_raw = _str("DEPTH_CALIBRATION", "CORRECT").upper()
     if "TOO_EASY" in depth_raw:
@@ -2037,7 +2070,12 @@ def _run_judge_b(
             temperature=0.2,
             timeout_override=120,
         )
-        return _parse_judge_b_response(raw, mcq.get("score_category", "moderate"))
+        return _parse_judge_b_response(
+            raw,
+            mcq.get("score_category", "moderate"),
+            mcq.get("mastery_level", "Intermediate"),
+            mcq.get("question_type", "4a"),
+        )
     except Exception as exc:
         logger.warning("judge_b_failed", error=str(exc)[:100])
         # On failure: ACCEPT with score 0 so the sample is not silently lost;
@@ -2336,6 +2374,28 @@ def _run_judge_d(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _judge_b_reject_reason(b: JudgeBResult, mcq: dict) -> str | None:
+    """Return Judge B's rejection reason, or None if B passes.
+
+    Factored out so the evaluation worker can short-circuit: because the overall
+    decision always considers ALL of Judge B before C or D, a Judge-B rejection
+    means C and D never matter — so we can skip those two LLM calls entirely.
+    """
+    if not b.type_eligible:
+        return "judge_b:type_not_eligible"
+    if b.mastery_score < 2:
+        return f"judge_b:mastery_score_{b.mastery_score}"
+    if b.score_cat_score < 2:
+        return f"judge_b:score_category_{b.score_cat_score}"
+    if mcq.get("misconception_context") and b.misconception_score < 2:
+        return f"judge_b:misconception_{b.misconception_score}"
+    if b.depth_calibration == "TOO_HARD":
+        return "judge_b:too_hard"
+    if b.verdict == "REJECT":
+        return f"judge_b:{b.primary_failure}"
+    return None
+
+
 def _decide(
     b: JudgeBResult,
     c: JudgeCResult,
@@ -2347,18 +2407,9 @@ def _decide(
     Returns (accepted: bool, reason: str).
     On accept, attaches personalization_score to mcq in-place.
     """
-    if not b.type_eligible:
-        return False, f"judge_b:type_not_eligible"
-    if b.mastery_score < 2:
-        return False, f"judge_b:mastery_score_{b.mastery_score}"
-    if b.score_cat_score < 2:
-        return False, f"judge_b:score_category_{b.score_cat_score}"
-    if mcq.get("misconception_context") and b.misconception_score < 2:
-        return False, f"judge_b:misconception_{b.misconception_score}"
-    if b.depth_calibration == "TOO_HARD":
-        return False, "judge_b:too_hard"
-    if b.verdict == "REJECT":
-        return False, f"judge_b:{b.primary_failure}"
+    b_reason = _judge_b_reject_reason(b, mcq)
+    if b_reason is not None:
+        return False, b_reason
     if c.verdict == "REJECT":
         return False, f"judge_c:{c.reason}"
     if d.verdict == "REJECT":
@@ -2717,12 +2768,27 @@ def _worker(
             break
 
         if result is not None:
-            # Push to eval queue — evaluation worker handles judging + writing
-            eval_queue.put(result)
-            stats.record_success()
-            if target_counter is not None:
-                with target_counter["lock"]:
-                    target_counter["count"] += 1
+            # Push to eval queue — evaluation worker handles judging + writing.
+            # The queue is bounded (backpressure): if evaluation has fallen
+            # behind, block here until there is room. While blocked, this worker
+            # is NOT holding an API key, so the eval workers can borrow the idle
+            # generation key to judge faster. Stay responsive to shutdown so a
+            # stopped pipeline never deadlocks on a full queue.
+            pushed = False
+            while not (key_mgr.all_dead or stop_event.is_set()):
+                try:
+                    eval_queue.put(result, timeout=2)
+                    pushed = True
+                    break
+                except queue.Full:
+                    continue
+            if pushed:
+                stats.record_success()
+                if target_counter is not None:
+                    with target_counter["lock"]:
+                        target_counter["count"] += 1
+            else:
+                break  # shutting down — drop this in-hand draft (run is ending)
         else:
             logger.error(
                 "worker_all_retries_exhausted",
@@ -2836,8 +2902,9 @@ def _evaluation_worker(
 ):
     """Evaluation worker: drains eval_queue, judges, and writes accepted samples.
 
-    Judge A (regex pre-filter) runs synchronously in Python — no LLM call.
-    Judges B, C, D fire in parallel via ThreadPoolExecutor.
+    Judge A (regex pre-filter) and type eligibility run in Python — no LLM call.
+    Judge B then runs alone; only if it passes do Judge C and D fire in parallel
+    (a Judge-B reject makes C/D irrelevant, so those calls are skipped).
 
     Judge-feedback loop: when an MCQ is rejected and ``max_eval_retries`` > 1
     (and a ``regen_client`` is available), the rejection reason is translated
@@ -2853,9 +2920,34 @@ def _evaluation_worker(
     can_regen = regen_client is not None and max_eval_retries > 1
 
     def _judge_once(mcq: dict) -> tuple[bool, str]:
-        """Run Judge A then B/C/D on one MCQ. Returns (accepted, reason)."""
+        """Judge one MCQ in a SINGLE round-trip and return (accepted, reason).
+
+        Order:
+          0. Judge A regex pre-filter       — free (Python)
+          1. Deterministic type eligibility — free (metadata lookup)
+          2. Judge B + Judge C + Judge D    — 3 LLM calls fired in PARALLEL.
+
+        We deliberately run all three judges concurrently rather than gating
+        C/D behind B. Judge keys are plentiful (6 dedicated + fallback) and are
+        not the bottleneck — wall-clock latency is. Serializing B then C+D would
+        double the eval latency for the ~78% of MCQs that pass B, so the few
+        judge calls "wasted" on a B-reject are far cheaper than the round-trip
+        we would otherwise add to every accepted sample. _decide() applies the
+        exact same precedence (B reasons first, then C, then D), so the outcome
+        is identical to the serialized path.
+        """
         if not _passes_regex_filter(mcq):
             return False, "judge_a:regex"
+
+        # Free deterministic gate — an ineligible type costs zero LLM calls.
+        if not _is_type_eligible(
+            mcq.get("mastery_level", "Intermediate"),
+            mcq.get("score_category", "moderate"),
+            mcq.get("question_type", "4a"),
+        ):
+            return False, "judge_b:type_not_eligible"
+
+        # All three judges in one parallel round-trip.
         with ThreadPoolExecutor(max_workers=3) as ex:
             fb = ex.submit(_run_judge_b, mcq, judge_b_client)
             fc = ex.submit(_run_judge_c, mcq, judge_c_client)
@@ -2863,7 +2955,6 @@ def _evaluation_worker(
             b_result = fb.result()
             c_result = fc.result()
             d_result = fd.result()
-        # Record every sub-check answer for pass-rate reporting
         eval_stats.record_sub_checks(b_result.sub_checks)
         eval_stats.record_sub_checks(c_result.sub_checks)
         eval_stats.record_sub_checks(d_result.sub_checks)
@@ -3278,7 +3369,16 @@ def main():
     )
     parser.add_argument(
         "--workers", type=int, default=CONFIG["num_workers"],
-        help="Number of parallel generation worker threads (max 4, one per generation key).",
+        help="Number of parallel generation worker threads (one per generation key).",
+    )
+    parser.add_argument(
+        "--eval-workers", type=int, default=CONFIG["num_eval_workers"],
+        help=(
+            "Number of parallel evaluation worker threads draining the judge "
+            "queue. Each judges one MCQ at a time (3 judges in parallel + any "
+            "regeneration). Raising this drains the eval backlog faster; the "
+            "shared key manager lets them borrow idle generation/fallback keys."
+        ),
     )
     parser.add_argument(
         "--chunk-size", type=int, default=CONFIG["chunk_size"],
@@ -3324,9 +3424,10 @@ def main():
         "--max-eval-retries", type=int, default=CONFIG["max_eval_retries"],
         help=(
             "Total judging rounds per MCQ before giving up. 1 = judge once and "
-            "discard on reject. 2 (default) = on reject, send the judges' "
+            "discard on reject. N (default 3) = on reject, send the judges' "
             "feedback back to the generator, regenerate for the SAME chunk, and "
-            "re-judge — so a chunk is never silently discarded on the first try."
+            "re-judge, up to N rounds — so a chunk gets multiple chances before "
+            "being discarded."
         ),
     )
     args = parser.parse_args()
@@ -3515,10 +3616,21 @@ def main():
     for task in tasks:
         task_queue.put(task)
 
-    eval_queue: queue.Queue = queue.Queue(maxsize=CONFIG["eval_queue_maxsize"])
+    # Bounded eval queue = backpressure. When evaluation falls behind, the
+    # generation workers block on a full queue (releasing their API keys), which
+    # both caps the gen↔eval gap and frees generation keys for the eval workers
+    # to borrow. Sized to give a working buffer ahead of the eval workers.
+    n_eval_workers = max(1, args.eval_workers)
+    eval_queue_max = max(32, n_eval_workers * 16)
+    eval_queue: queue.Queue = queue.Queue(maxsize=eval_queue_max)
 
     total_tasks = len(tasks)
-    logger.info("tasks_queued", total=total_tasks)
+    logger.info(
+        "tasks_queued",
+        total=total_tasks,
+        eval_workers=n_eval_workers,
+        eval_queue_max=eval_queue_max,
+    )
 
     # ── Shared state ─────────────────────────────────────────────────────
     file_lock  = threading.Lock()
@@ -3565,11 +3677,13 @@ def main():
     monitor_thread = threading.Thread(target=_monitor, daemon=True, name="monitor")
     monitor_thread.start()
 
-    # ── Launch evaluation worker first ───────────────────────────────────
-    # The evaluation worker drains eval_queue and applies judges.
-    # If judges are skipped, it writes all items directly.
+    # ── Launch evaluation workers first ──────────────────────────────────
+    # N parallel workers drain eval_queue and apply the judges. Evaluation is
+    # the throughput bottleneck, so it gets more threads than generation; they
+    # borrow idle generation/fallback keys through the shared key manager.
+    eval_threads: list[threading.Thread] = []
     if args.skip_judges:
-        # Fast path: bypass all judges — write directly in eval thread
+        # Fast path: bypass all judges — write directly.
         def _direct_eval_worker():
             while True:
                 try:
@@ -3586,24 +3700,41 @@ def main():
                         f.write(json.dumps(item) + "\n")
                 eval_queue.task_done()
 
-        eval_thread = threading.Thread(target=_direct_eval_worker, daemon=True)
+        for _ in range(n_eval_workers):
+            t = threading.Thread(target=_direct_eval_worker, daemon=True)
+            t.start()
+            eval_threads.append(t)
     else:
-        eval_thread = threading.Thread(
-            target=_evaluation_worker,
-            args=(
-                eval_queue, args.output, file_lock,
-                judge_b_client, judge_c_client, judge_d_client,
-                eval_stats, regen_client, args.max_eval_retries, key_mgr,
-            ),
-            daemon=True,
-        )
-    eval_thread.start()
+        for _ in range(n_eval_workers):
+            t = threading.Thread(
+                target=_evaluation_worker,
+                args=(
+                    eval_queue, args.output, file_lock,
+                    judge_b_client, judge_c_client, judge_d_client,
+                    eval_stats, regen_client, args.max_eval_retries, key_mgr,
+                ),
+                daemon=True,
+            )
+            t.start()
+            eval_threads.append(t)
+    print(f"  Eval workers: {n_eval_workers}  (queue cap {eval_queue_max})")
 
-    # Push any recovered pending MCQs into the eval queue now that the thread
-    # is running (so it can drain them alongside freshly generated ones).
-    for _pending_item in pending_eval_items:
-        eval_queue.put(_pending_item)
+    # Backfill recovered pending MCQs from a previous interrupted run. The eval
+    # queue is bounded, so push them from a daemon feeder thread that blocks on
+    # a full queue WITHOUT stalling generation startup.
     if pending_eval_items:
+        def _pending_feeder(items: list[dict]):
+            for it in items:
+                while not (key_mgr.all_dead or stop_event.is_set()):
+                    try:
+                        eval_queue.put(it, timeout=2)
+                        break
+                    except queue.Full:
+                        continue
+        threading.Thread(
+            target=_pending_feeder, args=(list(pending_eval_items),),
+            daemon=True, name="pending-feeder",
+        ).start()
         logger.info("pending_eval_items_queued", count=len(pending_eval_items))
 
     # ── Launch generation workers ────────────────────────────────────────
@@ -3648,18 +3779,21 @@ def main():
         )
         pbar.close()
 
-    # Signal evaluation worker to stop, then wait for it to drain.
-    # Give it up to 60 s; if a second Ctrl-C interrupts the join, dump the
-    # remaining queue to disk so nothing is lost and the next run can recover.
-    eval_queue.put(None)
+    # Signal every evaluation worker to stop (one poison pill each), then wait
+    # for them to FULLY drain the backlog. A Ctrl-C during the drain breaks out
+    # and dumps the remaining queue to disk so nothing is lost on resume.
+    for _ in eval_threads:
+        eval_queue.put(None)
     interrupted_during_drain = False
     try:
-        eval_thread.join(timeout=60)
-        if eval_thread.is_alive():
-            # Timed out — worker didn't drain in 60 s (very large backlog)
-            interrupted_during_drain = True
+        for _t in eval_threads:
+            while _t.is_alive():
+                _t.join(timeout=1.0)
     except KeyboardInterrupt:
         interrupted_during_drain = True
+        print(
+            "\n  Interrupted during evaluation — saving the unevaluated backlog…"
+        )
 
     # Dump whatever is still in the queue to the pending-eval file so the
     # next run can recover it without re-generating.
