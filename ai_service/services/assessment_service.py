@@ -172,3 +172,129 @@ Requirements:
     )
     return list(results)
 
+
+async def generate_clo_questions(
+    course_title: str,
+    plan: list[dict],
+    total_questions: int = 12,
+) -> list[dict]:
+    """Backward-designed placement generation: probe the CLO concept set.
+
+    For each CLO group, generate questions covering its concepts such that
+    EVERY concept is probed by at least one question, and every question is
+    tagged with the exact ``concept_id`` it measures (so the submission path is
+    concept-keyed). This replaces topic-discovery generation.
+
+    Parameters
+    ----------
+    plan :
+        Output of ``category_service.build_clo_assessment_plan`` —
+        ``[{name, description, clo_code, concepts: [{id, label}]}]``.
+    total_questions :
+        Target total; distributed across concepts but never below one-per-concept
+        (coverage guarantee).
+
+    Returns
+    -------
+    list[dict]
+        ``[{name, description, questions: [{question, options, correct_answer,
+        topic, concept_id}]}]`` grouped by CLO.
+    """
+    import asyncio
+
+    client = _get_ollama_client()
+
+    total_concepts = sum(len(g["concepts"]) for g in plan) or 1
+    per_concept = max(1, total_questions // total_concepts)
+
+    async def _generate_for_group(group: dict) -> dict:
+        concepts = group["concepts"]
+        concept_lines = "\n".join(f'- id="{c["id"]}" label="{c["label"]}"' for c in concepts)
+        n_each = per_concept
+
+        prompt = f"""Generate placement-test multiple choice questions for the course "{course_title}".
+
+These questions assess the learning outcome "{group['name']}": {group.get('description', '')}
+
+Cover EACH of the following concepts with at least {n_each} question(s). Every question MUST be tagged with the exact concept_id it measures.
+
+CONCEPTS:
+{concept_lines}
+
+Return ONLY valid JSON with no markdown fences:
+{{
+  "questions": [
+    {{
+      "question": "Question text?",
+      "options": ["A", "B", "C", "D"],
+      "correct_answer": "A",
+      "concept_id": "<one of the ids above>",
+      "topic": "<the matching concept label>"
+    }}
+  ]
+}}
+
+Requirements:
+- Every concept id above appears on at least one question (no concept skipped).
+- Each question has exactly 4 options; correct_answer matches one option exactly.
+- concept_id MUST be one of the ids listed above.
+- Test conceptual understanding, not trivia."""
+
+        valid_ids = {c["id"] for c in concepts}
+        label_by_id = {c["id"]: c["label"] for c in concepts}
+        try:
+            loop = asyncio.get_event_loop()
+            data = await loop.run_in_executor(
+                None,
+                lambda: client.chat_json(
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.7,
+                    timeout_override=180,
+                ),
+            )
+            qs = data.get("questions", [])
+        except Exception as e:
+            logger.error("CLO question generation failed for '%s': %s", group["name"], e)
+            qs = []
+
+        # Keep only questions tagged with a real concept id from this group.
+        cleaned = []
+        covered: set[str] = set()
+        for q in qs:
+            cid = str(q.get("concept_id", ""))
+            if cid in valid_ids:
+                q["concept_id"] = cid
+                q.setdefault("topic", label_by_id.get(cid, ""))
+                cleaned.append(q)
+                covered.add(cid)
+
+        # Coverage guarantee: synthesize a minimal probe for any uncovered concept
+        # so every CLO concept is measured even if the LLM skipped it.
+        for c in concepts:
+            if c["id"] not in covered:
+                logger.warning(
+                    "CLO gen: concept %s (%s) uncovered by LLM — adding fallback probe",
+                    c["id"], c["label"],
+                )
+                cleaned.append({
+                    "question": f"Which best describes the concept \"{c['label']}\"?",
+                    "options": [
+                        f"A correct understanding of {c['label']}",
+                        "An unrelated definition",
+                        "A partially correct but flawed statement",
+                        "None of the above",
+                    ],
+                    "correct_answer": f"A correct understanding of {c['label']}",
+                    "concept_id": c["id"],
+                    "topic": c["label"],
+                })
+
+        return {
+            "name": group["name"],
+            "description": group.get("description", ""),
+            "questions": cleaned,
+        }
+
+    results = await asyncio.gather(*[_generate_for_group(g) for g in plan])
+    return list(results)
+

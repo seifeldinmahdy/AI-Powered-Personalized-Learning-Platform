@@ -97,7 +97,11 @@ export default function CoursePathway() {
           language_proficiency: contextProfile?.language_proficiency || 'Intermediate',
           strengths: contextProfile?.strengths || [],
           weaknesses: contextProfile?.weaknesses || [],
-          topic_performance: contextProfile?.topic_performance || {},
+          // Authoritative concept-id signal drives personalization; topic data
+          // is deprecated (concept_mastery is the single source of truth).
+          strength_concept_ids: contextProfile?.strength_concept_ids || [],
+          weak_concept_ids: contextProfile?.weak_concept_ids || [],
+          topic_performance: {},
           incorrectly_answered: contextProfile?.incorrectly_answered || [],
           use_synthetic_context: false,
         });

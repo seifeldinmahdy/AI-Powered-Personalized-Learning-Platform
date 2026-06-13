@@ -54,6 +54,7 @@ class SessionChunkIn(BaseModel):
     chunk_id: str = ""
     raw_text: str
     topic: str = ""
+    concept_id: str = ""  # Django Concept.id this chunk teaches (concept-keyed mastery)
     page_start: int = 0
     page_end: int = 0
 
@@ -118,9 +119,9 @@ class SlideMasteryMetadata(BaseModel):
     """Per-slide mastery provenance — tracks how mastery was derived."""
     mastery_used: Literal["Novice", "Intermediate", "Expert"]
     global_mastery: Literal["Novice", "Intermediate", "Expert"]
-    topic_score: float | None = None
-    topic_matched: str | None = None
-    mastery_source: Literal["topic_performance", "global_fallback"]
+    topic_score: float | None = None       # the concept's mastery score, if matched
+    topic_matched: str | None = None       # the concept_id matched, if any
+    mastery_source: Literal["concept_mastery", "global_fallback"]
 
 
 class SlideOut(BaseModel):
@@ -292,6 +293,7 @@ def _resolve_student_context(
 def _generate_session_slides(
     request: SlideGenerateRequest,
     tutor_context: Optional[dict] = None,
+    concept_mastery: Optional[dict] = None,
 ) -> list[SlideOut]:
     """Run the full orchestrator pipeline for one session.
 
@@ -387,21 +389,20 @@ def _generate_session_slides(
 
     from services.topic_mastery import (
         derive_topic_mastery,
-        match_topic_to_performance,
         smooth_mastery_sequence,
     )
 
     global_mastery = profile_dict.get("mastery_level", "Novice")
 
-    # Retrieve topic_performance from student context (if available)
-    topic_performance: dict[str, float] | None = None
-    if request.student_context and request.student_context.profile.topic_performance:
-        topic_performance = request.student_context.profile.topic_performance
+    # Per-slide mastery is now CONCEPT-KEYED: each chunk carries the Django
+    # Concept.id it teaches, and we look up that concept's score in the single
+    # knowledge signal (concept_mastery), instead of fuzzy-matching the chunk's
+    # free-text topic against a parallel topic_performance map.
+    concept_mastery = concept_mastery or {}
 
     # Load thresholds from settings (if accessible), else use defaults
     expert_thresh = 0.75
     intermediate_thresh = 0.45
-    match_thresh = 0.75
     try:
         _pathway_src = str(_PROJECT_ROOT / "course_pathway" / "src")
         if _pathway_src not in sys.path:
@@ -410,7 +411,6 @@ def _generate_session_slides(
         _pw_settings = _get_pathway_settings()
         expert_thresh = _pw_settings.topic_mastery_expert_threshold
         intermediate_thresh = _pw_settings.topic_mastery_intermediate_threshold
-        match_thresh = _pw_settings.topic_match_threshold
     except Exception:
         pass  # Use defaults — non-critical
 
@@ -421,31 +421,31 @@ def _generate_session_slides(
         if cleaned and len(cleaned) >= 20:
             valid_chunks.append((chunk_in, cleaned))
 
-    # Match topics and derive raw masteries for all valid chunks
+    # Derive raw masteries per chunk from its concept's mastery score.
     raw_masteries: list[str] = []
     match_results: list[tuple[float | None, str | None]] = []
 
     for chunk_in, _ in valid_chunks:
-        score, matched_key = match_topic_to_performance(
-            chunk_in.topic, topic_performance, similarity_threshold=match_thresh,
-        )
+        cid = getattr(chunk_in, "concept_id", "") or ""
+        entry = concept_mastery.get(cid) if cid else None
+        score = float(entry["score"]) if entry and "score" in entry else None
         mastery = derive_topic_mastery(
             score, global_mastery,
             expert_threshold=expert_thresh,
             intermediate_threshold=intermediate_thresh,
         )
         raw_masteries.append(mastery)
-        match_results.append((score, matched_key))
+        match_results.append((score, cid or None))
 
     # Smooth jarring transitions across the full sequence
     smoothed_masteries = smooth_mastery_sequence(raw_masteries)
 
     # Log session-level mastery derivation summary
-    topic_matched_count = sum(1 for s, _ in match_results if s is not None)
+    concept_matched_count = sum(1 for s, _ in match_results if s is not None)
     logger.info(
-        "slides_mastery_derivation: global=%s total_chunks=%d topic_matched=%d global_fallback=%d",
-        global_mastery, len(valid_chunks), topic_matched_count,
-        len(valid_chunks) - topic_matched_count,
+        "slides_mastery_derivation: global=%s total_chunks=%d concept_matched=%d global_fallback=%d",
+        global_mastery, len(valid_chunks), concept_matched_count,
+        len(valid_chunks) - concept_matched_count,
     )
 
     # ── Process each valid chunk ────────────────────────────────
@@ -466,7 +466,7 @@ def _generate_session_slides(
         # specialist is aware of what has already been covered.
         enriched_text = tutor_prefix + cleaned_for_t5 if tutor_prefix else cleaned_for_t5
 
-        mastery_source = "topic_performance" if topic_score is not None else "global_fallback"
+        mastery_source = "concept_mastery" if topic_score is not None else "global_fallback"
         logger.info(
             "slides_processing_chunk: chunk_id=%s topic=%s matched_key=%s "
             "topic_score=%s mastery=%s (source=%s)",
@@ -693,8 +693,19 @@ async def generate_slides(request: SlideGenerateRequest):
         except Exception as exc:
             logger.warning("slides: failed to read SharedSessionStore: %s", exc)
 
+    # ── Fetch the single knowledge signal for concept-keyed per-slide mastery ──
+    concept_mastery: dict = {}
+    if request.student_id:
+        try:
+            from services.mastery import fetch_concept_mastery
+            concept_mastery = await fetch_concept_mastery(str(request.student_id))
+        except Exception as exc:
+            logger.warning("slides: failed to fetch concept_mastery: %s", exc)
+
     try:
-        slides = _generate_session_slides(request, tutor_context=tutor_context)
+        slides = _generate_session_slides(
+            request, tutor_context=tutor_context, concept_mastery=concept_mastery,
+        )
     except Exception as e:
         logger.error("slides_generation_failed: %s", str(e))
         raise HTTPException(status_code=500, detail=f"Slide generation failed: {e}")

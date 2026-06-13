@@ -82,7 +82,15 @@ class Personalizer:
 
         chunk_by_id: dict[str, CourseChunk] = {c.chunk_id: c for c in chunks}
 
-        # Normalise weakness/strength lists for matching
+        # Primary signal: concept-id sets (taxonomy-aligned). A section is a
+        # weakness/strength if ANY of its chunks teaches a weak/strong concept.
+        weak_concept_ids = {str(c) for c in getattr(context, "weak_concept_ids", [])}
+        strength_concept_ids = {str(c) for c in getattr(context, "strength_concept_ids", [])}
+
+        # Fallback signal (legacy / synthetic / unmatched concepts): normalised
+        # label/topic-string match against the section's canonical topic. This
+        # keeps personalization working when concept ids aren't populated, but the
+        # concept-id sets above take precedence.
         weakness_set = {_normalise_topic_for_match(w) for w in context.weaknesses}
         strength_set = {_normalise_topic_for_match(s) for s in context.strengths}
         preferred_diffs = _MASTERY_TO_DIFFICULTY.get(
@@ -92,16 +100,40 @@ class Personalizer:
             context.mastery_level, ["intermediate"]
         )
 
+        def _section_concept_ids(section: DiscoveredSection) -> set[str]:
+            ids: set[str] = set()
+            for cid in section.chunk_ids:
+                ch = chunk_by_id.get(cid)
+                if ch and getattr(ch, "concept_id", ""):
+                    ids.add(str(ch.concept_id))
+            return ids
+
+        def _classify(section: DiscoveredSection) -> str:
+            sec_concepts = _section_concept_ids(section)
+            if sec_concepts & weak_concept_ids:
+                return "weakness"
+            if sec_concepts & strength_concept_ids:
+                return "strength"
+            # Fallback to label/topic string match.
+            topic_normed = _normalise_topic_for_match(section.canonical_topic)
+            if topic_normed in weakness_set:
+                return "weakness"
+            if topic_normed in strength_set:
+                return "strength"
+            return "neutral"
+
         # Classify sections
         weakness_sections: list[DiscoveredSection] = []
         strength_sections: list[DiscoveredSection] = []
         neutral_sections: list[DiscoveredSection] = []
 
+        _klass: dict[str, str] = {}
         for section in sections:
-            topic_normed = _normalise_topic_for_match(section.canonical_topic)
-            if topic_normed in weakness_set:
+            k = _classify(section)
+            _klass[section.section_id] = k
+            if k == "weakness":
                 weakness_sections.append(section)
-            elif topic_normed in strength_set:
+            elif k == "strength":
                 strength_sections.append(section)
             else:
                 neutral_sections.append(section)
@@ -134,14 +166,14 @@ class Personalizer:
                 if cid in chunk_by_id
             ]
 
-            topic_normed = _normalise_topic_for_match(section.canonical_topic)
+            section_class = _klass.get(section.section_id, "neutral")
 
-            if topic_normed in weakness_set:
+            if section_class == "weakness":
                 # Weakness: keep ALL chunks, prefer easier difficulty
                 selected = self._select_chunks_for_weakness(
                     raw_chunks, preferred_diffs
                 )
-            elif topic_normed in strength_set:
+            elif section_class == "strength":
                 # Strength: compress — keep only higher-difficulty chunks
                 selected = self._select_chunks_for_strength(
                     raw_chunks, strength_diffs

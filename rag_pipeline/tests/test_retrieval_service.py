@@ -27,7 +27,7 @@ CORPUS_B = "corpus_bbbbbbbb"
 
 
 def _add_chunk(store, chunk_id, corpus_id, course_id, topic, difficulty,
-               embedding, chunk_index=0, book="bookA"):
+               embedding, chunk_index=0, book="bookA", concept_id=""):
     store.collection.add(
         ids=[chunk_id],
         documents=[f"text for {chunk_id} about {topic}"],
@@ -42,6 +42,7 @@ def _add_chunk(store, chunk_id, corpus_id, course_id, topic, difficulty,
             "course": book,
             "corpus_id": corpus_id,
             "course_id": course_id,
+            "concept_id": concept_id,
             "page_start": 1,
             "page_end": 2,
             "chunk_index": chunk_index,
@@ -53,12 +54,12 @@ def _add_chunk(store, chunk_id, corpus_id, course_id, topic, difficulty,
 def service(tmp_path):
     """A RetrievalService over a temp Chroma seeded with two corpora."""
     store = VectorStore(persist_dir=str(tmp_path / "chroma"), collection_name="course_chunks")
-    # Corpus A: embeddings near [1,0]
-    _add_chunk(store, "a1", CORPUS_A, "3", "loops", "beginner", [1.0, 0.0], 0, "bookA")
-    _add_chunk(store, "a2", CORPUS_A, "3", "recursion", "expert", [0.9, 0.1], 1, "bookA")
-    # Corpus B: embeddings near [0,1]
-    _add_chunk(store, "b1", CORPUS_B, "4", "pointers", "beginner", [0.0, 1.0], 0, "bookB")
-    _add_chunk(store, "b2", CORPUS_B, "4", "pointers", "expert", [0.1, 0.9], 1, "bookB")
+    # Corpus A: embeddings near [1,0]; concepts c10 (loops), c11 (recursion)
+    _add_chunk(store, "a1", CORPUS_A, "3", "loops", "beginner", [1.0, 0.0], 0, "bookA", concept_id="c10")
+    _add_chunk(store, "a2", CORPUS_A, "3", "recursion", "expert", [0.9, 0.1], 1, "bookA", concept_id="c11")
+    # Corpus B: embeddings near [0,1]; concept c20 (pointers)
+    _add_chunk(store, "b1", CORPUS_B, "4", "pointers", "beginner", [0.0, 1.0], 0, "bookB", concept_id="c20")
+    _add_chunk(store, "b2", CORPUS_B, "4", "pointers", "expert", [0.1, 0.9], 1, "bookB", concept_id="c20")
     return RetrievalService(store=store)
 
 
@@ -126,3 +127,29 @@ def test_empty_corpus_counts_zero(service):
 def test_count_reflects_scope(service):
     assert service.count(_scope(CORPUS_A)) == 2
     assert service.count(_scope(CORPUS_B)) == 2
+
+
+# ── Concept tagging + concept-scoped retrieval (Batch 5) ─────────
+
+def test_get_chunks_for_concept_is_scoped(service):
+    loops = service.get_chunks_for_concept(_scope(CORPUS_A), "c10")
+    assert {c.chunk_id for c in loops} == {"a1"}
+    assert all(c.concept_id == "c10" for c in loops)
+
+
+def test_concept_chunk_counts(service):
+    counts = service.get_concept_chunk_counts(_scope(CORPUS_A))
+    assert counts == {"c10": 1, "c11": 1}
+    assert service.get_concept_chunk_counts(_scope(CORPUS_B)) == {"c20": 2}
+
+
+def test_concept_lookup_cannot_cross_corpora(service):
+    # c20 belongs to corpus B; asking within corpus A must return nothing.
+    assert service.get_chunks_for_concept(_scope(CORPUS_A), "c20") == []
+
+
+def test_retrieved_chunk_carries_concept_id(service):
+    chunks = service.get_all_chunks(_scope(CORPUS_A))
+    by_id = {c.chunk_id: c for c in chunks}
+    assert by_id["a1"].concept_id == "c10"
+    assert by_id["a2"].concept_id == "c11"

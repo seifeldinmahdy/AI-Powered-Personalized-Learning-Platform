@@ -36,6 +36,10 @@ export interface GeneratePathwayRequest {
   language_proficiency?: string;
   strengths?: string[];
   weaknesses?: string[];
+  // Authoritative concept-id sets for personalization (Django Concept.id).
+  strength_concept_ids?: string[];
+  weak_concept_ids?: string[];
+  // DEPRECATED: parallel topic signal; concept data is the source of truth.
   topic_performance?: Record<string, number>;
   incorrectly_answered?: Array<{question: string; chosen_option: string; correct_option: string}>;
   use_synthetic_context?: boolean;

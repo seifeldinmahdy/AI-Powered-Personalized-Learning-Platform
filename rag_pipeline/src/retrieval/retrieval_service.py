@@ -100,6 +100,7 @@ class RetrievedChunk:
     book: str
     corpus_id: str
     course_id: str
+    concept_id: str
     page_start: int
     page_end: int
     chunk_index: int
@@ -131,6 +132,7 @@ def _chunk_from_meta(chunk_id: str, doc: str, meta: dict[str, Any],
         book=meta.get("book", ""),
         corpus_id=str(meta.get("corpus_id", "")),
         course_id=str(meta.get("course_id", meta.get("course", ""))),
+        concept_id=str(meta.get("concept_id", "")),
         page_start=int(meta.get("page_start", 0)),
         page_end=int(meta.get("page_end", 0)),
         chunk_index=int(meta.get("chunk_index", 0)),
@@ -208,6 +210,34 @@ class RetrievalService:
         topics = {m.get("topic") for m in res.get("metadatas", []) if m.get("topic")}
         return sorted(topics)
 
+    def get_chunks_for_concept(
+        self, scope: RetrievalScope, concept_id: str,
+    ) -> list[RetrievedChunk]:
+        """Every chunk in *scope* tagged with *concept_id*, ordered by index.
+
+        Used by backward-designed assessment generation (probe the CLO concept
+        set) and concept-keyed slide grounding. Corpus scope is still enforced.
+        """
+        scope.validate()
+        res = self._store.get_where(
+            scope.where({"concept_id": str(concept_id)}),
+            include=["documents", "metadatas"],
+        )
+        chunks = self._rows_to_chunks(res)
+        chunks.sort(key=lambda c: c.chunk_index)
+        return chunks
+
+    def get_concept_chunk_counts(self, scope: RetrievalScope) -> dict[str, int]:
+        """concept_id → chunk_count within *scope* (untagged chunks excluded)."""
+        scope.validate()
+        res = self._store.get_where(scope.where(), include=["metadatas"])
+        counts: dict[str, int] = {}
+        for m in res.get("metadatas", []):
+            cid = m.get("concept_id")
+            if cid:
+                counts[str(cid)] = counts.get(str(cid), 0) + 1
+        return counts
+
     def count(self, scope: RetrievalScope) -> int:
         """Number of chunks in *scope*. ``0`` means the corpus is empty."""
         scope.validate()
@@ -222,12 +252,13 @@ class RetrievalService:
         query_embedding: list[float] | None = None,
         topic: str | None = None,
         difficulty: str | None = None,
+        concept_id: str | None = None,
         top_k: int = 5,
     ) -> list[RetrievedChunk]:
         """Scoped semantic similarity search.
 
-        Defined now so Batch 3 (RAG/tutor) becomes a wiring change only. Always
-        applies the corpus filter, so RAG can never search the wrong course.
+        Always applies the corpus filter, so retrieval can never cross courses.
+        An optional ``concept_id`` narrows to a single concept's chunks.
         """
         scope.validate()
         if query_embedding is None:
@@ -243,6 +274,8 @@ class RetrievalService:
             extra["topic"] = topic
         if difficulty:
             extra["difficulty"] = difficulty
+        if concept_id:
+            extra["concept_id"] = str(concept_id)
 
         results = self._store.query(
             embedding=query_embedding,

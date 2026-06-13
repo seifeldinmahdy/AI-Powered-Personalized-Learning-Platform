@@ -8,6 +8,7 @@ export interface AssessmentQuestion {
     options: string[];
     correct: number; // index of correct option
     topic: string;
+    concept_id?: string | null; // Django Concept.id this question probes
 }
 
 export interface IncorrectlyAnsweredItem {
@@ -37,6 +38,7 @@ export interface SubmitPlacementPayload {
         question_id: number;
         question: string;
         topic: string;
+        concept_id?: string | null;
         chosen_option: string;
         correct_option: string;
         is_correct: boolean;
@@ -119,6 +121,7 @@ export async function generateCategorizedQuestions(
                         options: q.options || [],
                         correct: correctIndex >= 0 ? correctIndex : 0,
                         topic: q.topic || cat.name || 'General',
+                        concept_id: q.concept_id ?? null,
                     };
                 }),
             })).filter((cat: CategoryGroup) => cat.questions.length > 0);

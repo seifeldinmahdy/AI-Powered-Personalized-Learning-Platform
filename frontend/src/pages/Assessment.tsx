@@ -161,6 +161,7 @@ export default function Assessment() {
                 question_id: q.id,
                 question: q.question,
                 topic: q.topic || 'General',
+                concept_id: q.concept_id ?? null,  // concept-keyed scoring
                 chosen_option: chosenIdx >= 0 ? q.options[chosenIdx] : '',
                 correct_option: q.options[q.correct],
                 is_correct: isCorrect,

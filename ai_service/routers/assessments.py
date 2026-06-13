@@ -17,13 +17,12 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from services.assessment_service import generate_assessment_questions, generate_categorized_questions
-from services.category_service import build_assessment_categories, _get_embedder
+from services.assessment_service import generate_assessment_questions
 from services.student_context_store import get_student_context_store
 from schemas.student_context import (
     UnifiedStudentContext,
@@ -53,7 +52,8 @@ class GenerateCategorizedRequest(BaseModel):
 class AnswerItem(BaseModel):
     question_id: int
     question: str
-    topic: str
+    topic: str  # concept label (kept for display); concept_id is authoritative
+    concept_id: Optional[str] = None  # Django Concept.id this question probes
     chosen_option: str
     correct_option: str
     is_correct: bool
@@ -93,50 +93,47 @@ async def generate_endpoint(req: GenerateRequest):
 
 @router.post("/generate-categorized")
 async def generate_categorized_endpoint(req: GenerateCategorizedRequest):
-    """Generate placement-test questions grouped by LLM-derived categories.
+    """Generate a BACKWARD-DESIGNED placement test that probes the CLO concepts.
 
-    Pipeline: ChromaDB topics → semantic dedup → frequency filter → LLM
-    grouping (exactly 5 categories) → per-category question generation.
+    The placement test now measures what the course's CLOs declare it must teach:
+    the CLO concept set is fetched from Django, grouped per CLO, and questions are
+    generated to COVER every concept (each question tagged with its concept_id) so
+    the submission path can be concept-keyed. Questions are no longer generated
+    from arbitrary discovered ChromaDB topics.
     """
     try:
         import asyncio
+        from services.category_service import build_clo_assessment_plan
+        from services.assessment_service import generate_clo_questions
 
-        # Resolve the corpus scope server-side from the Django course id. The
-        # assessment generator is a first-class retrieval consumer: it must read
-        # topics from this course's corpus only, never an unscoped/fuzzy match.
-        from pathway.corpus_resolver import resolve_corpus_id  # type: ignore
-        from src.retrieval.retrieval_service import RetrievalScope  # type: ignore
+        # Build the backward-designed plan from the course's CLO concept set.
+        plan = await asyncio.to_thread(build_clo_assessment_plan, req.course_id, req.course_title)
 
-        corpus_id = resolve_corpus_id(req.course_id)
-        if not corpus_id:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"No corpus is defined for course '{req.course_id}'. An admin "
-                    f"must create the course corpus and add sources first."
-                ),
+        if not plan:
+            # No CLOs/concepts authored yet — fall back to flat course-title
+            # generation so placement still works (clearly not backward-designed).
+            logger.warning(
+                "No CLO concept plan for course '%s' — falling back to flat generation.",
+                req.course_id,
             )
-        scope = RetrievalScope(corpus_id=corpus_id, course_id=req.course_id)
+            flat = await generate_assessment_questions(req.course_title, req.total_questions)
+            return {"categories": [{
+                "name": "General",
+                "description": f"General knowledge of {req.course_title}.",
+                "questions": flat.get("questions", []),
+            }]}
 
-        # build_assessment_categories is CPU-bound (embedding) + blocking IO (LLM)
-        # Run it in a thread pool to avoid blocking the async event loop
-        categories = await asyncio.to_thread(build_assessment_categories, req.course_title, scope)
+        n_concepts = sum(len(g["concepts"]) for g in plan)
         logger.info(
-            "Created %d categories for course '%s' (corpus '%s')",
-            len(categories), req.course_title, corpus_id,
+            "Backward-designed plan for course '%s': %d CLO group(s), %d concept(s)",
+            req.course_id, len(plan), n_concepts,
         )
 
-        # Distribute questions across categories
-        num_categories = len(categories)
-        base_per_cat = max(1, req.total_questions // num_categories)
-
-        # Generate questions per category (runs concurrently via asyncio.gather)
-        result = await generate_categorized_questions(
+        result = await generate_clo_questions(
             course_title=req.course_title,
-            categories=categories,
-            questions_per_category=base_per_cat,
+            plan=plan,
+            total_questions=req.total_questions,
         )
-
         return {"categories": result}
 
     except HTTPException:
@@ -150,10 +147,13 @@ async def generate_categorized_endpoint(req: GenerateCategorizedRequest):
 
 @router.post("/submit-placement", response_model=PlacementResultResponse)
 async def submit_placement(req: SubmitPlacementRequest):
-    """Score placement answers, build UnifiedStudentContext, and persist it.
+    """Score placement answers CONCEPT-KEYED, seed concept_mastery, persist context.
 
-    This is the single endpoint that converts raw assessment answers into
-    the complete student context used by every downstream component.
+    Backward-designed: each question probes a CLO concept (concept_id). Results
+    are aggregated per concept and written to the single knowledge signal
+    (Django concept_mastery). mastery_level is DERIVED from concept mastery, and
+    strengths/weaknesses are concept LABELS. topic_performance is no longer
+    produced as a source of truth.
     """
     total = len(req.answers)
     if total == 0:
@@ -162,32 +162,51 @@ async def submit_placement(req: SubmitPlacementRequest):
     correct_count = sum(1 for a in req.answers if a.is_correct)
     score_pct = round((correct_count / total) * 100)
 
-    # ── Derive mastery level ─────────────────────────────────────
-    if score_pct >= 70:
-        mastery_level = "Expert"
-    elif score_pct >= 40:
-        mastery_level = "Intermediate"
-    else:
-        mastery_level = "Novice"
-
-    # ── Per-topic scoring ────────────────────────────────────────
-    topic_counts: dict[str, dict] = {}
+    # ── Per-concept scoring (concept_id authoritative; label for display) ──
+    concept_stats: dict[str, dict] = {}
+    label_by_concept: dict[str, str] = {}
     for a in req.answers:
-        topic = a.topic or "General"
-        if topic not in topic_counts:
-            topic_counts[topic] = {"correct": 0, "total": 0}
-        topic_counts[topic]["total"] += 1
+        cid = str(a.concept_id) if a.concept_id else None
+        if not cid:
+            continue  # answers without a concept tag don't feed the knowledge signal
+        st = concept_stats.setdefault(cid, {"correct": 0, "total": 0})
+        st["total"] += 1
         if a.is_correct:
-            topic_counts[topic]["correct"] += 1
+            st["correct"] += 1
+        if a.topic:
+            label_by_concept.setdefault(cid, a.topic)
 
-    topic_performance = {
-        topic: round(data["correct"] / data["total"], 2)
-        for topic, data in topic_counts.items()
-        if data["total"] > 0
+    concept_scores = {
+        cid: round(s["correct"] / s["total"], 4)
+        for cid, s in concept_stats.items() if s["total"] > 0
     }
 
-    strengths = [t for t, s in topic_performance.items() if s > 0.7]
-    weaknesses = [t for t, s in topic_performance.items() if s < 0.5]
+    # ── Seed the single knowledge signal: Django concept_mastery ──
+    # Reuse the deterministic EMA entry shape so every existing reader (chart,
+    # certificate, problem-set targeting, capstone) sees consistent data.
+    from services.mastery import (
+        fetch_concept_mastery, patch_concept_mastery, build_entry,
+        derive_mastery_level,
+    )
+
+    existing_cm = await fetch_concept_mastery(req.student_id)
+    cm_updates: dict[str, dict] = {}
+    for cid, score in concept_scores.items():
+        # Seed from a neutral prior toward the observed placement score.
+        cm_updates[cid] = build_entry(existing_cm.get(cid, {}), outcome=score)
+    if cm_updates:
+        await patch_concept_mastery(req.student_id, cm_updates)
+
+    # Merge for derivation/strength-weakness (existing + just-seeded)
+    merged_cm = {**existing_cm, **cm_updates}
+    course_concept_ids = set(concept_scores.keys()) or None
+    mastery_level = derive_mastery_level(merged_cm, course_concept_ids)
+
+    # ── strengths / weaknesses as CONCEPT LABELS (+ authoritative concept ids) ──
+    strength_concept_ids = [cid for cid, s in concept_scores.items() if s > 0.7]
+    weak_concept_ids = [cid for cid, s in concept_scores.items() if s < 0.5]
+    strengths = sorted(label_by_concept.get(cid, cid) for cid in strength_concept_ids)
+    weaknesses = sorted(label_by_concept.get(cid, cid) for cid in weak_concept_ids)
 
     # ── Build incorrectly_answered ───────────────────────────────
     incorrectly_answered = [
@@ -195,12 +214,13 @@ async def submit_placement(req: SubmitPlacementRequest):
             "question": a.question,
             "chosen_option": a.chosen_option,
             "correct_option": a.correct_option,
+            "concept_id": str(a.concept_id) if a.concept_id else None,
         }
         for a in req.answers
         if not a.is_correct
     ]
 
-    # ── Build UnifiedStudentContext ──────────────────────────────
+    # ── Build UnifiedStudentContext (topic_performance intentionally empty) ──
     profile = StudentProfileState(
         student_id=req.student_id,
         course_id=req.course_id,
@@ -209,14 +229,16 @@ async def submit_placement(req: SubmitPlacementRequest):
         language_proficiency=req.language_proficiency,
         strengths=strengths,
         weaknesses=weaknesses,
-        topic_performance=topic_performance,
+        strength_concept_ids=strength_concept_ids,
+        weak_concept_ids=weak_concept_ids,
+        topic_performance={},  # deprecated shim — concept_mastery is the source of truth
         incorrectly_answered=incorrectly_answered,
         use_synthetic_context=False,
         course_intent=req.course_title,
         student_profile_summary=(
             f"{mastery_level} learner in {req.course_title}. "
-            f"Strong in: {', '.join(strengths) if strengths else 'no topics yet'}. "
-            f"Needs work on: {', '.join(weaknesses) if weaknesses else 'no topics yet'}."
+            f"Strong in: {', '.join(strengths) if strengths else 'no concepts yet'}. "
+            f"Needs work on: {', '.join(weaknesses) if weaknesses else 'no concepts yet'}."
         ),
     )
     live = LiveSessionState()
@@ -227,8 +249,10 @@ async def submit_placement(req: SubmitPlacementRequest):
     store.save(req.student_id, req.course_id, context)
 
     logger.info(
-        "placement_submitted student=%s course=%s score=%s mastery=%s strengths=%s weaknesses=%s",
-        req.student_id, req.course_id, score_pct, mastery_level, strengths, weaknesses,
+        "placement_submitted student=%s course=%s score=%s mastery=%s "
+        "concepts_scored=%d strengths=%s weaknesses=%s",
+        req.student_id, req.course_id, score_pct, mastery_level,
+        len(concept_scores), strengths, weaknesses,
     )
 
     return PlacementResultResponse(
@@ -236,7 +260,7 @@ async def submit_placement(req: SubmitPlacementRequest):
         mastery_level=mastery_level,
         strengths=strengths,
         weaknesses=weaknesses,
-        topic_performance=topic_performance,
+        topic_performance={},  # deprecated; concept_mastery is authoritative
         incorrectly_answered=incorrectly_answered,
         context_saved=True,
     )
@@ -348,12 +372,21 @@ async def mcq_session_endpoint(req: dict):
 
 @router.post("/submit")
 async def mcq_submit_endpoint(req: dict):
-    """Score a checkpoint submission and update student context.
+    """Score an in-session MCQ checkpoint and return the result.
 
-    1. Score answers via score_checkpoint
-    2. Update topic_performance via weighted moving average
-    3. Append incorrect answers to student context
-    4. Return CheckpointResult
+    ╔════════════════════════════════════════════════════════════════════════╗
+    ║ TODO(Batch 6): RE-WIRE THIS TO concept_mastery — IT IS CURRENTLY NEUTERED ║
+    ╚════════════════════════════════════════════════════════════════════════╝
+    This endpoint USED TO maintain a parallel ``topic_performance`` signal via a
+    weighted moving average. Batch 5 collapsed the taxonomy onto concept_mastery
+    (the single source of truth), so that parallel write has been REMOVED.
+
+    Consequence (accepted, see Batch 5 plan): in-session MCQ checkpoints DO NOT
+    contribute to mastery until Batch 6 closes this. Batch 6 must: tag checkpoint
+    MCQs with concept_id and route per-concept outcomes through mastery.py
+    (build_entry/EMA → patch_concept_mastery), exactly like the problem-set path.
+    Until then we only score-and-return; we still record incorrect answers for
+    the profiler, but we do NOT touch the knowledge signal.
     """
     try:
         _ensure_mcq_imports()
@@ -365,28 +398,13 @@ async def mcq_submit_endpoint(req: dict):
         # ── 1. Score the submission ──────────────────────────────
         result = score_checkpoint(submission)
 
-        # ── 2. Update student context ────────────────────────────
-        if result.per_topic_scores:
+        # ── 2. NEUTERED (Batch 6): do NOT write a parallel topic signal. ──
+        # We still append incorrect answers so the profiler keeps working, but
+        # mastery (concept_mastery) is intentionally NOT updated here yet.
+        if result.question_results:
             store = get_student_context_store()
             context = store.load(submission.student_id, submission.course_id)
-
             if context is not None:
-                from services.topic_mastery import update_topic_performance_scores
-
-                settings = _get_mcq_settings()
-                weight = settings.TOPIC_PERFORMANCE_UPDATE_WEIGHT
-
-                update_result = update_topic_performance_scores(
-                    current_performance=context.profile.topic_performance,
-                    session_scores=result.per_topic_scores,
-                    weight=weight,
-                )
-
-                context.profile.topic_performance = update_result["topic_performance"]
-                context.profile.strengths = update_result["strengths"]
-                context.profile.weaknesses = update_result["weaknesses"]
-
-                # ── 3. Append incorrect answers ──────────────────
                 for qr in result.question_results:
                     if not qr["correct"]:
                         context.profile.incorrectly_answered.append({
@@ -396,28 +414,15 @@ async def mcq_submit_endpoint(req: dict):
                             "question_type": qr.get("question_type", ""),
                             "topic": qr.get("topic", ""),
                         })
-
-                # Regenerate summary
-                mastery = context.profile.mastery_level
-                intent = context.profile.course_intent or submission.course_id
-                parts = [f"{mastery} learner in {intent}."]
-                if context.profile.strengths:
-                    parts.append(f"Strong in: {', '.join(context.profile.strengths)}.")
-                if context.profile.weaknesses:
-                    parts.append(f"Needs work on: {', '.join(context.profile.weaknesses)}.")
-                context.profile.student_profile_summary = " ".join(parts)
-
-                # Persist atomically
                 store.save(submission.student_id, submission.course_id, context)
 
-                logger.info(
-                    "mcq_submit_context_updated student=%s course=%s session=%d "
-                    "checkpoint=%d score=%.2f",
-                    submission.student_id, submission.course_id,
-                    submission.session_number, submission.checkpoint_index,
-                    result.score,
-                )
-
+        logger.warning(
+            "mcq_submit NEUTERED (TODO Batch 6): scored checkpoint for student=%s "
+            "course=%s session=%s but did NOT update mastery (no parallel "
+            "topic_performance; concept_mastery wiring pending).",
+            submission.student_id, submission.course_id,
+            getattr(submission, "session_number", "?"),
+        )
         return result.model_dump()
 
     except Exception as e:

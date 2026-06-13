@@ -25,6 +25,13 @@ class StudentProfileState(BaseModel):
     
     strengths: list[str] = Field(default_factory=list)
     weaknesses: list[str] = Field(default_factory=list)
+    # Concept-id sets (Django Concept.id) for strong/weak concepts. These are the
+    # authoritative, taxonomy-aligned signal used for pathway personalization;
+    # strengths/weaknesses above are the human LABELS of these for display/prose.
+    strength_concept_ids: list[str] = Field(default_factory=list)
+    weak_concept_ids: list[str] = Field(default_factory=list)
+    # DEPRECATED: parallel topic signal. Kept as an empty shim until Batch 6
+    # removes it; concept_mastery (Django) is the single source of truth.
     topic_performance: dict[str, float] = Field(default_factory=dict)
     incorrectly_answered: list[dict] = Field(
         default_factory=list,

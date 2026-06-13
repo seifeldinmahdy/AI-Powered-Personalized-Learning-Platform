@@ -59,6 +59,14 @@ class StudentContext(BaseModel):
         default_factory=list,
         description="Topic strings the student is weak in",
     )
+    strength_concept_ids: list[str] = Field(
+        default_factory=list,
+        description="Django Concept.id values the student is strong in (authoritative for personalization).",
+    )
+    weak_concept_ids: list[str] = Field(
+        default_factory=list,
+        description="Django Concept.id values the student is weak in (authoritative for personalization).",
+    )
     topic_performance: dict[str, float] = Field(
         default_factory=dict,
         description="Topic → score mapping (0.0–1.0)",
@@ -118,6 +126,7 @@ class CourseChunk(BaseModel):
     summary: str
     book: str
     course: str
+    concept_id: str = ""
     page_start: int
     page_end: int
     chunk_index: int

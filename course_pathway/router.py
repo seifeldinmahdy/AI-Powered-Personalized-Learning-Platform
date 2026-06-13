@@ -93,6 +93,8 @@ class GenerateRequest(BaseModel):
     language_proficiency: str = "Intermediate"
     strengths: list[str] = []
     weaknesses: list[str] = []
+    strength_concept_ids: list[str] = []
+    weak_concept_ids: list[str] = []
     topic_performance: dict[str, float] = {}
     incorrectly_answered: list[dict] = []
     use_synthetic_context: bool = False
@@ -176,6 +178,8 @@ async def generate_pathway(request: GenerateRequest):
             language_proficiency=request.language_proficiency,
             strengths=request.strengths,
             weaknesses=request.weaknesses,
+            strength_concept_ids=request.strength_concept_ids,
+            weak_concept_ids=request.weak_concept_ids,
             topic_performance=request.topic_performance,
             incorrectly_answered=request.incorrectly_answered,
             use_synthetic_context=request.use_synthetic_context,
@@ -212,6 +216,8 @@ async def regenerate_pathway(request: GenerateRequest):
             language_proficiency=request.language_proficiency,
             strengths=request.strengths,
             weaknesses=request.weaknesses,
+            strength_concept_ids=request.strength_concept_ids,
+            weak_concept_ids=request.weak_concept_ids,
             topic_performance=request.topic_performance,
             incorrectly_answered=request.incorrectly_answered,
             use_synthetic_context=request.use_synthetic_context,
@@ -261,6 +267,7 @@ class SessionChunkOut(BaseModel):
     chunk_id: str
     raw_text: str
     topic: str
+    concept_id: str = ""
     page_start: int
     page_end: int
 
@@ -311,6 +318,7 @@ async def get_session_chunks(request: SessionChunksRequest):
                 chunk_id=sc.chunk_id,
                 raw_text=sc.raw_text,
                 topic=meta.topic if meta else "",
+                concept_id=(meta.concept_id if meta else "") or "",
                 page_start=meta.page_start if meta else 0,
                 page_end=meta.page_end if meta else 0,
             ))

@@ -138,6 +138,7 @@ class ChromaDBReader:
             summary=c.summary,
             book=c.book,
             course=c.course_id or c.corpus_id,
+            concept_id=getattr(c, "concept_id", "") or "",
             page_start=c.page_start,
             page_end=c.page_end,
             chunk_index=c.chunk_index,

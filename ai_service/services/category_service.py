@@ -89,327 +89,89 @@ def _get_embedder() -> SentenceTransformer:
     return _embedder
 
 
-# ── Public API ──────────────────────────────────────────────────
+# ── Backward design: CLO concept set (replaces ChromaDB-topic discovery) ──────
+
+import httpx  # noqa: E402
+
+_DJANGO_API_URL = os.getenv("DJANGO_API_URL", "http://localhost:8000/api")
 
 
-def get_course_topics(scope: RetrievalScope) -> list[str]:
-    """Get unique topic tags for a corpus scope (via the scoped service)."""
+def _fetch_clo_concepts(course_id: str) -> list[dict]:
+    """Fetch the course's CLO concept set from Django.
+
+    Returns one row per (CLO, concept): ``[{clo_code, clo_text, concept_id,
+    label}]``. This is the backbone the placement test is backward-designed
+    against — questions are generated to cover THIS set, not arbitrary chunks.
+    """
+    service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
+    headers = {"X-Service-Key": service_key} if service_key else {}
+    base = _DJANGO_API_URL.rstrip("/")
     try:
-        return _get_service().get_topics(scope)
+        with httpx.Client(timeout=15.0) as client:
+            clo_resp = client.get(f"{base}/courses/courses/{course_id}/clos/", headers=headers)
+            con_resp = client.get(f"{base}/courses/courses/{course_id}/concepts/", headers=headers)
     except Exception as e:
-        logger.warning("Failed to read scoped topics: %s", e)
+        logger.warning("Failed to fetch CLO concepts for course %s: %s", course_id, e)
         return []
 
+    if clo_resp.status_code != 200 or con_resp.status_code != 200:
+        logger.warning(
+            "CLO/concept fetch bad status for course %s: clos=%s concepts=%s",
+            course_id, clo_resp.status_code, con_resp.status_code,
+        )
+        return []
 
-def get_topic_chunk_counts(scope: RetrievalScope) -> dict[str, int]:
-    """Get topic → chunk_count mapping for a corpus scope."""
-    try:
-        return _get_service().get_topic_summary(scope)
-    except Exception as e:
-        logger.warning("Failed to read scoped topic summary: %s", e)
-        return {}
+    def _rows(payload):
+        return payload.get("results", payload) if isinstance(payload, dict) else payload
 
+    label_map: dict[str, str] = {}
+    for c in _rows(con_resp.json()):
+        label_map[str(c["id"])] = c["label"]
 
-# ── Step 1: Semantic Deduplication ──────────────────────────────
-
-
-def deduplicate_topics(
-    topics: list[str],
-    topic_counts: dict[str, int],
-    similarity_threshold: float = 0.82,
-) -> tuple[list[str], dict[str, list[str]]]:
-    """Cluster semantically similar topics and keep the most frequent variant.
-
-    Parameters
-    ----------
-    topics :
-        All unique topic strings from ChromaDB.
-    topic_counts :
-        topic → chunk_count for frequency-based representative selection.
-    similarity_threshold :
-        Cosine similarity above which two topics are considered duplicates.
-
-    Returns
-    -------
-    canonical_topics :
-        Deduplicated list of canonical topic names.
-    variant_map :
-        Mapping from each canonical topic to all its variant strings
-        (including itself).
-    """
-    if len(topics) <= 1:
-        return topics, {t: [t] for t in topics}
-
-    embedder = _get_embedder()
-    embeddings = embedder.encode(topics, convert_to_numpy=True, show_progress_bar=False)
-
-    # Pairwise cosine similarity
-    sim_matrix = cosine_similarity(embeddings)
-
-    # Union-Find clustering
-    n = len(topics)
-    parent = list(range(n))
-
-    def find(x: int) -> int:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(a: int, b: int) -> None:
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[ra] = rb
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            if sim_matrix[i][j] >= similarity_threshold:
-                union(i, j)
-
-    # Group topics by cluster
-    clusters: dict[int, list[int]] = defaultdict(list)
-    for i in range(n):
-        clusters[find(i)].append(i)
-
-    # Pick the most frequent topic string as the canonical representative
-    canonical_topics: list[str] = []
-    variant_map: dict[str, list[str]] = {}
-
-    for indices in clusters.values():
-        cluster_topics = [topics[i] for i in indices]
-        # Sort by chunk count descending, then alphabetically for tie-breaking
-        best = max(cluster_topics, key=lambda t: (topic_counts.get(t, 0), t))
-        canonical_topics.append(best)
-        variant_map[best] = sorted(cluster_topics)
-
-    logger.info(
-        "semantic_dedup_complete",
-        extra={
-            "raw_count": len(topics),
-            "canonical_count": len(canonical_topics),
-            "clusters": len(clusters),
-        },
-    )
-    return sorted(canonical_topics), variant_map
+    rows: list[dict] = []
+    for clo in _rows(clo_resp.json()):
+        for cid in clo.get("concepts", []):
+            cid = str(cid)
+            rows.append({
+                "clo_code": clo.get("code", ""),
+                "clo_text": clo.get("text", ""),
+                "concept_id": cid,
+                "label": label_map.get(cid, cid),
+            })
+    return rows
 
 
-# ── Step 2: Frequency Filtering ────────────────────────────────
+def build_clo_assessment_plan(course_id: str, course_title: str) -> list[dict]:
+    """Group the CLO concept set into per-CLO categories for the placement test.
 
-
-def filter_by_frequency(
-    canonical_topics: list[str],
-    variant_map: dict[str, list[str]],
-    topic_counts: dict[str, int],
-    min_chunks: int = 3,
-    top_n: int = 30,
-) -> tuple[list[str], dict[str, list[str]]]:
-    """Keep the top N canonical topics by total chunk count.
-
-    Parameters
-    ----------
-    canonical_topics :
-        Deduplicated canonical topic names.
-    variant_map :
-        canonical → list of all variant topic strings.
-    topic_counts :
-        raw topic → chunk count from ChromaDB.
-    min_chunks :
-        Minimum total chunks across all variants to keep a topic.
-    top_n :
-        Maximum number of topics to pass to the LLM.
-
-    Returns
-    -------
-    filtered_topics :
-        Up to *top_n* canonical topic names sorted by chunk count desc.
-    filtered_variant_map :
-        Variant map limited to the filtered topics.
-    """
-    # Compute total chunk count for each canonical topic across all variants
-    scored: list[tuple[str, int]] = []
-    for canon in canonical_topics:
-        total = sum(topic_counts.get(v, 0) for v in variant_map.get(canon, [canon]))
-        if total >= min_chunks:
-            scored.append((canon, total))
-
-    # Sort by chunk count descending
-    scored.sort(key=lambda x: x[1], reverse=True)
-
-    # Keep top N
-    filtered = scored[:top_n]
-    filtered_topics = [t for t, _ in filtered]
-    filtered_variant_map = {t: variant_map.get(t, [t]) for t in filtered_topics}
-
-    logger.info(
-        "frequency_filter_complete",
-        extra={
-            "input_count": len(canonical_topics),
-            "filtered_count": len(filtered_topics),
-            "min_chunks": min_chunks,
-            "top_n": top_n,
-        },
-    )
-    return filtered_topics, filtered_variant_map
-
-
-# ── LLM Category Grouping ──────────────────────────────────────
-
-
-def group_topics_into_categories(
-    course_title: str,
-    topics: list[str],
-    variant_map: dict[str, list[str]] | None = None,
-) -> list[dict]:
-    """Use the LLM to group canonical topics into exactly 5 categories.
-
-    Parameters
-    ----------
-    course_title :
-        Human-readable course name.
-    topics :
-        Filtered canonical topic names (≤30).
-    variant_map :
-        Optional mapping from canonical → variant topic strings.
-        When present, the returned categories include an ``all_topics``
-        field listing every variant string for ChromaDB querying.
+    The placement test is backward-designed: it probes the concepts the course's
+    CLOs declare, NOT topics discovered from whatever chunks exist. Each returned
+    category corresponds to a CLO and lists the concepts that CLO must teach.
 
     Returns
     -------
     list[dict]
-        Each dict: ``{"name", "description", "topics", "all_topics"}``.
+        ``[{"name", "description", "clo_code", "concepts": [{"id","label"}]}]``.
+        Empty list if the course has no CLO concepts (caller handles fallback).
     """
-    if not topics:
-        return [{"name": "General", "description": f"General knowledge of {course_title}.", "topics": [], "all_topics": []}]
+    rows = _fetch_clo_concepts(course_id)
+    if not rows:
+        logger.warning("No CLO concepts for course %s — backward-designed plan empty.", course_id)
+        return []
 
-    client = _get_ollama_client()
+    by_clo: dict[str, dict] = {}
+    seen_concept_per_clo: dict[str, set] = {}
+    for r in rows:
+        code = r["clo_code"] or "CLO"
+        grp = by_clo.setdefault(code, {
+            "name": code,
+            "description": r["clo_text"] or f"{course_title} outcome {code}",
+            "clo_code": code,
+            "concepts": [],
+        })
+        seen = seen_concept_per_clo.setdefault(code, set())
+        if r["concept_id"] not in seen:
+            seen.add(r["concept_id"])
+            grp["concepts"].append({"id": r["concept_id"], "label": r["label"]})
 
-    prompt = f"""You are a curriculum designer. Given the course "{course_title}" and these {len(topics)} topic tags extracted from its textbook:
-
-{json.dumps(topics)}
-
-Group these topics into exactly 5 high-level pedagogically meaningful categories that represent the major conceptual pillars of the course. Each category needs:
-- A clear, concise category name (e.g. "Control Flow", "Data Structures")
-- A one-line description of what this section tests
-- The list of raw topic tags that belong to it
-
-Every topic tag must appear in exactly one category. No topic left out, no duplicates.
-
-Return ONLY valid JSON with no markdown fences:
-{{
-  "categories": [
-    {{
-      "name": "Category Name",
-      "description": "One line describing what this section covers.",
-      "topics": ["topic_tag_1", "topic_tag_2"]
-    }}
-  ]
-}}"""
-
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            data = client.chat_json(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                timeout_override=180,
-            )
-
-            categories = data.get("categories", [])
-            if not isinstance(categories, list) or len(categories) == 0:
-                raise ValueError("No categories returned")
-
-            # Validate: every topic assigned exactly once
-            assigned: list[str] = []
-            for cat in categories:
-                assigned.extend(cat.get("topics", []))
-
-            missing = set(topics) - set(assigned)
-
-            if missing:
-                logger.warning("Topics missing from categories (attempt %d): %s", attempt, missing)
-                if attempt < max_retries:
-                    continue
-                # On final attempt, add missing to the smallest category
-                smallest = min(categories, key=lambda c: len(c.get("topics", [])))
-                smallest["topics"].extend(list(missing))
-
-            # Expand variant_map into all_topics for ChromaDB querying
-            if variant_map:
-                for cat in categories:
-                    all_topics: list[str] = []
-                    for t in cat.get("topics", []):
-                        all_topics.extend(variant_map.get(t, [t]))
-                    cat["all_topics"] = sorted(set(all_topics))
-            else:
-                for cat in categories:
-                    cat["all_topics"] = cat.get("topics", [])
-
-            logger.info(
-                "category_grouping_complete",
-                extra={"num_categories": len(categories), "attempt": attempt},
-            )
-            return categories
-
-        except Exception as e:
-            logger.error("Category grouping failed (attempt %d): %s", attempt, e)
-            if attempt >= max_retries:
-                break
-
-    logger.warning("All category grouping attempts failed — using single category fallback")
-    all_topics = []
-    if variant_map:
-        for t in topics:
-            all_topics.extend(variant_map.get(t, [t]))
-    else:
-        all_topics = topics
-    return [{"name": "General", "description": f"General knowledge of {course_title}.", "topics": topics, "all_topics": sorted(set(all_topics))}]
-
-
-# ── Orchestrator ────────────────────────────────────────────────
-
-
-def build_assessment_categories(course_title: str, scope: RetrievalScope) -> list[dict]:
-    """Full pipeline: scoped topic read → dedup → filter → LLM grouping.
-
-    This is the single entry point called by the router. Topics are read ONLY
-    from the given corpus scope — the old fuzzy ``course_title``→ChromaDB-course
-    matcher is gone, so the assessment generator can no longer accidentally read
-    another course's topics. ``course_title`` is kept solely as a human label for
-    the LLM grouping prompt.
-
-    Returns
-    -------
-    list[dict]
-        Exactly 5 categories (or 1 "General" fallback), each with:
-        ``name``, ``description``, ``topics`` (canonical), ``all_topics``.
-    """
-    scope.validate()
-
-    # Fetch raw topics and chunk counts from the scoped corpus
-    raw_topics = get_course_topics(scope)
-    topic_counts = get_topic_chunk_counts(scope)
-
-    logger.info(
-        "Raw topics for corpus '%s' (course '%s'): %d",
-        scope.corpus_id, course_title, len(raw_topics),
-    )
-
-    if not raw_topics:
-        return [{"name": "General", "description": f"General knowledge of {course_title}.", "topics": [], "all_topics": []}]
-
-    # Step 1: Semantic deduplication
-    canonical, variant_map = deduplicate_topics(raw_topics, topic_counts)
-    logger.info("After dedup: %d canonical topics", len(canonical))
-
-    # Step 2: Frequency filtering
-    filtered, filtered_variants = filter_by_frequency(
-        canonical, variant_map, topic_counts,
-        min_chunks=3, top_n=30,
-    )
-    logger.info("After frequency filter: %d topics", len(filtered))
-
-    # Step 3: LLM grouping into exactly 5 categories
-    categories = group_topics_into_categories(course_title, filtered, filtered_variants)
-
-    return categories
-
+    return [g for g in by_clo.values() if g["concepts"]]

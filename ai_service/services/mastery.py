@@ -80,6 +80,38 @@ def build_entry(
     }
 
 
+def derive_mastery_level(
+    concept_mastery: dict,
+    course_concept_ids: set[str] | None = None,
+    *,
+    expert_threshold: float = 0.75,
+    intermediate_threshold: float = 0.45,
+) -> str:
+    """Derive the overall mastery_level from per-concept mastery.
+
+    mastery_level is no longer a string frozen at placement — it is a DERIVED
+    aggregate of concept mastery that moves as the student progresses. We take
+    the mean score over concepts that have evidence (optionally restricted to
+    the course's concept set) and threshold it.
+
+    Returns "Novice" when there is no evidence yet (safe default).
+    """
+    scores = [
+        float(v.get("score", 0.0))
+        for k, v in (concept_mastery or {}).items()
+        if (course_concept_ids is None or str(k) in course_concept_ids)
+        and int(v.get("evidence", 0)) > 0
+    ]
+    if not scores:
+        return "Novice"
+    mean = sum(scores) / len(scores)
+    if mean >= expert_threshold:
+        return "Expert"
+    if mean >= intermediate_threshold:
+        return "Intermediate"
+    return "Novice"
+
+
 def top_weak_concepts(concept_mastery: dict, n: int = 3) -> list[dict]:
     """Return up to n weakest concepts, sorted by (score asc, evidence asc).
 
