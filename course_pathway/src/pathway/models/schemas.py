@@ -33,7 +33,15 @@ class StudentContext(BaseModel):
     """
 
     student_id: str = Field(..., description="Unique student identifier")
-    course_id: str = Field(..., description="Course identifier (matches ChromaDB 'course' metadata)")
+    course_id: str = Field(..., description="Django course identifier (system of record). Used for cache keys/logging, NOT as a retrieval filter.")
+    corpus_id: str = Field(
+        default="",
+        description=(
+            "Stable retrieval scope (Django CourseCorpus.corpus_id), resolved "
+            "server-side from course_id. This is what scopes vector retrieval. "
+            "Deliberately EXCLUDED from context_hash() — see context_hash()."
+        ),
+    )
     mastery_level: Literal["Novice", "Intermediate", "Expert"] = Field(
         ..., description="Overall mastery tier from the placement test"
     )
@@ -75,6 +83,14 @@ class StudentContext(BaseModel):
         Only mastery_level, sorted weaknesses, and sorted strengths are
         included.  Minor changes (e.g. one new correct answer) do not
         change this hash.
+
+        ``corpus_id`` is intentionally NOT part of this hash. The corpus is a
+        deterministic, immutable property of the course (one corpus per course),
+        not a personalization signal — folding it in would change every existing
+        plan's hash and force a needless regeneration of pathways that should
+        stay byte-identical after the corpus backfill. Cache keys remain
+        (student_id, course_id); the resolved corpus_id only scopes *where*
+        chunks are read from, not *whether* a plan must be rebuilt.
         """
         payload = json.dumps(
             {

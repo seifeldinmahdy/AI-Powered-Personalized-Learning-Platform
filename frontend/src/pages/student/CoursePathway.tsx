@@ -88,7 +88,10 @@ export default function CoursePathway() {
 
         const result = await generatePathway({
           student_id: contextProfile?.student_id || String(studentId),
-          course_id: contextProfile?.course_id || 'pythonlearn',
+          // Always the real Django course id — the AI service resolves this to
+          // the course's corpus scope server-side. (No more 'pythonlearn' book
+          // stem leaking in as a course identifier.)
+          course_id: contextProfile?.course_id || String(courseId),
           mastery_level: contextProfile?.mastery_level || 'Novice',
           composition_mode: contextProfile?.composition_mode || 'balanced',
           language_proficiency: contextProfile?.language_proficiency || 'Intermediate',

@@ -52,6 +52,22 @@ urlpatterns = [
         views.CourseLearningOutcomeViewSet.as_view({"get": "attainment"}),
         name="clo-attainment",
     ),
+    # Course corpus (admin-defined source material; read open for scope resolution)
+    path(
+        "courses/<int:course_pk>/corpus/",
+        views.CourseCorpusViewSet.as_view({"get": "retrieve_corpus"}),
+        name="course-corpus",
+    ),
+    path(
+        "courses/<int:course_pk>/corpus/sources/",
+        views.CourseCorpusViewSet.as_view({"post": "add_source"}),
+        name="corpus-source-add",
+    ),
+    path(
+        "courses/<int:course_pk>/corpus/sources/<int:pk>/",
+        views.CourseCorpusViewSet.as_view({"delete": "remove_source"}),
+        name="corpus-source-remove",
+    ),
     # Completion certificate (gated on course complete + survey submitted)
     path(
         "courses/<int:course_id>/certificate/",

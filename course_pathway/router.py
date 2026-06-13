@@ -125,6 +125,31 @@ class PlanListItem(BaseModel):
     created_at: str
 
 
+# ── Scope resolution ─────────────────────────────────────────────
+
+
+def _resolve_corpus_or_404(course_id: str) -> str:
+    """Resolve course_id -> corpus_id server-side, or raise a clear 404.
+
+    Keeps the scope a server-side, SoR-derived boundary (the browser never
+    sends corpus_id). A missing corpus is an admin-facing error, not a silent
+    cross-course fallback.
+    """
+    from pathway.corpus_resolver import resolve_corpus_id
+
+    corpus_id = resolve_corpus_id(course_id)
+    if not corpus_id:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No corpus is defined for course '{course_id}'. An admin must "
+                f"create the course corpus and add sources before content can "
+                f"be generated."
+            ),
+        )
+    return corpus_id
+
+
 # ── Endpoints ────────────────────────────────────────────────────
 
 
@@ -140,9 +165,12 @@ async def generate_pathway(request: GenerateRequest):
 
         from pathway.models.schemas import StudentContext
 
+        corpus_id = _resolve_corpus_or_404(request.course_id)
+
         context = StudentContext(
             student_id=request.student_id,
             course_id=request.course_id,
+            corpus_id=corpus_id,
             mastery_level=request.mastery_level,
             composition_mode=request.composition_mode,
             language_proficiency=request.language_proficiency,
@@ -156,6 +184,8 @@ async def generate_pathway(request: GenerateRequest):
         response = gen.generate(context)
         return _plan_to_summary(response.plan, response.cached)
 
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -171,9 +201,12 @@ async def regenerate_pathway(request: GenerateRequest):
 
         from pathway.models.schemas import StudentContext
 
+        corpus_id = _resolve_corpus_or_404(request.course_id)
+
         context = StudentContext(
             student_id=request.student_id,
             course_id=request.course_id,
+            corpus_id=corpus_id,
             mastery_level=request.mastery_level,
             composition_mode=request.composition_mode,
             language_proficiency=request.language_proficiency,
@@ -187,6 +220,8 @@ async def regenerate_pathway(request: GenerateRequest):
         response = gen.generate(context, force_regenerate=True)
         return _plan_to_summary(response.plan, response.cached)
 
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -208,10 +243,10 @@ async def list_student_plans(student_id: str):
 
 @router.get("/courses/available", response_model=list[str])
 async def available_courses():
-    """List all course IDs available in ChromaDB."""
+    """List all corpus IDs present in the vector store (introspection)."""
     try:
         gen = _get_generator()
-        return gen._reader.get_available_courses()
+        return gen._reader.list_corpus_ids()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -258,11 +293,16 @@ async def get_session_chunks(request: SessionChunksRequest):
                 detail=f"Session {request.session_number} not found",
             )
 
-        # The session already has SessionChunk objects with chunk_id and raw_text
-        # But we also need topic, page_start, page_end from ChromaDB metadata
-        # Fetch all course chunks from ChromaDB for metadata lookup
-        all_chunks = gen._reader.get_all_course_chunks(request.course_id)
-        chunk_map = {c.chunk_id: c for c in all_chunks}
+        # Enrich the session's chunks with topic/page metadata, scoped to this
+        # course's corpus. We fetch ONLY the session's chunk ids (scoped), so a
+        # stale id from another corpus can never leak in.
+        corpus_id = _resolve_corpus_or_404(request.course_id)
+        from src.retrieval.retrieval_service import RetrievalScope  # type: ignore
+        scope = RetrievalScope(corpus_id=corpus_id, course_id=request.course_id)
+
+        chunk_ids = [sc.chunk_id for sc in session.chunks]
+        meta_chunks = gen._reader.get_chunks_by_ids(scope, chunk_ids)
+        chunk_map = {c.chunk_id: c for c in meta_chunks}
 
         result = []
         for sc in session.chunks:

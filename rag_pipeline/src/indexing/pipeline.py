@@ -89,6 +89,11 @@ class IndexingPipeline:
         """Process one PDF end-to-end. Returns counts for new/skipped/errors."""
         book_stem = pdf_path.stem
         course = book_stem  # Default: filename stem = course name
+        # BATCH 4 (corpus-aware ingestion): chunks must be tagged at index time
+        # with the admin-defined corpus_id + course_id (and concept_id, which
+        # becomes non-optional) instead of overloading the filename as `course`.
+        # Until then, the `backfill_corpus_vector_tags` management command stamps
+        # corpus_id/course_id onto these chunks so RetrievalService can scope them.
 
         logger.info("pdf_processing_start", book=book_stem, path=str(pdf_path))
 

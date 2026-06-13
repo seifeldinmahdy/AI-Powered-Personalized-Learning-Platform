@@ -5,11 +5,15 @@ from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from .models import Course, Module, Lesson, Slide, CodeChallenge, Enrollment, CourseRating, Concept, CourseLearningOutcome
+from .models import (
+    Course, Module, Lesson, Slide, CodeChallenge, Enrollment, CourseRating,
+    Concept, CourseLearningOutcome, CourseCorpus, CorpusSource,
+)
 from .serializers import (
     CourseSerializer, ModuleSerializer, LessonSerializer, LessonDetailSerializer,
     SlideSerializer, CodeChallengeStudentSerializer, EnrollmentSerializer, CourseRatingSerializer,
     ConceptSerializer, CourseLearningOutcomeSerializer,
+    CourseCorpusSerializer, CorpusSourceSerializer,
 )
 from django.conf import settings
 
@@ -458,3 +462,59 @@ class CourseLearningOutcomeViewSet(viewsets.ModelViewSet):
                 "evidence_count": evidence,
             })
         return Response(result)
+
+
+# ------------------------------------------------------------------
+# CourseCorpus ViewSet — admin-defined source material per course
+# Nested under /api/courses/courses/<course_pk>/corpus/
+# ------------------------------------------------------------------
+class CourseCorpusViewSet(viewsets.ViewSet):
+    """Manage a course's corpus and its sources.
+
+    Reads (GET corpus) are open so the AI service can resolve the scope; writes
+    (add/remove sources) require admin. The corpus itself is auto-created per
+    course, so GET always returns one for an existing course.
+    """
+
+    permission_classes = [IsAdminOrReadOnly]
+
+    @staticmethod
+    def _get_or_create_corpus(course_pk):
+        course = Course.objects.get(pk=course_pk)
+        corpus, _ = CourseCorpus.objects.get_or_create(
+            course=course, defaults={"name": course.title},
+        )
+        return corpus
+
+    def retrieve_corpus(self, request, course_pk=None):
+        """GET /api/courses/courses/<course_pk>/corpus/ — corpus + sources."""
+        try:
+            corpus = self._get_or_create_corpus(course_pk)
+        except Course.DoesNotExist:
+            return Response({"error": "Course not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(CourseCorpusSerializer(corpus).data)
+
+    def add_source(self, request, course_pk=None):
+        """POST /api/courses/courses/<course_pk>/corpus/sources/ — admin only."""
+        try:
+            corpus = self._get_or_create_corpus(course_pk)
+        except Course.DoesNotExist:
+            return Response({"error": "Course not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = CorpusSourceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            serializer.save(corpus=corpus)
+        except Exception as exc:
+            # Most likely the (corpus, book_stem) uniqueness constraint.
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def remove_source(self, request, course_pk=None, pk=None):
+        """DELETE /api/courses/courses/<course_pk>/corpus/sources/<pk>/ — admin."""
+        deleted, _ = CorpusSource.objects.filter(
+            corpus__course_id=course_pk, pk=pk,
+        ).delete()
+        if not deleted:
+            return Response({"error": "Source not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)

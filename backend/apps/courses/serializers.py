@@ -1,13 +1,23 @@
 from rest_framework import serializers
-from .models import Course, Module, Lesson, Slide, CodeChallenge, Enrollment, CourseRating, Concept, CourseLearningOutcome
+from .models import (
+    Course, Module, Lesson, Slide, CodeChallenge, Enrollment, CourseRating,
+    Concept, CourseLearningOutcome, CourseCorpus, CorpusSource,
+)
 
 
 class CourseSerializer(serializers.ModelSerializer):
     total_lessons_count = serializers.SerializerMethodField()
+    corpus_id = serializers.SerializerMethodField()
 
     def get_total_lessons_count(self, obj):
         from .models import Lesson
         return Lesson.objects.filter(module__course=obj).count()
+
+    def get_corpus_id(self, obj):
+        # Exposed read-only so clients/diagnostics can see the scope, but the AI
+        # service resolves it server-side rather than trusting a client value.
+        corpus = getattr(obj, "corpus", None)
+        return corpus.corpus_id if corpus else None
 
     class Meta:
         model = Course
@@ -15,6 +25,7 @@ class CourseSerializer(serializers.ModelSerializer):
             "id", "title", "description",
             "difficulty", "status", "tags", "is_published", "price",
             "total_lessons_count", "avg_rating", "created_at", "syllabus",
+            "corpus_id",
         ]
         read_only_fields = ["id", "created_at"]
 
@@ -98,6 +109,22 @@ class ConceptSerializer(serializers.ModelSerializer):
         model = Concept
         fields = ["id", "course", "label", "slug", "parent", "lessons", "order", "children"]
         read_only_fields = ["id"]
+
+
+class CorpusSourceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CorpusSource
+        fields = ["id", "title", "book_stem", "source_type", "concept", "is_active", "added_at"]
+        read_only_fields = ["id", "added_at"]
+
+
+class CourseCorpusSerializer(serializers.ModelSerializer):
+    sources = CorpusSourceSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = CourseCorpus
+        fields = ["id", "course", "corpus_id", "name", "sources", "created_at", "updated_at"]
+        read_only_fields = ["id", "course", "corpus_id", "created_at", "updated_at"]
 
 
 class CourseLearningOutcomeSerializer(serializers.ModelSerializer):

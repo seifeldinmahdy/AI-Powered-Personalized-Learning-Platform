@@ -1,6 +1,17 @@
+import uuid
+
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 from django.conf import settings
+
+
+def _new_corpus_id() -> str:
+    """Generate a stable, opaque corpus identifier.
+
+    Deliberately NOT derived from course_id/title/book — the whole point of the
+    corpus refactor is to stop overloading those strings as retrieval scope.
+    """
+    return uuid.uuid4().hex
 
 
 class Course(models.Model):
@@ -254,6 +265,80 @@ class Concept(models.Model):
 
     def __str__(self):
         return f"{self.course.title} — {self.label}"
+
+
+# ------------------------------------------------------------------
+# CourseCorpus — the admin-defined source material bound to a course
+# ------------------------------------------------------------------
+class CourseCorpus(models.Model):
+    """One explicit, admin-curated corpus per course.
+
+    ``corpus_id`` is the STABLE retrieval scope used by the vector store and the
+    RetrievalService. It is generated independently of the Django course_id /
+    title / book filename so retrieval scope is never an overloaded string.
+    Exactly one corpus exists per course (auto-created via signal).
+    """
+
+    course = models.OneToOneField(
+        Course, on_delete=models.CASCADE, related_name="corpus",
+    )
+    corpus_id = models.CharField(
+        max_length=64, unique=True, editable=False, default=_new_corpus_id,
+        help_text="Stable, opaque retrieval scope key. Never changes.",
+    )
+    name = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "course_corpora"
+        verbose_name = "Course Corpus"
+        verbose_name_plural = "Course Corpora"
+
+    def __str__(self):
+        return f"Corpus[{self.corpus_id[:8]}] for {self.course.title}"
+
+
+class CorpusSource(models.Model):
+    """A single source material (book/doc/url) bound to a course's corpus.
+
+    ``book_stem`` is the ingestion key — it must equal the ChromaDB ``book``
+    metadata value produced by the indexer for this source, so the backfill can
+    map existing vectors to this corpus.
+    """
+
+    SOURCE_TYPES = [
+        ("pdf", "PDF"),
+        ("doc", "Document"),
+        ("url", "URL"),
+    ]
+
+    corpus = models.ForeignKey(
+        CourseCorpus, on_delete=models.CASCADE, related_name="sources",
+    )
+    title = models.CharField(max_length=300)
+    book_stem = models.CharField(
+        max_length=200,
+        help_text="Ingestion key; must match the ChromaDB 'book' value for this source.",
+    )
+    source_type = models.CharField(max_length=10, choices=SOURCE_TYPES, default="pdf")
+    concept = models.ForeignKey(
+        Concept, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="corpus_sources",
+        help_text="Optional concept binding. Batch 4 makes concept tagging non-optional.",
+    )
+    is_active = models.BooleanField(default=True)
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "corpus_sources"
+        unique_together = [["corpus", "book_stem"]]
+        ordering = ["added_at"]
+        verbose_name = "Corpus Source"
+        verbose_name_plural = "Corpus Sources"
+
+    def __str__(self):
+        return f"{self.title} ({self.book_stem})"
 
 
 # ------------------------------------------------------------------

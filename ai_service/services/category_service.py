@@ -30,21 +30,25 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 
-# Ensure course_pathway/src is on sys.path for ChromaDB + OllamaClient
+# Ensure course_pathway/src and rag_pipeline are on sys.path
 _pathway_src = str(Path(__file__).resolve().parent.parent.parent / "course_pathway" / "src")
 if _pathway_src not in sys.path:
     sys.path.insert(0, _pathway_src)
+_rag_dir = str(Path(__file__).resolve().parent.parent.parent / "rag_pipeline")
+if _rag_dir not in sys.path:
+    sys.path.insert(0, _rag_dir)
 
 from pathway.llm.naming import OllamaClient  # type: ignore
-from pathway.chromadb_reader import ChromaDBReader  # type: ignore
 from pathway.config import get_settings  # type: ignore
+from src.indexing.store import VectorStore  # type: ignore
+from src.retrieval.retrieval_service import RetrievalService, RetrievalScope  # type: ignore
 
 logger = logging.getLogger(__name__)
 
 # ── Singletons ──────────────────────────────────────────────────
 
 _client: OllamaClient | None = None
-_reader: ChromaDBReader | None = None
+_service: RetrievalService | None = None
 _embedder: SentenceTransformer | None = None
 
 _EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
@@ -63,15 +67,17 @@ def _get_ollama_client() -> OllamaClient:
     return _client
 
 
-def _get_reader() -> ChromaDBReader:
-    global _reader
-    if _reader is None:
+def _get_service() -> RetrievalService:
+    """The single scoped retrieval entry point for assessment topic reads."""
+    global _service
+    if _service is None:
         settings = get_settings()
-        _reader = ChromaDBReader(
+        store = VectorStore(
             persist_dir=settings.chroma_db_path,
             collection_name=settings.chroma_collection_name,
         )
-    return _reader
+        _service = RetrievalService(store=store)
+    return _service
 
 
 def _get_embedder() -> SentenceTransformer:
@@ -86,23 +92,21 @@ def _get_embedder() -> SentenceTransformer:
 # ── Public API ──────────────────────────────────────────────────
 
 
-def get_course_topics(course_title: str) -> list[str]:
-    """Get unique topic tags from ChromaDB for a course."""
+def get_course_topics(scope: RetrievalScope) -> list[str]:
+    """Get unique topic tags for a corpus scope (via the scoped service)."""
     try:
-        reader = _get_reader()
-        return reader.get_course_topics(course_title)
+        return _get_service().get_topics(scope)
     except Exception as e:
-        logger.warning("Failed to read ChromaDB topics: %s", e)
+        logger.warning("Failed to read scoped topics: %s", e)
         return []
 
 
-def get_topic_chunk_counts(course_title: str) -> dict[str, int]:
-    """Get topic → chunk_count mapping from ChromaDB."""
+def get_topic_chunk_counts(scope: RetrievalScope) -> dict[str, int]:
+    """Get topic → chunk_count mapping for a corpus scope."""
     try:
-        reader = _get_reader()
-        return reader.get_topic_summary(course_title)
+        return _get_service().get_topic_summary(scope)
     except Exception as e:
-        logger.warning("Failed to read topic summary: %s", e)
+        logger.warning("Failed to read scoped topic summary: %s", e)
         return {}
 
 
@@ -361,120 +365,34 @@ Return ONLY valid JSON with no markdown fences:
     return [{"name": "General", "description": f"General knowledge of {course_title}.", "topics": topics, "all_topics": sorted(set(all_topics))}]
 
 
-# ── Course title resolution ─────────────────────────────────────
-
-
-def resolve_chromadb_course(django_title: str) -> str:
-    """Fuzzy-match a Django course title to a ChromaDB course identifier.
-
-    ChromaDB stores courses by their source-book name (e.g.
-    "Think Python 2nd Edition") while Django may store a user-facing
-    title like "Python for Beginners".  This function resolves the
-    mapping using keyword overlap and embedding similarity.
-
-    Returns the best-matching ChromaDB course identifier, or the
-    original ``django_title`` if no match is found.
-    """
-    import re
-    from difflib import SequenceMatcher
-
-    try:
-        reader = _get_reader()
-        available = reader.get_available_courses()
-    except Exception as e:
-        logger.warning("Failed to list ChromaDB courses: %s", e)
-        return django_title
-
-    if not available:
-        return django_title
-
-    # 1. Exact match
-    if django_title in available:
-        return django_title
-
-    # 2. Case-insensitive exact match
-    lower_map = {c.lower(): c for c in available}
-    if django_title.lower() in lower_map:
-        return lower_map[django_title.lower()]
-
-    # 3. Keyword-based scoring + fuzzy matching
-    def _normalise(s: str) -> str:
-        return re.sub(r"[^a-z0-9 ]", " ", s.lower()).strip()
-
-    def _tokens(s: str) -> set[str]:
-        return {w for w in _normalise(s).split() if len(w) > 2}
-
-    django_tokens = _tokens(django_title)
-    best_score = 0.0
-    best_match = available[0]
-
-    for chroma_course in available:
-        chroma_tokens = _tokens(chroma_course)
-
-        # Jaccard-style keyword overlap
-        if django_tokens and chroma_tokens:
-            overlap = len(django_tokens & chroma_tokens) / len(django_tokens | chroma_tokens)
-        else:
-            overlap = 0.0
-
-        # SequenceMatcher ratio on normalised strings
-        seq_ratio = SequenceMatcher(None, _normalise(django_title), _normalise(chroma_course)).ratio()
-
-        # Combined score (keyword overlap weighted higher)
-        score = 0.6 * overlap + 0.4 * seq_ratio
-
-        if score > best_score:
-            best_score = score
-            best_match = chroma_course
-
-    # If the best score is too low, try embedding similarity as fallback
-    if best_score < 0.15:
-        try:
-            embedder = _get_embedder()
-            all_texts = [django_title] + available
-            embs = embedder.encode(all_texts, convert_to_numpy=True, show_progress_bar=False)
-            sims = cosine_similarity([embs[0]], embs[1:])[0]
-            best_idx = int(np.argmax(sims))
-            best_match = available[best_idx]
-            best_score = float(sims[best_idx])
-            logger.info(
-                "Resolved '%s' → '%s' via embedding (sim=%.3f)",
-                django_title, best_match, best_score,
-            )
-        except Exception as e:
-            logger.warning("Embedding-based course resolution failed: %s", e)
-
-    logger.info(
-        "Course resolution: '%s' → '%s' (score=%.3f)",
-        django_title, best_match, best_score,
-    )
-    return best_match
-
-
 # ── Orchestrator ────────────────────────────────────────────────
 
 
-def build_assessment_categories(course_title: str) -> list[dict]:
-    """Full pipeline: resolve course → ChromaDB → dedup → filter → LLM grouping.
+def build_assessment_categories(course_title: str, scope: RetrievalScope) -> list[dict]:
+    """Full pipeline: scoped topic read → dedup → filter → LLM grouping.
 
-    This is the single entry point called by the router.
+    This is the single entry point called by the router. Topics are read ONLY
+    from the given corpus scope — the old fuzzy ``course_title``→ChromaDB-course
+    matcher is gone, so the assessment generator can no longer accidentally read
+    another course's topics. ``course_title`` is kept solely as a human label for
+    the LLM grouping prompt.
 
     Returns
     -------
     list[dict]
         Exactly 5 categories (or 1 "General" fallback), each with:
-        ``name``, ``description``, ``topics`` (canonical), ``all_topics``
-        (all variant strings for ChromaDB).
+        ``name``, ``description``, ``topics`` (canonical), ``all_topics``.
     """
-    # Resolve Django course title to ChromaDB identifier
-    chroma_course = resolve_chromadb_course(course_title)
-    logger.info("Resolved course: '%s' → '%s'", course_title, chroma_course)
+    scope.validate()
 
-    # Fetch raw topics and chunk counts from ChromaDB
-    raw_topics = get_course_topics(chroma_course)
-    topic_counts = get_topic_chunk_counts(chroma_course)
+    # Fetch raw topics and chunk counts from the scoped corpus
+    raw_topics = get_course_topics(scope)
+    topic_counts = get_topic_chunk_counts(scope)
 
-    logger.info("Raw topics for '%s': %d", chroma_course, len(raw_topics))
+    logger.info(
+        "Raw topics for corpus '%s' (course '%s'): %d",
+        scope.corpus_id, course_title, len(raw_topics),
+    )
 
     if not raw_topics:
         return [{"name": "General", "description": f"General knowledge of {course_title}.", "topics": [], "all_topics": []}]

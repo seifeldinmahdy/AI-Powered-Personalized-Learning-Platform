@@ -1,6 +1,9 @@
 from django.contrib import admin
 from django import forms
-from .models import Course, Module, Lesson, Slide, CodeChallenge, Enrollment
+from .models import (
+    Course, Module, Lesson, Slide, CodeChallenge, Enrollment,
+    CourseCorpus, CorpusSource,
+)
 
 
 class CourseAdminForm(forms.ModelForm):
@@ -95,3 +98,23 @@ class EnrollmentAdmin(admin.ModelAdmin):
     list_display = ("student", "course", "progress_percentage", "current_score", "is_paid", "enrolled_at")
     list_filter = ("course", "is_paid")
     search_fields = ("student__username", "course__title")
+
+
+class CorpusSourceInline(admin.TabularInline):
+    model = CorpusSource
+    extra = 0
+
+
+@admin.register(CourseCorpus)
+class CourseCorpusAdmin(admin.ModelAdmin):
+    list_display = ("course", "corpus_id", "name", "created_at")
+    search_fields = ("course__title", "corpus_id")
+    readonly_fields = ("corpus_id",)
+    inlines = [CorpusSourceInline]
+
+
+@admin.register(CorpusSource)
+class CorpusSourceAdmin(admin.ModelAdmin):
+    list_display = ("title", "book_stem", "corpus", "source_type", "is_active", "added_at")
+    list_filter = ("source_type", "is_active")
+    search_fields = ("title", "book_stem", "corpus__course__title")

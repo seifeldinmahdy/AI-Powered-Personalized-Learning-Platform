@@ -112,6 +112,28 @@ class PathwayGenerator:
         )
         self._synthetic_gen = SyntheticContextGenerator()
 
+    @staticmethod
+    def _build_scope(context: StudentContext):
+        """Build the required RetrievalScope from the student context.
+
+        Raises ``ValueError`` if no corpus_id was resolved — retrieval must
+        never run unscoped.
+        """
+        import sys
+        from pathlib import Path
+
+        rag_dir = str(Path(__file__).resolve().parent.parent.parent.parent / "rag_pipeline")
+        if rag_dir not in sys.path:
+            sys.path.insert(0, rag_dir)
+        from src.retrieval.retrieval_service import RetrievalScope  # type: ignore
+
+        if not context.corpus_id:
+            raise ValueError(
+                f"No corpus_id resolved for course_id='{context.course_id}'. "
+                f"Cannot generate a pathway without a corpus scope."
+            )
+        return RetrievalScope(corpus_id=context.corpus_id, course_id=context.course_id)
+
     def generate(
         self,
         context: StudentContext,
@@ -153,15 +175,21 @@ class PathwayGenerator:
             "pathway_generation_start",
             student_id=context.student_id,
             course_id=context.course_id,
+            corpus_id=context.corpus_id,
             mastery=context.mastery_level,
         )
 
-        # 2. Load ALL chunks from ChromaDB
-        chunks = self._reader.get_all_course_chunks(context.course_id)
+        # 2. Load ALL chunks from ChromaDB — strictly scoped to this corpus
+        scope = self._build_scope(context)
+        chunks = self._reader.get_all_chunks(scope)
         if not chunks:
+            # An empty result now means exactly one thing: this course's corpus
+            # is empty (no silent cross-course fallback). Surface it clearly so
+            # the admin knows to add sources / run the indexer + backfill.
             raise ValueError(
-                f"No chunks found for course '{context.course_id}'. "
-                f"Available courses: {self._reader.get_available_courses()}"
+                f"Course corpus is empty: no chunks found for corpus_id="
+                f"'{context.corpus_id}' (course_id='{context.course_id}'). "
+                f"Add sources to this course's corpus and index them."
             )
 
         # 3. Synthetic context (if requested)
@@ -176,7 +204,7 @@ class PathwayGenerator:
             }
             diff_tier = mastery_to_diff.get(context.mastery_level, "intermediate")
             difficulty_topics = self._reader.get_topics_by_difficulty(
-                context.course_id, diff_tier
+                scope, diff_tier
             )
 
             context = self._synthetic_gen.generate(

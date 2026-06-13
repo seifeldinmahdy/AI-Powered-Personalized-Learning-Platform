@@ -125,6 +125,63 @@ class VectorStore:
         logger.info("vectorstore_query_results", n_found=n_found)
         return results
 
+    def get_where(
+        self,
+        where: dict[str, Any] | None = None,
+        include: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Metadata-filtered fetch (no embedding/similarity).
+
+        Thin wrapper over ``collection.get`` so callers (RetrievalService)
+        never touch the raw collection. ``where`` is a ChromaDB filter clause.
+        """
+        kwargs: dict[str, Any] = {}
+        if where:
+            kwargs["where"] = where
+        kwargs["include"] = include if include is not None else ["documents", "metadatas"]
+        return self.collection.get(**kwargs)
+
+    def get_by_ids(
+        self,
+        ids: list[str],
+        where: dict[str, Any] | None = None,
+        include: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Fetch specific chunk ids, optionally constrained by a ``where`` clause.
+
+        The ``where`` constraint lets callers enforce a scope (e.g. corpus_id)
+        even when fetching by id, so an id from another corpus can never leak.
+        """
+        if not ids:
+            return {"ids": [], "documents": [], "metadatas": []}
+        kwargs: dict[str, Any] = {"ids": ids}
+        if where:
+            kwargs["where"] = where
+        kwargs["include"] = include if include is not None else ["documents", "metadatas"]
+        return self.collection.get(**kwargs)
+
+    def count_where(self, where: dict[str, Any] | None = None) -> int:
+        """Return the number of chunks matching *where* (scope-aware count)."""
+        if not where:
+            return self.collection.count()
+        res = self.collection.get(where=where, include=[])
+        return len(res.get("ids", []))
+
+    def update_metadata(
+        self,
+        ids: list[str],
+        metadatas: list[dict[str, Any]],
+    ) -> None:
+        """Update metadata on existing chunks in place (no re-embedding).
+
+        Used by the corpus backfill to stamp ``corpus_id`` / ``course_id``
+        onto already-indexed chunks without re-running the indexing pipeline.
+        """
+        if not ids:
+            return
+        self.collection.update(ids=ids, metadatas=metadatas)
+        logger.info("chunk_metadata_updated", count=len(ids))
+
     def get_all_metadata_values(self, field: str) -> list[str]:
         """Return distinct values for a metadata field across all chunks.
 

@@ -100,10 +100,31 @@ async def generate_categorized_endpoint(req: GenerateCategorizedRequest):
     """
     try:
         import asyncio
+
+        # Resolve the corpus scope server-side from the Django course id. The
+        # assessment generator is a first-class retrieval consumer: it must read
+        # topics from this course's corpus only, never an unscoped/fuzzy match.
+        from pathway.corpus_resolver import resolve_corpus_id  # type: ignore
+        from src.retrieval.retrieval_service import RetrievalScope  # type: ignore
+
+        corpus_id = resolve_corpus_id(req.course_id)
+        if not corpus_id:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"No corpus is defined for course '{req.course_id}'. An admin "
+                    f"must create the course corpus and add sources first."
+                ),
+            )
+        scope = RetrievalScope(corpus_id=corpus_id, course_id=req.course_id)
+
         # build_assessment_categories is CPU-bound (embedding) + blocking IO (LLM)
         # Run it in a thread pool to avoid blocking the async event loop
-        categories = await asyncio.to_thread(build_assessment_categories, req.course_title)
-        logger.info("Created %d categories for course '%s'", len(categories), req.course_title)
+        categories = await asyncio.to_thread(build_assessment_categories, req.course_title, scope)
+        logger.info(
+            "Created %d categories for course '%s' (corpus '%s')",
+            len(categories), req.course_title, corpus_id,
+        )
 
         # Distribute questions across categories
         num_categories = len(categories)
@@ -118,6 +139,8 @@ async def generate_categorized_endpoint(req: GenerateCategorizedRequest):
 
         return {"categories": result}
 
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
