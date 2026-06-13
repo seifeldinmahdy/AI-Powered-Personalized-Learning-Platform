@@ -50,11 +50,27 @@ class ContinueRequest(BaseModel):
     student_emotion: Optional[str] = Field(default=None, description="Current student emotional state for tone adaptation")
 
 
+class GroundingPassage(BaseModel):
+    """A raw retrieved source passage the tutor must ground on."""
+    text: str
+    book: str = ""
+    page_start: int = 0
+    page_end: int = 0
+    topic: str = ""
+    relevance_score: float = 0.0
+
+
 class AskQuestionRequest(BaseModel):
     session_id: str = Field(..., description="Session ID")
     question: str = Field(..., min_length=1, description="Student's question")
     include_audio: bool = Field(default=True, description="Include TTS audio in response")
     student_emotion: Optional[str] = Field(default=None, description="Student's emotional state during the question")
+    grounding: Optional[list[GroundingPassage]] = Field(
+        default=None,
+        description="Raw retrieved source passages (from /rag/ask) for the tutor "
+                    "to ground on. The tutor grounds on these PRIMARY passages, "
+                    "not on a pre-generated RAG answer.",
+    )
 
 
 class StopRequest(BaseModel):
@@ -162,7 +178,15 @@ async def ask(request: AskQuestionRequest):
         raise HTTPException(status_code=404, detail="Session not found")
 
     try:
-        result = await answer_question(request.session_id, request.question, student_emotion=request.student_emotion)
+        grounding_passages = (
+            [p.model_dump() for p in request.grounding] if request.grounding else None
+        )
+        result = await answer_question(
+            request.session_id,
+            request.question,
+            student_emotion=request.student_emotion,
+            grounding_passages=grounding_passages,
+        )
 
         audio_base64 = None
         blendshapes = None
@@ -191,6 +215,7 @@ async def ask(request: AskQuestionRequest):
             "is_finished": result["is_finished"],
             "status": result["status"],
             "inference_time": result.get("inference_time"),
+            "grounded": result.get("grounded", False),
         }
     except Exception as e:
         logger.error(f"Ask question error: {e}")

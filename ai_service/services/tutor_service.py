@@ -178,6 +178,19 @@ TUTOR_SKILLS = {
         "Only after two failed attempts should you provide a partial answer."
     ),
 
+    # Activated when retrieved source passages are supplied with the question.
+    # The tutor grounds on PRIMARY textbook text (not a pre-generated RAG answer).
+    "SOURCE_GROUNDING": (
+        "SKILL — SOURCE GROUNDING: You have been given RETRIEVED SOURCE PASSAGES "
+        "(verbatim excerpts from this course's textbook corpus). Base every factual "
+        "claim in your answer ONLY on those passages — they are the ground truth. "
+        "When you state a fact, attribute it to its source (book + page range). "
+        "If the passages do not actually contain what the student is asking about, "
+        "say plainly that the course materials do not cover it rather than inventing "
+        "an answer. This grounding does not override the Socratic style: use the "
+        "passages to form your hints and guiding questions, not to dump the answer."
+    ),
+
     # Activated when intent is Emotional-State — replaces Socratic approach entirely
     "EMOTIONAL_ACKNOWLEDGEMENT": (
         "SKILL — EMOTIONAL ACKNOWLEDGEMENT: The student is expressing a feeling or emotional state, "
@@ -974,12 +987,35 @@ async def generate_lecture_chunk(
     }
 
 
+def _format_grounding_block(passages: Optional[list[dict]]) -> str:
+    """Render retrieved source passages as a primary-text grounding block.
+
+    This is what makes the tutor ground on RAW retrieved passages (primary text
+    + citations) rather than on a pre-generated RAG answer. Returns "" when no
+    passages are supplied (ungrounded fallback).
+    """
+    if not passages:
+        return ""
+    lines = [
+        "RETRIEVED SOURCE PASSAGES (verbatim textbook excerpts — ground your "
+        "answer ONLY in these and cite book + pages):"
+    ]
+    for i, p in enumerate(passages, 1):
+        book = p.get("book", "?")
+        ps, pe = p.get("page_start", 0), p.get("page_end", 0)
+        topic = p.get("topic", "")
+        text = (p.get("text") or "").strip()
+        lines.append(f"[{i}] {book} p.{ps}-{pe}" + (f" ({topic})" if topic else "") + f":\n{text}")
+    return "\n\n".join(lines)
+
+
 async def answer_question(
     session_id: str,
     question: str,
     student_emotion: Optional[str] = None,
     intent: Optional[str] = None,
     intent_confidence: float = 0.0,
+    grounding_passages: Optional[list[dict]] = None,
 ) -> dict:
     """
     Handle a student question mid-lecture.
@@ -1153,9 +1189,16 @@ async def answer_question(
         elif is_hands_on:
             qa_skills.append("HANDS_ON_LEARNER")
 
+    # Ground on raw retrieved passages when available (single-model grounding).
+    grounding_block = _format_grounding_block(grounding_passages)
+    if grounding_block:
+        qa_skills.append("SOURCE_GROUNDING")
+
     system_prompt = _build_system_prompt(ANSWER_SYSTEM_PROMPT, qa_skills)
 
     context_parts = []
+    if grounding_block:
+        context_parts.append(grounding_block)
     if session.running_summary:
         context_parts.append(f"CONTEXT (what we've covered so far):\n{session.running_summary}")
 
@@ -1244,6 +1287,10 @@ async def answer_question(
         "status": session.status,
         "inference_time": elapsed,
         "active_skills": qa_skills,
+        # True when the answer was grounded on retrieved source passages.
+        # False → the UI surfaces a "grounding unavailable" state instead of
+        # silently presenting an ungrounded answer as if it were sourced.
+        "grounded": bool(grounding_block),
     }
 
 

@@ -38,6 +38,7 @@ export interface AskResponse {
   progress: number;
   is_finished: boolean;
   status: string;
+  grounded?: boolean;
 }
 
 export interface SERResult {
@@ -90,11 +91,14 @@ export async function askTutor(
   question: string,
   include_audio = true,
   student_emotion?: string,
+  grounding?: RAGPassage[],
 ): Promise<AskResponse> {
   const res = await fetch(`${AI_URL}/tutor/ask`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id, question, include_audio, student_emotion }),
+    // `grounding` carries the RAW retrieved passages; the tutor grounds on these
+    // primary excerpts rather than a pre-generated RAG answer.
+    body: JSON.stringify({ session_id, question, include_audio, student_emotion, grounding }),
   });
   if (!res.ok) throw new Error('Failed to ask tutor');
   return res.json();
@@ -170,16 +174,26 @@ export interface RAGSource {
   relevance_score: number;
 }
 
-export interface RAGAnswer {
-  answer: string;
-  sources: RAGSource[];
+/** A raw retrieved source passage: primary text + citation. */
+export interface RAGPassage extends RAGSource {
+  chunk_id: string;
+  text: string;
 }
 
-export async function askRag(question: string, topic?: string): Promise<RAGAnswer> {
+export interface RAGResult {
+  question: string;
+  passages: RAGPassage[];
+  grounded: boolean;
+}
+
+/** Retrieve RAW textbook passages for a question, scoped to the course corpus.
+ *  `courseId` is the Django course id — the AI service resolves it to the
+ *  course's corpus scope server-side so the tutor can only cite this course. */
+export async function askRag(question: string, courseId: string): Promise<RAGResult> {
   const res = await fetch(`${AI_URL}/rag/ask`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, topic, top_k: 5 }),
+    body: JSON.stringify({ question, course_id: String(courseId), top_k: 5 }),
   });
   if (!res.ok) throw new Error('RAG unavailable');
   return res.json();

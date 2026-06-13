@@ -25,11 +25,15 @@ interface TranscriptEntry {
   text: string;
   topic?: string;
   sources?: { book: string; page_start: number; page_end: number }[];
+  // Set on on-topic answers: true = grounded in textbook passages, false =
+  // answered without grounding (surface a "grounding unavailable" note).
+  grounded?: boolean;
 }
 
 interface CompactTutorProps {
   lessonTitle?: string;
   lessonId?: number;
+  courseId?: string;
   sessionId?: string;
   subtopics?: string[];
   fusedEmotion?: string;
@@ -47,6 +51,7 @@ interface CompactTutorProps {
 export function CompactTutor({
   lessonTitle,
   lessonId,
+  courseId,
   sessionId,
   subtopics = [],
   fusedEmotion,
@@ -483,22 +488,30 @@ export function CompactTutor({
       }
 
       // On-Topic Question (or Repeat/clarification fallback)
-      // Try RAG first to ground the answer in textbook content
-      let ragContext = '';
+      // Retrieve RAW textbook passages scoped to THIS course's corpus, and let
+      // the tutor LLM ground on them directly (no pre-generated RAG answer, no
+      // telephone game). courseId is required to resolve the corpus scope.
+      let grounding: import('../services/tutor').RAGPassage[] = [];
       let ragSources: { book: string; page_start: number; page_end: number }[] = [];
-      try {
-        const ragRes = await askRag(q, lessonTitle);
-        // Only use RAG context if it found real sources (not the "could not find" fallback)
-        if (ragRes.answer && ragRes.sources.length > 0 && !ragRes.answer.includes('could not find')) {
-          ragContext = `\n\nRelevant textbook context:\n${ragRes.answer}`;
-          ragSources = ragRes.sources.map(s => ({ book: s.book, page_start: s.page_start, page_end: s.page_end }));
+      if (courseId) {
+        try {
+          const ragRes = await askRag(q, courseId);
+          if (ragRes.grounded && ragRes.passages.length > 0) {
+            grounding = ragRes.passages;
+            ragSources = ragRes.passages.map(s => ({ book: s.book, page_start: s.page_start, page_end: s.page_end }));
+          }
+        } catch {
+          // Retrieval unavailable — fall through to an ungrounded tutor answer.
         }
-      } catch {
-        // RAG unavailable — fall back to pure LLM
       }
 
-      const augmentedQuestion = ragContext ? `${q}${ragContext}` : q;
-      const res = await askTutor(sessionIdRef.current, augmentedQuestion, !isMutedRef.current, currentEmotion !== 'neutral' ? currentEmotion : undefined);
+      const res = await askTutor(
+        sessionIdRef.current,
+        q,
+        !isMutedRef.current,
+        currentEmotion !== 'neutral' ? currentEmotion : undefined,
+        grounding.length > 0 ? grounding : undefined,
+      );
 
       // Staleness guard: if this was an auto-explain and the student moved
       // to a different slide while we were waiting, discard the response.
@@ -512,6 +525,7 @@ export function CompactTutor({
         text: res.answer,
         topic: 'Answer',
         sources: ragSources.length > 0 ? ragSources : undefined,
+        grounded: res.grounded,
       }]);
 
       if (lessonId) persistChatLog(lessonId, q, res.answer);
@@ -858,6 +872,11 @@ export function CompactTutor({
                       📖 {s.book} p.{s.page_start}–{s.page_end}
                     </span>
                   ))}
+                </div>
+              )}
+              {entry.role === 'tutor' && entry.grounded === false && (
+                <div className="mt-1.5 text-xs text-amber-600/90 flex items-center gap-1">
+                  ⚠ Grounding unavailable — answered from general knowledge, not the course textbook.
                 </div>
               )}
             </div>

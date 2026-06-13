@@ -879,6 +879,7 @@ export default function LiveSession() {
           key={lessonId}
           lessonTitle={slides.length > 0 ? plan?.sessions.find((s) => s.session_number === currentLessonIndex + 1)?.session_title || 'AI Session' : lesson?.title || ''}
           lessonId={lessonId ? Number(lessonId) : undefined}
+          courseId={courseId}
           sessionId={sessionIdRef.current}
           subtopics={subtopics}
           fusedEmotion={fusedEmotion}
