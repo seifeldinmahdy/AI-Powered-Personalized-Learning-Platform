@@ -202,12 +202,15 @@ export async function checkRelevance(question: string, lessonTitle: string): Pro
 
 export type IntentName = 'On-Topic Question' | 'Off-Topic Question' | 'Emotional-State' | 'Pace-Related' | 'Repeat/clarification';
 
-export async function classifyIntent(text: string, sessionContext = ''): Promise<IntentName> {
+export async function classifyIntent(text: string, sessionId?: string): Promise<IntentName> {
   try {
     const res = await fetch(`${AI_URL}/intent/classify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ student_input: text, session_context: sessionContext }),
+      // Send only the real session_id. The AI service auto-fills the classifier
+      // context (topic / emotion / pace / ability / slides) from
+      // SharedSessionStore, so we never build a client-side context string.
+      body: JSON.stringify({ student_input: text, session_id: sessionId }),
     });
     if (!res.ok) return 'On-Topic Question';
     const data = await res.json();

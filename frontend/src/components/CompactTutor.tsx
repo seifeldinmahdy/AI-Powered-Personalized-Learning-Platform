@@ -342,12 +342,12 @@ export function CompactTutor({
         } else if (emotionKeywords.some(k => lower.includes(k))) {
           intent = 'Emotional-State';
         } else {
-          // Format context to match the model's training format so it can
-          // correctly judge what is on-topic vs off-topic for this lesson.
-          const sessionContext = lessonTitle
-            ? `topic:${lessonTitle} | prev:${lessonTitle} | emotion:neutral | pace:normal`
-            : '';
-          intent = await classifyIntent(q, sessionContext);
+          // Pass the real backend session_id. The AI service fills the
+          // classifier context from SharedSessionStore (live emotion / pace /
+          // topic / ability), so it reflects real state instead of constants.
+          // Falls back gracefully to empty context if the session isn't in the
+          // store yet.
+          intent = await classifyIntent(q, sessionIdRef.current ?? undefined);
         }
       }
 

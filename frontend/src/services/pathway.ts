@@ -104,9 +104,11 @@ export interface SlideGenerateRequest {
   topics_covered: string[];
   book: string;
   chunks: SessionChunk[];
-  mastery_level: string;
-  composition_mode: string;
-  language_proficiency: string;
+  // Personalization (mastery_level / composition_mode / language_proficiency)
+  // is derived server-side from the student's stored context. The client only
+  // identifies the student; it never sends personalization literals.
+  student_id: string;
+  course_id: string;
 }
 
 // ── API calls ──────────────────────────────────────────────────

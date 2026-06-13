@@ -64,7 +64,20 @@ class SlideGenerateRequest(BaseModel):
     topics_covered: list[str] = Field(default_factory=list)
     book: str = ""
     chunks: list[SessionChunkIn]
-    # Deprecated: use student_context instead. Kept for backward compatibility.
+    # Preferred: the AI service derives personalization server-side from the
+    # student's stored context. The frontend only needs to identify the student.
+    student_id: Optional[str] = Field(
+        default=None,
+        description="Student ID. When provided with course_id, the stored "
+                    "UnifiedStudentContext is loaded server-side to drive "
+                    "mastery_level / composition_mode / language_proficiency.",
+    )
+    course_id: Optional[str] = Field(
+        default=None,
+        description="Course ID. See student_id.",
+    )
+    # Deprecated: personalization literals. Kept only as a graceful fallback for
+    # internal callers when no stored context can be resolved.
     mastery_level: str | None = "Novice"
     composition_mode: str | None = "visual_heavy"
     language_proficiency: str | None = "Elementary"
@@ -247,6 +260,33 @@ def _normalize_for_t5(text: str) -> str:
             text = text.replace(sym, repl)
     return text
 
+
+
+def _resolve_student_context(
+    request: SlideGenerateRequest,
+) -> Optional[UnifiedStudentContext]:
+    """Resolve the student's UnifiedStudentContext for slide personalization.
+
+    Resolution priority:
+      1. An explicit ``request.student_context`` (back-compat / internal callers).
+      2. Server-side load from the StudentContextStore keyed by
+         ``student_id`` + ``course_id`` (the placement-derived context).
+      3. ``None`` — the caller then falls back to the deprecated literal
+         fields / defaults so slide generation still succeeds.
+    """
+    if request.student_context is not None:
+        return request.student_context
+
+    if request.student_id and request.course_id:
+        try:
+            from services.student_context_store import get_student_context_store
+            return get_student_context_store().load(
+                request.student_id, request.course_id,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("slides: student context load failed: %s", exc)
+
+    return None
 
 
 def _generate_session_slides(
@@ -612,6 +652,31 @@ async def generate_slides(request: SlideGenerateRequest):
         "slides_generation_start: session=%d title=%s chunks=%d",
         request.session_number, request.session_title, len(request.chunks),
     )
+
+    # ── Derive personalization server-side from the stored context ──
+    # The frontend no longer sends mastery/composition/language literals; we
+    # load the student's placement-derived UnifiedStudentContext here so every
+    # student drives their own slide-generation inputs.
+    if request.student_context is None:
+        resolved = _resolve_student_context(request)
+        if resolved is not None:
+            request.student_context = resolved
+            logger.info(
+                "slides_personalization_source=stored_context student=%s course=%s "
+                "mastery=%s composition=%s language=%s",
+                request.student_id, request.course_id,
+                resolved.profile.mastery_level,
+                resolved.profile.composition_mode,
+                resolved.profile.language_proficiency,
+            )
+        else:
+            logger.info(
+                "slides_personalization_source=defaults student=%s course=%s "
+                "mastery=%s composition=%s language=%s (no stored context found)",
+                request.student_id, request.course_id,
+                request.mastery_level, request.composition_mode,
+                request.language_proficiency,
+            )
 
     # ── Read tutor context from SharedSessionStore ──────────────
     tutor_context = None
