@@ -12,4 +12,5 @@ router.register(r"learning-profile", views.StudentLearningProfileViewSet, basena
 urlpatterns = [
     path("", include(router.urls)),
     path("practice-completion/", views.practice_completion, name="practice_completion"),
+    path("concept-mastery/", views.concept_mastery_view, name="concept-mastery"),
 ]

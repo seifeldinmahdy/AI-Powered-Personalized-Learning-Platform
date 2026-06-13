@@ -154,6 +154,16 @@ class StudentLearningProfile(models.Model):
             "recommended_approaches, topics_of_difficulty, topics_of_strength."
         ),
     )
+    # Concept-mastery is a SEPARATE field — the profiler LLM never writes here.
+    # Only mastery.py (ai_service) updates these values via deterministic EMA.
+    concept_mastery = models.JSONField(
+        default=dict,
+        help_text=(
+            "Keys are concept IDs (str). Per-entry shape: "
+            "{score: 0.0-1.0, evidence: int, trend: up|flat|down, "
+            "last_updated: iso, linked_mistakes: []}."
+        ),
+    )
 
     class Meta:
         db_table = "student_learning_profiles"

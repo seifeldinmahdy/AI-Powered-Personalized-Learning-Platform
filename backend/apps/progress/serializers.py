@@ -59,6 +59,6 @@ class StudentLearningProfileSerializer(serializers.ModelSerializer):
         fields = [
             "id", "student", "student_username",
             "last_updated", "sessions_count",
-            "profile_summary", "profile_data",
+            "profile_summary", "profile_data", "concept_mastery",
         ]
         read_only_fields = ["id", "student", "last_updated"]

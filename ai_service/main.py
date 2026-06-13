@@ -16,7 +16,7 @@ if _intent_model_dir not in sys.path:
 from fastapi.middleware.cors import CORSMiddleware
 from routers import health, asr, coding, assessments, student_context
 from routers import intent, tts, fer, ser, tutor, rag, profiler, slides, session
-from routers import a2f_health, problem_set
+from routers import a2f_health, problem_set, clos, surveys, capstone as capstone_router
 
 # Add course_pathway to sys.path for the pathway router
 from pathlib import Path as _Path
@@ -117,5 +117,7 @@ _static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 if os.path.isdir(_static_dir):
     app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 app.include_router(student_context.router)
-app.include_router(pathway_router)
 app.include_router(problem_set.router)
+app.include_router(clos.router)
+app.include_router(surveys.router)
+app.include_router(capstone_router.router)

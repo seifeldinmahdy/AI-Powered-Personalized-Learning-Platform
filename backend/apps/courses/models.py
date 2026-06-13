@@ -200,6 +200,10 @@ class Enrollment(models.Model):
     is_paid = models.BooleanField(default=False)
     is_pathway_ready = models.BooleanField(default=False)
     is_assessment_started = models.BooleanField(default=False)
+    # Set once the course is genuinely complete: material at 100% for courses
+    # without a capstone, or a PASSED capstone for courses that have one. Drives
+    # the survey trigger and certificate date. See apps.courses.completion.
+    completed_at = models.DateTimeField(null=True, blank=True)
     last_accessed = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -226,3 +230,58 @@ class CourseRating(models.Model):
 
     def __str__(self):
         return f"{self.student.username} → {self.course.title}: {self.rating}★"
+
+
+# ------------------------------------------------------------------
+# Concept — atomic learning unit within a course (shallow tree)
+# ------------------------------------------------------------------
+class Concept(models.Model):
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="concepts")
+    label = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=60)
+    parent = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="children"
+    )
+    lessons = models.ManyToManyField(Lesson, blank=True, related_name="concepts")
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "concepts"
+        ordering = ["order"]
+        unique_together = [["course", "slug"]]
+        verbose_name = "Concept"
+        verbose_name_plural = "Concepts"
+
+    def __str__(self):
+        return f"{self.course.title} — {self.label}"
+
+
+# ------------------------------------------------------------------
+# CourseLearningOutcome — measurable outcome for a course (CLO)
+# ------------------------------------------------------------------
+class CourseLearningOutcome(models.Model):
+    BLOOM_CHOICES = [
+        ("remember", "Remember"),
+        ("understand", "Understand"),
+        ("apply", "Apply"),
+        ("analyze", "Analyze"),
+        ("evaluate", "Evaluate"),
+        ("create", "Create"),
+    ]
+
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="clos")
+    code = models.CharField(max_length=20, help_text="E.g. CLO1, CLO2")
+    text = models.TextField()
+    bloom_level = models.CharField(max_length=20, choices=BLOOM_CHOICES, blank=True)
+    concepts = models.ManyToManyField(Concept, blank=True, related_name="clos")
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "course_learning_outcomes"
+        ordering = ["order"]
+        unique_together = [["course", "code"]]
+        verbose_name = "Course Learning Outcome"
+        verbose_name_plural = "Course Learning Outcomes"
+
+    def __str__(self):
+        return f"{self.course.title} — {self.code}"

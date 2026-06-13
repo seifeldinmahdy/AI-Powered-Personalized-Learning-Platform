@@ -20,6 +20,7 @@ import {
     Lightbulb, ChevronDown, ChevronUp, ArrowLeft, ArrowRight, Trophy,
     AlertTriangle, Eye, Code2, BarChart3, SkipForward,
 } from 'lucide-react';
+import { CapstoneStartCTA } from '../../components/CapstoneStartCTA';
 
 /* ── helpers ─────────────────────────────────────────────── */
 
@@ -363,13 +364,25 @@ export default function ProblemSet() {
                             Continue to Next Session
                         </button>
                     ) : (
-                        <button
-                            onClick={() => navigate(`/courses/${courseId}`)}
-                            className="mt-8 w-full py-3 bg-gradient-to-r from-primary to-secondary text-white rounded-xl font-semibold flex items-center justify-center gap-2 hover:shadow-lg transition-all"
-                        >
-                            <Trophy size={18} />
-                            Back to Course
-                        </button>
+                        <div className="mt-8 space-y-4">
+                            {/* Course finished — terminal gate is the capstone */}
+                            <div className="rounded-2xl border-2 border-primary/30 bg-gradient-to-br from-primary/5 to-secondary/5 p-6 text-center space-y-3">
+                                <Trophy size={28} className="mx-auto text-primary" />
+                                <div>
+                                    <p className="font-semibold">You've finished the coursework!</p>
+                                    <p className="text-sm text-muted-foreground">One final step: complete your capstone project.</p>
+                                </div>
+                                <div className="flex justify-center">
+                                    <CapstoneStartCTA courseId={Number(courseId)} variant="inline" />
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => navigate(`/courses/${courseId}`)}
+                                className="w-full py-2.5 rounded-xl font-medium border border-border text-muted-foreground hover:bg-muted/40 transition-all"
+                            >
+                                Back to Course
+                            </button>
+                        </div>
                     )}
                 </div>
             </div>

@@ -552,7 +552,12 @@ async def _fetch_student_profile(student_id: str) -> dict:
 
 
 async def _patch_student_profile(student_id: str, profile_data: dict) -> None:
-    """Patch the student's profile_data on Django."""
+    """Patch the student's profile_data on Django.
+
+    INVARIANT: only writes profile_data (qualitative LLM rewrite).
+    concept_mastery is a separate DB field owned exclusively by mastery.py —
+    it is never read or written here, so the profiler LLM cannot overwrite mastery scores.
+    """
     service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

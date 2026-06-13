@@ -9,6 +9,7 @@ import { getCourseById, submitCourseRating, type Course } from '../services/cour
 import { getModules, getLessons, type Module, type Lesson } from '../services/lessons';
 import { getEnrollments } from '../services/api';
 import { getLessonCompletions } from '../services/progress';
+import { CapstoneStartCTA } from '../components/CapstoneStartCTA';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -54,6 +55,7 @@ interface EnrollmentInfo {
     placement_score: number | null;
     is_pathway_ready: boolean;
     is_assessment_started: boolean;
+    progress_percentage?: string;
 }
 
 export default function CourseDetail() {
@@ -510,6 +512,11 @@ function CtaCard({
                         <>Start Assessment & Enroll <ChevronRight size={16} /></>
                     )}
                 </button>
+            )}
+
+            {/* Capstone entry — appears once the coursework is finished */}
+            {isEnrolled && enrollment && parseFloat(enrollment.progress_percentage ?? '0') >= 100 && (
+                <CapstoneStartCTA courseId={courseId} variant="card" />
             )}
 
             {/* Star rating — enrolled students only */}

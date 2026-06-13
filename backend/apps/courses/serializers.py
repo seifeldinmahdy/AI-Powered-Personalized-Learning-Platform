@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Course, Module, Lesson, Slide, CodeChallenge, Enrollment, CourseRating
+from .models import Course, Module, Lesson, Slide, CodeChallenge, Enrollment, CourseRating, Concept, CourseLearningOutcome
 
 
 class CourseSerializer(serializers.ModelSerializer):
@@ -86,3 +86,26 @@ class EnrollmentSerializer(serializers.ModelSerializer):
             "is_assessment_started", "is_paid", "enrolled_at", "last_accessed",
         ]
         read_only_fields = ["id", "student", "enrolled_at", "last_accessed"]
+
+
+class ConceptSerializer(serializers.ModelSerializer):
+    children = serializers.SerializerMethodField()
+
+    def get_children(self, obj):
+        return ConceptSerializer(obj.children.all(), many=True).data
+
+    class Meta:
+        model = Concept
+        fields = ["id", "course", "label", "slug", "parent", "lessons", "order", "children"]
+        read_only_fields = ["id"]
+
+
+class CourseLearningOutcomeSerializer(serializers.ModelSerializer):
+    concepts = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Concept.objects.all(), required=False
+    )
+
+    class Meta:
+        model = CourseLearningOutcome
+        fields = ["id", "course", "code", "text", "bloom_level", "concepts", "order"]
+        read_only_fields = ["id", "course"]

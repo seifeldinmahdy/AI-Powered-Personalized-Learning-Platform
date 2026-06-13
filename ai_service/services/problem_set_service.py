@@ -263,6 +263,7 @@ Each question object must have these exact fields:
             BAD: "Is the code correct?"
             GOOD: "Does the function use a return statement rather than only printing the result?"
           - weight: float, all check weights within one criterion must sum to exactly 1.0
+      - concept_id: (optional) set to the concept ID string from AVAILABLE CONCEPTS if one matches, else omit/null.
       - result and evidence fields must NOT appear in generated output — they are added only at evaluation time
     All criterion weights must sum to exactly 100.
     All check weights within each criterion must sum to exactly 1.0.
@@ -374,6 +375,38 @@ async def generate(request) -> ProblemSetData:
     unresolved_qs = profile_data.get("unresolved_questions", [])
     unresolved_block = chr(10).join(str(q) for q in unresolved_qs) if unresolved_qs else "None"
 
+    # Fetch course concepts + student weak-concept list for targeting
+    from services.mastery import fetch_course_concepts, fetch_concept_mastery, top_weak_concepts
+    course_concepts: list[dict] = []
+    weak_concept_block = ""
+    concepts_block = ""
+    if course_id:
+        try:
+            course_concepts = await fetch_course_concepts(course_id)
+            concept_mastery = await fetch_concept_mastery(student_id)
+            if concept_mastery:
+                weak = top_weak_concepts(concept_mastery, n=3)
+                # Enrich with labels
+                concept_label_map = {c["id"]: c["label"] for c in course_concepts}
+                weak_labeled = [
+                    {**w, "label": concept_label_map.get(w["concept_id"], w["concept_id"])}
+                    for w in weak
+                ]
+                if weak_labeled:
+                    weak_concept_block = (
+                        "\nWEAK CONCEPTS TO TARGET (prioritize in question selection and rubric criteria):\n"
+                        + json.dumps(weak_labeled, indent=2)
+                        + "\nInclude at least one question directly addressing the weakest concept above."
+                    )
+            if course_concepts:
+                concepts_block = (
+                    "\nAVAILABLE CONCEPTS FOR TAGGING (set concept_id in rubric criteria):\n"
+                    + json.dumps(course_concepts, indent=2)
+                    + "\nFor each rubric criterion, set concept_id to the ID of the most relevant concept above, or null."
+                )
+        except Exception as _ce:
+            logger.warning("Could not fetch concepts/mastery for prompt: %s", _ce)
+
     user_prompt = f"""Analyze the session content below, then generate an appropriate number of coding questions (typically 2-8) that thoroughly cover the material.
 
 SESSION SUMMARY:
@@ -390,7 +423,8 @@ STUDENT PROFILE:
 
 UNRESOLVED QUESTIONS FROM PREVIOUS SESSIONS (address these if relevant):
 {unresolved_block}
-
+{weak_concept_block}
+{concepts_block}
 Based on the breadth and depth of the material above, decide how many questions are needed and what each should cover. Output ONLY a JSON array of question objects."""
 
     # Call LLM with retries
@@ -490,6 +524,19 @@ Based on the breadth and depth of the material above, decide how many questions 
     # Don't save empty problem sets
     if not questions:
         raise RuntimeError("Problem set generation produced 0 questions after 3 attempts")
+
+    # Defensive: drop any concept_id the LLM hallucinated that isn't a real
+    # course concept, so mastery.py never writes a junk key into concept_mastery.
+    if course_concepts:
+        valid_concept_ids = {str(c["id"]) for c in course_concepts}
+        dropped = 0
+        for q in questions:
+            for crit in q.rubric:
+                if crit.concept_id and str(crit.concept_id) not in valid_concept_ids:
+                    crit.concept_id = None
+                    dropped += 1
+        if dropped:
+            logger.info("Dropped %d hallucinated concept_id(s) not in course concepts", dropped)
 
     # Build and save
     problem_set = ProblemSetData(

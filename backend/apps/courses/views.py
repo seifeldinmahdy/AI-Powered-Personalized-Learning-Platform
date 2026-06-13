@@ -5,11 +5,13 @@ from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from .models import Course, Module, Lesson, Slide, CodeChallenge, Enrollment, CourseRating
+from .models import Course, Module, Lesson, Slide, CodeChallenge, Enrollment, CourseRating, Concept, CourseLearningOutcome
 from .serializers import (
     CourseSerializer, ModuleSerializer, LessonSerializer, LessonDetailSerializer,
     SlideSerializer, CodeChallengeStudentSerializer, EnrollmentSerializer, CourseRatingSerializer,
+    ConceptSerializer, CourseLearningOutcomeSerializer,
 )
+from django.conf import settings
 
 CACHE_TTL = 60 * 15  # 15 minutes
 
@@ -338,3 +340,121 @@ def get_coding_hint(request):
             {"error": "AI Grading Service is currently offline."},
             status=status.HTTP_503_SERVICE_UNAVAILABLE
         )
+
+
+# ------------------------------------------------------------------
+# Concept ViewSet — read-only; nested under /api/courses/courses/<course_pk>/concepts/
+# ------------------------------------------------------------------
+class ConceptViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = ConceptSerializer
+    permission_classes = [AllowAny]
+
+    def get_queryset(self):
+        course_pk = self.kwargs.get("course_pk")
+        qs = Concept.objects.select_related("parent").prefetch_related("children", "lessons")
+        if course_pk:
+            qs = qs.filter(course_id=course_pk)
+        return qs
+
+
+# ------------------------------------------------------------------
+# CourseLearningOutcome ViewSet — CRUD (admin writes); nested under /api/courses/courses/<course_pk>/clos/
+# ------------------------------------------------------------------
+class CourseLearningOutcomeViewSet(viewsets.ModelViewSet):
+    serializer_class = CourseLearningOutcomeSerializer
+    permission_classes = [IsAdminOrReadOnly]
+
+    def get_queryset(self):
+        course_pk = self.kwargs.get("course_pk")
+        qs = CourseLearningOutcome.objects.prefetch_related("concepts")
+        if course_pk:
+            qs = qs.filter(course_id=course_pk)
+        return qs
+
+    def perform_create(self, serializer):
+        course_pk = self.kwargs.get("course_pk")
+        serializer.save(course_id=course_pk)
+
+    @action(detail=False, methods=["post"], url_path="suggest",
+            permission_classes=[permissions.IsAuthenticated])
+    def suggest(self, request, course_pk=None):
+        """POST /api/courses/courses/<course_pk>/clos/suggest/ — admin only.
+        Proxies to the AI service to generate draft CLOs.
+        """
+        if getattr(request.user, "role", None) != "admin":
+            return Response({"error": "Admin only"}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            course = Course.objects.get(pk=course_pk)
+        except Course.DoesNotExist:
+            return Response({"error": "Course not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Build outline: [{module, lessons: [str]}]
+        outline = []
+        for module in course.modules.prefetch_related("lessons").order_by("module_order"):
+            outline.append({
+                "module": module.title,
+                "lessons": list(module.lessons.values_list("title", flat=True).order_by("lesson_order")),
+            })
+
+        existing_concepts = list(
+            Concept.objects.filter(course=course).values("id", "label")
+        )
+
+        ai_url = getattr(settings, "AI_SERVICE_URL", "http://localhost:8001")
+        try:
+            ai_resp = requests.post(
+                f"{ai_url}/clos/suggest",
+                json={
+                    "course_title": course.title,
+                    "outline": outline,
+                    "existing_concepts": [
+                        {"id": str(c["id"]), "label": c["label"]} for c in existing_concepts
+                    ],
+                },
+                timeout=120,
+            )
+            ai_resp.raise_for_status()
+            return Response(ai_resp.json())
+        except requests.exceptions.ConnectionError:
+            return Response({"error": "AI service offline"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    @action(detail=False, methods=["get"], url_path="attainment",
+            permission_classes=[permissions.IsAuthenticated])
+    def attainment(self, request, course_pk=None):
+        """GET /api/courses/courses/<course_pk>/clos/attainment/?student=<id>
+        Returns per-CLO attainment derived from concept_mastery scores.
+        """
+        from apps.progress.models import StudentLearningProfile
+
+        student_id = request.query_params.get("student") or request.user.id
+        profile = StudentLearningProfile.objects.filter(student_id=student_id).first()
+        cm = (profile.concept_mastery or {}) if profile else {}
+
+        clos = (
+            CourseLearningOutcome.objects
+            .filter(course_id=course_pk)
+            .prefetch_related("concepts")
+        )
+        result = []
+        for clo in clos:
+            scores = [
+                cm[str(c.id)]["score"]
+                for c in clo.concepts.all()
+                if str(c.id) in cm
+            ]
+            evidence = sum(
+                cm.get(str(c.id), {}).get("evidence", 0)
+                for c in clo.concepts.all()
+            )
+            result.append({
+                "id": clo.id,
+                "code": clo.code,
+                "text": clo.text,
+                "bloom_level": clo.bloom_level,
+                "attainment": round(sum(scores) / len(scores), 3) if scores else None,
+                "evidence_count": evidence,
+            })
+        return Response(result)

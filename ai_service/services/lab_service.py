@@ -505,6 +505,25 @@ async def generate_coding_lab(request: CodingLabGenerateRequest) -> CodingLabGen
         profile_data = await _fetch_student_profile(request.student_id)
         topic = request.lesson_title or session.get("current_topic", "")
         profile_context = _extract_relevant_profile_context(profile_data, topic=topic)
+
+        # Append weak-concept remediation targets derived from concept_mastery
+        course_id = getattr(request, "course_id", "") or ""
+        if course_id:
+            from services.mastery import fetch_concept_mastery, fetch_course_concepts, top_weak_concepts
+            try:
+                cm = await fetch_concept_mastery(request.student_id)
+                if cm:
+                    concepts = await fetch_course_concepts(course_id)
+                    label_map = {c["id"]: c["label"] for c in concepts}
+                    weak = top_weak_concepts(cm, n=3)
+                    if weak:
+                        labels = [label_map.get(w["concept_id"], w["concept_id"]) for w in weak]
+                        profile_context += (
+                            f"\nREMEDIATION TARGETS: {', '.join(labels)}. "
+                            "Include one dedicated remediation coding cell addressing the weakest concept."
+                        )
+            except Exception as _we:
+                logger.debug("Could not fetch weak concepts for lab: %s", _we)
     except Exception as exc:
         logger.warning("lab_profile_fetch_failed: %s — continuing without profile", exc)
 

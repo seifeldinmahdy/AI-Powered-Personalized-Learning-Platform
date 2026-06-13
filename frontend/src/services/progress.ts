@@ -127,3 +127,22 @@ export async function reportPracticeCompletion(
     );
     return response.data;
 }
+
+// ---------- Concept Mastery ----------
+
+export interface ConceptMasteryEntry {
+    concept_id: string;
+    label: string;
+    score: number;
+    evidence: number;
+    trend: 'up' | 'flat' | 'down';
+    last_updated: string;
+    linked_mistakes: string[];
+}
+
+export async function getConceptMastery(courseId?: number): Promise<ConceptMasteryEntry[]> {
+    const response = await api.get<ConceptMasteryEntry[]>('/progress/concept-mastery/', {
+        params: courseId ? { course: courseId } : undefined,
+    });
+    return Array.isArray(response.data) ? response.data : [];
+}

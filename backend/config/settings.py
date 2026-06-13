@@ -35,6 +35,8 @@ INSTALLED_APPS = [
     "apps.courses",
     "apps.progress",
     "apps.gamification",
+    "apps.feedback",
+    "apps.capstone",
 ]
 
 MIDDLEWARE = [
@@ -159,3 +161,11 @@ CORS_ALLOW_CREDENTIALS = True
 
 # ---------- FastAPI AI Service ----------
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
+
+# ---------- GitHub App (capstone provisioning) ----------
+GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
+GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "")  # PEM content
+GITHUB_APP_INSTALLATION_ID = os.getenv("GITHUB_APP_INSTALLATION_ID", "")
+GITHUB_ORG = os.getenv("GITHUB_ORG", "")
+GITHUB_WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
+INTERNAL_SERVICE_KEY = os.getenv("INTERNAL_SERVICE_KEY", "")

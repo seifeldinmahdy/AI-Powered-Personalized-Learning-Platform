@@ -11,6 +11,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -64,6 +65,20 @@ async def submit_answer(request: ProblemSetSubmitRequest):
             language=request.language,
             hints_used=request.hints_used,
         )
+
+        # Fire-and-forget: update concept_mastery from binary rubric results.
+        # The LLM never touches mastery scores — only mastery.py does.
+        try:
+            from services.mastery import update_concept_mastery_from_eval
+            asyncio.create_task(
+                update_concept_mastery_from_eval(
+                    student_id=request.student_id,
+                    evaluated_rubric=[c.model_dump() for c in result.evaluated_rubric],
+                )
+            )
+        except Exception as _me:
+            logger.warning("Could not schedule mastery update: %s", _me)
+
         return result.model_dump()
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

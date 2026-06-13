@@ -191,12 +191,60 @@ class StudentLearningProfileViewSet(viewsets.ModelViewSet):
             profile.profile_summary = request.data["profile_summary"]
             profile.save(update_fields=["profile_summary"])
 
+        # concept_mastery is updated here only — the profiler LLM never writes this field.
+        incoming_cm = request.data.get("concept_mastery")
+        if incoming_cm and isinstance(incoming_cm, dict):
+            existing_cm = profile.concept_mastery or {}
+            existing_cm.update(incoming_cm)
+            profile.concept_mastery = existing_cm
+            profile.save(update_fields=["concept_mastery"])
+
         return Response(StudentLearningProfileSerializer(profile).data)
 
     @action(detail=False, methods=["patch"], url_path="update")
     def patch_profile(self, request):
         """PATCH /learning-profile/update/ — list-level patch alias."""
         return self.partial_update(request)
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def concept_mastery_view(request):
+    """GET /api/progress/concept-mastery/?course=<id>
+    Returns the student's concept_mastery vector, optionally filtered by course.
+    Each entry is enriched with the concept label.
+    """
+    from apps.courses.models import Concept
+
+    course_id = request.query_params.get("course")
+    profile = StudentLearningProfile.objects.filter(student=request.user).first()
+    if not profile:
+        return Response([])
+
+    cm = profile.concept_mastery or {}
+
+    if course_id:
+        concept_ids_in_course = set(
+            str(c_id) for c_id in
+            Concept.objects.filter(course_id=course_id).values_list("id", flat=True)
+        )
+        cm = {k: v for k, v in cm.items() if k in concept_ids_in_course}
+
+    # Resolve labels for the remaining concept IDs
+    try:
+        numeric_ids = [int(k) for k in cm if k.isdigit()]
+        label_map = {
+            str(c.id): c.label
+            for c in Concept.objects.filter(id__in=numeric_ids)
+        }
+    except Exception:
+        label_map = {}
+
+    result = [
+        {"concept_id": k, "label": label_map.get(k, k), **v}
+        for k, v in cm.items()
+    ]
+    return Response(result)
 
 
 @api_view(['POST'])

@@ -1,13 +1,16 @@
 import { Header } from '../../components/Header';
 import { CircularProgress } from '../../components/CircularProgress';
-import { Play, Clock, Award, TrendingUp, BookOpen, Target, Loader2, Bookmark } from 'lucide-react';
+import { ConceptMasteryChart } from '../../components/ConceptMasteryChart';
+import { Play, Clock, Award, TrendingUp, BookOpen, Target, Loader2, Bookmark, MessageSquare } from 'lucide-react';
 import { Link } from 'react-router';
 import { useAuth } from '../../contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { getEnrollments } from '../../services/api';
-import { getLessonCompletions, getBookmarks, type LessonCompletion, type Bookmark as BookmarkType } from '../../services/progress';
+import { getLessonCompletions, getBookmarks, getConceptMastery, type LessonCompletion, type Bookmark as BookmarkType, type ConceptMasteryEntry } from '../../services/progress';
 import { getMyAchievements, getDailyStats, type UserAchievement, type DailyStudyStats } from '../../services/gamification';
 import { getStudentProfile, type StudentProfile } from '../../services/profile';
+import { getSurveyStatus } from '../../services/surveys';
+import { CapstoneStartCTA } from '../../components/CapstoneStartCTA';
 
 interface EnrollmentData {
   id: number;
@@ -29,6 +32,8 @@ export default function Dashboard() {
   const [dailyStats, setDailyStats] = useState<DailyStudyStats[]>([]);
   const [profile, setProfile] = useState<StudentProfile | null>(null);
   const [bookmarks, setBookmarks] = useState<BookmarkType[]>([]);
+  const [conceptMastery, setConceptMastery] = useState<ConceptMasteryEntry[]>([]);
+  const [surveyPendingCourseId, setSurveyPendingCourseId] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,15 +51,34 @@ export default function Dashboard() {
 
         if (cancelled) return;
 
+        let loadedEnrollments: EnrollmentData[] = [];
         if (enrollRes.status === 'fulfilled') {
           const raw = enrollRes.value.data;
-          setEnrollments(Array.isArray(raw) ? raw : raw.results ?? []);
+          loadedEnrollments = Array.isArray(raw) ? raw : (raw as { results?: EnrollmentData[] }).results ?? [];
+          setEnrollments(loadedEnrollments);
         }
         if (completionsRes.status === 'fulfilled') setCompletions(completionsRes.value);
         if (achievementsRes.status === 'fulfilled') setAchievements(achievementsRes.value);
         if (statsRes.status === 'fulfilled') setDailyStats(statsRes.value);
         if (profileRes.status === 'fulfilled') setProfile(profileRes.value);
         if (bookmarksRes.status === 'fulfilled') setBookmarks(bookmarksRes.value);
+
+        // Load concept mastery for the active course
+        const activeEnrollment = loadedEnrollments[0];
+        if (activeEnrollment) {
+          const [cmRes, surveyRes] = await Promise.allSettled([
+            getConceptMastery(activeEnrollment.course),
+            parseFloat(activeEnrollment.progress_percentage) >= 100
+              ? getSurveyStatus(activeEnrollment.id)
+              : Promise.resolve(null),
+          ]);
+          if (!cancelled) {
+            if (cmRes.status === 'fulfilled') setConceptMastery(cmRes.value);
+            if (surveyRes.status === 'fulfilled' && surveyRes.value?.pending) {
+              setSurveyPendingCourseId(activeEnrollment.course);
+            }
+          }
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -211,6 +235,34 @@ export default function Dashboard() {
             </section>
           )}
 
+          {/* Capstone start banner — material complete, capstone is the terminal gate */}
+          {currentEnrollment && progress >= 100 && (
+            <section className="mb-8">
+              <CapstoneStartCTA courseId={currentEnrollment.course} variant="banner" />
+            </section>
+          )}
+
+          {/* Survey Banner */}
+          {surveyPendingCourseId !== null && (
+            <section className="mb-8">
+              <div className="bg-card rounded-2xl border-2 border-primary/30 p-6 shadow-sm flex items-center gap-5">
+                <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                  <MessageSquare size={22} className="text-primary" />
+                </div>
+                <div className="flex-1">
+                  <p className="font-semibold text-foreground mb-0.5">You completed the course!</p>
+                  <p className="text-sm text-muted-foreground">Share your feedback to help improve the course for future students.</p>
+                </div>
+                <Link
+                  to={`/survey/${surveyPendingCourseId}`}
+                  className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors shrink-0"
+                >
+                  Take Survey
+                </Link>
+              </div>
+            </section>
+          )}
+
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Recent Activity */}
             <section className="lg:col-span-2">
@@ -259,7 +311,7 @@ export default function Dashboard() {
               </div>
             </section>
 
-            {/* Sidebar - Achievements & Weekly Stats */}
+            {/* Sidebar - Achievements, Concept Mastery & Weekly Stats */}
             <section className="space-y-8">
               {/* Achievements */}
               <div>
@@ -296,6 +348,11 @@ export default function Dashboard() {
                   )}
                 </div>
               </div>
+
+              {/* Concept Mastery Chart */}
+              {conceptMastery.length > 0 && (
+                <ConceptMasteryChart data={conceptMastery} />
+              )}
 
               {/* Saved Items */}
               <div>
@@ -349,7 +406,7 @@ export default function Dashboard() {
                             >
                               {parseFloat(day.hours_spent) > 0
                                 ? `${day.hours_spent}h`
-                                : '\u2014'}
+                                : '—'}
                             </span>
                           </div>
                         ))}

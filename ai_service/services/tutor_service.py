@@ -322,6 +322,8 @@ class TutorSession:
 
     # ── Engagement personalization data from profiler ─────────────────
     student_profile_data: Optional[dict] = None
+    # Structured weak concepts from concept_mastery [{concept_id, label, score, evidence}]
+    weak_concepts: list = field(default_factory=list)
 
     # ── Socratic attempt tracking ─────────────────────────────────────
     # Tracks how many times the student has attempted to answer the
@@ -579,6 +581,14 @@ async def _fetch_and_attach_profile(session: TutorSession) -> None:
             session.student_profile_summary = profile_data.get(
                 "profile_summary", ""
             )
+        # Populate structured weak concepts for skill targeting
+        try:
+            from services.mastery import fetch_concept_mastery, top_weak_concepts
+            cm = await fetch_concept_mastery(session.student_id)
+            if cm:
+                session.weak_concepts = top_weak_concepts(cm, n=3)
+        except Exception as _wce:
+            logger.debug("Could not fetch weak concepts for tutor session: %s", _wce)
         logger.info(
             "Profile attached to session %s for student %s",
             session.session_id, session.student_id
@@ -766,6 +776,14 @@ async def generate_lecture_chunk(
             d in combined_lower or any(word in d for word in combined_lower.split() if len(word) > 3)
             for d in difficulties
         )
+        # Also treat low-mastery concepts as difficulty topics
+        if not is_difficulty_topic and session.weak_concepts:
+            for wc in session.weak_concepts:
+                wc_label = str(wc.get("label", "")).lower()
+                if wc_label and (wc_label in combined_lower or combined_lower in wc_label):
+                    is_difficulty_topic = True
+                    break
+
         is_strength_topic = any(
             s in combined_lower or any(word in s for word in combined_lower.split() if len(word) > 3)
             for s in strengths

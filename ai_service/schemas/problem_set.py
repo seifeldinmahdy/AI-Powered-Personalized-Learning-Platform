@@ -73,6 +73,7 @@ class RubricCriterion(BaseModel):
     name: str                  # human-readable name
     weight: float              # percentage of total score. all criteria sum to 100
     checks: list[RubricCheck]  # 2 to 4 checks per criterion
+    concept_id: Optional[str] = None  # concept this criterion targets (set by generator, used by mastery.py)
 
 
 class RubricScore(BaseModel):
