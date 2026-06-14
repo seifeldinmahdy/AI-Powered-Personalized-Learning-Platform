@@ -76,6 +76,7 @@ class PlacementResultResponse(BaseModel):
     weaknesses: list[str]
     topic_performance: dict[str, float]
     incorrectly_answered: list[dict]
+    pathway_ready: bool = False  # True once the pathway was generated server-side
     context_saved: bool
 
 
@@ -255,9 +256,24 @@ async def submit_placement(req: SubmitPlacementRequest):
         len(concept_scores), strengths, weaknesses,
     )
 
+    # ── Generate the pathway ONCE, server-side, now (UX shows "building…") ──
+    # This is the single trigger and the single writer of is_pathway_ready.
+    pathway_ready = False
+    try:
+        import asyncio
+        from services.pathway_trigger import generate_after_placement, mark_pathway_ready
+        pathway_ready = await asyncio.to_thread(
+            generate_after_placement, req.student_id, req.course_id, profile,
+        )
+        if pathway_ready:
+            await asyncio.to_thread(mark_pathway_ready, req.enrollment_id, req.student_id)
+    except Exception:
+        logger.exception("placement: pathway generation trigger failed")
+
     return PlacementResultResponse(
         score_pct=score_pct,
         mastery_level=mastery_level,
+        pathway_ready=pathway_ready,
         strengths=strengths,
         weaknesses=weaknesses,
         topic_performance={},  # deprecated; concept_mastery is authoritative

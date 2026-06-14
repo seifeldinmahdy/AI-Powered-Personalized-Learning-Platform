@@ -180,10 +180,17 @@ class SessionGrouper:
             title = f"{titles[0]}, {titles[1]} & {len(titles) - 2} more"
 
         session_chunks = [
-            SessionChunk(chunk_id=c.chunk_id, raw_text=c.raw_text)
+            SessionChunk(
+                chunk_id=c.chunk_id,
+                raw_text=c.raw_text,
+                concept_id=getattr(c, "concept_id", "") or "",
+            )
             for c in chunks
         ]
         topics = list(dict.fromkeys(c.topic for c in chunks))
+        # Provenance: distinct concept ids taught by this session (sorted for
+        # determinism). clo_codes are filled by the generator (it holds the map).
+        concept_ids = sorted({getattr(c, "concept_id", "") or "" for c in chunks} - {""})
         total_tokens = sum(_estimate_tokens(c.raw_text) for c in chunks)
 
         books = [c.book for c in chunks if c.book]
@@ -196,6 +203,7 @@ class SessionGrouper:
             session_title=title,
             chunks=session_chunks,
             topics_covered=topics,
+            concept_ids=concept_ids,
             estimated_token_count=total_tokens,
             book=book,
             page_range_start=page_start,

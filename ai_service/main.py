@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from routers import health, asr, coding, assessments, student_context
 from routers import intent, tts, fer, ser, tutor, rag, profiler, slides, session
 from routers import a2f_health, problem_set, clos, surveys, capstone as capstone_router
+from routers import pathway_admin
 
 # Add course_pathway to sys.path for the pathway router
 from pathlib import Path as _Path
@@ -110,6 +111,7 @@ app.include_router(slides.router)
 app.include_router(session.router)
 app.include_router(assessments.router)
 app.include_router(pathway_router)
+app.include_router(pathway_admin.router)
 app.include_router(a2f_health.router)
 app.include_router(student_context.router)
 app.include_router(problem_set.router)

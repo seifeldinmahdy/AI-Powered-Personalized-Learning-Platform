@@ -299,11 +299,16 @@ class Personalizer:
         chunks: list[CourseChunk],
         strength_diffs: list[str],
     ) -> list[CourseChunk]:
-        """Strength topics: keep only higher-difficulty + definitional chunks.
+        """Strength topics: compress to higher-difficulty + definitional chunks.
 
-        Definitional chunks are always kept (even at beginner level)
-        because they define the concept.  Applied/example chunks are
-        filtered to only the target difficulty tier.
+        Definitional chunks are always kept (they define the concept); applied
+        chunks are filtered to the target difficulty tier.
+
+        COVERAGE INVARIANT: compression is a DEPTH choice driven by mastery — it
+        must never remove a concept entirely. So every concept_id present in the
+        input retains at least one chunk after compression (deterministic pick:
+        lowest (chunk_index, chunk_id)). This keeps strength-compression from
+        breaking CLO coverage for high-mastery students.
         """
         selected: list[CourseChunk] = []
         for chunk in chunks:
@@ -312,10 +317,29 @@ class Personalizer:
             elif chunk.difficulty in strength_diffs:
                 selected.append(chunk)
 
-        # If filtering removed everything, keep at least the first chunk
+        selected_ids = {c.chunk_id for c in selected}
+
+        # Per-concept retention: any concept whose chunks were all dropped gets
+        # one representative chunk added back (deterministic order).
+        chunks_by_concept: dict[str, list[CourseChunk]] = {}
+        for c in chunks:
+            cid = getattr(c, "concept_id", "") or ""
+            if cid:
+                chunks_by_concept.setdefault(cid, []).append(c)
+
+        for cid, cchunks in chunks_by_concept.items():
+            if any(c.chunk_id in selected_ids for c in cchunks):
+                continue
+            keep = sorted(cchunks, key=lambda c: (c.chunk_index, c.chunk_id))[0]
+            selected.append(keep)
+            selected_ids.add(keep.chunk_id)
+
+        # If filtering removed everything (e.g. untagged chunks), keep first.
         if not selected and chunks:
             selected = [chunks[0]]
 
+        # Preserve deterministic order by (chunk_index, chunk_id).
+        selected.sort(key=lambda c: (c.chunk_index, c.chunk_id))
         return selected
 
     @staticmethod

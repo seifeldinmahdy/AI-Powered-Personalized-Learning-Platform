@@ -324,8 +324,11 @@ export default function Assessment() {
                     </div>
                 </div>
                 <div className="text-center mt-8">
-                    <h1 className="text-xl font-bold text-white mb-2">Analyzing your results...</h1>
-                    <p className="text-white/50 text-sm">Building your personalized learning profile</p>
+                    <h1 className="text-xl font-bold text-white mb-2">Building your course…</h1>
+                    <p className="text-white/50 text-sm">
+                        Scoring your placement and generating your personalized,
+                        outcome-aligned learning pathway. This can take a moment.
+                    </p>
                 </div>
             </div>
         );

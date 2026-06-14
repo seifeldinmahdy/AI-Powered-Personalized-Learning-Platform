@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 
 import {
   generateSlides,
+  getCurrentPathway,
   type PathwayPlan,
   type GeneratedSlide,
 } from '../../services/pathway';
@@ -164,14 +165,25 @@ export default function LiveSession() {
         }
 
         // ─── AI Slide Generation (with cache) ─────────────────
-        const rawPlan = sessionStorage.getItem('pathway_plan');
-        if (rawPlan) {
-          const pathwayPlan: PathwayPlan = JSON.parse(rawPlan);
+        // Read the CURRENT authoritative plan (single source of truth) — not a
+        // sessionStorage copy. The slide cache is pinned to plan_version, so a
+        // version bump makes stale slides structurally unreachable.
+        let pathwayPlan: PathwayPlan | null = null;
+        try {
+          const authUser = localStorage.getItem('auth_user');
+          const studentId = authUser ? JSON.parse(authUser).id : '';
+          if (studentId && courseId) {
+            pathwayPlan = await getCurrentPathway(String(studentId), String(courseId));
+          }
+        } catch {
+          // No current plan yet — leave pathwayPlan null (handled below).
+        }
+        if (pathwayPlan) {
           if (!cancelled) setPlan(pathwayPlan);
           const currentSession = pathwayPlan.sessions.find(s => s.session_number === sessionNum);
           if (currentSession) {
-            // Check cache first to avoid re-generation on reload
-            const cacheKey = `slides_cache_${lessonId}`;
+            // Cache key pinned to plan_version (not just lessonId).
+            const cacheKey = `slides_cache_${courseId}_v${pathwayPlan.plan_version}_${sessionNum}`;
             const cachedSlides = sessionStorage.getItem(cacheKey);
             if (cachedSlides) {
               try {

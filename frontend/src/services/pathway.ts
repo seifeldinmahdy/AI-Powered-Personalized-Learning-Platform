@@ -11,6 +11,8 @@ export interface PathwaySession {
   session_number: number;
   session_title: string;
   topics_covered: string[];
+  concept_ids?: string[];   // provenance
+  clo_codes?: string[];     // provenance
   estimated_token_count: number;
   chunk_count: number;
   book: string;
@@ -25,6 +27,7 @@ export interface PathwayPlan {
   total_chunks: number;
   generated_at: string;
   cached: boolean;
+  plan_version: number;     // authoritative version (pins slide caches)
   sessions: PathwaySession[];
 }
 
@@ -117,6 +120,24 @@ export interface SlideGenerateRequest {
 
 // ── API calls ──────────────────────────────────────────────────
 
+/** Read-only fetch of the CURRENT authoritative plan. Opening the pathway page
+ *  must NOT generate — generation happens once, server-side, after placement. */
+export async function getCurrentPathway(
+  studentId: string,
+  courseId: string,
+): Promise<PathwayPlan> {
+  const res = await fetch(
+    `${AI_URL}/pathway/current?student_id=${encodeURIComponent(studentId)}&course_id=${encodeURIComponent(courseId)}`,
+  );
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`No pathway available: ${detail}`);
+  }
+  return res.json();
+}
+
+/** @deprecated Generation is server-side (post-placement) and service-key gated;
+ *  the browser cannot call /pathway/generate. Use getCurrentPathway to read. */
 export async function generatePathway(
   request: GeneratePathwayRequest,
 ): Promise<PathwayPlan> {

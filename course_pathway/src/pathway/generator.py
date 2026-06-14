@@ -10,6 +10,8 @@ and returns a ``PathwayResponse``.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections import defaultdict
 from difflib import SequenceMatcher
@@ -18,17 +20,30 @@ import structlog
 
 from pathway.chromadb_reader import ChromaDBReader
 from pathway.config import PathwaySettings
-from pathway.llm.curriculum import design_curriculum
-from pathway.llm.naming import OllamaClient, validate_sequence
+from pathway.llm.curriculum import (
+    clean_topic_list,
+    propose_curriculum,
+    resolve_curriculum,
+)
+from pathway.llm.naming import OllamaClient
 from pathway.models.schemas import (
     CourseChunk,
     DiscoveredSection,
     LLMCurriculumSession,
     PathwayResponse,
     Session,
+    SessionChunk,
     SessionPlan,
     StudentContext,
 )
+
+
+class CoverageError(ValueError):
+    """Raised when a plan fails to cover every CLO concept.
+
+    Coverage is a guarantee, not a personalization choice: assessment results
+    set depth/order/pacing/remediation, never WHETHER a CLO is taught.
+    """
 from pathway.models.synthetic import SyntheticContextGenerator
 from pathway.personalization.personalizer import Personalizer
 from pathway.session.grouper import SessionGrouper
@@ -137,136 +152,141 @@ class PathwayGenerator:
     def generate(
         self,
         context: StudentContext,
+        clo_concepts: list[dict] | None = None,
         force_regenerate: bool = False,
     ) -> PathwayResponse:
-        """Generate (or retrieve cached) a personalized session plan.
+        """Generate (or retrieve current) a personalized, CLO-covering plan.
 
         Parameters
         ----------
         context:
-            Student context with mastery, strengths, weaknesses.
+            Student context (mastery, strengths, weaknesses) — sets DEPTH,
+            ORDER, PACING, REMEDIATION, never CLO coverage.
+        clo_concepts:
+            ``[{concept_id, label, clo_code}]`` — the course's CLO concept set.
+            Generation GUARANTEES every concept here is covered, or raises
+            ``CoverageError``.
         force_regenerate:
-            If True, ignore cached plans and regenerate from scratch.
+            If True, bypass the current-version check and create a new version.
 
         Returns
         -------
         PathwayResponse
-            Contains the ``SessionPlan`` and a ``cached`` flag.
+            The current ``SessionPlan`` and a ``cached`` flag.
         """
         ctx_hash = context.context_hash()
 
-        # 1. Check cache (unless forced)
-        if not force_regenerate:
-            if not self._store.needs_regeneration(
-                context.student_id, context.course_id, ctx_hash
-            ):
-                cached_plan = self._store.load(
-                    context.student_id, context.course_id
-                )
-                if cached_plan is not None:
-                    logger.info(
-                        "pathway_served_from_cache",
-                        student_id=context.student_id,
-                        course_id=context.course_id,
-                    )
-                    return PathwayResponse(plan=cached_plan, cached=True)
+        # 1. Current-version reuse (deterministic + context-hashed). Identical
+        #    context returns the existing CURRENT plan — no new version.
+        if not force_regenerate and not self._store.needs_regeneration(
+            context.student_id, context.course_id, ctx_hash
+        ):
+            cached_plan = self._store.load_current(context.student_id, context.course_id)
+            if cached_plan is not None:
+                logger.info("pathway_served_from_current_version",
+                            student_id=context.student_id, course_id=context.course_id,
+                            plan_version=cached_plan.plan_version)
+                return PathwayResponse(plan=cached_plan, cached=True)
 
-        logger.info(
-            "pathway_generation_start",
-            student_id=context.student_id,
-            course_id=context.course_id,
-            corpus_id=context.corpus_id,
-            mastery=context.mastery_level,
-        )
+        logger.info("pathway_generation_start", student_id=context.student_id,
+                    course_id=context.course_id, corpus_id=context.corpus_id,
+                    mastery=context.mastery_level)
 
-        # 2. Load ALL chunks from ChromaDB — strictly scoped to this corpus
+        # 2. Load ALL chunks — strictly scoped to this corpus.
         scope = self._build_scope(context)
         chunks = self._reader.get_all_chunks(scope)
         if not chunks:
-            # An empty result now means exactly one thing: this course's corpus
-            # is empty (no silent cross-course fallback). Surface it clearly so
-            # the admin knows to add sources / run the indexer + backfill.
             raise ValueError(
                 f"Course corpus is empty: no chunks found for corpus_id="
                 f"'{context.corpus_id}' (course_id='{context.course_id}'). "
                 f"Add sources to this course's corpus and index them."
             )
 
-        # 3. Synthetic context (if requested)
+        # 3. Synthetic context (testing only).
         if context.use_synthetic_context:
-            topics = [c.topic for c in chunks]
-            unique_topics = list(dict.fromkeys(topics))
-
-            mastery_to_diff = {
-                "Novice": "beginner",
-                "Intermediate": "intermediate",
-                "Expert": "expert",
-            }
+            unique_topics = list(dict.fromkeys(c.topic for c in chunks))
+            mastery_to_diff = {"Novice": "beginner", "Intermediate": "intermediate", "Expert": "expert"}
             diff_tier = mastery_to_diff.get(context.mastery_level, "intermediate")
-            difficulty_topics = self._reader.get_topics_by_difficulty(
-                scope, diff_tier
-            )
-
+            difficulty_topics = self._reader.get_topics_by_difficulty(scope, diff_tier)
             context = self._synthetic_gen.generate(
-                student_id=context.student_id,
-                course_id=context.course_id,
-                available_topics=unique_topics,
-                difficulty_topics=difficulty_topics,
+                student_id=context.student_id, course_id=context.course_id,
+                available_topics=unique_topics, difficulty_topics=difficulty_topics,
                 mastery_level=context.mastery_level,
             )
             ctx_hash = context.context_hash()
 
-        # 4. Extract unique topic tags
+        # 4. Topic index.
         all_topics = list(dict.fromkeys(c.topic for c in chunks))
-
-        # Build topic → chunks index
         chunks_by_topic: dict[str, list[CourseChunk]] = defaultdict(list)
         for chunk in chunks:
             chunks_by_topic[chunk.topic].append(chunk)
+        book_titles = sorted({c.book for c in chunks})
 
-        book_titles = list({c.book for c in chunks})
+        # 5. Curriculum: capture & REPLAY the raw LLM proposal so the plan is
+        #    re-resolved deterministically (independent of provider drift).
+        clean_topics = clean_topic_list(all_topics)
+        input_hash = hashlib.sha256(
+            json.dumps({"topics": sorted(clean_topics), "intent": context.course_intent},
+                       sort_keys=True).encode()
+        ).hexdigest()
 
-        # 5. LLM designs curriculum (or fallback if no client)
-        if self._llm is not None:
-            curriculum = design_curriculum(
-                client=self._llm,
-                topics=all_topics,
-                course_intent=context.course_intent,
-                book_titles=book_titles,
+        raw_proposal: dict = {}
+        raw_proposal_hash = ""
+        cached_proposal = self._store.load_proposal(context.course_id, context.corpus_id, input_hash)
+        if cached_proposal is not None:
+            proposal_json, raw_proposal_hash = cached_proposal
+            raw_proposal = json.loads(proposal_json)
+            logger.info("curriculum_proposal_replayed", proposal_hash=raw_proposal_hash)
+        elif self._llm is not None and clean_topics:
+            raw_proposal = propose_curriculum(
+                client=self._llm, clean_topics=clean_topics,
+                course_intent=context.course_intent, book_titles=book_titles,
                 max_retries=self._settings.max_retries,
                 timeout=self._settings.ollama_curriculum_timeout,
                 target_sessions=self._settings.target_session_count,
                 min_sessions=self._settings.min_sessions,
                 max_sessions=self._settings.max_sessions,
             )
-        else:
-            # No LLM — simple alphabetical fallback
-            from pathway.llm.curriculum import _alphabetical_fallback
-            curriculum = _alphabetical_fallback(
-                all_topics, target_sessions=self._settings.target_session_count
-            )
+            proposal_json = json.dumps(raw_proposal, sort_keys=True)
+            raw_proposal_hash = hashlib.sha256(proposal_json.encode()).hexdigest()
+            self._store.save_proposal(context.course_id, context.corpus_id,
+                                      input_hash, proposal_json, raw_proposal_hash)
 
-        # 6. Build DiscoveredSections from the LLM curriculum
-        sections, section_chunks_raw = self._build_sections_from_curriculum(
-            curriculum, chunks_by_topic
+        # Deterministic resolution from the (replayed or fresh) proposal.
+        curriculum = resolve_curriculum(
+            raw_proposal, clean_topics,
+            target_sessions=self._settings.target_session_count,
+            max_sessions=self._settings.max_sessions,
         )
 
-        # 7. Personalise (chunk selection per section)
+        # 6-8. Sections → personalise (depth/order) → group into sessions.
+        sections, _ = self._build_sections_from_curriculum(curriculum, chunks_by_topic)
         personalised_sections, section_chunks = self._personalizer.personalize(
             sections, chunks, context
         )
+        sessions = self._grouper.group_sessions(personalised_sections, section_chunks)
 
-        # 8. Group into sessions (token budget)
-        sessions = self._grouper.group_sessions(
-            personalised_sections, section_chunks
-        )
+        # 9. CLO COVERAGE GUARANTEE — inject any uncovered CLO concept, then
+        #    hard-fail if a CLO concept still can't be covered.
+        clo_concepts = clo_concepts or []
+        concept_to_clos: dict[str, set[str]] = defaultdict(set)
+        concept_label: dict[str, str] = {}
+        for c in clo_concepts:
+            cid = str(c["concept_id"])
+            concept_to_clos[cid].add(c.get("clo_code", ""))
+            concept_label[cid] = c.get("label", cid)
+        required = set(concept_to_clos.keys())
+        if required:
+            self._ensure_clo_coverage(sessions, scope, required, concept_label, concept_to_clos)
 
-        # 9. Validate sequence (optional)
-        if self._llm is not None and sessions:
-            validation = validate_sequence(self._llm, sessions)
-            logger.info("sequence_validation", result=validation)
+        # 10. Provenance: stamp each session with the CLOs it teaches.
+        for s in sessions:
+            clos: set[str] = set()
+            for cid in s.concept_ids:
+                clos.update(c for c in concept_to_clos.get(cid, set()) if c)
+            s.clo_codes = sorted(clos)
 
-        # 10. Build the plan
+        # 11. Build + persist as a NEW VERSION (never overwrite).
         plan = SessionPlan(
             student_id=context.student_id,
             course_id=context.course_id,
@@ -274,20 +294,91 @@ class PathwayGenerator:
             total_sessions=len(sessions),
             total_chunks=sum(len(s.chunks) for s in sessions),
             student_context_hash=ctx_hash,
+            raw_proposal_hash=raw_proposal_hash,
         )
+        version = self._store.save_new_version(plan)
 
-        # 11. Persist
-        self._store.save(plan)
-
-        logger.info(
-            "pathway_generation_complete",
-            student_id=context.student_id,
-            course_id=context.course_id,
-            total_sessions=plan.total_sessions,
-            total_chunks=plan.total_chunks,
-        )
-
+        logger.info("pathway_generation_complete", student_id=context.student_id,
+                    course_id=context.course_id, plan_version=version,
+                    total_sessions=plan.total_sessions, total_chunks=plan.total_chunks)
         return PathwayResponse(plan=plan, cached=False)
+
+    # ── CLO coverage ─────────────────────────────────────────────
+
+    def _ensure_clo_coverage(
+        self,
+        sessions: list[Session],
+        scope,
+        required: set[str],
+        concept_label: dict[str, str],
+        concept_to_clos: dict[str, set[str]],
+    ) -> None:
+        """Guarantee every required CLO concept is covered; raise if impossible.
+
+        Uncovered concepts are injected into the deterministic best-fit session.
+        A concept with NO corpus chunks can never be covered → CoverageError.
+        """
+        def covered_set() -> set[str]:
+            out: set[str] = set()
+            for s in sessions:
+                out.update(s.concept_ids)
+            return out
+
+        missing = sorted(required - covered_set())  # deterministic order
+        for cid in missing:
+            cchunks = self._reader.get_chunks_for_concept(scope, cid)
+            if not cchunks:
+                continue  # caught by the final hard check below
+            target = self._best_fit_session(sessions, concept_label.get(cid, cid))
+            self._inject_chunks(target, cchunks, cid)
+
+        still_missing = sorted(required - covered_set())
+        if still_missing:
+            details = ", ".join(
+                f"{concept_label.get(cid, cid)} (concept {cid}; "
+                f"CLO {','.join(sorted(c for c in concept_to_clos.get(cid, set()) if c)) or '?'})"
+                for cid in still_missing
+            )
+            raise CoverageError(
+                "Pathway generation aborted: the following CLO concepts have no "
+                f"corpus chunks and cannot be covered — {details}. Add sources "
+                "covering these concepts (or run tag_chunks_with_concepts)."
+            )
+
+    @staticmethod
+    def _best_fit_session(sessions: list[Session], label: str) -> Session:
+        """Pick the deterministic best-fit session for an uncovered concept.
+
+        Score = max difflib ratio between the concept label and the session's
+        title/topics. Tie-break: highest score, then LOWEST session_number.
+        """
+        label_n = label.lower().strip()
+
+        def score(s: Session) -> float:
+            cands = [s.session_title, *s.topics_covered]
+            return max((SequenceMatcher(None, label_n, (c or "").lower()).ratio() for c in cands), default=0.0)
+
+        # Sort by (-score, session_number) → best score, lowest number on ties.
+        return sorted(sessions, key=lambda s: (-score(s), s.session_number))[0]
+
+    @staticmethod
+    def _inject_chunks(session: Session, course_chunks: list[CourseChunk], concept_id: str) -> None:
+        """Add a concept's chunks to *session* (idempotent), updating provenance."""
+        existing = {c.chunk_id for c in session.chunks}
+        added = False
+        for ch in sorted(course_chunks, key=lambda c: (c.chunk_index, c.chunk_id)):
+            if ch.chunk_id in existing:
+                continue
+            session.chunks.append(SessionChunk(
+                chunk_id=ch.chunk_id, raw_text=ch.raw_text, concept_id=concept_id,
+            ))
+            if ch.topic and ch.topic not in session.topics_covered:
+                session.topics_covered.append(ch.topic)
+            added = True
+        if added and concept_id not in session.concept_ids:
+            session.concept_ids = sorted(set(session.concept_ids) | {concept_id})
+        logger.info("clo_coverage_injected", concept_id=concept_id,
+                    session=session.session_number, added=added)
 
     def _build_sections_from_curriculum(
         self,

@@ -18,6 +18,12 @@ urlpatterns = [
     path("coding/rubric/", views.get_coding_rubric, name="coding_rubric"),
     path("coding/hint/", views.get_coding_hint, name="coding_hint"),
     path("admin/stats/", views.admin_stats, name="admin_stats"),
+    # Admin-only pathway regeneration (students get 403; proxies to AI service).
+    path(
+        "courses/<int:course_id>/pathway/regenerate/",
+        views.regenerate_pathway,
+        name="pathway-regenerate",
+    ),
     # Concepts (nested under course)
     path(
         "courses/<int:course_pk>/concepts/",

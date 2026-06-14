@@ -1,7 +1,6 @@
 import { useParams, useNavigate } from 'react-router';
 import { useState, useEffect, useRef } from 'react';
-import { generatePathway, type PathwayPlan, type PathwaySession } from '../../services/pathway';
-import api, { getEnrollments } from '../../services/api';
+import { getCurrentPathway, type PathwayPlan, type PathwaySession } from '../../services/pathway';
 import { BookOpen, Clock, Layers, ChevronRight, Loader2, Sparkles } from 'lucide-react';
 
 const LOADING_MESSAGES = [
@@ -41,7 +40,8 @@ export default function CoursePathway() {
     };
   }, [loading]);
 
-  // Generate pathway on mount
+  // READ the current authoritative plan on mount — never generate here.
+  // The plan is generated once, server-side, after placement.
   useEffect(() => {
     if (!courseId) return;
     let cancelled = false;
@@ -74,60 +74,16 @@ export default function CoursePathway() {
         const authUser = localStorage.getItem('auth_user');
         const studentId = authUser ? JSON.parse(authUser).id : 'mvp_student_001';
 
-        // Fetch real student context from persistence
-        let contextProfile: any = null;
-        try {
-          const ctxRes = await fetch(`${import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001'}/student-context/${studentId}/${courseId}`);
-          if (ctxRes.ok) {
-            const ctx = await ctxRes.json();
-            contextProfile = ctx.profile;
-          }
-        } catch (e) {
-          console.warn('Could not fetch student context, using defaults', e);
-        }
-
-        const result = await generatePathway({
-          student_id: contextProfile?.student_id || String(studentId),
-          // Always the real Django course id — the AI service resolves this to
-          // the course's corpus scope server-side. (No more 'pythonlearn' book
-          // stem leaking in as a course identifier.)
-          course_id: contextProfile?.course_id || String(courseId),
-          mastery_level: contextProfile?.mastery_level || 'Novice',
-          composition_mode: contextProfile?.composition_mode || 'balanced',
-          language_proficiency: contextProfile?.language_proficiency || 'Intermediate',
-          strengths: contextProfile?.strengths || [],
-          weaknesses: contextProfile?.weaknesses || [],
-          // Authoritative concept-id signal drives personalization; topic data
-          // is deprecated (concept_mastery is the single source of truth).
-          strength_concept_ids: contextProfile?.strength_concept_ids || [],
-          weak_concept_ids: contextProfile?.weak_concept_ids || [],
-          topic_performance: {},
-          incorrectly_answered: contextProfile?.incorrectly_answered || [],
-          use_synthetic_context: false,
-        });
+        // Read-only: fetch the current authoritative plan. No generation, no save.
+        const result = await getCurrentPathway(String(studentId), String(courseId));
 
         if (!cancelled) {
-          // Notify backend that pathway is ready
-          try {
-            const enrollRes = await getEnrollments();
-            const list = Array.isArray(enrollRes.data) ? enrollRes.data : enrollRes.data?.results || [];
-            const enrollment = list.find((e: any) => e.course === Number(courseId));
-
-            if (enrollment) {
-              await api.post(`/courses/enrollments/${enrollment.id}/save_pathway/`, {
-                pathway: result
-              });
-            }
-          } catch (backendError) {
-            console.error("Failed to sync pathway to backend", backendError);
-          }
-
           setPlan(result);
           setLoading(false);
         }
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Pathway generation failed');
+          setError(e instanceof Error ? e.message : 'Pathway not available yet');
           setLoading(false);
         }
       }

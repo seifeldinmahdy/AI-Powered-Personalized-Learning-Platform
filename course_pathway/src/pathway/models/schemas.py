@@ -194,6 +194,7 @@ class SessionChunk(BaseModel):
 
     chunk_id: str
     raw_text: str
+    concept_id: str = ""  # provenance: the concept this chunk teaches
 
 
 class Session(BaseModel):
@@ -205,6 +206,11 @@ class Session(BaseModel):
     )
     chunks: list[SessionChunk]
     topics_covered: list[str] = Field(default_factory=list)
+    # Provenance: which concepts (and therefore CLOs) this session teaches,
+    # carried from the corpus chunks it was built from. Makes any slide traceable
+    # back to a concept and a CLO.
+    concept_ids: list[str] = Field(default_factory=list)
+    clo_codes: list[str] = Field(default_factory=list)
     estimated_token_count: int = 0
     book: str = ""
     page_range_start: int = 0
@@ -223,6 +229,10 @@ class SessionPlan(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
     student_context_hash: str = ""
+    # Versioning + determinism provenance.
+    plan_version: int = 1
+    is_current: bool = True
+    raw_proposal_hash: str = ""  # hash of the stored raw LLM proposal it was resolved from
 
 
 # ── API contracts ─────────────────────────────────────────────────

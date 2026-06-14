@@ -177,23 +177,10 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         ).order_by("module__module_order", "lesson_order").first()
         serializer.save(student=self.request.user, current_lesson=first_lesson)
 
-    @action(detail=True, methods=["post"], url_path="save_pathway")
-    def save_pathway(self, request, pk=None):
-        enrollment = self.get_object()
-        pathway_data = request.data.get("pathway", {})
-        slides_data = request.data.get("slides", [])
-
-        from django.db import transaction
-        with transaction.atomic():
-            enrollment.current_pathway = pathway_data
-            enrollment.is_pathway_ready = True
-            enrollment.save(update_fields=["current_pathway", "is_pathway_ready"])
-            
-            # Here we would normally save the slides that are generated.
-            # Assuming 'slides_data' processing... (mocking as instruction just said "when saving all generated slides")
-            pass
-
-        return Response({"status": "pathway and slides saved", "is_pathway_ready": True}, status=status.HTTP_200_OK)
+    # save_pathway was RETIRED: the authoritative plan lives in the AI-service
+    # versioned store, not Django. The plan is generated once server-side after
+    # placement (which also sets is_pathway_ready — the single runtime writer of
+    # that flag). The frontend no longer pushes the plan here.
 
 
 @api_view(["GET"])
@@ -245,6 +232,45 @@ def admin_stats(request):
 
 
 
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def regenerate_pathway(request, course_id):
+    """POST /api/courses/courses/<course_id>/pathway/regenerate/  — ADMIN ONLY.
+
+    A STUDENT CANNOT regenerate their pathway. This is the only human-initiated
+    regeneration path and it is admin-gated server-side; it proxies to the
+    internal AI endpoint with the service key (which itself rejects keyless
+    callers). Body: {"student_id": <id>}.
+
+    TODO(instructor-role): when an 'instructor' role is added, allow it here too.
+    """
+    import os
+    if getattr(request.user, "role", None) != "admin":
+        return Response(
+            {"error": "Only an admin can regenerate a pathway."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    student_id = request.data.get("student_id")
+    if not student_id:
+        return Response({"error": "student_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    ai_url = getattr(settings, "AI_SERVICE_URL", "http://localhost:8001")
+    service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
+    try:
+        ai_resp = requests.post(
+            f"{ai_url}/pathway-admin/regenerate",
+            json={"student_id": str(student_id), "course_id": str(course_id)},
+            headers={"X-Service-Key": service_key},
+            timeout=600,
+        )
+        return Response(ai_resp.json(), status=ai_resp.status_code)
+    except requests.exceptions.ConnectionError:
+        return Response({"error": "AI service offline"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    except Exception as exc:
+        return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
 
 @api_view(['POST'])

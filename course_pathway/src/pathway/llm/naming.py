@@ -51,11 +51,19 @@ class OllamaClient:
         json_mode: bool = False,
         timeout_override: int | None = None,
         num_predict: int | None = None,
+        seed: int | None = None,
     ) -> str:
-        """Send a chat completion and return the raw content string."""
+        """Send a chat completion and return the raw content string.
+
+        Pass ``temperature=0`` and a fixed ``seed`` for reproducible output.
+        (Note: the pathway generator additionally captures and replays the raw
+        proposal, so determinism does not rely on provider reproducibility.)
+        """
         options: dict[str, Any] = {"temperature": temperature}
         if num_predict is not None:
             options["num_predict"] = num_predict
+        if seed is not None:
+            options["seed"] = seed
 
         payload: dict[str, Any] = {
             "model": self._model,
@@ -101,6 +109,7 @@ class OllamaClient:
         temperature: float = 0.3,
         timeout_override: int | None = None,
         num_predict: int | None = None,
+        seed: int | None = None,
     ) -> dict[str, Any]:
         """Chat expecting a JSON response, parsed into a dict.
 
@@ -115,6 +124,7 @@ class OllamaClient:
             json_mode=True,
             timeout_override=timeout_override,
             num_predict=num_predict,
+            seed=seed,
         )
         # Tier 1 — strict parse
         try:

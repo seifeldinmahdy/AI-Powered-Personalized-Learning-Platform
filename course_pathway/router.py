@@ -16,12 +16,33 @@ import os
 import sys
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/pathway", tags=["Pathway"])
+
+
+def _require_service_key(x_service_key: Optional[str]) -> None:
+    """Gate generation endpoints to internal/admin callers only.
+
+    A student's browser cannot call generate/regenerate: these require the
+    internal service key (used by the placement trigger and the admin-only Django
+    regenerate proxy). A keyless/wrong-key call gets a clear 403 — never a silent
+    regeneration. (Read endpoints stay open to the enrolled student.)
+    """
+    expected = os.getenv("INTERNAL_SERVICE_KEY", "")
+    if not expected or x_service_key != expected:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Pathway (re)generation is not permitted from this caller. "
+                "Students cannot regenerate their pathway; it is created once "
+                "after placement and re-versioned only by the system or an admin."
+            ),
+        )
 
 # ── Lazy singleton initialisation ────────────────────────────────
 
@@ -104,6 +125,8 @@ class SessionOut(BaseModel):
     session_number: int
     session_title: str
     topics_covered: list[str]
+    concept_ids: list[str] = []   # provenance
+    clo_codes: list[str] = []     # provenance
     estimated_token_count: int
     chunk_count: int
     book: str
@@ -118,6 +141,7 @@ class PlanSummary(BaseModel):
     total_chunks: int
     generated_at: str
     cached: bool
+    plan_version: int = 1
     sessions: list[SessionOut]
 
 
@@ -125,6 +149,7 @@ class PlanListItem(BaseModel):
     course_id: str
     context_hash: str
     created_at: str
+    plan_version: int = 1
 
 
 # ── Scope resolution ─────────────────────────────────────────────
@@ -155,39 +180,55 @@ def _resolve_corpus_or_404(course_id: str) -> str:
 # ── Endpoints ────────────────────────────────────────────────────
 
 
-@router.post("/generate", response_model=PlanSummary)
-async def generate_pathway(request: GenerateRequest):
-    """Generate a personalised learning pathway for a student.
+def _context_from_request(request: GenerateRequest, corpus_id: str):
+    from pathway.models.schemas import StudentContext
+    return StudentContext(
+        student_id=request.student_id,
+        course_id=request.course_id,
+        corpus_id=corpus_id,
+        mastery_level=request.mastery_level,
+        composition_mode=request.composition_mode,
+        language_proficiency=request.language_proficiency,
+        strengths=request.strengths,
+        weaknesses=request.weaknesses,
+        strength_concept_ids=request.strength_concept_ids,
+        weak_concept_ids=request.weak_concept_ids,
+        topic_performance=request.topic_performance,
+        incorrectly_answered=request.incorrectly_answered,
+        use_synthetic_context=request.use_synthetic_context,
+    )
 
-    If a cached plan exists with the same context hash, it is returned
-    immediately.  Otherwise the full pipeline runs.
-    """
+
+def _run_generation(request: GenerateRequest, force: bool) -> "PlanSummary":
+    """Shared generate/regenerate body: resolve scope, fetch CLOs, generate."""
+    from pathway.generator import CoverageError
+    from pathway.clo_fetch import fetch_clo_concepts
+
+    gen = _get_generator()
+    corpus_id = _resolve_corpus_or_404(request.course_id)
+    context = _context_from_request(request, corpus_id)
+    clo_concepts = fetch_clo_concepts(request.course_id)
     try:
-        gen = _get_generator()
+        response = gen.generate(context, clo_concepts=clo_concepts, force_regenerate=force)
+    except CoverageError as e:
+        # Coverage failure is an authoring problem — surface it clearly (422).
+        raise HTTPException(status_code=422, detail=str(e))
+    return _plan_to_summary(response.plan, response.cached)
 
-        from pathway.models.schemas import StudentContext
 
-        corpus_id = _resolve_corpus_or_404(request.course_id)
+@router.post("/generate", response_model=PlanSummary)
+async def generate_pathway(
+    request: GenerateRequest,
+    x_service_key: Optional[str] = Header(default=None),
+):
+    """INTERNAL: generate a pathway (service-key only).
 
-        context = StudentContext(
-            student_id=request.student_id,
-            course_id=request.course_id,
-            corpus_id=corpus_id,
-            mastery_level=request.mastery_level,
-            composition_mode=request.composition_mode,
-            language_proficiency=request.language_proficiency,
-            strengths=request.strengths,
-            weaknesses=request.weaknesses,
-            strength_concept_ids=request.strength_concept_ids,
-            weak_concept_ids=request.weak_concept_ids,
-            topic_performance=request.topic_performance,
-            incorrectly_answered=request.incorrectly_answered,
-            use_synthetic_context=request.use_synthetic_context,
-        )
-
-        response = gen.generate(context)
-        return _plan_to_summary(response.plan, response.cached)
-
+    Not callable by a student browser. Used by the placement trigger / admin
+    regenerate proxy. Returns the current version if context is unchanged.
+    """
+    _require_service_key(x_service_key)
+    try:
+        return _run_generation(request, force=False)
     except HTTPException:
         raise
     except ValueError as e:
@@ -198,34 +239,14 @@ async def generate_pathway(request: GenerateRequest):
 
 
 @router.post("/regenerate", response_model=PlanSummary)
-async def regenerate_pathway(request: GenerateRequest):
-    """Force-regenerate a pathway, ignoring any cached plan."""
+async def regenerate_pathway(
+    request: GenerateRequest,
+    x_service_key: Optional[str] = Header(default=None),
+):
+    """INTERNAL: force a NEW plan version (service-key only; admin path)."""
+    _require_service_key(x_service_key)
     try:
-        gen = _get_generator()
-
-        from pathway.models.schemas import StudentContext
-
-        corpus_id = _resolve_corpus_or_404(request.course_id)
-
-        context = StudentContext(
-            student_id=request.student_id,
-            course_id=request.course_id,
-            corpus_id=corpus_id,
-            mastery_level=request.mastery_level,
-            composition_mode=request.composition_mode,
-            language_proficiency=request.language_proficiency,
-            strengths=request.strengths,
-            weaknesses=request.weaknesses,
-            strength_concept_ids=request.strength_concept_ids,
-            weak_concept_ids=request.weak_concept_ids,
-            topic_performance=request.topic_performance,
-            incorrectly_answered=request.incorrectly_answered,
-            use_synthetic_context=request.use_synthetic_context,
-        )
-
-        response = gen.generate(context, force_regenerate=True)
-        return _plan_to_summary(response.plan, response.cached)
-
+        return _run_generation(request, force=True)
     except HTTPException:
         raise
     except ValueError as e:
@@ -233,6 +254,58 @@ async def regenerate_pathway(request: GenerateRequest):
     except Exception as e:
         logger.error(f"Pathway regeneration error: {e}")
         raise HTTPException(status_code=500, detail=f"Regeneration failed: {e}")
+
+
+@router.get("/current", response_model=PlanSummary)
+async def current_pathway(student_id: str, course_id: str):
+    """Read-only: return the CURRENT authoritative plan (no generation).
+
+    The pathway page and live session read this — opening the page never
+    triggers regeneration.
+    """
+    try:
+        gen = _get_generator()
+        plan = gen._store.load_current(student_id, course_id)
+        if plan is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No pathway has been generated yet for this student/course.",
+            )
+        return _plan_to_summary(plan, cached=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"current_pathway error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SessionProvenance(BaseModel):
+    session_number: int
+    session_title: str
+    concept_ids: list[str]
+    clo_codes: list[str]
+
+
+@router.get("/{student_id}/{course_id}/provenance", response_model=list[SessionProvenance])
+async def pathway_provenance(student_id: str, course_id: str):
+    """List, per session, the concepts and CLOs it covers (explainability)."""
+    try:
+        gen = _get_generator()
+        plan = gen._store.load_current(student_id, course_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="No current plan.")
+        return [
+            SessionProvenance(
+                session_number=s.session_number, session_title=s.session_title,
+                concept_ids=s.concept_ids, clo_codes=s.clo_codes,
+            )
+            for s in plan.sessions
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"provenance error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{student_id}", response_model=list[PlanListItem])
@@ -360,11 +433,14 @@ def _plan_to_summary(plan, cached: bool) -> PlanSummary:
         total_chunks=plan.total_chunks,
         generated_at=plan.generated_at,
         cached=cached,
+        plan_version=plan.plan_version,
         sessions=[
             SessionOut(
                 session_number=s.session_number,
                 session_title=s.session_title,
                 topics_covered=s.topics_covered,
+                concept_ids=s.concept_ids,
+                clo_codes=s.clo_codes,
                 estimated_token_count=s.estimated_token_count,
                 chunk_count=len(s.chunks),
                 book=s.book,

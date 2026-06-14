@@ -24,6 +24,12 @@ from pathway.models.schemas import LLMCurriculumSession
 
 logger = structlog.get_logger(__name__)
 
+# Fixed seed for the curriculum LLM call. Combined with temperature=0 this asks
+# the provider for greedy/reproducible decoding; the generator additionally
+# captures and replays the raw proposal so determinism never depends on the
+# provider actually being bit-reproducible.
+CURRICULUM_SEED = 1234
+
 # ── Topic normalisation (reused from section_builder pattern) ────
 
 _STRIP_RE = re.compile(r"[^a-z0-9\s]")
@@ -200,6 +206,114 @@ def _assign_missing_topics(
 # ── Main function ────────────────────────────────────────────────
 
 
+def clean_topic_list(topics: list[str]) -> list[str]:
+    """Return topics with boilerplate removed (stable order preserved)."""
+    return [t for t in topics if not _is_boilerplate(t)]
+
+
+def propose_curriculum(
+    client: OllamaClient,
+    clean_topics: list[str],
+    course_intent: str = "",
+    book_titles: list[str] | None = None,
+    max_retries: int = 3,
+    timeout: int = 600,
+    target_sessions: int = 15,
+    min_sessions: int = 8,
+    max_sessions: int = 25,
+) -> dict:
+    """LLM step ONLY: return the raw curriculum proposal dict (``{"sessions": [...]}``).
+
+    Deterministic decoding is requested (temperature=0 + fixed seed). This raw
+    proposal is what the caller hashes/stores and later REPLAYS — the plan is
+    re-resolved deterministically from it, so generation never depends on the
+    provider being bit-reproducible. Returns ``{}`` if the LLM never yields a
+    usable proposal (caller falls back).
+    """
+    if not clean_topics:
+        return {}
+
+    effective_intent = course_intent.strip() or _infer_course_intent(clean_topics, book_titles)
+    user_message = CURRICULUM_USER_TEMPLATE.format(
+        course_intent=effective_intent,
+        count=len(clean_topics),
+        topic_listing=_build_topic_listing(clean_topics),
+        target_sessions=target_sessions,
+        min_sessions=min_sessions,
+        max_sessions=max_sessions,
+    )
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            result = client.chat_json(
+                [
+                    {"role": "system", "content": CURRICULUM_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=0.0,
+                seed=CURRICULUM_SEED,
+                timeout_override=timeout,
+            )
+            if isinstance(result.get("sessions"), list) and result["sessions"]:
+                return result
+            logger.warning("curriculum_invalid_response", attempt=attempt)
+        except Exception as exc:
+            logger.warning("curriculum_llm_error", attempt=attempt, error=str(exc))
+
+    return {}
+
+
+def resolve_curriculum(
+    raw_proposal: dict,
+    clean_topics: list[str],
+    target_sessions: int = 15,
+    max_sessions: int = 25,
+) -> list[LLMCurriculumSession]:
+    """DETERMINISTIC step: turn a raw proposal into a validated curriculum.
+
+    Pure function of (raw_proposal, clean_topics) — no LLM, no randomness — so
+    replaying a stored proposal always yields byte-identical structure. Falls
+    back to a deterministic alphabetical grouping if the proposal is empty.
+    """
+    raw_sessions = (raw_proposal or {}).get("sessions", [])
+    if not isinstance(raw_sessions, list) or not raw_sessions:
+        return _alphabetical_fallback(clean_topics, target_sessions=target_sessions)
+
+    parsed_sessions: list[LLMCurriculumSession] = []
+    for raw in raw_sessions:
+        try:
+            parsed_sessions.append(LLMCurriculumSession(**raw))
+        except Exception as parse_exc:
+            logger.warning("curriculum_session_parse_error", error=str(parse_exc), raw=str(raw)[:200])
+
+    if not parsed_sessions:
+        return _alphabetical_fallback(clean_topics, target_sessions=target_sessions)
+
+    validated_sessions = _validate_topics(parsed_sessions, clean_topics)
+
+    used_topics: set[str] = set()
+    for session in validated_sessions:
+        used_topics.update(session.topics)
+    missing = [t for t in clean_topics if t not in used_topics]
+    if missing:
+        validated_sessions = _assign_missing_topics(missing, validated_sessions)
+
+    validated_sessions = [s for s in validated_sessions if s.topics]
+
+    if len(validated_sessions) > max_sessions:
+        validated_sessions = _merge_sessions_to_cap(validated_sessions, max_sessions)
+
+    for i, session in enumerate(validated_sessions, 1):
+        session.session_number = i
+
+    logger.info(
+        "curriculum_resolved",
+        sessions=len(validated_sessions),
+        total_topics=sum(len(s.topics) for s in validated_sessions),
+    )
+    return validated_sessions
+
+
 def design_curriculum(
     client: OllamaClient,
     topics: list[str],
@@ -211,171 +325,21 @@ def design_curriculum(
     min_sessions: int = 8,
     max_sessions: int = 25,
 ) -> list[LLMCurriculumSession]:
-    """Design a complete curriculum top-down using the LLM.
+    """Propose (LLM) then deterministically resolve a curriculum.
 
-    Parameters
-    ----------
-    client:
-        Configured Ollama Cloud client.
-    topics:
-        Every unique topic tag from ChromaDB for this course.
-    course_intent:
-        Course goal description. Auto-inferred if empty.
-    book_titles:
-        Optional book titles for intent inference.
-    max_retries:
-        Retries on validation failure before fallback.
-    timeout:
-        Timeout in seconds for the LLM call.
-    target_sessions:
-        Number of sessions the designer aims for, regardless of topic count.
-    min_sessions, max_sessions:
-        Bounds requested from the LLM. ``max_sessions`` is also enforced as a
-        hard cap (over-long curricula are merged down) so the session count
-        never scales with book size.
-
-    Returns
-    -------
-    list[LLMCurriculumSession]
-        The LLM-designed curriculum. Falls back to alphabetical
-        grouping on complete failure.
+    Kept for back-compat / standalone use. The generator instead calls
+    ``propose_curriculum`` + ``resolve_curriculum`` directly so it can capture,
+    hash, store, and replay the raw proposal.
     """
-    if not topics:
-        return []
-
-    # Filter boilerplate topics
-    clean_topics = [t for t in topics if not _is_boilerplate(t)]
-
-    logger.info(
-        "curriculum_design_start",
-        total_topics=len(clean_topics),
-        filtered_boilerplate=len(topics) - len(clean_topics),
-    )
-
+    clean_topics = clean_topic_list(topics)
     if not clean_topics:
         return []
-
-    # Resolve course intent
-    effective_intent = course_intent.strip()
-    if not effective_intent:
-        effective_intent = _infer_course_intent(clean_topics, book_titles)
-
-    # Build prompt
-    topic_listing = _build_topic_listing(clean_topics)
-    user_message = CURRICULUM_USER_TEMPLATE.format(
-        course_intent=effective_intent,
-        count=len(clean_topics),
-        topic_listing=topic_listing,
-        target_sessions=target_sessions,
-        min_sessions=min_sessions,
-        max_sessions=max_sessions,
+    raw = propose_curriculum(
+        client, clean_topics, course_intent, book_titles,
+        max_retries=max_retries, timeout=timeout,
+        target_sessions=target_sessions, min_sessions=min_sessions, max_sessions=max_sessions,
     )
-
-    # Attempt LLM call with retries
-    for attempt in range(1, max_retries + 1):
-        try:
-            result = client.chat_json(
-                [
-                    {"role": "system", "content": CURRICULUM_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message},
-                ],
-                temperature=0.2,
-                timeout_override=timeout,
-            )
-
-            raw_sessions = result.get("sessions", [])
-
-            if not isinstance(raw_sessions, list) or not raw_sessions:
-                logger.warning(
-                    "curriculum_invalid_response",
-                    attempt=attempt,
-                    got_type=type(raw_sessions).__name__,
-                )
-                continue
-
-            # Parse into Pydantic models
-            parsed_sessions: list[LLMCurriculumSession] = []
-            for raw in raw_sessions:
-                try:
-                    parsed_sessions.append(LLMCurriculumSession(**raw))
-                except Exception as parse_exc:
-                    logger.warning(
-                        "curriculum_session_parse_error",
-                        attempt=attempt,
-                        error=str(parse_exc),
-                        raw=str(raw)[:200],
-                    )
-
-            if not parsed_sessions:
-                logger.warning("curriculum_no_valid_sessions", attempt=attempt)
-                continue
-
-            # Validate topic strings — fuzzy match against original list
-            validated_sessions = _validate_topics(parsed_sessions, clean_topics)
-
-            # Check for missing topics and assign them
-            used_topics: set[str] = set()
-            for session in validated_sessions:
-                used_topics.update(session.topics)
-
-            missing = [t for t in clean_topics if t not in used_topics]
-
-            if missing:
-                logger.info(
-                    "curriculum_missing_topics",
-                    attempt=attempt,
-                    count=len(missing),
-                    sample=missing[:5],
-                )
-                validated_sessions = _assign_missing_topics(
-                    missing, validated_sessions
-                )
-
-            # Remove any sessions that ended up empty after validation
-            validated_sessions = [
-                s for s in validated_sessions if s.topics
-            ]
-
-            # Hard cap: if the LLM ignored the bound and returned too many
-            # sessions, merge adjacent ones so the count never scales with
-            # book size.
-            if len(validated_sessions) > max_sessions:
-                logger.info(
-                    "curriculum_session_count_capped",
-                    attempt=attempt,
-                    returned=len(validated_sessions),
-                    max_sessions=max_sessions,
-                )
-                validated_sessions = _merge_sessions_to_cap(
-                    validated_sessions, max_sessions
-                )
-
-            # Re-number sessions
-            for i, session in enumerate(validated_sessions, 1):
-                session.session_number = i
-
-            logger.info(
-                "curriculum_design_complete",
-                attempt=attempt,
-                sessions=len(validated_sessions),
-                total_topics=sum(len(s.topics) for s in validated_sessions),
-            )
-            return validated_sessions
-
-        except Exception as exc:
-            logger.warning(
-                "curriculum_llm_error",
-                attempt=attempt,
-                error=str(exc),
-            )
-
-    # All retries exhausted — fall back to alphabetical
-    logger.warning(
-        "curriculum_design_fallback",
-        reason="All retries exhausted",
-        max_retries=max_retries,
-    )
-    return _alphabetical_fallback(clean_topics, target_sessions=target_sessions)
+    return resolve_curriculum(raw, clean_topics, target_sessions=target_sessions, max_sessions=max_sessions)
 
 
 # ── Session cap ──────────────────────────────────────────────────
