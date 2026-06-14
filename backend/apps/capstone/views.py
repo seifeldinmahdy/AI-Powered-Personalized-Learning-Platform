@@ -526,7 +526,18 @@ def capstone_for_course(request, course_id):
 @api_view(["GET"])
 @permission_classes([permissions.IsAuthenticated])
 def my_submission(request, capstone_id):
-    """GET /capstone/<capstone_id>/my-submission/ — student's own submission."""
+    """GET /capstone/<capstone_id>/my-submission/ — student's own submission.
+
+    Opportunistically recovers stuck grades so a student polling their result can
+    self-heal a grade whose worker died (in addition to the cron sweep). Safe and
+    idempotent — recovery re-checks each row under a lock.
+    """
+    try:
+        from .grading import recover_stuck_grades
+        recover_stuck_grades()
+    except Exception:
+        logger.exception("opportunistic stuck-grade recovery failed")
+
     sub = CapstoneSubmission.objects.filter(
         capstone_id=capstone_id, enrollment__student=request.user
     ).first()
@@ -583,13 +594,16 @@ def submit_archive(request, capstone_id):
     if not rubric_items:
         return Response({"error": "No rubric items defined."}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Create submission in evaluating state
+    # Create submission in evaluating state. Stamp grading_started_at so that a
+    # process death mid-grade is detectable by recover_stuck_grades (an archive
+    # submission has no repo to re-read, so recovery fails it for re-submit).
     sub = CapstoneSubmission.objects.create(
         capstone=capstone,
         enrollment=enrollment,
         proposal=proposal,
         team=team,
         status="evaluating",
+        grading_started_at=dj_timezone.now(),
     )
 
     # Synchronous grade (archive submit is a one-shot; acceptable to block).
@@ -615,9 +629,10 @@ def provision_repo(request, capstone_id):
     POST /capstone/<capstone_id>/provision-repo/
     Body: {github_username: str}
 
-    Creates a public repo from the capstone template under GITHUB_ORG,
-    sets branch protection on main, and invites the student as collaborator.
-    Never returns the installation token to the client.
+    Creates a PRIVATE repo from the capstone template under GITHUB_ORG, sets
+    branch protection on main, and invites the student as collaborator.
+    Private repos protect academic integrity (a passing repo is not publicly
+    copyable). Never returns the installation token to the client.
     """
     if not settings.GITHUB_ORG:
         return Response({"error": "GitHub integration not configured."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -662,14 +677,14 @@ def provision_repo(request, capstone_id):
             owner, template = capstone.github_template_repo.split("/", 1)
             create_resp = requests.post(
                 f"https://api.github.com/repos/{owner}/{template}/generate",
-                json={"owner": org, "name": repo_name, "private": False},
+                json={"owner": org, "name": repo_name, "private": True},
                 headers=hdrs,
                 timeout=30,
             )
         else:
             create_resp = requests.post(
                 f"https://api.github.com/orgs/{org}/repos",
-                json={"name": repo_name, "private": False, "auto_init": True},
+                json={"name": repo_name, "private": True, "auto_init": True},
                 headers=hdrs,
                 timeout=30,
             )
@@ -729,12 +744,17 @@ def provision_repo(request, capstone_id):
 
 
 @api_view(["POST"])
-@permission_classes([])  # No auth — GitHub sends unsigned webhooks
+@permission_classes([])  # Auth is the HMAC signature check below, not a user.
 def github_webhook(request):
     """
     POST /capstone/github-webhook/
-    Verifies HMAC-SHA256 signature, then records push/check_suite events.
-    Updates CapstoneSubmission on CI completion (check_suite conclusion=success/failure).
+    Verifies the HMAC-SHA256 signature, then acknowledges push/check_suite events.
+
+    CI status is FEEDBACK ONLY. It is deliberately NOT written to the submission's
+    grading status/verdict: the rubric verdict (computed by _evaluate_and_grade)
+    is the sole completion signal, and grading state is owned by the grading state
+    machine. The workspace reads live CI via the commit-status endpoint, so the
+    webhook does not need to mutate any submission row.
     """
     secret = settings.GITHUB_WEBHOOK_SECRET
     if not secret:
@@ -756,138 +776,42 @@ def github_webhook(request):
         return Response({"error": "Invalid JSON."}, status=status.HTTP_400_BAD_REQUEST)
 
     if event == "check_suite":
+        # Log only — never touch submission status/verdict (feedback, not completion).
         conclusion = payload.get("check_suite", {}).get("conclusion")
         repo_url = payload.get("repository", {}).get("html_url", "")
         head_sha = payload.get("check_suite", {}).get("head_sha", "")
-        if repo_url and head_sha and conclusion in ("success", "failure"):
-            CapstoneSubmission.objects.filter(
-                repo_url=repo_url,
-                latest_commit_sha=head_sha,
-                status="evaluating",
-            ).update(
-                status="completed" if conclusion == "success" else "failed",
-                evaluated_at=dj_timezone.now(),
-            )
+        logger.info(
+            "github_webhook check_suite: repo=%s sha=%s conclusion=%s (feedback only)",
+            repo_url, head_sha, conclusion,
+        )
 
     return Response({"received": event})
 
 
-@api_view(["POST"])
-@permission_classes([permissions.IsAuthenticated])
-def submit_from_repo(request, capstone_id):
-    """
-    POST /capstone/<capstone_id>/submit-from-repo/
-    Body: {repo_url: str, commit_sha: str, github_username: str}
+def _start_repo_grading(sub) -> Response:
+    """The single repo-grading entry. Derives everything server-side from the
+    student's PROVISIONED submission:
 
-    Records the submission intent.  Actual evaluation is triggered by the
-    github_webhook when the CI check_suite concludes.
-    The platform never stores cloned code — only repo_url + commit_sha.
-    """
-    repo_url = request.data.get("repo_url", "").strip()
-    commit_sha = request.data.get("commit_sha", "").strip()
-    github_username = request.data.get("github_username", "").strip()
-
-    if not repo_url or not commit_sha:
-        return Response({"error": "repo_url and commit_sha required."}, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
-        capstone = Capstone.objects.get(pk=capstone_id)
-    except Capstone.DoesNotExist:
-        return Response({"error": "Capstone not found."}, status=status.HTTP_404_NOT_FOUND)
-
-    from apps.courses.models import Enrollment
-    enrollment = Enrollment.objects.filter(student=request.user, course=capstone.course).first()
-    if not enrollment:
-        return Response({"error": "Not enrolled."}, status=status.HTTP_403_FORBIDDEN)
-
-    sub, created = CapstoneSubmission.objects.update_or_create(
-        capstone=capstone,
-        enrollment=enrollment,
-        defaults={
-            "repo_url": repo_url,
-            "latest_commit_sha": commit_sha,
-            "github_username": github_username,
-            "status": "evaluating",
-            "score": None,
-            "results": {},
-            "feedback": "",
-        },
-    )
-
-    return Response(
-        CapstoneSubmissionSerializer(sub).data,
-        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
-    )
-
-
-def _grade_from_repo(submission_id: int, sha: str) -> None:
-    """
-    Background worker: read the repo at `sha` into a transient bundle and grade
-    it through the shared deterministic pipeline. The code is never persisted.
-    """
-    from .capstone_git import read_repo_bundle, GitError
-
-    try:
-        sub = CapstoneSubmission.objects.select_related(
-            "capstone", "enrollment__student", "proposal", "team"
-        ).get(pk=submission_id)
-    except CapstoneSubmission.DoesNotExist:
-        return
-
-    proposal_text = ""
-    if sub.proposal_id:
-        try:
-            proposal_text = f"{sub.proposal.title}\n{sub.proposal.description}"
-        except Exception:
-            proposal_text = ""
-
-    try:
-        bundle = read_repo_bundle(sub.repo_url, sha)
-    except GitError:
-        logger.exception("read_repo_bundle failed during grading for submission %s", submission_id)
-        sub.status = "failed"
-        sub.feedback = "Could not read repository for grading."
-        sub.save(update_fields=["status", "feedback"])
-        return
-
-    if not bundle.strip():
-        sub.status = "failed"
-        sub.feedback = "Repository contained no gradable text files."
-        sub.save(update_fields=["status", "feedback"])
-        return
-
-    _evaluate_and_grade(sub, bundle, proposal_text)
-
-
-@api_view(["POST"])
-@permission_classes([permissions.IsAuthenticated])
-def submit_for_grading(request, capstone_id):
-    """
-    POST /capstone/<capstone_id>/submit-for-grading/
-
-    Final submission from the in-platform IDE:
-      1. Resolve the student's work-branch HEAD.
-      2. Require CI to be GREEN on that exact commit (continuous feedback gate).
-      3. Fast-forward `main` to that CI-passed commit. Branch protection stays
-         satisfied because the required `ci` status check already passed for
-         this SHA, and the App may update the ref.
-      4. Grade `main` (== that commit) in the background through the shared,
-         deterministic pipeline. Idempotent: re-submitting re-scores without
+      1. Resolve the work-branch HEAD (the exact SHA, server-side).
+      2. Require CI GREEN on that commit (continuous-feedback gate).
+      3. Grade THAT SHA through the shared deterministic pipeline. `main` is
+         never mutated (no admin permission needed) — read_repo_bundle reads the
+         exact CI-passed work commit. Idempotent: re-grading re-scores without
          multiplying XP/mastery. Code is read transiently and never stored.
+
+    The grading worker is launched via the grading state machine, which claims
+    the submission atomically so concurrent submits cannot double-launch.
     """
-    sub, _capstone, err = _resolve_submission(request.user, capstone_id)
-    if err:
-        return err
+    from .capstone_git import head_sha, get_check_runs, GitError
+    from .grading import start_grading
 
-    from .capstone_git import head_sha, get_check_runs, move_ref, GitError
-
-    # 1. Work-branch HEAD
+    # 1. Work-branch HEAD (server-resolved — client cannot choose the SHA).
     try:
         work_sha = head_sha(sub.repo_url, sub.branch)
     except GitError as exc:
         return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
-    # 2. CI must be green on that commit
+    # 2. CI must be green on that commit.
     try:
         verdict = get_check_runs(sub.repo_url, work_sha)
     except GitError as exc:
@@ -901,35 +825,54 @@ def submit_for_grading(request, capstone_id):
             status=status.HTTP_409_CONFLICT,
         )
 
-    # 3. Fast-forward main to the CI-passed commit (FF only; never a force push)
-    try:
-        move_ref(sub.repo_url, "main", work_sha, force=False)
-    except GitError as exc:
-        logger.warning("submit_for_grading: could not fast-forward main: %s", exc)
-        return Response(
-            {"error": f"Could not promote your commit to main: {exc}"},
-            status=status.HTTP_502_BAD_GATEWAY,
-        )
-
-    # 4. Mark evaluating and grade main (== work_sha) in the background
-    sub.latest_commit_sha = work_sha
-    sub.status = "evaluating"
-    sub.save(update_fields=["latest_commit_sha", "status"])
-
-    threading.Thread(
-        target=_grade_from_repo,
-        args=(sub.id, work_sha),
-        daemon=True,
-    ).start()
+    # 3. Grade the exact work SHA in the background (main is never moved).
+    launched = start_grading(sub, work_sha)
+    sub.refresh_from_db()
 
     return Response(
         {
             "status": "evaluating",
             "commit_sha": work_sha,
+            "already_grading": not launched,
             "submission": CapstoneSubmissionSerializer(sub).data,
         },
         status=status.HTTP_202_ACCEPTED,
     )
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def submit_from_repo(request, capstone_id):
+    """
+    POST /capstone/<capstone_id>/submit-from-repo/
+
+    Grades the student's PROVISIONED repo. Any repo_url / commit_sha /
+    github_username in the request body are IGNORED for academic integrity — the
+    platform never grades an arbitrary external repo. Everything is derived
+    server-side from the provisioned submission (work-branch HEAD, CI-gated),
+    so this is the same single grading path as submit_for_grading.
+    """
+    sub, _capstone, err = _resolve_submission(request.user, capstone_id)
+    if err:
+        return err
+    return _start_repo_grading(sub)
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def submit_for_grading(request, capstone_id):
+    """
+    POST /capstone/<capstone_id>/submit-for-grading/
+
+    Final submission from the in-platform IDE. Resolves the provisioned
+    work-branch HEAD, requires CI green, and grades that exact commit through the
+    shared deterministic pipeline. Returns 409 (with the CI verdict) if CI hasn't
+    passed yet. `main` is never mutated.
+    """
+    sub, _capstone, err = _resolve_submission(request.user, capstone_id)
+    if err:
+        return err
+    return _start_repo_grading(sub)
 
 
 # ===========================================================================

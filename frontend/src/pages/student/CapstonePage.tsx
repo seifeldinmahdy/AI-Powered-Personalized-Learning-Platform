@@ -252,15 +252,18 @@ export default function CapstonePage() {
     }
 
     async function handleSubmitFromRepo() {
-        if (!capstone || !repoUrl || !commitSha) return;
+        if (!capstone) return;
         setSubmitting(true);
         try {
-            const result = await submitFromRepo(capstone.id, repoUrl, commitSha, githubUsername);
-            setSubmission(result);
+            // The backend grades the PROVISIONED repo (server-resolved work-branch
+            // HEAD, CI-gated). Any typed repo/sha are ignored for integrity.
+            const result = await submitFromRepo(capstone.id);
+            setSubmission(result.submission);
             setTab('results');
-            toast.success('Repo submission recorded. Waiting for CI…');
-        } catch {
-            toast.error('Submission failed.');
+            toast.success('Submitted for grading — your score will appear shortly.');
+        } catch (e: unknown) {
+            const err = e as { response?: { status?: number; data?: { error?: string } } };
+            toast.error(err?.response?.data?.error || 'Submission failed.');
         } finally {
             setSubmitting(false);
         }

@@ -208,23 +208,26 @@ export async function submitArchive(
     return resp.data;
 }
 
+/**
+ * Submit the student's PROVISIONED repo for grading. The backend ignores any
+ * client-supplied repo/sha — it resolves the work-branch HEAD server-side,
+ * requires CI green, and grades that exact commit in the background. Returns 409
+ * (with a verdict) if CI hasn't passed yet.
+ */
 export async function submitFromRepo(
     capstoneId: number,
-    repoUrl: string,
-    commitSha: string,
-    githubUsername: string,
-): Promise<CapstoneSubmission> {
-    const resp = await api.post<CapstoneSubmission>(
+): Promise<{ status: string; commit_sha: string; submission: CapstoneSubmission }> {
+    const resp = await api.post(
         `/capstone/capstones/${capstoneId}/submit-from-repo/`,
-        { repo_url: repoUrl, commit_sha: commitSha, github_username: githubUsername },
+        {},
     );
     return resp.data;
 }
 
 /**
  * Final submission from the in-platform IDE. The backend verifies CI is green
- * on the work branch HEAD, fast-forwards main to that commit, and grades it in
- * the background. Returns 409 (with a verdict) if CI hasn't passed yet.
+ * on the work-branch HEAD and grades that exact commit in the background
+ * (main is never mutated). Returns 409 (with a verdict) if CI hasn't passed yet.
  */
 export async function submitForGrading(
     capstoneId: number,

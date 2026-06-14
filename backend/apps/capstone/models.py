@@ -250,6 +250,13 @@ class CapstoneSubmission(models.Model):
     mastery_applied = models.BooleanField(default=False)
     submitted_at = models.DateTimeField(auto_now_add=True)
     evaluated_at = models.DateTimeField(null=True, blank=True)
+    # Grading state machine (recovery for stuck "evaluating" jobs). A grade runs
+    # in a worker thread; if the process dies mid-grade the row would otherwise
+    # stay "evaluating" forever. grading_started_at stamps when the current
+    # attempt began; recover_stuck_grades() re-queues (or fails) rows whose
+    # attempt has exceeded the timeout. grading_attempts bounds the retries.
+    grading_started_at = models.DateTimeField(null=True, blank=True)
+    grading_attempts = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
         db_table = "capstone_submissions"
