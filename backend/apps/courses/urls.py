@@ -18,6 +18,8 @@ urlpatterns = [
     path("coding/rubric/", views.get_coding_rubric, name="coding_rubric"),
     path("coding/hint/", views.get_coding_hint, name="coding_hint"),
     path("admin/stats/", views.admin_stats, name="admin_stats"),
+    # Resume summary (index + current plan; no content scan).
+    path("<int:course_id>/resume/", views.course_resume, name="course-resume"),
     # Admin-only pathway regeneration (students get 403; proxies to AI service).
     path(
         "courses/<int:course_id>/pathway/regenerate/",

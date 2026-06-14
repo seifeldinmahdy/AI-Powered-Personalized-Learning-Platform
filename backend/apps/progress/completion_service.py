@@ -30,6 +30,27 @@ def _lesson_course_id(lesson):
     return lesson.module.course_id
 
 
+def _advance_current_lesson(enrollment):
+    """Point enrollment.current_lesson at the first incomplete lesson (or the
+    last lesson when all are done). Drives the resume "Continue" jump."""
+    from apps.courses.models import Lesson
+
+    completed_ids = set(
+        LessonCompletion.objects.filter(enrollment=enrollment, status="Completed")
+        .values_list("lesson_id", flat=True)
+    )
+    lessons = list(
+        Lesson.objects.filter(module__course_id=enrollment.course_id)
+        .order_by("module__module_order", "lesson_order")
+    )
+    if not lessons:
+        return
+    target = next((l for l in lessons if l.id not in completed_ids), lessons[-1])
+    if enrollment.current_lesson_id != target.id:
+        enrollment.current_lesson_id = target.id
+        enrollment.save(update_fields=["current_lesson"])
+
+
 def complete_lesson(user, lesson, *, time_spent_minutes=None, score=None):
     """Idempotently mark `lesson` Completed for `user`. Returns a dict:
 
@@ -89,6 +110,10 @@ def complete_lesson(user, lesson, *, time_spent_minutes=None, score=None):
         if completion.time_spent_minutes == 0:
             completion.time_spent_minutes = 30  # backward-compat default
         completion.save()  # fires the gamification signal exactly once
+
+    # Advance the resume pointer to the first still-incomplete lesson (self-
+    # correcting regardless of completion order) so "Continue" lands correctly.
+    _advance_current_lesson(enrollment)
 
     after = UserAchievement.objects.filter(user=user).select_related("achievement")
     newly_earned = [

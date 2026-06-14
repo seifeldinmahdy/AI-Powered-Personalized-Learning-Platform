@@ -140,7 +140,7 @@ class BestScoreTests(Base):
         return ProblemSet.objects.create(
             enrollment=self.enr, student=self.user, course=self.course, lesson=self.lesson,
             plan_version=1, generation_index=gen, ps_uid=uid,
-            content_json={"questions": questions},
+            content_json={"questions": questions}, num_questions=len(questions),
         )
 
     def _attempt(self, ps, qid, score):

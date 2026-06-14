@@ -127,11 +127,13 @@ def import_problem_sets(data_dir, report: ImportReport, *, dry_run: bool = False
             items.sort(key=lambda t: t[0])  # submission/generation order
             last = len(items) - 1
             for idx, (_gen_at, d, enr, sid) in enumerate(items):
+                questions = d.get("questions", []) or []
                 ps = ProblemSet.objects.create(
                     enrollment=enr, student_id=enr.student_id, course_id=enr.course_id,
                     lesson_id=lesson_id, plan_version=IMPORTED_PLAN_VERSION,
                     generation_index=idx, ps_uid=d["problem_set_id"],
-                    content_json={"questions": d.get("questions", [])},
+                    content_json={"questions": questions},
+                    num_questions=len(questions),
                     superseded=(idx < last),
                 )
                 n_att = 0

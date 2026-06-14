@@ -19,5 +19,6 @@ urlpatterns = [
     path("problem-sets/score/", views.problem_set_score, name="problem-set-score"),
     path("problem-sets/<str:ps_uid>/", views.problem_set_detail, name="problem-set-detail"),
     path("problem-sets/<str:ps_uid>/attempts/", views.problem_set_attempt_create, name="problem-set-attempt-create"),
+    path("problem-sets/<str:ps_uid>/history/", views.problem_set_attempt_history, name="problem-set-attempt-history"),
     path("problem-sets/<str:ps_uid>/hint-tracking/", views.problem_set_hint_tracking, name="problem-set-hint-tracking"),
 ]

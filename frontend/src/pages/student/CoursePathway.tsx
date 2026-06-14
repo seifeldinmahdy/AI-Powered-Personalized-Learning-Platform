@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from 'react-router';
 import { useState, useEffect, useRef } from 'react';
 import { getCurrentPathway, type PathwayPlan, type PathwaySession } from '../../services/pathway';
+import { getCourseResume, type CourseResume } from '../../services/resume';
 import { BookOpen, Clock, Layers, ChevronRight, Loader2, Sparkles } from 'lucide-react';
 
 const LOADING_MESSAGES = [
@@ -23,6 +24,13 @@ export default function CoursePathway() {
   const [messageIndex, setMessageIndex] = useState(0);
   const [fadingOut, setFadingOut] = useState(false);
   const [firstLessonId, setFirstLessonId] = useState<number | null>(null);
+  const [resume, setResume] = useState<CourseResume | null>(null);
+
+  // Resume summary (index + current plan; no content scan).
+  useEffect(() => {
+    if (!courseId) return;
+    getCourseResume(courseId).then(setResume).catch(() => setResume(null));
+  }, [courseId]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Cycle loading messages
@@ -222,6 +230,53 @@ export default function CoursePathway() {
 
       {/* Session cards */}
       <div className="max-w-5xl mx-auto px-6 py-8">
+        {resume && resume.completed > 0 && (
+          <div className="mb-6 rounded-2xl border border-border bg-card p-5">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="font-semibold">Continue where you left off</p>
+                <p className="text-sm text-muted-foreground">
+                  {resume.completed} of {resume.total_sessions} sessions complete
+                  {' · '}{resume.sessions_left} left
+                </p>
+              </div>
+              {resume.current_lesson && (
+                <button
+                  onClick={() => navigate(`/course/${courseId}/lesson/${resume.current_lesson}`)}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-primary to-secondary text-white font-semibold flex items-center gap-2 shrink-0"
+                >
+                  Continue <ChevronRight size={18} />
+                </button>
+              )}
+            </div>
+            {resume.timeline.length > 0 && (
+              <ul className="mt-4 space-y-1.5 border-t border-border pt-3">
+                {resume.timeline.map((e, i) => {
+                  const label = e.type === 'problem_set' ? 'Problem set'
+                    : e.type === 'lab' ? 'Coding lab' : 'Slides';
+                  const clickable = e.lesson != null;
+                  return (
+                    <li
+                      key={`${e.type}-${e.id ?? e.ps_uid ?? i}`}
+                      onClick={clickable ? () => navigate(`/course/${courseId}/lesson/${e.lesson}`) : undefined}
+                      className={`flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg ${clickable ? 'hover:bg-muted/50 cursor-pointer' : ''}`}
+                    >
+                      <span className="text-muted-foreground w-24 shrink-0">{label}</span>
+                      <span className="flex-1 truncate">
+                        {e.session_number != null ? `Session ${e.session_number}` : `Lesson ${e.lesson}`}
+                      </span>
+                      {e.type === 'problem_set' && e.best_score != null && (
+                        <span className="font-semibold">{e.best_score}/100</span>
+                      )}
+                      <span className="text-xs text-muted-foreground capitalize">{e.status}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
+
         <div className="space-y-4">
           {plan.sessions.map((session) => (
             <SessionCard key={session.session_number} session={session} />

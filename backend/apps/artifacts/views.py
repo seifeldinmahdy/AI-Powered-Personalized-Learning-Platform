@@ -201,6 +201,7 @@ def problem_set_create(request):
                     enrollment=enrollment, lesson_id=lesson_id, plan_version=plan_version
                 ).update(superseded=True)
 
+        content_json = request.data.get("content_json", {})
         ps = ProblemSet.objects.create(
             enrollment=enrollment,
             student=request.user,
@@ -209,7 +210,8 @@ def problem_set_create(request):
             plan_version=plan_version,
             generation_index=next_index,
             ps_uid=request.data["ps_uid"],
-            content_json=request.data.get("content_json", {}),
+            content_json=content_json,
+            num_questions=len(content_json.get("questions", []) or []),
             superseded=False,
         )
     return Response(ProblemSetSerializer(ps).data, status=status.HTTP_201_CREATED)
@@ -252,6 +254,28 @@ def problem_set_attempt_create(request, ps_uid):
         source=source,
     )
     return Response(ProblemSetAttemptSerializer(attempt).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def problem_set_attempt_history(request, ps_uid):
+    """Read-only attempt history + best score for a problem set (ownership checked).
+
+    Drives the past-problem-set view: every submission in order, plus the
+    derived best score for the lesson.
+    """
+    ps = get_object_or_404(ProblemSet, ps_uid=ps_uid)
+    if ps.student_id != request.user.id:
+        return Response({"error": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+    attempts = ps.attempts.all()  # ordered by created_at, id (submission order)
+    return Response({
+        "ps_uid": ps.ps_uid,
+        "lesson": ps.lesson_id,
+        "generation_index": ps.generation_index,
+        "superseded": ps.superseded,
+        "best_score": best_lesson_score(ps.enrollment_id, ps.lesson_id, ps.plan_version),
+        "attempts": ProblemSetAttemptSerializer(attempts, many=True).data,
+    })
 
 
 @api_view(["PATCH"])

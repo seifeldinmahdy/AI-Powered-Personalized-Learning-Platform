@@ -161,6 +161,9 @@ class ProblemSet(models.Model):
     # CONTENT: the generated questions + rubric (no submissions; those are attempts).
     content_json = models.JSONField(default=dict)
     storage_key = models.CharField(max_length=255, null=True, blank=True)
+    # Question count, denormalized from content at create time so the derived
+    # best-score (and the resume timeline) never has to scan content_json.
+    num_questions = models.IntegerField(default=0)
     # Mutable per-question working state for in-progress hint reveals (deductions
     # + revealed hints), keyed by question_id. This is NOT an attempt — it is the
     # pre-submission scratch the evaluator reads to apply hint penalties. Lets the

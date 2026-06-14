@@ -183,6 +183,107 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
     # that flag). The frontend no longer pushes the plan here.
 
 
+def _fetch_current_plan(student_id, course_id):
+    """Read-only fetch of the CURRENT authoritative plan from the AI service
+    (plan_version + total_sessions + sessions). Returns None on any failure —
+    resume then degrades to the index-only view."""
+    import os
+    ai_url = os.getenv("AI_SERVICE_URL", "http://localhost:8001").rstrip("/")
+    try:
+        resp = requests.get(
+            f"{ai_url}/pathway/current",
+            params={"student_id": str(student_id), "course_id": str(course_id)},
+            timeout=8,
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "resume: could not fetch current plan (student=%s course=%s)", student_id, course_id)
+    return None
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def course_resume(request, course_id):
+    """Resume summary for a course — computed entirely from the index + the
+    current plan, never by scanning artifact content.
+
+    Returns total/completed/remaining session counts, the continue pointer, and a
+    timeline of this enrollment's artifacts (slides, labs, problem sets) at the
+    CURRENT plan_version — so orphaned old-version artifacts never show as current.
+    """
+    from apps.progress.models import LessonCompletion
+    from apps.artifacts.models import StudentArtifact, ProblemSet
+    from apps.artifacts.scoring import best_lesson_score
+
+    enrollment = Enrollment.objects.filter(
+        student=request.user, course_id=course_id
+    ).select_related("current_lesson").first()
+    if not enrollment:
+        return Response({"error": "Not enrolled in this course."}, status=status.HTTP_404_NOT_FOUND)
+
+    plan = _fetch_current_plan(request.user.id, course_id)
+    plan_version = plan.get("plan_version") if plan else None
+    total_sessions = int(plan.get("total_sessions", 0)) if plan else 0
+
+    completed = LessonCompletion.objects.filter(
+        enrollment=enrollment, status="Completed"
+    ).count()
+    sessions_left = max(0, total_sessions - completed)
+
+    # Position map (lesson -> 1-based order) to order a unified timeline and to
+    # derive the current session number from the pointer.
+    lesson_order = {
+        lid: i + 1
+        for i, lid in enumerate(
+            Lesson.objects.filter(module__course_id=course_id)
+            .order_by("module__module_order", "lesson_order")
+            .values_list("id", flat=True)
+        )
+    }
+
+    timeline = []
+    if plan_version is not None:
+        # Slides + labs — content_json deferred (no content scan).
+        for a in (StudentArtifact.objects
+                  .filter(enrollment=enrollment, plan_version=plan_version)
+                  .defer("content_json").order_by("session_number", "lesson_id")):
+            timeline.append({
+                "kind": "artifact", "id": a.id, "type": a.artifact_type,
+                "session_number": a.session_number, "lesson": a.lesson_id,
+                "status": a.status,
+                "sort_key": a.session_number or lesson_order.get(a.lesson_id, 9999),
+            })
+        # Problem sets — content/hint deferred; best score is content-free.
+        for ps in (ProblemSet.objects
+                   .filter(enrollment=enrollment, plan_version=plan_version)
+                   .defer("content_json", "hint_tracking").prefetch_related("attempts")):
+            timeline.append({
+                "kind": "problem_set", "ps_uid": ps.ps_uid, "type": "problem_set",
+                "lesson": ps.lesson_id, "generation_index": ps.generation_index,
+                "superseded": ps.superseded,
+                "status": "completed" if ps.attempts.all() else "generated",
+                "best_score": best_lesson_score(enrollment.id, ps.lesson_id, plan_version),
+                "sort_key": lesson_order.get(ps.lesson_id, 9999),
+            })
+        timeline.sort(key=lambda e: e["sort_key"])
+
+    return Response({
+        "course_id": int(course_id),
+        "enrollment_id": enrollment.id,
+        "progress_percentage": float(enrollment.progress_percentage or 0),
+        "plan_version": plan_version,
+        "total_sessions": total_sessions,
+        "completed": completed,
+        "sessions_left": sessions_left,
+        "current_lesson": enrollment.current_lesson_id,
+        "current_session_number": lesson_order.get(enrollment.current_lesson_id),
+        "timeline": timeline,
+    })
+
+
 @api_view(["GET"])
 @permission_classes([permissions.IsAuthenticated])
 def admin_stats(request):
