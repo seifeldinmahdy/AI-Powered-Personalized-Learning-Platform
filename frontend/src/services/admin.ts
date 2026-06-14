@@ -36,6 +36,48 @@ export interface AdminCourse {
     created_at: string;
 }
 
+export interface ServiceHealth {
+    status: 'healthy' | 'degraded' | 'down' | 'unknown';
+    error?: string;
+    model_loaded?: boolean;
+    model_path?: string;
+    [key: string]: unknown;
+}
+
+export interface AuditLogEntry {
+    id: number;
+    admin: number | null;
+    admin_username: string;
+    action: string;
+    target_type: string;
+    target_id: string;
+    snapshot_before: Record<string, unknown> | null;
+    snapshot_after: Record<string, unknown> | null;
+    ip_address: string | null;
+    created_at: string;
+}
+
+export interface IntentFeedbackEntry {
+    id: number;
+    student_input: string;
+    session_context: string;
+    predicted_intent: string;
+    confidence: number | null;
+    feedback: string;
+    corrected_intent: string | null;
+    status: string;
+    created_at: string;
+}
+
+export interface RetrainingCounter {
+    id: number;
+    reviews_since_last_train: number;
+    threshold: number;
+    last_trained_at: string | null;
+    updated_at: string;
+}
+
+// ---------- Dashboard ----------
 export async function getAdminStats(): Promise<AdminStats> {
     const res = await api.get('/courses/admin/stats/');
     return res.data;
@@ -122,4 +164,86 @@ export async function updateLesson(id: number, data: Partial<AdminLesson>): Prom
 
 export async function deleteLesson(id: number): Promise<void> {
     await api.delete(`/courses/lessons/${id}/`);
+}
+
+// ---------- Health Monitoring (distributed proxies) ----------
+
+const HEALTH_ENDPOINTS: Record<string, string> = {
+    intent: '/admin/health/intent/',
+    tutor: '/admin/health/tutor/',
+    rag: '/admin/health/rag/',
+    slides: '/admin/health/slides/',
+    asr: '/admin/health/asr/',
+    tts: '/admin/health/tts/',
+    fer: '/admin/health/fer/',
+    ser: '/admin/health/ser/',
+    pathway: '/admin/health/pathway/',
+    assessments: '/admin/health/assessments/',
+    a2f: '/admin/health/a2f/',
+};
+
+export async function getServiceHealth(service: string): Promise<ServiceHealth> {
+    const endpoint = HEALTH_ENDPOINTS[service];
+    if (!endpoint) return { status: 'unknown', error: 'Unknown service' };
+    try {
+        const res = await api.get(endpoint);
+        return res.data;
+    } catch {
+        return { status: 'down', error: 'Request failed' };
+    }
+}
+
+export async function getAllServicesHealth(): Promise<Record<string, ServiceHealth>> {
+    const entries = await Promise.all(
+        Object.entries(HEALTH_ENDPOINTS).map(async ([name, endpoint]) => {
+            try {
+                const res = await api.get(endpoint);
+                return [name, res.data as ServiceHealth] as const;
+            } catch {
+                return [name, { status: 'down' as const, error: 'Request failed' }] as const;
+            }
+        })
+    );
+    return Object.fromEntries(entries);
+}
+
+export function getHealthServiceNames(): string[] {
+    return Object.keys(HEALTH_ENDPOINTS);
+}
+
+// ---------- Audit Logs ----------
+
+export async function getAuditLogs(params?: {
+    action?: string;
+    admin_id?: number;
+}): Promise<AuditLogEntry[]> {
+    const res = await api.get('/audit-logs/', { params });
+    const data = res.data;
+    return Array.isArray(data) ? data : data.results ?? [];
+}
+
+// ---------- Intent Feedback & Retraining ----------
+
+export async function getIntentFeedbackBuffer(): Promise<IntentFeedbackEntry[]> {
+    const res = await api.get('/progress/intent-feedback/');
+    const data = res.data;
+    return Array.isArray(data) ? data : data.results ?? [];
+}
+
+export async function relabelFeedback(
+    id: number,
+    corrected_intent: string
+): Promise<IntentFeedbackEntry> {
+    const res = await api.patch(`/progress/intent-feedback/${id}/`, { corrected_intent });
+    return res.data;
+}
+
+export async function getRetrainingCounter(): Promise<RetrainingCounter> {
+    const res = await api.get('/progress/retraining-counter/');
+    return res.data;
+}
+
+export async function updateThreshold(threshold: number): Promise<RetrainingCounter> {
+    const res = await api.patch('/progress/retraining-counter/1/', { threshold });
+    return res.data;
 }
