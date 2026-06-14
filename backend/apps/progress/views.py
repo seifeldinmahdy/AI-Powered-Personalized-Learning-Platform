@@ -1,3 +1,5 @@
+import logging
+
 from django.utils import timezone
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action, api_view, permission_classes
@@ -5,8 +7,15 @@ from rest_framework.response import Response
 
 from .models import (
     LessonCompletion, SystemActivityLog, AIChatLog,
-    StudentLearningProfile, Bookmark,
+    StudentLearningProfile, Bookmark, ConceptMasteryEvent,
 )
+
+logger = logging.getLogger(__name__)
+
+# Below this topic→concept match confidence, a checkpoint update is DROPPED
+# rather than written — the same conservative stance as a no-match. The mapping
+# is on the live mastery write path with no human review, so each one is logged.
+MASTERY_TOPIC_MATCH_FLOOR = 0.55
 from .serializers import (
     LessonCompletionSerializer,
     SystemActivityLogSerializer,
@@ -191,13 +200,15 @@ class StudentLearningProfileViewSet(viewsets.ModelViewSet):
             profile.profile_summary = request.data["profile_summary"]
             profile.save(update_fields=["profile_summary"])
 
-        # concept_mastery is updated here only — the profiler LLM never writes this field.
-        incoming_cm = request.data.get("concept_mastery")
-        if incoming_cm and isinstance(incoming_cm, dict):
-            existing_cm = profile.concept_mastery or {}
-            existing_cm.update(incoming_cm)
-            profile.concept_mastery = existing_cm
-            profile.save(update_fields=["concept_mastery"])
+        # concept_mastery is NO LONGER writable here. It is an event-sourced
+        # read-model with exactly one mutator: mastery_service.record_events
+        # (via POST /progress/mastery/record/). A concept_mastery payload here is
+        # ignored on purpose — see Batch 6.
+        if "concept_mastery" in request.data:
+            logger.warning(
+                "learning-profile PATCH included concept_mastery — IGNORED "
+                "(use /progress/mastery/record/). student=%s", request.user.id,
+            )
 
         return Response(StudentLearningProfileSerializer(profile).data)
 
@@ -245,6 +256,107 @@ def concept_mastery_view(request):
         for k, v in cm.items()
     ]
     return Response(result)
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def mastery_record(request):
+    """THE single concept-mastery write endpoint (cross-process callers).
+
+    Body: ``{"events": [{outcome, source, alpha?, evidence_delta?, mistake_tag?,
+    concept_id? | (topic + course_id)}]}``. The student is the authenticated
+    user (service callers impersonate via X-Student-ID). Topic-only events are
+    mapped to a Concept here (logged, with a confidence floor below which they
+    are DROPPED). All events funnel into the one mutator, mastery_service.record_events.
+
+    TODO(loud): the in-session checkpoint generator should tag its MCQs with
+    concept_id end-to-end so we stop fuzzy-mapping topics on the live write path.
+    Until then, low-confidence/no-match topics are dropped, not written.
+    """
+    from apps.courses.models import Concept
+    from apps.courses.concept_match import build_matcher
+    from .mastery_service import record_events
+
+    student_id = request.user.id
+    raw_events = request.data.get("events", [])
+    if not isinstance(raw_events, list) or not raw_events:
+        return Response({"error": "events (non-empty list) required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    resolved: list[dict] = []
+    dropped = 0
+    _matchers: dict[str, object] = {}
+    for e in raw_events:
+        cid = e.get("concept_id")
+        if not cid:
+            topic = e.get("topic")
+            course_id = e.get("course_id")
+            if not topic or not course_id:
+                dropped += 1
+                logger.warning("mastery_record: event lacks concept_id and topic/course_id — DROPPED: %s", e)
+                continue
+            course_id = str(course_id)
+            if course_id not in _matchers:
+                _matchers[course_id] = build_matcher(list(Concept.objects.filter(course_id=course_id)))
+            concept, conf = _matchers[course_id].match(topic)
+            if concept is None or conf < MASTERY_TOPIC_MATCH_FLOOR:
+                dropped += 1
+                logger.warning(
+                    "mastery_record: topic→concept DROP topic=%r course=%s "
+                    "match=%s conf=%.2f floor=%.2f source=%s",
+                    topic, course_id, getattr(concept, "label", None),
+                    conf, MASTERY_TOPIC_MATCH_FLOOR, e.get("source"),
+                )
+                continue
+            logger.info(
+                "mastery_record: topic→concept MAP topic=%r -> %s(id=%s) conf=%.2f source=%s",
+                topic, concept.label, concept.id, conf, e.get("source"),
+            )
+            cid = str(concept.id)
+        resolved.append({
+            "concept_id": str(cid),
+            "outcome": e.get("outcome"),
+            "source": e.get("source", "checkpoint"),
+            "alpha": e.get("alpha", 0.3),
+            "evidence_delta": e.get("evidence_delta", 1),
+            "mistake_tag": e.get("mistake_tag", ""),
+        })
+
+    updated = record_events(student_id, resolved) if resolved else {}
+    return Response({"updated": updated, "dropped": dropped})
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def concept_mastery_history(request, concept_id):
+    """GET /progress/concept-mastery/<concept_id>/history/ — explainability.
+
+    Returns the ordered events for this student+concept and the running score
+    after each, so you can say WHY a concept moved (which source, when, how much).
+    """
+    from .mastery_service import fold_events
+
+    events = list(
+        ConceptMasteryEvent.objects
+        .filter(student=request.user, concept_id=str(concept_id))
+        .order_by("created_at", "id")
+    )
+    history = []
+    for i, ev in enumerate(events, 1):
+        folded = fold_events(events[:i])
+        history.append({
+            "source": ev.source,
+            "outcome": ev.outcome,
+            "alpha": ev.alpha,
+            "evidence_delta": ev.evidence_delta,
+            "mistake_tag": ev.mistake_tag,
+            "resulting_score": folded["score"],
+            "created_at": ev.created_at.isoformat(),
+        })
+    return Response({
+        "concept_id": str(concept_id),
+        "events": history,
+        "current": fold_events(events) if events else None,
+    })
 
 
 @api_view(['POST'])

@@ -13,4 +13,7 @@ urlpatterns = [
     path("", include(router.urls)),
     path("practice-completion/", views.practice_completion, name="practice_completion"),
     path("concept-mastery/", views.concept_mastery_view, name="concept-mastery"),
+    # The single concept-mastery write path + per-concept history (explainability).
+    path("mastery/record/", views.mastery_record, name="mastery-record"),
+    path("concept-mastery/<str:concept_id>/history/", views.concept_mastery_history, name="concept-mastery-history"),
 ]

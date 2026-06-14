@@ -85,16 +85,18 @@ async def test_submit_placement_is_concept_keyed(monkeypatch):
     import routers.assessments as ra
     import services.mastery as mastery
 
-    patched = {}
+    posted = []
 
     async def fake_fetch(student_id):
         return {}
 
-    async def fake_patch(student_id, updates):
-        patched.update(updates)
+    async def fake_post(student_id, events):
+        posted.extend(events)
 
     monkeypatch.setattr(mastery, "fetch_concept_mastery", fake_fetch)
-    monkeypatch.setattr(mastery, "patch_concept_mastery", fake_patch)
+    monkeypatch.setattr(mastery, "post_mastery_events", fake_post)
+    # submit_placement imports these names inside the function, so also patch the
+    # module-local references it pulls in.
     store = _FakeStore()
     monkeypatch.setattr(ra, "get_student_context_store", lambda: store)
 
@@ -111,9 +113,11 @@ async def test_submit_placement_is_concept_keyed(monkeypatch):
     )
     resp = await ra.submit_placement(req)
 
-    # concept_mastery was seeded (the single signal), keyed by concept_id.
-    assert "c10" in patched and "c11" in patched
-    assert patched["c10"]["score"] > patched["c11"]["score"]  # loops all-correct > recursion wrong
+    # Mastery is recorded via the single writer as concept-keyed 'assessment' events.
+    by_concept = {e["concept_id"]: e for e in posted}
+    assert "c10" in by_concept and "c11" in by_concept
+    assert by_concept["c10"]["source"] == "assessment"
+    assert by_concept["c10"]["outcome"] > by_concept["c11"]["outcome"]  # loops correct > recursion wrong
     # strengths/weaknesses are concept LABELS, not topic strings from chunks.
     assert "Loops" in resp.strengths
     assert "Recursion" in resp.weaknesses
@@ -127,11 +131,12 @@ async def test_submit_placement_is_concept_keyed(monkeypatch):
     assert resp.mastery_level in ("Novice", "Intermediate", "Expert")
 
 
-# ── §2.3 neuter: no topic_performance source-of-truth ──
+# ── §2.3 checkpoint → single writer (no parallel topic_performance) ──
 
 @pytest.mark.asyncio
-async def test_update_performance_endpoint_is_neutered(monkeypatch):
+async def test_update_performance_records_checkpoint_events(monkeypatch):
     import routers.student_context as sc
+    import services.mastery as mastery
     from schemas.student_context import (
         UnifiedStudentContext, StudentProfileState, LiveSessionState,
     )
@@ -146,17 +151,24 @@ async def test_update_performance_endpoint_is_neutered(monkeypatch):
     class _Store:
         def load(self, s, c):
             return ctx
-        def save(self, s, c, context):
-            raise AssertionError("neutered endpoint must not persist a parallel signal")
 
     monkeypatch.setattr(sc, "get_student_context_store", lambda: _Store())
+
+    posted = []
+
+    async def fake_post(student_id, events):
+        posted.extend(events)
+
+    monkeypatch.setattr(mastery, "post_mastery_events", fake_post)
 
     body = sc.TopicPerformanceUpdate(
         session_scores={"loops": 0.9}, session_number=1, session_topic="Loops",
     )
     resp = await sc.update_performance("7", "3", body)
 
-    # No parallel topic signal returned, and existing concept-derived labels untouched.
+    # Recorded as a checkpoint event (topic+course for server-side mapping);
+    # no parallel topic_performance signal is returned/maintained.
+    assert len(posted) == 1
+    assert posted[0]["source"] == "checkpoint"
+    assert posted[0]["topic"] == "loops" and posted[0]["course_id"] == "3"
     assert resp.updated_topic_performance == {}
-    assert resp.topics_updated == []
-    assert ctx.profile.topic_performance == {}  # unchanged

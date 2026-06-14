@@ -25,7 +25,8 @@ from pathlib import Path
 from django.core.management.base import BaseCommand
 
 from apps.courses.models import Concept
-from apps.progress.models import StudentLearningProfile
+from apps.progress.models import StudentLearningProfile, ConceptMasteryEvent
+from apps.progress.mastery_service import record_events
 
 from apps.courses.concept_match import build_matcher  # shared concept matcher
 
@@ -88,32 +89,28 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.WARNING(f"  skip {f.name}: bad student_id {student_id!r}"))
                 continue
 
-            cm = dict(slp.concept_mastery or {})
-            seeded, unmatched = [], []
+            seeded_events, unmatched = [], []
             for topic, score in tp.items():
                 concept, conf = matcher.match(topic)
                 if concept is None or conf < min_conf:
                     unmatched.append(topic)
                     continue
                 key = str(concept.id)
-                existing = cm.get(key)
-                # Conservative: only seed if absent or evidence-less.
-                if existing and int(existing.get("evidence", 0)) > 0:
+                # Conservative: skip concepts that already have any event (don't
+                # double-seed / clobber accumulated evidence).
+                if ConceptMasteryEvent.objects.filter(student_id=slp.student_id, concept_id=key).exists():
                     continue
-                cm[key] = {
-                    "score": round(float(score), 4),
-                    "evidence": 1,
-                    "trend": "flat",
-                    "last_updated": datetime.now(timezone.utc).isoformat(),
-                    "linked_mistakes": [],
-                }
-                seeded.append(label_cache[course_id].get(key, key))
+                # Route through the SINGLE writer (alpha=1.0 lands score exactly).
+                seeded_events.append({
+                    "concept_id": key, "outcome": round(float(score), 4),
+                    "source": "assessment", "alpha": 1.0, "evidence_delta": 1,
+                })
 
-            total_seeded += len(seeded)
+            total_seeded += len(seeded_events)
             total_unmatched += len(unmatched)
-            if not dry and seeded:
-                slp.concept_mastery = cm
-                slp.save(update_fields=["concept_mastery"])
+            if not dry and seeded_events:
+                record_events(slp.student_id, seeded_events)
+            seeded = seeded_events  # for the count printout below
 
             self.stdout.write(
                 f"  student={student_id} course={course_id}: "

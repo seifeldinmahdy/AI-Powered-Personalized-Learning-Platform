@@ -99,19 +99,15 @@ async def update_performance(
     course_id: str,
     body: TopicPerformanceUpdate,
 ):
-    """In-session performance update — NEUTERED in Batch 5.
+    """In-session performance update → concept-mastery events (single writer).
 
-    ╔════════════════════════════════════════════════════════════════════════╗
-    ║ TODO(Batch 6): RE-WIRE TO concept_mastery — THIS IS CURRENTLY NEUTERED.   ║
-    ╚════════════════════════════════════════════════════════════════════════╝
-    This endpoint used to maintain a parallel ``topic_performance`` signal via a
-    weighted moving average. Batch 5 made concept_mastery the single source of
-    truth, so the parallel write is REMOVED. It now returns the CURRENT state
-    without mutating any knowledge signal.
+    Per-topic session scores are recorded as ``source="checkpoint"`` events via
+    the one Django writer (/progress/mastery/record). Topics are mapped to
+    Concepts there — logged, and DROPPED below the confidence floor. No parallel
+    topic_performance signal is maintained.
 
-    Consequence (accepted, see Batch 5 plan): in-session checkpoints DO NOT
-    contribute to mastery until Batch 6 routes per-concept outcomes through
-    mastery.py (build_entry/EMA → patch_concept_mastery), keyed by concept_id.
+    TODO(loud): concept-tag the checkpoint generator so this stops relying on a
+    fuzzy topic→concept mapping on the live mastery write path.
     """
     store = get_student_context_store()
     context = store.load(student_id, course_id)
@@ -121,14 +117,27 @@ async def update_performance(
             detail=f"No student context found for student={student_id}, course={course_id}",
         )
 
-    logger.warning(
-        "update_performance NEUTERED (TODO Batch 6): student=%s course=%s session=%s "
-        "topic=%s — ignored %d session score(s); concept_mastery not updated.",
-        student_id, course_id, body.session_number, body.session_topic,
-        len(body.session_scores or {}),
+    from services.mastery import post_mastery_events
+    events = [
+        {
+            "topic": topic,
+            "course_id": str(course_id),
+            "outcome": float(score),
+            "source": "checkpoint",
+            "alpha": 0.3,
+        }
+        for topic, score in (body.session_scores or {}).items()
+    ]
+    if events:
+        await post_mastery_events(student_id, events)
+
+    logger.info(
+        "update_performance recorded %d checkpoint event(s) student=%s course=%s session=%s",
+        len(events), student_id, course_id, body.session_number,
     )
 
-    # Return current state unchanged (no parallel signal maintained).
+    # strengths/weaknesses are now derived from concept_mastery elsewhere; echo
+    # the current context (no parallel topic signal).
     return TopicPerformanceUpdateResponse(
         student_id=student_id,
         course_id=course_id,

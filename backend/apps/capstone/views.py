@@ -108,48 +108,36 @@ def _apply_xp_delta(student_id: int, delta: int) -> None:
 
 
 def _update_concept_mastery_sync(student_id: int, results: dict, rubric_items: list[CapstoneRubricItem]) -> None:
+    """Record capstone-grade mastery via the SINGLE writer (event-sourced).
+
+    concept_id comes from the rubric item's FK; outcome is the per-concept mean
+    pass rate. EMA + concurrency-safety now live in mastery_service.record_events.
     """
-    Update concept_mastery on StudentLearningProfile using EMA.
-    concept_id is taken from the rubric item's FK.  Runs in background thread.
-    """
-    ALPHA = 0.3
-    from apps.progress.models import StudentLearningProfile
+    from apps.progress.mastery_service import record_events
 
     concept_outcomes: dict[str, list[float]] = {}
     for item in rubric_items:
         if not item.concept_id:
             continue
         passed = results.get(str(item.id), {}).get("passed", False)
-        concept_key = str(item.concept_id)
-        concept_outcomes.setdefault(concept_key, []).append(1.0 if passed else 0.0)
+        concept_outcomes.setdefault(str(item.concept_id), []).append(1.0 if passed else 0.0)
 
     if not concept_outcomes:
         return
 
+    events = [
+        {
+            "concept_id": cid,
+            "outcome": sum(outcomes) / len(outcomes),
+            "source": "capstone_grade",
+            "alpha": 0.3,
+        }
+        for cid, outcomes in concept_outcomes.items()
+    ]
     try:
-        profile, _ = StudentLearningProfile.objects.get_or_create(student_id=student_id)
-        cm = dict(profile.concept_mastery or {})
-        now_iso = datetime.now(timezone.utc).isoformat()
-
-        for concept_id, outcomes in concept_outcomes.items():
-            outcome = sum(outcomes) / len(outcomes)
-            old = cm.get(concept_id, {})
-            old_score = old.get("score", 0.5)
-            new_score = round(old_score + ALPHA * (outcome - old_score), 4)
-            delta = new_score - old_score
-            trend = "up" if delta > 0.02 else ("down" if delta < -0.02 else "flat")
-            cm[concept_id] = {
-                "score": new_score,
-                "evidence": old.get("evidence", 0) + 1,
-                "trend": trend,
-                "last_updated": now_iso,
-                "linked_mistakes": old.get("linked_mistakes", []),
-            }
-
-        profile.concept_mastery = cm
-        profile.save(update_fields=["concept_mastery"])
+        record_events(student_id, events)
     except Exception:
-        logger.exception("Failed to update concept mastery for student %s", student_id)
+        logger.exception("Failed to record capstone-grade mastery for student %s", student_id)
 
 
 def _normalize_results(rubric_items: list[CapstoneRubricItem], ai_result: dict) -> dict:
@@ -1169,32 +1157,24 @@ def _get_or_reset_quota(capstone, student) -> CapstoneAssistQuota:
 
 
 def _apply_assist_mastery_penalty(student_id, concept_id):
-    """
-    Heavy reliance on assist lowers demonstrated mastery for the targeted concept
-    (mirrors the problem-set hint-penalty philosophy). Small EMA nudge downward.
+    """Heavy assist reliance lowers demonstrated mastery for the concept.
+
+    A gentle (alpha=0.1) nudge toward an "assisted" outcome of 0.3, recorded
+    through the SINGLE writer. ``evidence_delta=0`` because assist is NOT new
+    independent demonstration — but the event still moves the score, so the
+    concept never reads as "no data" (it has an entry; see derive_mastery_level).
     """
     if not concept_id:
         return
-    ALPHA = 0.1  # gentle
-    from apps.progress.models import StudentLearningProfile
+    from apps.progress.mastery_service import record_events
     try:
-        profile, _ = StudentLearningProfile.objects.get_or_create(student_id=student_id)
-        cm = dict(profile.concept_mastery or {})
-        key = str(concept_id)
-        old = cm.get(key, {})
-        old_score = old.get("score", 0.5)
-        # Nudge toward a lower "assisted" outcome (0.3), capturing reduced
-        # independent demonstration of the concept.
-        new_score = round(old_score + ALPHA * (0.3 - old_score), 4)
-        cm[key] = {
-            "score": new_score,
-            "evidence": old.get("evidence", 0),  # not new independent evidence
-            "trend": "down" if new_score < old_score - 0.02 else "flat",
-            "last_updated": datetime.now(timezone.utc).isoformat(),
-            "linked_mistakes": old.get("linked_mistakes", []),
-        }
-        profile.concept_mastery = cm
-        profile.save(update_fields=["concept_mastery"])
+        record_events(student_id, [{
+            "concept_id": str(concept_id),
+            "outcome": 0.3,
+            "source": "capstone_assist",
+            "alpha": 0.1,
+            "evidence_delta": 0,
+        }])
     except Exception:
         logger.exception("assist mastery penalty failed for student %s", student_id)
 

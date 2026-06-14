@@ -172,3 +172,59 @@ class StudentLearningProfile(models.Model):
 
     def __str__(self):
         return f"Learning Profile — {self.student.username} ({self.sessions_count} sessions)"
+
+
+# ------------------------------------------------------------------
+# ConceptMasteryEvent — append-only event log; mastery is a fold over it.
+# This is the source of truth. ``StudentLearningProfile.concept_mastery`` is a
+# derived read-model recomputed from these events by the single writer
+# (apps.progress.mastery_service). Append-only ⇒ concurrent writes never
+# conflict; full per-concept history ⇒ explainability ("why did it move").
+# ------------------------------------------------------------------
+class ConceptMasteryEvent(models.Model):
+    SOURCE_CHOICES = [
+        ("assessment", "Placement assessment"),
+        ("checkpoint", "In-session MCQ checkpoint"),
+        ("problem_set", "Problem set"),
+        ("capstone_grade", "Capstone grade"),
+        ("capstone_assist", "Capstone assist penalty"),
+        ("backfill", "Migration backfill seed"),
+    ]
+
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="concept_mastery_events",
+    )
+    concept_id = models.CharField(
+        max_length=64,
+        help_text="Django Concept.id (string) — matches concept_mastery projection keys.",
+    )
+    outcome = models.FloatField(help_text="Observed outcome 0.0–1.0 (fail→pass).")
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES)
+    alpha = models.FloatField(
+        default=0.3,
+        help_text="Per-event EMA weight. Lets callers (e.g. Batch 10) down-weight "
+                  "an update without the mastery code knowing why.",
+    )
+    evidence_delta = models.IntegerField(
+        default=1,
+        help_text="How much independent evidence this event contributes. "
+                  "0 for assist penalties (not new independent demonstration); "
+                  "for backfill seeds, the prior evidence count.",
+    )
+    mistake_tag = models.CharField(max_length=120, blank=True, default="")
+    # Backfill seeds carry the FULL pre-migration entry ({linked_mistakes, trend})
+    # so the fold round-trips the projection exactly. Normal events leave this null.
+    seed_meta = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "concept_mastery_events"
+        indexes = [
+            models.Index(fields=["student", "concept_id", "created_at", "id"]),
+        ]
+        ordering = ["created_at", "id"]
+
+    def __str__(self):
+        return f"{self.student_id}/{self.concept_id} {self.source} {self.outcome} (a={self.alpha})"

@@ -49,37 +49,6 @@ def derive_trend(old_score: float, new_score: float, epsilon: float = EPSILON) -
     return "flat"
 
 
-def build_entry(
-    old_entry: dict,
-    outcome: float,
-    mistake_tag: str | None = None,
-) -> dict:
-    """Build a fully updated mastery entry dict ready for JSON storage.
-
-    Args:
-        old_entry: existing {score, evidence, trend, last_updated, linked_mistakes}
-                   or {} if first time seeing this concept.
-        outcome:   0.0 (failed) or 1.0 (passed).
-        mistake_tag: rubric category string to append to linked_mistakes on failure.
-    """
-    old_score = float(old_entry.get("score", 0.5))
-    new_score = update(old_score, outcome)
-    evidence = int(old_entry.get("evidence", 0)) + 1
-    trend = derive_trend(old_score, new_score)
-
-    mistakes = list(old_entry.get("linked_mistakes", []))
-    if mistake_tag and outcome == 0.0 and mistake_tag not in mistakes:
-        mistakes.append(mistake_tag)
-
-    return {
-        "score": new_score,
-        "evidence": evidence,
-        "trend": trend,
-        "last_updated": datetime.now(timezone.utc).isoformat(),
-        "linked_mistakes": mistakes,
-    }
-
-
 def derive_mastery_level(
     concept_mastery: dict,
     course_concept_ids: set[str] | None = None,
@@ -89,18 +58,23 @@ def derive_mastery_level(
 ) -> str:
     """Derive the overall mastery_level from per-concept mastery.
 
-    mastery_level is no longer a string frozen at placement — it is a DERIVED
-    aggregate of concept mastery that moves as the student progresses. We take
-    the mean score over concepts that have evidence (optionally restricted to
-    the course's concept set) and threshold it.
+    mastery_level is a DERIVED aggregate of concept mastery that moves as the
+    student progresses: the mean score over concepts PRESENT in the projection
+    (optionally restricted to the course's concept set), thresholded.
 
-    Returns "Novice" when there is no evidence yet (safe default).
+    Post-event-sourcing, a concept is present iff it has at least one event, so
+    "present" already means "has data". We therefore do NOT gate on evidence>0 —
+    that would make an assist-only concept (evidence_delta 0, but a real,
+    lowered score) read as "no data" and silently drop out of the mean. Such a
+    concept SHOULD count (the student needed help on it).
+
+    Returns "Novice" when the student has no concept data at all.
     """
     scores = [
         float(v.get("score", 0.0))
         for k, v in (concept_mastery or {}).items()
         if (course_concept_ids is None or str(k) in course_concept_ids)
-        and int(v.get("evidence", 0)) > 0
+        and isinstance(v, dict) and "score" in v
     ]
     if not scores:
         return "Novice"
@@ -124,58 +98,64 @@ def top_weak_concepts(concept_mastery: dict, n: int = 3) -> list[dict]:
     )[:n]
 
 
-def compute_mastery_updates(
-    evaluated_rubric: list,
-    existing_concept_mastery: dict,
-) -> dict:
-    """Given evaluated rubric criteria (with optional concept_id) and the
-    existing concept_mastery dict, return the subset of concept_mastery that
-    changed and should be PATCHed to Django.
+def outcomes_from_eval(evaluated_rubric: list) -> list[dict]:
+    """Aggregate evaluated rubric criteria into per-concept OUTCOMES (no EMA).
 
-    This function is pure — no I/O. It aggregates binary outcomes per concept:
-    if multiple criteria target the same concept, the outcome is averaged before
-    calling update().
+    Pure. The EMA + persistence now live behind the single Django writer
+    (mastery_service.record_events); here we only produce
+    ``[{concept_id, outcome, mistake_tag}]`` to send it.
     """
-    # Collect all (concept_id, binary_outcome, category) tuples
     per_concept: dict[str, list[float]] = {}
     per_concept_tag: dict[str, str] = {}
-
     for crit in evaluated_rubric:
         crit_dict = crit if isinstance(crit, dict) else crit.model_dump()
         concept_id = crit_dict.get("concept_id")
         if not concept_id:
             continue
-
-        category = crit_dict.get("category", "")
         checks = crit_dict.get("checks", [])
         if not checks:
             continue
-
-        # Average the binary check outcomes for this criterion
-        check_outcomes = [
-            1.0 if c.get("result") is True else 0.0
-            for c in checks
-        ]
-        avg_outcome = sum(check_outcomes) / len(check_outcomes)
-        per_concept.setdefault(concept_id, []).append(avg_outcome)
-
-        # Track the most "failing" category for linked_mistakes
+        avg_outcome = sum(1.0 if c.get("result") is True else 0.0 for c in checks) / len(checks)
+        per_concept.setdefault(str(concept_id), []).append(avg_outcome)
         if avg_outcome < 0.5:
-            per_concept_tag[concept_id] = category
+            per_concept_tag[str(concept_id)] = crit_dict.get("category", "")
 
-    updates: dict = {}
-    for concept_id, outcomes in per_concept.items():
-        final_outcome = sum(outcomes) / len(outcomes)
-        old_entry = existing_concept_mastery.get(str(concept_id), {})
-        mistake_tag = per_concept_tag.get(concept_id)
-        updates[str(concept_id)] = build_entry(old_entry, final_outcome, mistake_tag)
-
-    return updates
+    return [
+        {
+            "concept_id": cid,
+            "outcome": sum(outs) / len(outs),
+            "mistake_tag": per_concept_tag.get(cid, ""),
+        }
+        for cid, outs in per_concept.items()
+    ]
 
 
 # ── Async helpers (I/O) ──────────────────────────────────────────
 
 DJANGO_API_URL = os.getenv("DJANGO_API_URL", "http://localhost:8000/api")
+
+
+async def post_mastery_events(student_id: str, events: list[dict]) -> None:
+    """POST mastery events to the SINGLE Django writer (/progress/mastery/record).
+
+    This is how ai_service mutates concept mastery — it no longer computes EMA or
+    PATCHes the projection. ``events`` items: ``{concept_id|topic+course_id,
+    outcome, source, alpha?, evidence_delta?, mistake_tag?}``.
+    """
+    if not events:
+        return
+    service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                f"{DJANGO_API_URL}/progress/mastery/record/",
+                json={"events": events},
+                headers={"X-Student-ID": str(student_id), "X-Service-Key": service_key},
+            )
+            if resp.status_code not in (200, 201):
+                logger.warning("mastery/record returned %d for student %s", resp.status_code, student_id)
+    except Exception as e:
+        logger.warning("Could not POST mastery events for student %s: %s", student_id, e)
 
 
 async def fetch_concept_mastery(student_id: str) -> dict:
@@ -192,27 +172,6 @@ async def fetch_concept_mastery(student_id: str) -> dict:
     except Exception as e:
         logger.warning("Could not fetch concept_mastery for student %s: %s", student_id, e)
     return {}
-
-
-async def patch_concept_mastery(student_id: str, updates: dict) -> None:
-    """PATCH the student's concept_mastery on Django with the provided updates."""
-    if not updates:
-        return
-    service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.patch(
-                f"{DJANGO_API_URL}/progress/learning-profile/update/",
-                json={"concept_mastery": updates},
-                headers={"X-Student-ID": student_id, "X-Service-Key": service_key},
-            )
-            if resp.status_code not in (200, 204):
-                logger.warning(
-                    "concept_mastery PATCH returned %d for student %s",
-                    resp.status_code, student_id,
-                )
-    except Exception as e:
-        logger.warning("Could not PATCH concept_mastery for student %s: %s", student_id, e)
 
 
 async def fetch_course_concepts(course_id: str) -> list[dict]:
@@ -236,19 +195,25 @@ async def fetch_course_concepts(course_id: str) -> list[dict]:
 async def update_concept_mastery_from_eval(
     student_id: str,
     evaluated_rubric: list,
+    alpha: float = 0.3,
 ) -> None:
-    """Fire-and-forget: fetch existing mastery, compute updates, PATCH back.
+    """Fire-and-forget: send problem-set outcomes to the single mastery writer.
 
-    Designed to be called as asyncio.create_task() from the submit endpoint.
+    ``alpha`` is the per-call EMA weight — Batch 10's attempt policy passes a
+    down-weighted alpha for regenerated-set attempts; this code stays unaware of
+    why. No EMA/RMW here: the Django writer folds it.
     """
     try:
-        existing = await fetch_concept_mastery(student_id)
-        updates = compute_mastery_updates(evaluated_rubric, existing)
-        if updates:
-            await patch_concept_mastery(student_id, updates)
+        outcomes = outcomes_from_eval(evaluated_rubric)
+        events = [
+            {**o, "source": "problem_set", "alpha": alpha}
+            for o in outcomes
+        ]
+        if events:
+            await post_mastery_events(student_id, events)
             logger.info(
-                "Updated concept_mastery for student %s: %d concept(s)",
-                student_id, len(updates),
+                "Recorded problem-set mastery for student %s: %d concept(s)",
+                student_id, len(events),
             )
     except Exception:
         logger.exception("concept_mastery update failed for student %s", student_id)

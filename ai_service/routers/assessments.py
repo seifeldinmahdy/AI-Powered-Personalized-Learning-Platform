@@ -182,24 +182,22 @@ async def submit_placement(req: SubmitPlacementRequest):
         for cid, s in concept_stats.items() if s["total"] > 0
     }
 
-    # ── Seed the single knowledge signal: Django concept_mastery ──
-    # Reuse the deterministic EMA entry shape so every existing reader (chart,
-    # certificate, problem-set targeting, capstone) sees consistent data.
+    # ── Seed the single knowledge signal via the ONE writer ──
+    # Placement results are recorded as 'assessment' events (alpha=1.0 → the
+    # server fold from the 0.5 prior lands exactly on the observed score).
     from services.mastery import (
-        fetch_concept_mastery, patch_concept_mastery, build_entry,
-        derive_mastery_level,
+        fetch_concept_mastery, post_mastery_events, derive_mastery_level,
     )
 
-    existing_cm = await fetch_concept_mastery(req.student_id)
-    cm_updates: dict[str, dict] = {}
-    for cid, score in concept_scores.items():
-        # Seed from a neutral prior toward the observed placement score.
-        cm_updates[cid] = build_entry(existing_cm.get(cid, {}), outcome=score)
-    if cm_updates:
-        await patch_concept_mastery(req.student_id, cm_updates)
+    events = [
+        {"concept_id": cid, "outcome": score, "source": "assessment", "alpha": 1.0}
+        for cid, score in concept_scores.items()
+    ]
+    if events:
+        await post_mastery_events(req.student_id, events)
 
-    # Merge for derivation/strength-weakness (existing + just-seeded)
-    merged_cm = {**existing_cm, **cm_updates}
+    # Re-read the updated projection to derive the live mastery_level.
+    merged_cm = await fetch_concept_mastery(req.student_id)
     course_concept_ids = set(concept_scores.keys()) or None
     mastery_level = derive_mastery_level(merged_cm, course_concept_ids)
 
@@ -388,35 +386,42 @@ async def mcq_session_endpoint(req: dict):
 
 @router.post("/submit")
 async def mcq_submit_endpoint(req: dict):
-    """Score an in-session MCQ checkpoint and return the result.
+    """Score an in-session MCQ checkpoint and record concept-mastery events.
 
-    ╔════════════════════════════════════════════════════════════════════════╗
-    ║ TODO(Batch 6): RE-WIRE THIS TO concept_mastery — IT IS CURRENTLY NEUTERED ║
-    ╚════════════════════════════════════════════════════════════════════════╝
-    This endpoint USED TO maintain a parallel ``topic_performance`` signal via a
-    weighted moving average. Batch 5 collapsed the taxonomy onto concept_mastery
-    (the single source of truth), so that parallel write has been REMOVED.
+    The checkpoint's per-topic scores are sent to the SINGLE mastery writer as
+    ``source="checkpoint"`` events. Because checkpoint MCQs are still topic-keyed,
+    each topic is mapped to a Concept inside /progress/mastery/record — logged,
+    and DROPPED below the confidence floor (no parallel signal is revived).
 
-    Consequence (accepted, see Batch 5 plan): in-session MCQ checkpoints DO NOT
-    contribute to mastery until Batch 6 closes this. Batch 6 must: tag checkpoint
-    MCQs with concept_id and route per-concept outcomes through mastery.py
-    (build_entry/EMA → patch_concept_mastery), exactly like the problem-set path.
-    Until then we only score-and-return; we still record incorrect answers for
-    the profiler, but we do NOT touch the knowledge signal.
+    TODO(loud): concept-tag the in-session checkpoint GENERATOR end-to-end so we
+    stop fuzzy-mapping topics on the live mastery write path.
     """
     try:
         _ensure_mcq_imports()
         from mcq.models import CheckpointSubmission  # type: ignore
         from mcq.scoring import score_checkpoint  # type: ignore
+        from services.mastery import post_mastery_events
 
         submission = CheckpointSubmission(**req)
-
-        # ── 1. Score the submission ──────────────────────────────
         result = score_checkpoint(submission)
 
-        # ── 2. NEUTERED (Batch 6): do NOT write a parallel topic signal. ──
-        # We still append incorrect answers so the profiler keeps working, but
-        # mastery (concept_mastery) is intentionally NOT updated here yet.
+        # Record checkpoint outcomes through the one writer (topic→concept mapped
+        # server-side with a confidence floor + logging).
+        per_topic = getattr(result, "per_topic_scores", None) or {}
+        events = [
+            {
+                "topic": topic,
+                "course_id": str(submission.course_id),
+                "outcome": float(score),
+                "source": "checkpoint",
+                "alpha": 0.3,
+            }
+            for topic, score in per_topic.items()
+        ]
+        if events:
+            await post_mastery_events(submission.student_id, events)
+
+        # Keep recording incorrect answers for the profiler (unchanged).
         if result.question_results:
             store = get_student_context_store()
             context = store.load(submission.student_id, submission.course_id)
@@ -432,13 +437,6 @@ async def mcq_submit_endpoint(req: dict):
                         })
                 store.save(submission.student_id, submission.course_id, context)
 
-        logger.warning(
-            "mcq_submit NEUTERED (TODO Batch 6): scored checkpoint for student=%s "
-            "course=%s session=%s but did NOT update mastery (no parallel "
-            "topic_performance; concept_mastery wiring pending).",
-            submission.student_id, submission.course_id,
-            getattr(submission, "session_number", "?"),
-        )
         return result.model_dump()
 
     except Exception as e:

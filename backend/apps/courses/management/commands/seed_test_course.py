@@ -179,18 +179,17 @@ class Command(BaseCommand):
 
             StudentProfile.objects.get_or_create(user=user)
 
-            # Seed complementary concept_mastery (rotated profile).
-            prof, _ = StudentLearningProfile.objects.get_or_create(student=user)
-            cm = {}
+            # Seed complementary concept_mastery through the SINGLE writer so the
+            # event log is the source of truth even for seeded fixtures.
+            from apps.progress.mastery_service import record_events
+            StudentLearningProfile.objects.get_or_create(student=user)
             mp = MASTERY_PROFILES[(i - 1) % len(MASTERY_PROFILES)]
-            now_iso = timezone.now().isoformat()
-            for slug, (score, evidence) in mp.items():
-                cm[str(concepts[slug].id)] = {
-                    "score": score, "evidence": evidence,
-                    "trend": "flat", "last_updated": now_iso, "linked_mistakes": [],
-                }
-            prof.concept_mastery = cm
-            prof.save(update_fields=["concept_mastery"])
+            record_events(user.id, [
+                # alpha=1.0 lands the score exactly; evidence_delta carries the count.
+                {"concept_id": str(concepts[slug].id), "outcome": score,
+                 "source": "assessment", "alpha": 1.0, "evidence_delta": evidence}
+                for slug, (score, evidence) in mp.items()
+            ])
 
             enrollment, _ = Enrollment.objects.get_or_create(
                 student=user, course=course,
