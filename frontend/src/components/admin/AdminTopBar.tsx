@@ -1,4 +1,3 @@
-import { Search, Command } from "lucide-react";
 import { useLocation, Link } from "react-router";
 
 const breadcrumbMap: Record<string, string> = {
@@ -27,7 +26,7 @@ export function AdminTopBar() {
     }, []);
 
   return (
-    <header className="h-16 px-8 flex items-center justify-between bg-[var(--admin-paper-elevated)] border-b border-[var(--admin-hairline)]">
+    <header className="h-14 px-8 flex items-center bg-[var(--admin-paper-elevated)] border-b border-[var(--admin-hairline)]">
       {/* Breadcrumb */}
       <nav aria-label="Breadcrumb">
         <ol className="flex items-center gap-2 admin-label">
@@ -46,25 +45,6 @@ export function AdminTopBar() {
           ))}
         </ol>
       </nav>
-
-      {/* Search */}
-      <div className="flex-1 max-w-md mx-8">
-        <div className="relative">
-          <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--admin-ink-tertiary)]" />
-          <input
-            type="text"
-            placeholder="Search..."
-            className="admin-input pl-11 pr-12 py-2.5 text-[14px]"
-          />
-          <span className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-[var(--admin-ink-tertiary)]">
-            <Command size={12} />
-            <span className="admin-body-sm">K</span>
-          </span>
-        </div>
-      </div>
-
-      {/* Spacer to keep layout balanced */}
-      <div className="w-8" />
     </header>
   );
 }

@@ -102,7 +102,7 @@ export function AdminSidebar() {
           <p className="font-[family-name:var(--admin-font-display)] font-semibold text-[14px] text-[var(--admin-ink)]">
             {user?.username ?? "Admin"}
           </p>
-          <p className="admin-body-sm">{user?.email ?? "admin@personifai.edu"}</p>
+          <p className="admin-body-sm">{user?.email ?? ""}</p>
         </div>
         <button
           onClick={handleLogout}

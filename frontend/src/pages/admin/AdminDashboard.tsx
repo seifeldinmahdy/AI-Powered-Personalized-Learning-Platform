@@ -26,7 +26,7 @@ import {
 const DIFFICULTIES = ['Beginner', 'Intermediate', 'Advanced'];
 const STATUSES = ['Draft', 'Published', 'Archived'];
 
-const emptyForm = { title: '', description: '', difficulty: 'Beginner', status: 'Draft', price: '0.00', tags: [] as string[] };
+const emptyForm = { title: '', description: '', difficulty: 'Beginner', status: 'Draft', tags: [] as string[] };
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -58,7 +58,7 @@ export default function AdminDashboard() {
   const openCreate = () => { setEditingCourse(null); setForm(emptyForm); setShowForm(true); };
   const openEdit = (course: AdminCourse) => {
     setEditingCourse(course);
-    setForm({ title: course.title, description: course.description, difficulty: course.difficulty, status: course.status, price: course.price, tags: course.tags ?? [] });
+    setForm({ title: course.title, description: course.description, difficulty: course.difficulty, status: course.status, tags: course.tags ?? [] });
     setShowForm(true);
   };
 
@@ -118,28 +118,12 @@ export default function AdminDashboard() {
     <div className="admin-animate-page">
       {/* Page header */}
       <div className="mb-10">
-        <p className="admin-label admin-label-accent mb-3">ADMIN / OVERVIEW</p>
         <h1 className="admin-heading-md mb-3">Platform overview.</h1>
         <p className="admin-body-lg max-w-2xl">
           Live status, recent activity, and key metrics for the learning platform.
         </p>
       </div>
 
-      {/* Health strip */}
-      <div className="admin-card p-6 mb-8">
-        <p className="admin-label mb-4">Service health</p>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          {['Django API', 'AI Service', 'Intent Model', 'Slide Gen', 'Tutor', 'RAG Index'].map((service) => (
-            <div key={service} className="flex items-center gap-3 p-3 border border-[var(--admin-hairline-light)]">
-              <span className="admin-status-dot admin-status-dot-success" />
-              <div>
-                <p className="font-[family-name:var(--admin-font-display)] font-medium text-[13px] text-[var(--admin-ink)]">{service}</p>
-                <p className="admin-body-sm">Healthy</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
@@ -205,7 +189,6 @@ export default function AdminDashboard() {
                   <tr>
                     <th>Course</th>
                     <th>Difficulty</th>
-                    <th>Lessons</th>
                     <th>Status</th>
                     <th>Actions</th>
                   </tr>
@@ -215,10 +198,9 @@ export default function AdminDashboard() {
                     <tr key={course.id}>
                       <td>
                         <p className="font-[family-name:var(--admin-font-display)] font-semibold text-[14px] text-[var(--admin-ink)]">{course.title}</p>
-                        <p className="admin-body-sm">${course.price}</p>
+                        <p className="admin-body-sm">{course.description?.slice(0, 60) || 'No description'}{course.description?.length > 60 ? '…' : ''}</p>
                       </td>
                       <td><span className={getDifficultyBadge(course.difficulty)}>{course.difficulty}</span></td>
-                      <td className="font-mono font-semibold">{course.total_lessons_count}</td>
                       <td><span className={getStatusBadge(course.status)}>{course.status}</span></td>
                       <td>
                         <div className="flex gap-2">
@@ -365,17 +347,6 @@ export default function AdminDashboard() {
                     {STATUSES.map(s => <option key={s}>{s}</option>)}
                   </select>
                 </div>
-              </div>
-              <div>
-                <label className="admin-input-label">Price ($)</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.price}
-                  onChange={e => setForm(f => ({ ...f, price: e.target.value }))}
-                  className="admin-input"
-                />
               </div>
             </div>
             <div className="px-6 py-4 border-t border-[var(--admin-hairline)] flex gap-3 justify-end">
