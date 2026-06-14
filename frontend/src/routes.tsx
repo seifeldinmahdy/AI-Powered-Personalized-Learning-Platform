@@ -9,10 +9,17 @@ import CodingLab from "./pages/student/CodingLab";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import AdminStudents from "./pages/admin/AdminStudents";
 import AdminCourseEditor from "./pages/admin/AdminCourseEditor";
+import ContentManagement from "./pages/admin/ContentManagement";
+import StudentCreate from "./pages/admin/StudentCreate";
+import StudentDetail from "./pages/admin/StudentDetail";
+import Enrollments from "./pages/admin/Enrollments";
+import AiOperations from "./pages/admin/AiOperations";
+import HealthMonitor from "./pages/admin/HealthMonitor";
+import Settings from "./pages/admin/Settings";
 import Profile from "./pages/Profile";
 import NotFound from "./pages/shared/NotFound";
 import StudentLayout from "./layouts/StudentLayout";
-import AdminLayout from "./layouts/AdminLayout";
+import { AdminLayout } from "./components/admin/AdminLayout";
 import RequireAuth from "./components/RequireAuth";
 import RequirePathway from "./components/RequirePathway";
 
@@ -83,7 +90,14 @@ export const router = createBrowserRouter([
         ),
         children: [
             { path: "admin", Component: AdminDashboard },
+            { path: "admin/content", Component: ContentManagement },
             { path: "admin/students", Component: AdminStudents },
+            { path: "admin/students/new", Component: StudentCreate },
+            { path: "admin/students/:id", Component: StudentDetail },
+            { path: "admin/enrollments", Component: Enrollments },
+            { path: "admin/ai-ops", Component: AiOperations },
+            { path: "admin/health", Component: HealthMonitor },
+            { path: "admin/settings", Component: Settings },
             { path: "admin/courses/:courseId/editor", Component: AdminCourseEditor },
         ],
     },

@@ -6,10 +6,13 @@ router = DefaultRouter()
 router.register(r"lesson-completions", views.LessonCompletionViewSet, basename="lesson-completion")
 router.register(r"activity-logs", views.SystemActivityLogViewSet, basename="activity-log")
 router.register(r"chat-logs", views.AIChatLogViewSet, basename="chat-log")
+router.register(r"intent-feedback-buffer", views.IntentFeedbackBufferViewSet, basename="intent-feedback-buffer")
+router.register(r"intent-retraining-counter", views.IntentRetrainingCounterViewSet, basename="intent-retraining-counter")
 router.register(r"bookmarks", views.BookmarkViewSet, basename="bookmark")
 router.register(r"learning-profile", views.StudentLearningProfileViewSet, basename="learning-profile")
 
 urlpatterns = [
     path("", include(router.urls)),
     path("practice-completion/", views.practice_completion, name="practice_completion"),
+    path("trigger-retraining/", views.trigger_retraining, name="trigger_retraining"),
 ]

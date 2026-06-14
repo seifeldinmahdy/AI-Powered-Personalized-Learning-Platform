@@ -1,4 +1,4 @@
-import { Mic, MicOff, Volume2, VolumeX, MessageCircle, Pause, Play, Send, Loader2, Code2, GripHorizontal, Maximize2, Minimize2 } from 'lucide-react';
+import { Mic, MicOff, Volume2, VolumeX, MessageCircle, Pause, Play, Send, Loader2, Code2, GripHorizontal, Maximize2, Minimize2, ThumbsUp, ThumbsDown, Info } from 'lucide-react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import {
@@ -13,18 +13,58 @@ import {
   synthesizeAudio,
   setTutorPace,
   persistChatLog,
+  submitFeedback,
   type SERResult,
+  type IntentPrediction,
+  type FeedbackValue,
 } from '../services/tutor';
 
 import { fuseEmotions } from '../services/emotionFusion';
 import { Nova3DAvatar } from './Nova3DAvatar';
 import type { BlendshapeData } from '../services/tutor';
 
+const INTENT_OPTIONS: { value: string; label: string; description: string }[] = [
+  {
+    value: 'On-Topic Question',
+    label: 'On-Topic Question',
+    description: 'Asking about the current Python topic — explanation, example, clarification, or debugging help.',
+  },
+  {
+    value: 'Off-Topic Question',
+    label: 'Off-Topic',
+    description: 'Completely unrelated to the lesson or programming.',
+  },
+  {
+    value: 'Emotional-State',
+    label: 'Emotional State',
+    description: 'Expressing a feeling like frustration, confusion, excitement, boredom, or anxiety.',
+  },
+  {
+    value: 'Pace-Related',
+    label: 'Pace-Related',
+    description: 'Wants to change speed — slow down, speed up, skip, or take a break.',
+  },
+  {
+    value: 'Repeat/clarification',
+    label: 'Repeat / Clarification',
+    description: 'Wants something repeated or explained again (uses "again", "back", "repeat", "missed").',
+  },
+  {
+    value: 'Debugging/Code-Sharing',
+    label: 'Debugging / Code',
+    description: 'Sharing code, error messages, tracebacks, or asking for debugging help.',
+  },
+];
+
 interface TranscriptEntry {
   role: 'tutor' | 'student';
   text: string;
   topic?: string;
   sources?: { book: string; page_start: number; page_end: number }[];
+  chatLogId?: number;
+  feedback?: FeedbackValue | null;
+  correctedIntent?: string | null;
+  intent?: IntentPrediction | null;
 }
 
 interface CompactTutorProps {
@@ -75,6 +115,8 @@ export function CompactTutor({
   const [started, setStarted] = useState(false);
   const [tutorEmotion, setTutorEmotion] = useState('calm');
   const [currentBlendshapes, setCurrentBlendshapes] = useState<BlendshapeData | null>(null);
+  const [sessionContext, setSessionContext] = useState('');
+  const [correctionModal, setCorrectionModal] = useState<{ index: number; chatLogId: number } | null>(null);
 
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -332,7 +374,8 @@ export function CompactTutor({
       const paceKeywords = ['slow down', 'too fast', 'speed up', 'faster', 'slower', 'skip'];
       const emotionKeywords = ['confused', 'lost', 'frustrated', 'don\'t understand', 'hard', 'difficult', 'give up', 'struggling'];
       const lower = q.toLowerCase();
-      let intent: import('../services/tutor').IntentName = 'On-Topic Question';
+      let intent: string = 'On-Topic Question';
+      let intentPrediction: IntentPrediction | null = null;
 
       if (!isAutoTrigger) {
         if (repeatKeywords.some(k => lower.includes(k))) {
@@ -344,10 +387,12 @@ export function CompactTutor({
         } else {
           // Format context to match the model's training format so it can
           // correctly judge what is on-topic vs off-topic for this lesson.
-          const sessionContext = lessonTitle
+          const ctx = lessonTitle
             ? `topic:${lessonTitle} | prev:${lessonTitle} | emotion:neutral | pace:normal`
             : '';
-          intent = await classifyIntent(q, sessionContext);
+          setSessionContext(ctx);
+          intentPrediction = await classifyIntent(q, ctx);
+          intent = intentPrediction?.intent_name ?? 'On-Topic Question';
         }
       }
 
@@ -507,14 +552,31 @@ export function CompactTutor({
         return;
       }
 
+      let chatLogId: number | undefined;
+      if (lessonId) {
+        const chatLog = await persistChatLog({
+          lesson: lessonId,
+          transcript_text: q,
+          ai_response_text: res.answer,
+          session_id: sessionIdRef.current ?? undefined,
+          session_context: sessionContext,
+          predicted_intent: intentPrediction?.intent_name,
+          confidence: intentPrediction?.confidence,
+          intent_probabilities: intentPrediction?.probabilities,
+        });
+        chatLogId = chatLog?.id;
+      }
+
       setTranscript((prev) => [...prev, {
         role: 'tutor',
         text: res.answer,
         topic: 'Answer',
         sources: ragSources.length > 0 ? ragSources : undefined,
+        chatLogId,
+        intent: intentPrediction,
+        feedback: null,
       }]);
 
-      if (lessonId) persistChatLog(lessonId, q, res.answer);
       logInteraction(res.answer);
       setTutorEmotion('happy');
 
@@ -534,6 +596,51 @@ export function CompactTutor({
       setIsAsking(false);
     }
   };
+
+  const handleFeedback = async (index: number, feedback: FeedbackValue) => {
+    const entry = transcript[index];
+    if (!entry?.chatLogId || entry.feedback) return;
+
+    if (feedback === 'thumbs_down') {
+      setCorrectionModal({ index, chatLogId: entry.chatLogId });
+      return;
+    }
+
+    const result = await submitFeedback(entry.chatLogId, feedback);
+    if (result) {
+      setTranscript((prev) => {
+        const updated = [...prev];
+        updated[index] = { ...updated[index], feedback };
+        return updated;
+      });
+      if (result.retraining_recommended) {
+        console.log('[Intent Feedback] Retraining threshold reached.');
+      }
+    }
+  };
+
+  const handleCorrectIntent = async (correctedIntent: string) => {
+    if (!correctionModal) return;
+    const { index, chatLogId } = correctionModal;
+    const result = await submitFeedback(chatLogId, 'thumbs_down', correctedIntent);
+    if (result) {
+      setTranscript((prev) => {
+        const updated = [...prev];
+        updated[index] = {
+          ...updated[index],
+          feedback: 'thumbs_down',
+          correctedIntent,
+        };
+        return updated;
+      });
+      if (result.retraining_recommended) {
+        console.log('[Intent Feedback] Retraining threshold reached.');
+      }
+    }
+    setCorrectionModal(null);
+  };
+
+  const closeCorrectionModal = () => setCorrectionModal(null);
 
   const handleVoiceInput = async () => {
     if (isRecording) {
@@ -860,6 +967,34 @@ export function CompactTutor({
                   ))}
                 </div>
               )}
+              {entry.role === 'tutor' && entry.chatLogId && (
+                <div className="mt-2 flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-muted-foreground">Was this helpful?</span>
+                    <button
+                      onClick={() => handleFeedback(i, 'thumbs_up')}
+                      disabled={entry.feedback === 'thumbs_down'}
+                      className={`p-1 rounded transition-colors ${entry.feedback === 'thumbs_up' ? 'bg-green-100 text-green-600' : 'hover:bg-muted text-muted-foreground'}`}
+                      title="Helpful"
+                    >
+                      <ThumbsUp size={12} />
+                    </button>
+                    <button
+                      onClick={() => handleFeedback(i, 'thumbs_down')}
+                      disabled={entry.feedback === 'thumbs_up'}
+                      className={`p-1 rounded transition-colors ${entry.feedback === 'thumbs_down' ? 'bg-red-100 text-red-600' : 'hover:bg-muted text-muted-foreground'}`}
+                      title="Not helpful"
+                    >
+                      <ThumbsDown size={12} />
+                    </button>
+                  </div>
+                  {entry.feedback === 'thumbs_down' && entry.correctedIntent && (
+                    <span className="text-[10px] text-red-600">
+                      Marked as: {INTENT_OPTIONS.find(o => o.value === entry.correctedIntent)?.label ?? entry.correctedIntent}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
         ))}
         <div ref={transcriptEndRef} />
@@ -912,6 +1047,41 @@ export function CompactTutor({
               <><Mic size={16} /><span>Voice Input</span></>
             )}
           </button>
+        </div>
+      )}
+
+      {/* Correction modal for thumbs-down feedback */}
+      {correctionModal && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-border bg-card p-4 shadow-2xl">
+            <h4 className="text-sm font-semibold mb-1">Which intent fits better?</h4>
+            <p className="text-xs text-muted-foreground mb-3">
+              Help us improve by selecting the correct category for your question.
+            </p>
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {INTENT_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => handleCorrectIntent(option.value)}
+                  className="w-full flex items-center justify-between rounded-lg border border-border px-3 py-2 text-left text-xs hover:bg-muted transition-colors"
+                >
+                  <span className="font-medium">{option.label}</span>
+                  <span
+                    className="ml-2 text-muted-foreground"
+                    title={option.description}
+                  >
+                    <Info size={14} />
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={closeCorrectionModal}
+              className="mt-3 w-full py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
     </div>

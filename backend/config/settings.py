@@ -3,12 +3,24 @@ Django settings for AI-Powered Personalized Learning Platform.
 """
 
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# ---------- Startup guard (A.6) ----------
+# Fail fast if critical secrets are missing.  Disabled during tests.
+_REQUIRED_ENV_VARS = ["DJANGO_SECRET_KEY", "DB_PASSWORD", "INTERNAL_SERVICE_KEY"]
+_MISSING = [k for k in _REQUIRED_ENV_VARS if not os.getenv(k)]
+if _MISSING and not os.getenv("DJANGO_TESTING"):
+    print(
+        f"WARNING: Missing recommended env vars: {', '.join(_MISSING)}.  "
+        "Set DJANGO_TESTING=1 to suppress this check.",
+        file=sys.stderr,
+    )
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "change-me-in-production")
 
@@ -29,6 +41,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
+    "axes",
     # Local apps
     "apps.core",
     "apps.users",
@@ -46,6 +59,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "axes.middleware.AxesMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -132,6 +146,9 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "30/minute",
         "user": "120/minute",
+        "admin_write": "10/minute",
+        "feedback": "30/hour",
+        "anon_feedback": "0/minute",
     },
 }
 
@@ -159,3 +176,36 @@ CORS_ALLOW_CREDENTIALS = True
 
 # ---------- FastAPI AI Service ----------
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
+
+# Intent classifier retraining paths
+# Absolute path to the Intent_Classifier_Model directory on the host running
+# the Django backend (used by check_intent_retraining to export feedback CSV).
+INTENT_CLASSIFIER_MODEL_DIR = os.getenv(
+    "INTENT_CLASSIFIER_MODEL_DIR",
+    str(BASE_DIR.parent / "Intent_Classifier_Model"),
+)
+
+# Shared secret for service-to-service calls from Django to the AI service.
+# Must match the AI service's INTERNAL_SERVICE_KEY env var.
+AI_SERVICE_KEY = os.getenv("INTERNAL_SERVICE_KEY", "")
+
+# ---------- Security Headers (A.8) ----------
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = "DENY"
+SECURE_BROWSER_XSS_FILTER = True
+
+# Production-only TLS settings (A.11) — enable when deploying behind HTTPS.
+# SECURE_SSL_REDIRECT = os.getenv("IS_PRODUCTION", "").lower() in ("true", "1")
+# SECURE_HSTS_SECONDS = 300  # start low; increase to 31536000 after testing
+# SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+# SECURE_HSTS_PRELOAD = False
+
+# ---------- django-axes (A.5) — brute-force login lockout ----------
+AUTHENTICATION_BACKENDS = [
+    "axes.backends.AxesStandaloneBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
+AXES_FAILURE_LIMIT = 5
+AXES_COOLOFF_TIME = 0.25  # hours (= 15 minutes)
+AXES_RESET_ON_SUCCESS = True
+AXES_LOCKOUT_CALLABLE = "apps.core.lockout.axes_lockout_handler"
