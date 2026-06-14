@@ -3,12 +3,24 @@ Django settings for AI-Powered Personalized Learning Platform.
 """
 
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# ---------- Startup guard (A.6) ----------
+# Fail fast if critical secrets are missing.  Disabled during tests.
+_REQUIRED_ENV_VARS = ["DJANGO_SECRET_KEY", "DB_PASSWORD", "INTERNAL_SERVICE_KEY"]
+_MISSING = [k for k in _REQUIRED_ENV_VARS if not os.getenv(k)]
+if _MISSING and not os.getenv("DJANGO_TESTING"):
+    print(
+        f"WARNING: Missing recommended env vars: {', '.join(_MISSING)}.  "
+        "Set DJANGO_TESTING=1 to suppress this check.",
+        file=sys.stderr,
+    )
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "change-me-in-production")
 
@@ -132,6 +144,7 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "30/minute",
         "user": "120/minute",
+        "admin_write": "10/minute",
         "feedback": "30/hour",
         "anon_feedback": "0/minute",
     },
@@ -173,3 +186,14 @@ INTENT_CLASSIFIER_MODEL_DIR = os.getenv(
 # Shared secret for service-to-service calls from Django to the AI service.
 # Must match the AI service's INTERNAL_SERVICE_KEY env var.
 AI_SERVICE_KEY = os.getenv("INTERNAL_SERVICE_KEY", "")
+
+# ---------- Security Headers (A.8) ----------
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = "DENY"
+SECURE_BROWSER_XSS_FILTER = True
+
+# Production-only TLS settings (A.11) — enable when deploying behind HTTPS.
+# SECURE_SSL_REDIRECT = os.getenv("IS_PRODUCTION", "").lower() in ("true", "1")
+# SECURE_HSTS_SECONDS = 300  # start low; increase to 31536000 after testing
+# SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+# SECURE_HSTS_PRELOAD = False
