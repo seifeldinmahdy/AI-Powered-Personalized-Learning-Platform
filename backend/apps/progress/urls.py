@@ -14,4 +14,5 @@ router.register(r"learning-profile", views.StudentLearningProfileViewSet, basena
 urlpatterns = [
     path("", include(router.urls)),
     path("practice-completion/", views.practice_completion, name="practice_completion"),
+    path("trigger-retraining/", views.trigger_retraining, name="trigger_retraining"),
 ]

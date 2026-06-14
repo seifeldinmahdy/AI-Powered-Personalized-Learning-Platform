@@ -397,3 +397,51 @@ def practice_completion(request):
         })
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def trigger_retraining(request):
+    """Manually trigger intent model retraining. Admin only.
+
+    Calls the check_intent_retraining management command and returns
+    the result.  Rate-limited by AdminWriteThrottle.
+    """
+    from apps.core.permissions import IsVerifiedAdmin
+    from apps.core.audit import log_admin_action
+    from apps.core.throttles import AdminWriteThrottle
+
+    if not IsVerifiedAdmin().has_permission(request, None):
+        return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+
+    # Manual throttle check
+    throttle = AdminWriteThrottle()
+    if not throttle.allow_request(request, None):
+        return Response(
+            {"error": "Rate limit exceeded. Please wait before triggering again."},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+    try:
+        from django.core.management import call_command
+        from io import StringIO
+
+        out = StringIO()
+        call_command("check_intent_retraining", stdout=out)
+        output = out.getvalue()
+
+        log_admin_action(
+            request,
+            action="trigger_retraining",
+            target_type="IntentModel",
+        )
+
+        return Response({
+            "status": "success",
+            "output": output,
+        })
+    except Exception as e:
+        return Response(
+            {"error": f"Retraining failed: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )

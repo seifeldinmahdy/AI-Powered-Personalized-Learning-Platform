@@ -225,7 +225,7 @@ export async function getAuditLogs(params?: {
 // ---------- Intent Feedback & Retraining ----------
 
 export async function getIntentFeedbackBuffer(): Promise<IntentFeedbackEntry[]> {
-    const res = await api.get('/progress/intent-feedback/');
+    const res = await api.get('/progress/intent-feedback-buffer/');
     const data = res.data;
     return Array.isArray(data) ? data : data.results ?? [];
 }
@@ -234,16 +234,16 @@ export async function relabelFeedback(
     id: number,
     corrected_intent: string
 ): Promise<IntentFeedbackEntry> {
-    const res = await api.patch(`/progress/intent-feedback/${id}/`, { corrected_intent });
+    const res = await api.patch(`/progress/intent-feedback-buffer/${id}/`, { corrected_intent });
     return res.data;
 }
 
 export async function getRetrainingCounter(): Promise<RetrainingCounter> {
-    const res = await api.get('/progress/retraining-counter/');
+    const res = await api.get('/progress/intent-retraining-counter/');
     return res.data;
 }
 
 export async function updateThreshold(threshold: number): Promise<RetrainingCounter> {
-    const res = await api.patch('/progress/retraining-counter/1/', { threshold });
+    const res = await api.patch('/progress/intent-retraining-counter/1/', { threshold });
     return res.data;
 }
