@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     "apps.gamification",
     "apps.feedback",
     "apps.capstone",
+    "apps.artifacts",
 ]
 
 MIDDLEWARE = [

@@ -12,4 +12,5 @@ urlpatterns = [
     path("api/gamification/", include("apps.gamification.urls")),
     path("api/feedback/", include("apps.feedback.urls")),
     path("api/capstone/", include("apps.capstone.urls")),
+    path("api/artifacts/", include("apps.artifacts.urls")),
 ]
