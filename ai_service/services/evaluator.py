@@ -12,33 +12,68 @@ _pathway_src = str(Path(__file__).resolve().parent.parent.parent / "course_pathw
 if _pathway_src not in sys.path:
     sys.path.insert(0, _pathway_src)
 
-from pathway.llm.naming import OllamaClient  # type: ignore
+try:
+    from pathway.llm.naming import OllamaClient  # type: ignore
+    _ollama_available = True
+except Exception:
+    _ollama_available = False
+
+try:
+    from groq import Groq as GroqClient
+    _groq_client = GroqClient(api_key=os.getenv("GROQ_API_KEY", ""))
+    _GROQ_MODEL = os.getenv("GROQ_MODEL_CODING", "qwen/qwen3-32b")
+    _GROQ_FALLBACK = "llama-3.3-70b-versatile"
+except Exception:
+    _groq_client = None
 
 logger = logging.getLogger(__name__)
 
-_ollama_client: OllamaClient | None = None
+_ollama_client = None
 
-def _get_ollama_client() -> OllamaClient:
+def _get_ollama_client():
     global _ollama_client
+    if not _ollama_available:
+        return None
     if _ollama_client is None:
-        _ollama_client = OllamaClient(
-            host=os.getenv("OLLAMA_HOST", "https://ollama.com"),
-            model=os.getenv("OLLAMA_MODEL", "gpt-oss:120b"),
-            api_key=os.getenv("OLLAMA_API_KEY", ""),
-            max_retries=3,
-            timeout=120,
-        )
+        try:
+            _ollama_client = OllamaClient(
+                host=os.getenv("OLLAMA_HOST", "https://ollama.com"),
+                model=os.getenv("OLLAMA_MODEL", "gpt-oss:120b"),
+                api_key=os.getenv("OLLAMA_API_KEY", ""),
+                max_retries=3,
+                timeout=120,
+            )
+        except Exception as e:
+            logger.warning(f"OllamaClient init failed: {e}")
+            return None
     return _ollama_client
 
 
 def _chat_json(messages: list, temperature: float = 0.2) -> dict:
-    """Call OllamaClient with JSON mode."""
+    """Try Ollama first, fall back to Groq on any failure."""
     client = _get_ollama_client()
-    return client.chat_json(
-        messages=messages,
-        temperature=temperature,
-        timeout_override=120,
-    )
+    if client is not None:
+        try:
+            return client.chat_json(messages=messages, temperature=temperature, timeout_override=120)
+        except Exception as e:
+            logger.warning(f"Ollama failed in evaluator: {e}. Falling back to Groq.")
+
+    if _groq_client is None:
+        raise RuntimeError("No LLM backend available (Ollama and Groq both unavailable)")
+
+    for model in [_GROQ_MODEL, _GROQ_FALLBACK]:
+        try:
+            completion = _groq_client.chat.completions.create(
+                messages=messages,
+                model=model,
+                response_format={"type": "json_object"},
+                temperature=temperature,
+            )
+            return json.loads(completion.choices[0].message.content)
+        except Exception as e:
+            if model == _GROQ_FALLBACK:
+                raise
+            logger.warning(f"Groq model {model} failed: {e}. Trying fallback.")
 
 
 def _letter_grade(score: int) -> str:
