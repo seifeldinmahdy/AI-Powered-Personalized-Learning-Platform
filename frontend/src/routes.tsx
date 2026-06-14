@@ -1,5 +1,8 @@
 import { createBrowserRouter, Navigate } from "react-router";
 import Login from "./pages/auth/Login";
+import OAuthCallback from "./pages/auth/OAuthCallback";
+import Landing from "./pages/Landing";
+import { useAuth } from "./contexts/AuthContext";
 import Dashboard from "./pages/student/Dashboard";
 import LiveSession from "./pages/student/LiveSession";
 import CodingLab from "./pages/student/CodingLab";
@@ -15,9 +18,21 @@ import AdminLayout from "./layouts/AdminLayout";
 import RequireAuth from "./components/RequireAuth";
 import RequirePathway from "./components/RequirePathway";
 
+// Public landing page at "/". Authenticated users are bounced to their
+// role's home so the marketing page never shadows the app for logged-in users.
+function LandingRoute() {
+    const { isAuthenticated, user } = useAuth();
+    if (isAuthenticated && user) {
+        return <Navigate to={user.role === "admin" ? "/admin" : "/dashboard"} replace />;
+    }
+    return <Landing />;
+}
+
 export const router = createBrowserRouter([
     // Public routes
+    { path: "/", Component: LandingRoute },
     { path: "/login", Component: Login },
+    { path: "/auth/callback/:provider", Component: OAuthCallback },
 
     // Student / User routes
     {
@@ -27,7 +42,6 @@ export const router = createBrowserRouter([
             </RequireAuth>
         ),
         children: [
-            { path: "/", element: <Navigate to="/dashboard" replace /> },
             { path: "dashboard", Component: Dashboard },
             {
                 path: "courses",

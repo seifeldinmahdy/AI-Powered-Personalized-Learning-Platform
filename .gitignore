@@ -21,6 +21,7 @@ staticfiles/
 frontend/node_modules/
 frontend/build/
 frontend/.env.local
+frontend/personifai-design/
 
 # Environment
 .env

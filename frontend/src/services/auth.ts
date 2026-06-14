@@ -41,3 +41,21 @@ export async function logoutUser(): Promise<void> {
         await api.post('/users/logout/', { refresh: refreshToken });
     }
 }
+
+/**
+ * Exchange an OAuth authorization code (from a social provider redirect) for
+ * our own JWT pair. The backend verifies the code with the provider, then
+ * finds-or-creates the matching user.
+ */
+export async function oauthExchange(
+    provider: string,
+    code: string,
+    redirectUri: string,
+): Promise<AuthResponse> {
+    const response = await api.post<AuthResponse>('/users/oauth/', {
+        provider,
+        code,
+        redirect_uri: redirectUri,
+    });
+    return response.data;
+}
