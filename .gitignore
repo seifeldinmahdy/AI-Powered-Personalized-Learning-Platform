@@ -87,3 +87,9 @@ Intent_Classifier_Model/kaggle_train.ipynb
 # TTS/ASR benchmark testing (separate sibling project)
 TTS testing/
 .venv_benchmark/
+
+# Personal/Agent files
+AGENTS.md
+Obsidian_vault/
+docs/
+.playwright-mcp/
