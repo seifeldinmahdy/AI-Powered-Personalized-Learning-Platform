@@ -3,7 +3,6 @@ import {
   Search,
   Loader2,
   BookOpen,
-  Plus,
   Edit2,
   Eye,
   Trash2,
@@ -77,21 +76,13 @@ export default function ContentManagement() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="admin-heading" id="content-management-title">
-            Content Management
-          </h1>
-          <p className="admin-subheading mt-1">
-            {courses.length} courses • {filtered.length} shown
-          </p>
-        </div>
-        <button
-          onClick={() => navigate("/admin/dashboard")}
-          className="admin-btn admin-btn-primary flex items-center gap-2"
-        >
-          <Plus size={16} /> New Course
-        </button>
+      <div className="mb-8">
+        <h1 className="admin-heading" id="content-management-title">
+          Content Management
+        </h1>
+        <p className="admin-subheading mt-1">
+          {courses.length} courses • {filtered.length} shown
+        </p>
       </div>
 
       {/* Summary Cards */}
@@ -208,9 +199,6 @@ export default function ContentManagement() {
             </div>
 
             <div className="flex items-center gap-3 mb-4 text-xs" style={{ color: "var(--admin-muted)" }}>
-              <span className="flex items-center gap-1">
-                <BookOpen size={12} /> {course.total_lessons_count || 0} lessons
-              </span>
               <span className="flex items-center gap-1">
                 <Users size={12} /> {course.difficulty || "—"}
               </span>

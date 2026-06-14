@@ -1,6 +1,5 @@
-import { Search, Bell, Command } from "lucide-react";
+import { Search, Command } from "lucide-react";
 import { useLocation, Link } from "react-router";
-import { useAuth } from "../../contexts/AuthContext";
 
 const breadcrumbMap: Record<string, string> = {
   "/admin": "Overview",
@@ -15,7 +14,6 @@ const breadcrumbMap: Record<string, string> = {
 
 export function AdminTopBar() {
   const location = useLocation();
-  const { user } = useAuth();
 
   const segments = location.pathname
     .split("/")
@@ -65,25 +63,8 @@ export function AdminTopBar() {
         </div>
       </div>
 
-      {/* Actions */}
-      <div className="flex items-center gap-4">
-        <button className="relative p-2 text-[var(--admin-ink-secondary)] hover:text-[var(--admin-ink)] transition-colors">
-          <Bell size={20} />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-[var(--admin-error)] rounded-full" />
-        </button>
-
-        <div className="flex items-center gap-3 pl-4 border-l border-[var(--admin-hairline)]">
-          <div className="w-9 h-9 flex items-center justify-center bg-[var(--admin-accent)] text-white rounded-[var(--admin-radius-md)] font-[family-name:var(--admin-font-display)] font-bold text-[13px]">
-            {user?.username?.slice(0, 2).toUpperCase() ?? "AD"}
-          </div>
-          <div className="hidden md:block">
-            <p className="font-[family-name:var(--admin-font-display)] font-semibold text-[13px] text-[var(--admin-ink)]">
-              {user?.username ?? "Admin"}
-            </p>
-            <p className="admin-body-sm">Administrator</p>
-          </div>
-        </div>
-      </div>
+      {/* Spacer to keep layout balanced */}
+      <div className="w-8" />
     </header>
   );
 }

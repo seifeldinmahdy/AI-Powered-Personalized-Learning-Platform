@@ -10,8 +10,10 @@ import {
   UserCheck,
   Clock,
   Filter,
+  Info,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "../../contexts/AuthContext";
 import api from "../../services/api";
 import { getAuditLogs, type AuditLogEntry } from "../../services/admin";
 
@@ -81,6 +83,7 @@ interface UserEntry {
 }
 
 function UsersRolesTab() {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<UserEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState<number | null>(null);
@@ -126,7 +129,14 @@ function UsersRolesTab() {
     fetchUsers();
   }, [fetchUsers]);
 
+  const isSelf = (u: UserEntry) => currentUser?.id === u.id;
+
   const handleToggleRole = async (user: UserEntry) => {
+    if (isSelf(user)) {
+      toast.error("You cannot change your own role");
+      return;
+    }
+
     const newRole = user.role === "admin" ? "student" : "admin";
     const action = newRole === "admin" ? "promote" : "demote";
     if (
@@ -214,7 +224,14 @@ function UsersRolesTab() {
                         {u.username.slice(0, 2).toUpperCase()}
                       </div>
                       <div>
-                        <p className="text-sm font-semibold" style={{ color: "var(--admin-ink)" }}>{u.username}</p>
+                        <p className="text-sm font-semibold" style={{ color: "var(--admin-ink)" }}>
+                          {u.username}
+                          {isSelf(u) && (
+                            <span className="ml-1.5 text-xs font-normal" style={{ color: "var(--admin-muted)" }}>
+                              (you)
+                            </span>
+                          )}
+                        </p>
                         <p className="text-xs" style={{ color: "var(--admin-muted)" }}>{u.email}</p>
                       </div>
                     </div>
@@ -235,20 +252,24 @@ function UsersRolesTab() {
                     {u.date_joined ? new Date(u.date_joined).toLocaleDateString() : "—"}
                   </td>
                   <td className="px-6 py-4">
-                    <button
-                      onClick={() => handleToggleRole(u)}
-                      disabled={toggling === u.id}
-                      className="admin-btn admin-btn-secondary text-xs px-3 py-1.5 flex items-center gap-1"
-                    >
-                      {toggling === u.id ? (
-                        <Loader2 size={12} className="animate-spin" />
-                      ) : u.role === "admin" ? (
-                        <UserCheck size={12} />
-                      ) : (
-                        <Crown size={12} />
-                      )}
-                      {u.role === "admin" ? "Demote" : "Promote"}
-                    </button>
+                    {isSelf(u) ? (
+                      <span className="text-xs" style={{ color: "var(--admin-muted)" }}>—</span>
+                    ) : (
+                      <button
+                        onClick={() => handleToggleRole(u)}
+                        disabled={toggling === u.id}
+                        className="admin-btn admin-btn-secondary text-xs px-3 py-1.5 flex items-center gap-1"
+                      >
+                        {toggling === u.id ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : u.role === "admin" ? (
+                          <UserCheck size={12} />
+                        ) : (
+                          <Crown size={12} />
+                        )}
+                        {u.role === "admin" ? "Demote" : "Promote"}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -299,6 +320,19 @@ function AuditLogTab() {
 
   return (
     <div>
+      {/* Info banner */}
+      <div
+        className="admin-card p-4 mb-4 flex items-start gap-3"
+        style={{ background: "var(--admin-accent)08", borderColor: "var(--admin-accent)33" }}
+      >
+        <Info size={18} className="flex-shrink-0 mt-0.5" style={{ color: "var(--admin-accent)" }} />
+        <div className="text-sm" style={{ color: "var(--admin-muted)" }}>
+          <strong style={{ color: "var(--admin-ink)" }}>Audit logs</strong> track every privileged
+          admin action — student creation, role changes, retraining triggers, and course deletions.
+          Each entry records who performed the action, when, from which IP, and what changed.
+        </div>
+      </div>
+
       {/* Toolbar */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">

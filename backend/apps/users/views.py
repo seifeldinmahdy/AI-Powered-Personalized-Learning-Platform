@@ -54,7 +54,7 @@ class UserViewSet(viewsets.ModelViewSet):
                 return Response({'error': 'Invalid credentials'},
                                 status=status.HTTP_401_UNAUTHORIZED)
 
-        user = authenticate(username=login_id, password=password)
+        user = authenticate(request=request, username=login_id, password=password)
 
         if user is not None:
             if not user.is_active:
