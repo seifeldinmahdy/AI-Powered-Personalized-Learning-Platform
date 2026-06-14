@@ -59,6 +59,12 @@ def on_lesson_completion(sender, instance, **kwargs):
     if instance.status != "Completed" or not instance.completed_at:
         return
 
+    # Idempotency latch: award XP/streak/progress exactly once, the first time
+    # this completion becomes "Completed". Any later save of an already-completed
+    # row (re-submit, score patch, a retried server-side trigger) is a no-op.
+    if instance.gamification_awarded:
+        return
+
     user = instance.enrollment.student
     try:
         profile = user.student_profile
@@ -97,6 +103,11 @@ def on_lesson_completion(sender, instance, **kwargs):
     profile.days_active = DailyStudyStats.objects.filter(user=user).count()
 
     profile.save()
+
+    # Latch this completion so the awards above never fire twice. Use .update()
+    # (not .save()) so we don't re-enter this post_save handler.
+    LessonCompletion.objects.filter(pk=instance.pk).update(gamification_awarded=True)
+    instance.gamification_awarded = True
 
     # --- Achievements ---
     newly_earned = []

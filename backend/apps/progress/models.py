@@ -26,6 +26,10 @@ class LessonCompletion(models.Model):
     score = models.IntegerField(default=0)
     completed_at = models.DateTimeField(null=True, blank=True)
     time_spent_minutes = models.IntegerField(default=0)
+    # One-shot idempotency latch for the gamification signal: XP/streak/progress
+    # are awarded exactly once, the first time this completion transitions to
+    # "Completed". Set by the signal via .update() (never re-triggers post_save).
+    gamification_awarded = models.BooleanField(default=False)
 
     class Meta:
         db_table = "lesson_completions"

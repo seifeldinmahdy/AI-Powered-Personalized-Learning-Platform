@@ -17,5 +17,7 @@ urlpatterns = [
     path("profile/apply/", views.profile_apply, name="profile-apply"),
     # The single concept-mastery write path + per-concept history (explainability).
     path("mastery/record/", views.mastery_record, name="mastery-record"),
+    # Server-side lesson completion — triggered by the problem-set finish event.
+    path("complete-lesson/", views.internal_complete_lesson, name="complete-lesson"),
     path("concept-mastery/<str:concept_id>/history/", views.concept_mastery_history, name="concept-mastery-history"),
 ]

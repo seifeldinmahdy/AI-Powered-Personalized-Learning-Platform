@@ -156,9 +156,16 @@ class SummaryViewedRequest(BaseModel):
 @router.post("/summary-viewed")
 async def summary_viewed(request: SummaryViewedRequest):
     """
-    Fired when the student reaches the problem set summary screen.
-    Validates the problem set exists, then fires the problem set profiler
-    as a background task. Returns immediately.
+    Fired when the student reaches the problem set summary screen — the genuine
+    end of the lesson (the final, mastery-writing step).
+
+    Validates the problem set exists, then:
+      1. Tells Django to mark the lesson complete (server-side, awaited so it is
+         recorded even if the tab closes the instant this returns).
+      2. Fires the problem-set profiler (writes concept_mastery) in the background.
+
+    Returns the completion result (incl. newly-earned achievements) so the
+    frontend can surface XP/achievement toasts at the correct moment.
     """
     import asyncio
 
@@ -169,6 +176,18 @@ async def summary_viewed(request: SummaryViewedRequest):
     if not problem_set:
         raise HTTPException(status_code=404, detail="Problem set not found")
 
+    # (1) Server-side lesson completion — the transition lives HERE, not in the
+    # frontend's end-of-live-session call. Awaited so a closed tab can't skip it.
+    completion = {}
+    try:
+        from services.completion import post_lesson_complete
+        completion = await post_lesson_complete(
+            student_id=request.student_id, lesson_id=request.lesson_id
+        )
+    except Exception as e:
+        logger.warning("Failed to trigger server-side lesson completion: %s", e)
+
+    # (2) Concept-mastery profiler (background).
     try:
         from services.profiler_service import run_problem_set_profiler
         asyncio.create_task(
@@ -181,7 +200,11 @@ async def summary_viewed(request: SummaryViewedRequest):
     except Exception as e:
         logger.warning("Failed to launch problem set profiler: %s", e)
 
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "newly_earned_achievements": completion.get("newly_earned_achievements", []),
+        "already_completed": completion.get("already_completed", False),
+    }
 
 
 @router.get("/{problem_set_id}")

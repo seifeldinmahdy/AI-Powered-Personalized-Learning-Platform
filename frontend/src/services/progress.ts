@@ -43,6 +43,7 @@ export async function createLessonCompletion(data: {
     enrollment: number;
     lesson: number;
     status?: string;
+    time_spent_minutes?: number;
 }): Promise<LessonCompletion> {
     const response = await api.post<LessonCompletion>('/progress/lesson-completions/', data);
     return response.data;

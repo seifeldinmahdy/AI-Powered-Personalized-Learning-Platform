@@ -195,11 +195,21 @@ export async function getDynamicHint(params: {
     return res.json();
 }
 
+export interface NewlyEarnedAchievement {
+    name: string;
+    icon_url: string;
+    xp_reward: number;
+}
+
 export async function notifySummaryViewed(params: {
     problemSetId: string;
     studentId: string;
     lessonId: string;
-}): Promise<{ status: string }> {
+}): Promise<{
+    status: string;
+    newly_earned_achievements?: NewlyEarnedAchievement[];
+    already_completed?: boolean;
+}> {
     const res = await fetch(`${AI_URL}/problem-set/summary-viewed`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

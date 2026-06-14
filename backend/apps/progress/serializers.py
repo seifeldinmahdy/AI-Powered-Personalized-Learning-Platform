@@ -12,7 +12,7 @@ class LessonCompletionSerializer(serializers.ModelSerializer):
         model = LessonCompletion
         fields = [
             "id", "enrollment", "lesson", "lesson_title",
-            "status", "score", "completed_at",
+            "status", "score", "completed_at", "time_spent_minutes",
         ]
         read_only_fields = ["id", "completed_at"]
 

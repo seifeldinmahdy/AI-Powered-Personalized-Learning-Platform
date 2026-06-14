@@ -42,40 +42,29 @@ class LessonCompletionViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):
-        """Mark a lesson completion as Completed and set completed_at."""
-        from apps.gamification.models import UserAchievement
+        """Mark a lesson completion as Completed (idempotent).
+
+        NOTE: the live session no longer calls this. A lesson is completed
+        server-side once its problem set finishes (see complete_lesson /
+        internal_complete_lesson). This action remains for backward-compat and
+        routes through the same idempotent writer so it can never double-award.
+        """
+        from .completion_service import complete_lesson
 
         completion = self.get_object()
-        user = request.user
-
-        # Snapshot achievements before save so we can detect newly earned ones
-        before_ids = set(
-            UserAchievement.objects.filter(user=user).values_list("achievement_id", flat=True)
+        result = complete_lesson(
+            request.user,
+            completion.lesson,
+            time_spent_minutes=request.data.get("time_spent_minutes"),
+            score=request.data.get("score"),
         )
-
-        completion.status = "Completed"
-        completion.completed_at = timezone.now()
-        if "score" in request.data:
-            completion.score = request.data["score"]
-        time_spent = request.data.get("time_spent_minutes")
-        if time_spent is not None:
-            try:
-                completion.time_spent_minutes = max(0, int(time_spent))
-            except (TypeError, ValueError):
-                pass
-        else:
-            completion.time_spent_minutes = 30  # backward-compat default
-        completion.save()  # triggers gamification signal
-
-        # Detect newly awarded achievements
-        after = UserAchievement.objects.filter(user=user).select_related("achievement")
-        newly_earned = [
-            {"name": ua.achievement.name, "icon_url": ua.achievement.icon_url, "xp_reward": ua.achievement.xp_reward}
-            for ua in after if ua.achievement_id not in before_ids
-        ]
-
-        data = LessonCompletionSerializer(completion).data
-        data["newly_earned_achievements"] = newly_earned
+        if result is None:
+            return Response(
+                {"detail": "No enrollment for this lesson's course."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        data = LessonCompletionSerializer(result["completion"]).data
+        data["newly_earned_achievements"] = result["newly_earned_achievements"]
         return Response(data)
 
 
@@ -337,6 +326,44 @@ def profile_apply(request):
         summary_source=request.data.get("summary_source"),
     )
     return Response({"profile_data": pd})
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def internal_complete_lesson(request):
+    """Server-side lesson-completion trigger (THE genuine end-of-lesson event).
+
+    Called by the AI service from the problem-set completion handler (service-key
+    + X-Student-ID auth resolves the student), so completion is recorded even if
+    the student's tab closes right after the final step. Idempotent: the gamified
+    transition fires exactly once per lesson.
+
+    Body: ``{"lesson_id": int, "time_spent_minutes"?: int, "score"?: int}``.
+    """
+    from apps.courses.models import Lesson
+    from .completion_service import complete_lesson
+
+    lesson_id = request.data.get("lesson_id")
+    try:
+        lesson = Lesson.objects.select_related("module").get(pk=int(lesson_id))
+    except (Lesson.DoesNotExist, TypeError, ValueError):
+        return Response({"detail": "lesson_id not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    result = complete_lesson(
+        request.user,
+        lesson,
+        time_spent_minutes=request.data.get("time_spent_minutes"),
+        score=request.data.get("score"),
+    )
+    if result is None:
+        return Response(
+            {"detail": "No enrollment for this lesson's course."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    data = LessonCompletionSerializer(result["completion"]).data
+    data["already_completed"] = result["already_completed"]
+    data["newly_earned_achievements"] = result["newly_earned_achievements"]
+    return Response(data)
 
 
 @api_view(["GET"])

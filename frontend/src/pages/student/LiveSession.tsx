@@ -11,7 +11,6 @@ import { getEnrollments } from '../../services/api';
 import {
   getLessonCompletions,
   createLessonCompletion,
-  markLessonComplete,
 } from '../../services/progress';
 import { Loader2, BookOpen, CheckCircle2, PlayCircle, Lock, ChevronDown, ChevronRight, Camera, CameraOff } from 'lucide-react';
 import { toast } from 'sonner';
@@ -553,26 +552,18 @@ export default function LiveSession() {
 
       const timeSpentMinutes = Math.max(1, Math.round((Date.now() - lessonStartTimeRef.current) / 60000));
 
-      let result;
-      if (existing) {
-        result = await markLessonComplete(existing.id, undefined, timeSpentMinutes);
-      } else {
-        const created = await createLessonCompletion({
+      // The lesson is NOT complete yet — the lab and problem set still have to
+      // run, and the problem set is what writes concept_mastery. We only record
+      // that the live session is done (In Progress, with the time we measured).
+      // The Completed transition + XP/streak/progress fire server-side once the
+      // problem set finishes, so closing the tab here can't skip them.
+      if (!existing) {
+        await createLessonCompletion({
           enrollment: enrollment.id,
           lesson: lesson.id,
-          status: 'Completed',
+          status: 'In Progress',
+          time_spent_minutes: timeSpentMinutes,
         });
-        result = await markLessonComplete(created.id, undefined, timeSpentMinutes);
-      }
-
-      // Mark completed locally so drawer updates immediately
-      setCompletedLessonIds((prev) => new Set([...prev, lesson.id]));
-
-      // Show achievement toasts
-      if (result.newly_earned_achievements?.length) {
-        for (const ach of result.newly_earned_achievements) {
-          toast.success(`${ach.icon_url} Achievement unlocked: ${ach.name} (+${ach.xp_reward} XP)`);
-        }
       }
 
       const labSlides = slides.length > 0

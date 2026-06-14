@@ -90,16 +90,24 @@ export default function ProblemSet() {
     const allDone = questions.length > 0 && questions.every(q => !!results[q.id] || !!problemSet?.submissions?.[q.id]);
     const showSummary = allDone && currentIdx >= questions.length;
 
-    // Fire once when summary screen mounts — triggers problem set profiler
+    // Fire once when summary screen mounts. This is the genuine end of the
+    // lesson: the server completes the lesson (XP/streak/progress) and runs the
+    // concept-mastery profiler. Achievement toasts surface from the response.
     useEffect(() => {
         if (showSummary && problemSet?.problem_set_id && studentId && lessonId) {
             notifySummaryViewed({
                 problemSetId: problemSet.problem_set_id,
                 studentId,
                 lessonId,
-            }).catch(err =>
-                console.warn('Summary viewed notification failed:', err)
-            );
+            })
+                .then(res => {
+                    for (const ach of res.newly_earned_achievements ?? []) {
+                        toast.success(`${ach.icon_url} Achievement unlocked: ${ach.name} (+${ach.xp_reward} XP)`);
+                    }
+                })
+                .catch(err =>
+                    console.warn('Summary viewed notification failed:', err)
+                );
         }
     }, [showSummary]);  // eslint-disable-line react-hooks/exhaustive-deps
 
