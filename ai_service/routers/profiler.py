@@ -10,7 +10,7 @@ fusion the ``fused_emotion`` and ``confidence`` are written back.
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional
-from services.profiler_service import update_profile, fuse_emotions
+from services.profiler_service import run_session_profiler, fuse_emotions
 from services.session_store import get_session_store
 from schemas.student_context import UnifiedStudentContext
 import collections
@@ -45,20 +45,16 @@ class EmotionEventInput(BaseModel):
 
 
 
-class UpdateProfileRequest(BaseModel):
+class RunSessionRequest(BaseModel):
+    """Trigger server-side session profiling from the DURABLE log.
+
+    No profile is read or merged by the caller — the server consolidates the
+    durable session-event log and applies claims via the single writer. The
+    frontend just fires this at session end (fire-and-forget).
+    """
+    session_id: str = Field(..., description="Backend session ID (durable-log key)")
     student_id: int = Field(..., description="Student user ID")
     lesson_title: str = Field(default="", description="Lesson title just completed")
-    session_id: Optional[str] = Field(default=None, description="Backend session ID to read logs from")
-    session_log: List[EmotionEventInput] = Field(
-        default_factory=list, description="Fallback EmotionEvent array if session_id is not provided"
-    )
-    existing_profile_summary: str = Field(
-        default="", description="Current profile_summary from DB (empty if first session)"
-    )
-    existing_profile_data: Dict = Field(
-        default_factory=dict, description="Current profile_data from DB (empty if first session)"
-    )
-    student_context: Optional[UnifiedStudentContext] = None
 
 
 class FuseEmotionsRequest(BaseModel):
@@ -171,40 +167,24 @@ def _group_session_log_by_slide(session_data) -> list[dict]:
 # ─── Endpoints ───────────────────────────────────────────────────
 
 
-@router.post("/update")
-async def update(request: UpdateProfileRequest):
-    """
-    Rewrite the student's persistent learning profile.
+@router.post("/run-session")
+async def run_session(request: RunSessionRequest):
+    """Server-side session profiling from the DURABLE log (no client merge).
 
-    Takes the existing profile + new session data (optionally pulled directly
-    from SharedSessionStore via session_id) and returns a synthesized
-    new profile (profile_summary + profile_data) to be saved to Django.
+    Consolidates the session's durable event log into claims and applies them via
+    the single writer. Idempotent: consumed events aren't re-applied, so the
+    explicit end-call and the sweeper can't double-apply. Works after an
+    AI-service restart because it reads the durable log, not memory.
     """
     try:
-        log_dicts = [e.model_dump() for e in request.session_log]
-        
-        # Override with backend-tracked session state if session_id is provided
-        if request.session_id:
-            from services.session_store import get_session_store
-            store = get_session_store()
-            session_data = store.get_session(request.session_id)
-            if session_data:
-                # Group by slide for structured per-slide analysis
-                log_dicts = _group_session_log_by_slide(session_data)
-                logger.info("Profiler /update: Grouped %d slide entries from SharedSessionStore for session %s", len(log_dicts), request.session_id)
-
-        result = await update_profile(
-            student_id=request.student_id,
+        result = await run_session_profiler(
+            session_id=request.session_id,
+            student_id=str(request.student_id),
             lesson_title=request.lesson_title,
-            session_log=log_dicts,
-            existing_profile_summary=request.existing_profile_summary,
-            existing_profile_data=request.existing_profile_data,
-            student_context=request.student_context,
-            session_id=request.session_id or "",
         )
         return {"success": True, **result}
     except Exception as e:
-        logger.error(f"Profile update error: {e}")
+        logger.error(f"Session profiler error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -290,6 +270,13 @@ async def fuse(request: FuseEmotionsRequest):
                             "emotion_signals": signals
                         }
                     )
+                    # Also stream to the DURABLE log so the signal survives an
+                    # abandoned session / AI-service restart.
+                    try:
+                        from services.session_event_log import get_session_event_log
+                        get_session_event_log().append(request.session_id, "emotion", new_signal)
+                    except Exception:
+                        pass
                     logger.info(
                         "Profiler /fuse-emotions: wrote fused_emotion=%r, "
                         "confidence=%.2f back to SharedSessionStore for session %s",

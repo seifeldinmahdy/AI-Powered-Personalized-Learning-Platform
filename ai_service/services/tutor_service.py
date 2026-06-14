@@ -509,17 +509,20 @@ def _build_profile_context(session: TutorSession) -> Optional[str]:
             f"{session.student_profile_summary}"
         )
     if session.student_profile_data:
-        engagement = session.student_profile_data.get("engagement_patterns", {})
-        approaches = session.student_profile_data.get("recommended_approaches", [])
-        if engagement or approaches:
-            profile_context = "ENGAGEMENT PATTERNS FROM PROFILER:\n"
-            if engagement.get("high"):
-                profile_context += f"Student engages most when: {', '.join(engagement['high'])}\n"
-            if engagement.get("low"):
-                profile_context += f"Student disengages when: {', '.join(engagement['low'])}\n"
+        from schemas.profile import flatten_profile_for_readers
+        flat = flatten_profile_for_readers(session.student_profile_data)
+        engagement = flat.get("engagement")
+        approaches = flat.get("recommended_approaches", [])
+        pace = flat.get("pace")
+        if engagement or approaches or pace:
+            ctx = "LEARNING SIGNALS FROM PROFILER (soft hints; do NOT mention to student):\n"
+            if engagement:
+                ctx += f"Engagement: {engagement}\n"
+            if pace:
+                ctx += f"Pace: {pace}\n"
             if approaches:
-                profile_context += f"Recommended approaches: {', '.join(approaches)}\n"
-            parts.append(profile_context)
+                ctx += f"Recommended approaches: {', '.join(approaches)}\n"
+            parts.append(ctx)
     return "\n".join(parts) if parts else None
 
 
@@ -782,90 +785,62 @@ async def generate_lecture_chunk(
     topic_name = session.current_topic or "General Review"
     subtopic_name = session.current_subtopic
 
-    if session.student_profile_data:
-        profile = session.student_profile_data
-        subtopic_lower = (subtopic_name or "").lower()
-        topic_lower = (topic_name or "").lower()
-        combined_lower = f"{subtopic_lower} {topic_lower}"
+    # Competence (difficulty) comes from the MASTERY MODEL (weak_concepts), never
+    # the qualitative profile. How-to-learn signals come from the flattened
+    # claims and are treated as SOFT HINTS.
+    subtopic_lower = (subtopic_name or "").lower()
+    topic_lower = (topic_name or "").lower()
+    combined_lower = f"{subtopic_lower} {topic_lower}"
 
-        difficulties = [str(d).lower() for d in profile.get("topics_of_difficulty", [])]
-        strengths = [str(s).lower() for s in profile.get("topics_of_strength", [])]
-        style_signals = [str(s).lower() for s in profile.get("learning_style_signals", [])]
-        intentions = [str(i).lower() for i in profile.get("notable_intentions", [])]
-        unresolved = profile.get("unresolved_questions", [])
-        recurrent_mistakes = profile.get("recurrent_mistakes", [])
+    # ── DIFFICULTY: low-mastery concepts (authoritative, from concept_mastery) ──
+    is_difficulty_topic = False
+    for wc in (session.weak_concepts or []):
+        wc_label = str(wc.get("label", "")).lower()
+        if wc_label and (wc_label in combined_lower or combined_lower in wc_label):
+            is_difficulty_topic = True
+            break
+    if is_difficulty_topic:
+        active_skills.append("DIFFICULTY_TOPIC")
 
-        # Difficulty topic detection — substring match in both directions
-        is_difficulty_topic = any(
-            d in combined_lower or any(word in d for word in combined_lower.split() if len(word) > 3)
-            for d in difficulties
-        )
-        # Also treat low-mastery concepts as difficulty topics
-        if not is_difficulty_topic and session.weak_concepts:
-            for wc in session.weak_concepts:
-                wc_label = str(wc.get("label", "")).lower()
-                if wc_label and (wc_label in combined_lower or combined_lower in wc_label):
-                    is_difficulty_topic = True
-                    break
+    # ── Soft hints from claims (flattened v2 profile) ──
+    from schemas.profile import flatten_profile_for_readers
+    flat = flatten_profile_for_readers(session.student_profile_data or {})
 
-        is_strength_topic = any(
-            s in combined_lower or any(word in s for word in combined_lower.split() if len(word) > 3)
-            for s in strengths
-        )
+    style_hint = " ".join(
+        [(flat.get("preferred_modality") or "")] + list(flat.get("recommended_approaches", []))
+    ).lower()
+    if "visual" in style_hint or "diagram" in style_hint or "spatial" in style_hint:
+        active_skills.append("VISUAL_LEARNER")
+    elif any(w in style_hint for w in ("hands", "practical", "doing", "concrete")):
+        active_skills.append("HANDS_ON_LEARNER")
 
-        # Only activate one of DIFFICULTY or STRENGTH — difficulty takes priority
-        if is_difficulty_topic:
-            active_skills.append("DIFFICULTY_TOPIC")
-        elif is_strength_topic:
-            active_skills.append("STRENGTH_TOPIC")
+    pace_hint = (flat.get("pace") or "").lower()
+    if any(w in pace_hint for w in ("slow", "more time")):
+        active_skills.append("PACE_SLOW")
+    elif any(w in pace_hint for w in ("fast", "quick", "skip")):
+        active_skills.append("PACE_FAST")
 
-        # Learning style detection
-        is_visual = any("visual" in s or "diagram" in s or "spatial" in s for s in style_signals)
-        is_hands_on = any("hands" in s or "practical" in s or "doing" in s or "concrete" in s for s in style_signals)
+    # Unresolved-question surfacing — find one relevant to the current subtopic.
+    if not hasattr(session, "_surfaced_unresolved"):
+        session._surfaced_unresolved = set()
+    for q in flat.get("unresolved_questions", []):
+        q_words = [w for w in q.lower().split() if len(w) > 4]
+        if q not in session._surfaced_unresolved and any(w in combined_lower for w in q_words):
+            original_skill = TUTOR_SKILLS["SURFACE_UNRESOLVED"]
+            TUTOR_SKILLS["SURFACE_UNRESOLVED"] = original_skill + f' The specific unresolved question is: "{q}"'
+            active_skills.append("SURFACE_UNRESOLVED")
+            session._surfaced_unresolved.add(q)
+            break
 
-        if is_visual:
-            active_skills.append("VISUAL_LEARNER")
-        elif is_hands_on:
-            # Only add HANDS_ON if VISUAL not already added — avoid conflicting style skills
-            active_skills.append("HANDS_ON_LEARNER")
-
-        # Pace preference detection from notable_intentions
-        wants_slow = any("slow" in i or "slower" in i or "more time" in i for i in intentions)
-        wants_fast = any("fast" in i or "faster" in i or "skip" in i or "quick" in i for i in intentions)
-        if wants_slow:
-            active_skills.append("PACE_SLOW")
-        elif wants_fast:
-            active_skills.append("PACE_FAST")
-
-        # Unresolved question surfacing — find one relevant to current subtopic
-        if not hasattr(session, '_surfaced_unresolved'):
-            session._surfaced_unresolved = set()
-
-        for q in unresolved:
-            q_words = [w for w in q.lower().split() if len(w) > 4]
-            if (
-                q not in session._surfaced_unresolved
-                and any(w in combined_lower for w in q_words)
-            ):
-                # Temporarily customize the skill text with the actual question
-                original_skill = TUTOR_SKILLS["SURFACE_UNRESOLVED"]
-                TUTOR_SKILLS["SURFACE_UNRESOLVED"] = (
-                    original_skill
-                    + f' The specific unresolved question is: "{q}"'
-                )
-                active_skills.append("SURFACE_UNRESOLVED")
-                session._surfaced_unresolved.add(q)
-                break  # only one per chunk
-
-        # Recurrent mistake detection — if current topic relates to a known mistake
-        if recurrent_mistakes:
-            recurrent_lower = [str(m).lower() for m in recurrent_mistakes]
-            mistake_match = any(
-                m in combined_lower or any(w in m for w in combined_lower.split() if len(w) > 3)
-                for m in recurrent_lower
-            )
-            if mistake_match:
-                active_skills.append("RECURRENT_MISTAKE")
+    # Recurrent PROCESS mistakes (from claims) relevant to the current topic.
+    recurrent = flat.get("recurrent_process_mistakes", [])
+    if recurrent:
+        recurrent_lower = [str(m).lower() for m in recurrent]
+        if any(
+            m in combined_lower or any(w in m for w in combined_lower.split() if len(w) > 3)
+            for m in recurrent_lower
+        ):
+            active_skills.append("RECURRENT_MISTAKE")
 
     # ── Remove ENGAGEMENT_ADAPT if more specific profile skills were activated ──
     profile_specific_skills = {
@@ -1178,15 +1153,16 @@ async def answer_question(
     if student_emotion and student_emotion.lower() in ("confused", "surprise", "fear"):
         qa_skills.append("CONFUSION_DIAGNOSIS")
 
-    # Profile-driven skills in Q&A context
+    # Profile-driven skills in Q&A context (soft hints from flattened claims).
     if session.student_profile_data:
-        profile = session.student_profile_data
-        style_signals = [str(s).lower() for s in profile.get("learning_style_signals", [])]
-        is_visual = any("visual" in s or "diagram" in s for s in style_signals)
-        is_hands_on = any("hands" in s or "concrete" in s for s in style_signals)
-        if is_visual:
+        from schemas.profile import flatten_profile_for_readers
+        flat = flatten_profile_for_readers(session.student_profile_data)
+        style_hint = " ".join(
+            [(flat.get("preferred_modality") or "")] + list(flat.get("recommended_approaches", []))
+        ).lower()
+        if "visual" in style_hint or "diagram" in style_hint:
             qa_skills.append("VISUAL_LEARNER")
-        elif is_hands_on:
+        elif "hands" in style_hint or "concrete" in style_hint:
             qa_skills.append("HANDS_ON_LEARNER")
 
     # Ground on raw retrieved passages when available (single-model grounding).

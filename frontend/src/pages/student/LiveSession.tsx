@@ -452,66 +452,21 @@ export default function LiveSession() {
 
   const fireAndForgetProfiler = useCallback(async () => {
     try {
-      const token = localStorage.getItem('access_token');
       const authUser = localStorage.getItem('auth_user');
       const studentId = authUser ? JSON.parse(authUser).id : 0;
 
-      // 1. GET existing learning profile from Django
-      let existingProfileSummary = '';
-      let existingProfileData = {};
-      let existingSessionsCount = 0;
-      if (token) {
-        try {
-          const existingRes = await fetch(`${API_URL}/progress/learning-profile/`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (existingRes.ok) {
-            const existing = await existingRes.json();
-            existingProfileSummary = existing.profile_summary || '';
-            existingProfileData = existing.profile_data || {};
-            existingSessionsCount = existing.sessions_count || 0;
-          }
-        } catch {
-          // No existing profile — first session
-        }
-      }
-
-      // 2. Call POST /profiler/update on the AI service
-      const profilerRes = await fetch(`${AI_URL}/profiler/update`, {
+      // The frontend NO LONGER reads/merges/overwrites the profile. It just asks
+      // the server to consolidate this session's DURABLE event log. The single
+      // server-side writer applies the resulting claims additively.
+      await fetch(`${AI_URL}/profiler/run-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           student_id: studentId,
-          lesson_title: lesson?.title || plan?.sessions.find(s => s.session_number === 1)?.session_title || '',
           session_id: sessionIdRef.current,
-          existing_profile_summary: existingProfileSummary,
-          existing_profile_data: existingProfileData,
+          lesson_title: lesson?.title || plan?.sessions.find(s => s.session_number === 1)?.session_title || '',
         }),
       });
-
-      if (profilerRes.ok) {
-        const profilerData = await profilerRes.json();
-
-        // 3. POST to Django to overwrite the learning profile
-        if (token) {
-          await fetch(`${API_URL}/progress/learning-profile/`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              sessions_count: existingSessionsCount + 1,
-              profile_summary: profilerData.profile_summary || '',
-              profile_data: {
-                profile_summary: profilerData.profile_summary || '',
-                ...(profilerData.profile_data || {}),
-              },
-            }),
-          });
-        }
-      }
-
     } catch {
       // Fire-and-forget — entire block is non-blocking
       console.warn('[LiveSession] Profiler update failed (non-blocking)');

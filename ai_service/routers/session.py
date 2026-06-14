@@ -136,8 +136,27 @@ async def update_session_state(session_id: str, request: UpdateLiveSessionReques
             events.append(event)
             live_kwargs["tutor_events"] = events
 
+    # ── Stream signal to the DURABLE log (survives restart/abandon) ──
+    try:
+        from services.session_event_log import get_session_event_log
+        elog = get_session_event_log()
+        if request.current_slide_index is not None or request.current_slide_title is not None:
+            elog.append(session_id, "slide", {
+                "slide_index": request.current_slide_index if request.current_slide_index is not None else data.live.current_slide_index,
+                "slide_title": request.current_slide_title or data.live.current_slide_title,
+                "slide_content": request.current_slide_content or data.live.current_slide_content,
+                "topic": request.current_topic or data.live.current_topic,
+                "subtopic": request.current_subtopic or data.live.current_subtopic,
+            })
+        if request.time_spent_update:
+            elog.append(session_id, "time_spent", {"updates": request.time_spent_update})
+        if request.tutor_event_push:
+            elog.append(session_id, "tutor_event", dict(request.tutor_event_push))
+    except Exception:
+        pass  # durable logging must never break the live PATCH
+
     if live_kwargs:
         updated = store.update_session(session_id, live_kwargs=live_kwargs)
         return {"success": True, "live": updated.live.model_dump()}
-    
+
     return {"success": True, "live": data.live.model_dump()}

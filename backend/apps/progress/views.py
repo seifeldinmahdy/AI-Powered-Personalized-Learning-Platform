@@ -159,11 +159,12 @@ class StudentLearningProfileViewSet(viewsets.ModelViewSet):
         )
 
         if not created:
-            # Overwrite existing profile with new data
-            profile.sessions_count = request.data.get("sessions_count", profile.sessions_count)
-            profile.profile_summary = request.data.get("profile_summary", profile.profile_summary)
-            profile.profile_data = request.data.get("profile_data", profile.profile_data)
-            profile.save()
+            # Only sessions_count is writable here. profile_summary / profile_data
+            # are owned solely by the single writer (profile_service.apply_claims
+            # via /progress/profile/apply/). Overwrites here are ignored.
+            if "sessions_count" in request.data:
+                profile.sessions_count = request.data.get("sessions_count", profile.sessions_count)
+                profile.save(update_fields=["sessions_count"])
 
         serializer = StudentLearningProfileSerializer(profile)
         return Response(
@@ -173,9 +174,12 @@ class StudentLearningProfileViewSet(viewsets.ModelViewSet):
 
     def partial_update(self, request, *args, **kwargs):
         """
-        PATCH — merge incoming profile_data fields into existing profile_data.
-        Works both at /learning-profile/<pk>/ and /learning-profile/ (list level).
-        Useful for updating recurrent_mistakes without overwriting the full profile.
+        PATCH — sessions_count only.
+
+        profile_data and profile_summary are owned SOLELY by the single writer
+        (profile_service.apply_claims via /progress/profile/apply/), and
+        concept_mastery by mastery_service.record_events. Any of those in the
+        payload here are IGNORED (logged) — there is one writer per signal.
         """
         pk = kwargs.get("pk")
         if pk:
@@ -189,26 +193,16 @@ class StudentLearningProfileViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        incoming_data = request.data.get("profile_data")
-        if incoming_data and isinstance(incoming_data, dict):
-            existing = profile.profile_data or {}
-            existing.update(incoming_data)
-            profile.profile_data = existing
-            profile.save(update_fields=["profile_data"])
+        if "sessions_count" in request.data:
+            profile.sessions_count = request.data["sessions_count"]
+            profile.save(update_fields=["sessions_count"])
 
-        if "profile_summary" in request.data:
-            profile.profile_summary = request.data["profile_summary"]
-            profile.save(update_fields=["profile_summary"])
-
-        # concept_mastery is NO LONGER writable here. It is an event-sourced
-        # read-model with exactly one mutator: mastery_service.record_events
-        # (via POST /progress/mastery/record/). A concept_mastery payload here is
-        # ignored on purpose — see Batch 6.
-        if "concept_mastery" in request.data:
-            logger.warning(
-                "learning-profile PATCH included concept_mastery — IGNORED "
-                "(use /progress/mastery/record/). student=%s", request.user.id,
-            )
+        for owned in ("profile_data", "profile_summary", "concept_mastery"):
+            if owned in request.data:
+                logger.warning(
+                    "learning-profile PATCH included %s — IGNORED (single-writer). student=%s",
+                    owned, request.user.id,
+                )
 
         return Response(StudentLearningProfileSerializer(profile).data)
 
@@ -323,6 +317,26 @@ def mastery_record(request):
 
     updated = record_events(student_id, resolved) if resolved else {}
     return Response({"updated": updated, "dropped": dropped})
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def profile_apply(request):
+    """THE single learning-profile write endpoint.
+
+    Body: ``{"claims": [Claim...], "summary"?: str, "summary_source"?: "session"}``.
+    Profilers send structured, validated claims; the writer merges them additively
+    under a row lock (provenance/confidence resolve collisions). No reader-side
+    merge, no overwrite. The student is the authenticated user.
+    """
+    from .profile_service import apply_claims
+    pd = apply_claims(
+        request.user.id,
+        request.data.get("claims", []),
+        summary=request.data.get("summary"),
+        summary_source=request.data.get("summary_source"),
+    )
+    return Response({"profile_data": pd})
 
 
 @api_view(["GET"])

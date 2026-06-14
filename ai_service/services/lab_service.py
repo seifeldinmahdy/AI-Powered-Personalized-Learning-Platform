@@ -128,52 +128,30 @@ def _extract_relevant_profile_context(
     topic: str = "",
 ) -> str:
     """
-    Extract a compact, prompt-ready profile summary.
-    Always includes: learning_style_signals, recommended_approaches
-    Conditionally includes: topics_of_difficulty, topics_of_strength,
-                            unresolved_questions (if non-empty)
-    Never includes: emotional_tendencies, engagement_patterns
+    Extract a compact, prompt-ready profile summary from the v2 claims schema.
+    HOW-to-learn only (pace, modality, approaches, unresolved questions).
+    COMPETENCE (what the student struggles with) is owned by the mastery model
+    and is NOT read from the profile here.
     """
     if not profile_data:
         return "No profile available"
 
+    from schemas.profile import flatten_profile_for_readers
+    flat = flatten_profile_for_readers(profile_data)
+
     parts = []
-
-    learning_signals = profile_data.get("learning_style_signals", [])
-    if learning_signals:
-        parts.append(f"Learning style: {', '.join(str(s) for s in learning_signals)}")
-
-    approaches = profile_data.get("recommended_approaches", [])
-    if approaches:
-        parts.append(f"Effective approaches: {', '.join(str(a) for a in approaches)}")
-
-    difficulties = profile_data.get("topics_of_difficulty", [])
-    if difficulties:
-        if topic:
-            difficulties = [
-                d for d in difficulties
-                if topic.lower() in str(d).lower()
-                or any(word in str(d).lower() for word in topic.lower().split())
-            ]
-        if difficulties:
-            parts.append(f"Struggles with: {', '.join(str(d) for d in difficulties)}")
-
-    strengths = profile_data.get("topics_of_strength", [])
-    if strengths:
-        if topic:
-            strengths = [
-                s for s in strengths
-                if topic.lower() in str(s).lower()
-                or any(word in str(s).lower() for word in topic.lower().split())
-            ]
-        if strengths:
-            parts.append(f"Strong in: {', '.join(str(s) for s in strengths)}")
-
-    unresolved = profile_data.get("unresolved_questions", [])
-    if unresolved:
+    if flat.get("preferred_modality"):
+        parts.append(f"Learning style: {flat['preferred_modality']}")
+    if flat.get("pace"):
+        parts.append(f"Pace: {flat['pace']}")
+    if flat.get("recommended_approaches"):
+        parts.append(f"Effective approaches: {', '.join(flat['recommended_approaches'])}")
+    if flat.get("recurrent_process_mistakes"):
+        parts.append(f"Recurrent process mistakes: {', '.join(flat['recurrent_process_mistakes'][:5])}")
+    if flat.get("unresolved_questions"):
         parts.append(
             f"Unresolved questions from previous sessions: "
-            f"{', '.join(str(q) for q in unresolved[:5])}"
+            f"{', '.join(flat['unresolved_questions'][:5])}"
         )
 
     return "\n".join(parts) if parts else "No relevant profile data available"

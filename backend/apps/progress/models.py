@@ -138,6 +138,9 @@ class StudentLearningProfile(models.Model):
     )
     last_updated = models.DateTimeField(auto_now=True)
     sessions_count = models.IntegerField(default=0)
+    # Optimistic-concurrency counter for profile writes. Bumped by the single
+    # writer (apps.progress.profile_service.apply_claims) on every applied update.
+    profile_version = models.IntegerField(default=0)
     profile_summary = models.TextField(
         blank=True,
         default="",

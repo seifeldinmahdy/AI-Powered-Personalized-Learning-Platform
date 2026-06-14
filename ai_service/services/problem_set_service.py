@@ -131,35 +131,22 @@ async def _fetch_student_profile(student_id: str) -> dict:
 
 
 async def _patch_recurrent_mistakes(student_id: str, mistakes: list[str]) -> None:
-    """Patch the student's profile_data.recurrent_mistakes on Django."""
-    service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            headers = {
-                "X-Student-ID": student_id,
-                "X-Service-Key": service_key,
-            }
-            # Fetch current profile
-            resp = await client.get(
-                f"{DJANGO_API_URL}/progress/learning-profile/",
-                headers=headers,
-            )
-            if resp.status_code != 200:
-                return
+    """Record recurrent PROCESS mistakes through the SINGLE profile writer.
 
-            current_data = resp.json()
-            profile_data = current_data.get("profile_data", {})
-            existing = profile_data.get("recurrent_mistakes", [])
-            updated = list(set(existing + mistakes))
-            profile_data["recurrent_mistakes"] = updated
-
-            await client.patch(
-                f"{DJANGO_API_URL}/progress/learning-profile/update/",
-                json={"profile_data": profile_data},
-                headers=headers,
-            )
-    except Exception as e:
-        logger.warning("Could not patch recurrent mistakes: %s", e)
+    No client-side read-modify-write: each mistake becomes a
+    recurrent_process_mistake claim (source=problem_set) and the Django writer
+    merges it additively (de-duping near-duplicates).
+    """
+    if not mistakes:
+        return
+    from services.profiler_service import post_profile_claims
+    from schemas.profile import Claim
+    claims = [
+        Claim(field="recurrent_process_mistake", value=m, source="problem_set",
+              evidence="recurred across >=2 problem-set questions", confidence=0.7)
+        for m in mistakes if str(m).strip()
+    ]
+    await post_profile_claims(student_id, claims)
 
 
 def _extract_relevant_profile_context(
@@ -167,52 +154,28 @@ def _extract_relevant_profile_context(
     topic: str = "",
 ) -> str:
     """
-    Extract a compact, prompt-ready profile summary.
-    Always includes: learning_style_signals, recommended_approaches
-    Conditionally includes: topics_of_difficulty, topics_of_strength,
-                            unresolved_questions (if non-empty)
-    Never includes: emotional_tendencies, engagement_patterns
+    Extract a compact, prompt-ready profile summary from the v2 claims schema.
+    HOW-to-learn only; COMPETENCE is owned by the mastery model (read elsewhere).
     """
     if not profile_data:
         return "No profile available"
 
+    from schemas.profile import flatten_profile_for_readers
+    flat = flatten_profile_for_readers(profile_data)
+
     parts = []
-
-    learning_signals = profile_data.get("learning_style_signals", [])
-    if learning_signals:
-        parts.append(f"Learning style: {', '.join(str(s) for s in learning_signals)}")
-
-    approaches = profile_data.get("recommended_approaches", [])
-    if approaches:
-        parts.append(f"Effective approaches: {', '.join(str(a) for a in approaches)}")
-
-    difficulties = profile_data.get("topics_of_difficulty", [])
-    if difficulties:
-        if topic:
-            difficulties = [
-                d for d in difficulties
-                if topic.lower() in str(d).lower()
-                or any(word in str(d).lower() for word in topic.lower().split())
-            ]
-        if difficulties:
-            parts.append(f"Struggles with: {', '.join(str(d) for d in difficulties)}")
-
-    strengths = profile_data.get("topics_of_strength", [])
-    if strengths:
-        if topic:
-            strengths = [
-                s for s in strengths
-                if topic.lower() in str(s).lower()
-                or any(word in str(s).lower() for word in topic.lower().split())
-            ]
-        if strengths:
-            parts.append(f"Strong in: {', '.join(str(s) for s in strengths)}")
-
-    unresolved = profile_data.get("unresolved_questions", [])
-    if unresolved:
+    if flat.get("preferred_modality"):
+        parts.append(f"Learning style: {flat['preferred_modality']}")
+    if flat.get("pace"):
+        parts.append(f"Pace: {flat['pace']}")
+    if flat.get("recommended_approaches"):
+        parts.append(f"Effective approaches: {', '.join(flat['recommended_approaches'])}")
+    if flat.get("recurrent_process_mistakes"):
+        parts.append(f"Recurrent process mistakes: {', '.join(flat['recurrent_process_mistakes'][:5])}")
+    if flat.get("unresolved_questions"):
         parts.append(
             f"Unresolved questions from previous sessions: "
-            f"{', '.join(str(q) for q in unresolved[:5])}"
+            f"{', '.join(flat['unresolved_questions'][:5])}"
         )
 
     return "\n".join(parts) if parts else "No relevant profile data available"
@@ -813,9 +776,10 @@ async def _detect_recurrent_mistakes(
     # Also check if any standard category tag appears in profile weaknesses
     # by direct string match
     if not recurrent:
+        from schemas.profile import flatten_profile_for_readers
         profile_data = await _fetch_student_profile(student_id)
-        weaknesses = profile_data.get("weaknesses",
-                     profile_data.get("topics_of_difficulty", []))
+        # Compare against known PROCESS mistakes (competence lives in mastery now).
+        weaknesses = flatten_profile_for_readers(profile_data).get("recurrent_process_mistakes", [])
         weakness_text = " ".join(str(w) for w in weaknesses).lower()
         recurrent = [
             tag for tag in new_mistake_tags
