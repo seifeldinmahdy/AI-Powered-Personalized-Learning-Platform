@@ -4,6 +4,7 @@ import Editor from '@monaco-editor/react';
 import { toast } from 'sonner';
 import {
     generateProblemSet,
+    regenerateProblemSet,
     getStudentProblemSets,
     submitAnswer,
     getDynamicHint,
@@ -77,6 +78,7 @@ export default function ProblemSet() {
     const [solutionShown, setSolutionShown] = useState<Record<string, boolean>>({});
     const [submitting, setSubmitting] = useState(false);
     const [expandedSummary, setExpandedSummary] = useState<string | null>(null);
+    const [regenerating, setRegenerating] = useState(false);
 
     // New hint system state
     const [staticHintExpanded, setStaticHintExpanded] = useState<Record<string, boolean>>({});
@@ -164,6 +166,37 @@ export default function ProblemSet() {
     }, [courseId, lessonId]);
 
     /* ── handlers ──────────────────────────────────────────── */
+
+    async function handleRegenerate() {
+        if (!courseId || !lessonId || regenerating) return;
+        setRegenerating(true);
+        try {
+            // The cap (MAX 3 / plan_version) is enforced server-side; a 409
+            // surfaces as the thrown message below.
+            const fresh = await regenerateProblemSet({
+                sessionId: locState.sessionId || '',
+                studentId, courseId, lessonId,
+                lessonTitle: locState.lessonTitle || '',
+                studentProfileSummary: locState.studentProfileSummary || '',
+                slides: locState.slides || [],
+                labCells: locState.labCells || [],
+            });
+            // Swap in the new generation and restart the set.
+            setProblemSet(fresh);
+            setResults({});
+            setSolutionShown({});
+            setExpandedSummary(null);
+            const codes: Record<string, string> = {};
+            for (const q of fresh.questions) codes[q.id] = q.starter_code;
+            setCodeMap(codes);
+            setCurrentIdx(0);
+            toast.success('Fresh problem set generated.');
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Could not regenerate.');
+        } finally {
+            setRegenerating(false);
+        }
+    }
 
     function toggleStaticHint(qid: string) {
         setStaticHintExpanded(p => ({ ...p, [qid]: !p[qid] }));
@@ -362,6 +395,17 @@ export default function ProblemSet() {
                             );
                         })}
                     </div>
+
+                    {/* Retry with a fresh variant. Best score is the max across
+                        all attempts/generations, so a weaker retry never lowers it;
+                        regenerated attempts contribute to mastery with reduced weight. */}
+                    <button
+                        onClick={handleRegenerate}
+                        disabled={regenerating}
+                        className="mt-8 w-full py-2.5 rounded-xl font-medium border border-border text-muted-foreground hover:bg-muted/40 transition-all disabled:opacity-50"
+                    >
+                        {regenerating ? 'Generating a fresh set…' : 'Regenerate problem set (up to 3)'}
+                    </button>
 
                     {locState.nextLessonId ? (
                         <button

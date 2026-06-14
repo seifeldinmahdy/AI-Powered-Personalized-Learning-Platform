@@ -3,6 +3,8 @@
  * Talks directly to the AI service's /problem-set endpoints.
  */
 
+import api from './api';
+
 const AI_URL = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001';
 
 // ── Types ──────────────────────────────────────────────────────
@@ -119,6 +121,53 @@ export async function getProblemSet(problemSetId: string, studentId: string = ''
         throw new Error(`Failed to load problem set: ${detail}`);
     }
     return res.json();
+}
+
+/** Student-initiated regeneration (MAX 3 per plan_version, cap enforced
+ *  server-side). Throws with the server message on 409 (limit reached). */
+export async function regenerateProblemSet(opts: GenerateProblemSetOptions): Promise<ProblemSetData> {
+    const res = await fetch(`${AI_URL}/problem-set/regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            session_id: opts.sessionId,
+            student_id: opts.studentId,
+            course_id: opts.courseId,
+            lesson_id: opts.lessonId,
+            lesson_title: opts.lessonTitle || '',
+            student_profile_summary: opts.studentProfileSummary || '',
+            slides: opts.slides || [],
+            lab_cells: opts.labCells || [],
+        }),
+    });
+    if (res.status === 409) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail || 'Regeneration limit reached for this lesson.');
+    }
+    if (!res.ok) {
+        throw new Error(`Problem set regeneration failed: ${await res.text()}`);
+    }
+    return res.json();
+}
+
+/** Remaining regenerations for a lesson at a plan version (Django). */
+export async function getRegenerationCount(
+    courseId: string | number, lessonId: string | number, planVersion: number,
+): Promise<{ regenerations_used: number; remaining: number; max: number }> {
+    const { data } = await api.get('/artifacts/problem-sets/regen-count/', {
+        params: { course: courseId, lesson: lessonId, plan_version: planVersion },
+    });
+    return data;
+}
+
+/** Student-facing best score for a lesson (derived from attempts; Django). */
+export async function getProblemSetBestScore(
+    courseId: string | number, lessonId: string | number, planVersion?: number,
+): Promise<number | null> {
+    const params: Record<string, string | number> = { course: courseId, lesson: lessonId };
+    if (planVersion != null) params.plan_version = planVersion;
+    const { data } = await api.get('/artifacts/problem-sets/score/', { params });
+    return data.best_score;
 }
 
 export async function getStudentProblemSets(
