@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
+    "axes",
     # Local apps
     "apps.core",
     "apps.users",
@@ -58,6 +59,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "axes.middleware.AxesMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -197,3 +199,13 @@ SECURE_BROWSER_XSS_FILTER = True
 # SECURE_HSTS_SECONDS = 300  # start low; increase to 31536000 after testing
 # SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 # SECURE_HSTS_PRELOAD = False
+
+# ---------- django-axes (A.5) — brute-force login lockout ----------
+AUTHENTICATION_BACKENDS = [
+    "axes.backends.AxesStandaloneBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
+AXES_FAILURE_LIMIT = 5
+AXES_COOLOFF_TIME = 0.25  # hours (= 15 minutes)
+AXES_RESET_ON_SUCCESS = True
+AXES_LOCKOUT_CALLABLE = "apps.core.lockout.axes_lockout_handler"

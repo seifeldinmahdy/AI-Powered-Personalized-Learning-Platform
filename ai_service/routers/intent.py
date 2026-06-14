@@ -19,6 +19,14 @@ from schemas.intent import IntentRequest, IntentResponse, ChatRequest, ChatRespo
 # If empty, service-only endpoints like /intent/reload are disabled.
 logger = logging.getLogger(__name__)
 
+INTERNAL_SERVICE_KEY = os.getenv("INTERNAL_SERVICE_KEY", "")
+
+# A.10: Allowed root directory for model loading.
+# The /intent/reload endpoint will only load checkpoints from within this path.
+_INTENT_MODEL_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "intent_model")
+)
+
 router = APIRouter(
     prefix="/intent",
     tags=["Intent Classification"]

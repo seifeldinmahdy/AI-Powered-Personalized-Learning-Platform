@@ -1,8 +1,12 @@
 import { Outlet } from "react-router";
 import { AdminSidebar } from "./AdminSidebar";
 import { AdminTopBar } from "./AdminTopBar";
+import { useAdminIdleTimer } from "../../hooks/useAdminIdleTimer";
 
 export function AdminLayout() {
+  // A.2: Auto-logout after 20 minutes of inactivity
+  useAdminIdleTimer();
+
   return (
     <div className="admin-scope min-h-screen flex bg-[var(--admin-paper)]">
       <AdminSidebar />
