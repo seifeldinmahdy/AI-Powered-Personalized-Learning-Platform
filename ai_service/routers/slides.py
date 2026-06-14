@@ -77,6 +77,11 @@ class SlideGenerateRequest(BaseModel):
         default=None,
         description="Course ID. See student_id.",
     )
+    plan_version: Optional[int] = Field(
+        default=None,
+        description="Authoritative plan version that pins the persisted deck. When "
+                    "omitted, the AI service resolves the current version server-side.",
+    )
     # Deprecated: personalization literals. Kept only as a graceful fallback for
     # internal callers when no stored context can be resolved.
     mastery_level: str | None = "Novice"
@@ -631,21 +636,13 @@ async def generate_slides(request: SlideGenerateRequest):
 
     When ``session_id`` is provided, tutor context is read from
     SharedSessionStore and injected into the content specialist prompt.
-    """
-    # --- DEBUG / TESTING OVERRIDE: Return saved deck if it exists for this session ---
-    import os
-    import json
-    if os.path.exists("latest_deck.json"):
-        try:
-            with open("latest_deck.json", "r", encoding="utf-8") as f:
-                saved_deck = json.load(f)
-            if saved_deck.get("session_number") == request.session_number:
-                logger.info("TESTING OVERRIDE: Returning latest_deck.json instantly to save generation time.")
-                return SlideGenerateResponse(**saved_deck)
-        except Exception as e:
-            logger.warning(f"Could not load saved deck override: {e}")
-    # ---------------------------------------------------------------------------------
 
+    The generated deck is persisted server-side (StudentArtifact, type=slides,
+    keyed by plan_version) so it survives restarts and drives resume. This
+    replaced a ``latest_deck.json`` global file that returned ANY saved deck whose
+    session_number matched — ignoring student/course/plan_version — i.e. a
+    cross-session data-leak / wrong-content bug, now removed.
+    """
     t0 = time.time()
 
     logger.info(
@@ -725,16 +722,81 @@ async def generate_slides(request: SlideGenerateRequest):
         generation_time_seconds=elapsed,
     )
 
-    # Save a debug copy to the ai_service root
-    try:
-        import json
-        with open("latest_deck.json", "w", encoding="utf-8") as f:
-            f.write(response.model_dump_json(indent=2))
-        logger.info("Saved raw output to latest_deck.json")
-    except Exception as e:
-        logger.warning(f"Could not save latest_deck.json: {e}")
+    # Persist the deck durably (net-new). Keyed by plan_version so a pathway
+    # regeneration can never serve stale slides. Best-effort: a storage failure
+    # must not fail slide generation.
+    await _persist_deck(request, response)
 
     return response
+
+
+async def _persist_deck(request: "SlideGenerateRequest", response: "SlideGenerateResponse") -> None:
+    """Persist a generated deck as StudentArtifact(type=slides), best-effort.
+
+    Resolves plan_version server-side (validating any client-supplied value via
+    the guard — never coercing). Skips persistence when student/course/plan are
+    not resolvable (legacy/internal callers) and logs why.
+    """
+    if not (request.student_id and request.course_id):
+        logger.info("slides: not persisting deck — missing student_id/course_id")
+        return
+    try:
+        import asyncio
+        from services.plan_resolver import resolve_for_write
+        from services.artifact_client import upsert_artifact
+
+        plan_version = await asyncio.to_thread(
+            resolve_for_write, str(request.student_id), str(request.course_id),
+            request.plan_version,
+        )
+        if plan_version is None:
+            logger.info(
+                "slides: no plan_version resolved — deck NOT persisted (student=%s course=%s)",
+                request.student_id, request.course_id,
+            )
+            return
+        saved = await upsert_artifact(
+            str(request.student_id), str(request.course_id), "slides",
+            plan_version=plan_version, session_number=request.session_number,
+            content_json=response.model_dump(),
+        )
+        if saved:
+            logger.info(
+                "slides: persisted deck student=%s course=%s session=%d v%s",
+                request.student_id, request.course_id, request.session_number, plan_version,
+            )
+    except Exception:
+        logger.warning("slides: deck persistence failed", exc_info=True)
+
+
+@router.get("/persisted")
+async def persisted_slides(
+    student_id: str,
+    course_id: str,
+    session_number: int,
+    plan_version: Optional[int] = None,
+):
+    """Return a previously persisted deck for resume, or 404.
+
+    Lets the client read a saved deck instead of regenerating after a restart /
+    on another device. Ownership is enforced server-side (Django authorizes
+    artifact.student == X-Student-ID). When plan_version is omitted, the current
+    version is resolved server-side.
+    """
+    import asyncio
+    from services.artifact_client import get_slides_artifact
+    from services.plan_resolver import current_plan_version
+
+    pv = plan_version
+    if pv is None:
+        pv = await asyncio.to_thread(current_plan_version, str(student_id), str(course_id))
+    if pv is None:
+        raise HTTPException(status_code=404, detail="No plan version for this student/course")
+
+    deck = await get_slides_artifact(str(student_id), session_number=session_number, plan_version=pv)
+    if not deck:
+        raise HTTPException(status_code=404, detail="No persisted slides")
+    return deck
 
 
 @router.get("/health")

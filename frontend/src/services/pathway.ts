@@ -116,6 +116,8 @@ export interface SlideGenerateRequest {
   // identifies the student; it never sends personalization literals.
   student_id: string;
   course_id: string;
+  // Authoritative plan version that pins the persisted deck (Batch 5/10a).
+  plan_version?: number;
 }
 
 // ── API calls ──────────────────────────────────────────────────
@@ -165,6 +167,25 @@ export async function generateSlides(
     const detail = await res.text();
     throw new Error(`Slide generation failed: ${detail}`);
   }
+  return res.json();
+}
+
+/** Fetch a previously persisted deck (resume) so we don't regenerate after a
+ *  restart / on another device. Returns null when none is saved. */
+export async function getPersistedSlides(
+  studentId: string,
+  courseId: string,
+  sessionNumber: number,
+  planVersion: number,
+): Promise<SlideGenerateResponse | null> {
+  const params = new URLSearchParams({
+    student_id: studentId,
+    course_id: courseId,
+    session_number: String(sessionNumber),
+    plan_version: String(planVersion),
+  });
+  const res = await fetch(`${AI_URL}/slides/persisted?${params.toString()}`);
+  if (!res.ok) return null;
   return res.json();
 }
 

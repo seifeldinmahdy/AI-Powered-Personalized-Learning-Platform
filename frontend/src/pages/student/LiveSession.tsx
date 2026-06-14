@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import {
   generateSlides,
   getCurrentPathway,
+  getPersistedSlides,
   type PathwayPlan,
   type GeneratedSlide,
 } from '../../services/pathway';
@@ -208,8 +209,37 @@ export default function LiveSession() {
               }
             }
 
-            // Only generate if we didn't load from cache
+            // On a local-cache miss, try the durably PERSISTED deck before
+            // regenerating — this is the resume path (survives restart / works
+            // on another device). Pinned to plan_version, so never stale.
+            let loadedFromPersisted = false;
             if (!cachedSlides) {
+              try {
+                const persisted = await getPersistedSlides(
+                  String(pathwayPlan.student_id), String(pathwayPlan.course_id),
+                  sessionNum, pathwayPlan.plan_version,
+                );
+                if (persisted && persisted.slides?.length > 0 && !cancelled) {
+                  setSlides(persisted.slides);
+                  try { sessionStorage.setItem(cacheKey, JSON.stringify(persisted.slides)); } catch { /* full */ }
+                  await fetch(`${AI_URL}/session/${sessionIdRef.current}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      current_slide_index: 0,
+                      current_slide_title: persisted.slides[0].title,
+                      current_slide_content: persisted.slides[0].body_content?.map(i => i.text).join('\n') || '',
+                      current_topic: currentSession.session_title,
+                      visited_slides_push: 0,
+                    }),
+                  }).catch(console.error);
+                  loadedFromPersisted = true;
+                }
+              } catch { /* no persisted deck — fall through to generation */ }
+            }
+
+            // Only generate if we loaded from neither cache nor persisted store
+            if (!cachedSlides && !loadedFromPersisted) {
               try {
                 const chunksRes = await fetch(`${AI_URL}/pathway/session-chunks`, {
                   method: 'POST',
@@ -241,6 +271,7 @@ export default function LiveSession() {
                       })),
                       student_id: pathwayPlan.student_id,
                       course_id: pathwayPlan.course_id,
+                      plan_version: pathwayPlan.plan_version,
                     });
 
                     if (!cancelled) {

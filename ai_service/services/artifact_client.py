@@ -128,6 +128,21 @@ async def get_artifact_content(student_id: str, artifact_id: int) -> Optional[di
     return data if ok else None
 
 
+async def get_slides_artifact(student_id: str, *, session_number: int,
+                              plan_version: int) -> Optional[dict]:
+    """Resolve a persisted slides deck for resume (index lookup → content fetch).
+
+    Returns the stored content_json (the SlideGenerateResponse dump), or None.
+    """
+    index = await get_artifact_index(
+        student_id, type="slides", session=session_number, plan_version=plan_version,
+    )
+    if not index:
+        return None
+    content = await get_artifact_content(student_id, index[0]["id"])
+    return (content or {}).get("content_json") if content else None
+
+
 # ── Problem sets (index) + attempts (events) ─────────────────────────────────
 
 async def create_problem_set(student_id: str, course_id: str, lesson_id: str, *,
