@@ -196,17 +196,20 @@ async def update_concept_mastery_from_eval(
     student_id: str,
     evaluated_rubric: list,
     alpha: float = 0.3,
+    source: str = "problem_set",
 ) -> None:
     """Fire-and-forget: send problem-set outcomes to the single mastery writer.
 
-    ``alpha`` is the per-call EMA weight — Batch 10's attempt policy passes a
-    down-weighted alpha for regenerated-set attempts; this code stays unaware of
-    why. No EMA/RMW here: the Django writer folds it.
+    ``alpha`` is the per-call EMA weight and ``source`` the provenance — Batch 10's
+    attempt policy passes a down-weighted alpha + a distinct source
+    ("problem_set_regen") for regenerated-set attempts so a fresh easy variant
+    nudges rather than dominates, and cannot wipe the original set's evidence.
+    This code stays unaware of why. No EMA/RMW here: the Django writer folds it.
     """
     try:
         outcomes = outcomes_from_eval(evaluated_rubric)
         events = [
-            {**o, "source": "problem_set", "alpha": alpha}
+            {**o, "source": source, "alpha": alpha}
             for o in outcomes
         ]
         if events:

@@ -243,7 +243,65 @@ Each question object must have these exact fields:
 """
 
 
-async def generate(request) -> ProblemSetData:
+# Mastery weighting (Batch 10a). A regenerated set is an easier variant — it must
+# NUDGE mastery, never dominate or wipe the original set's evidence. Agreed hybrid:
+# reduced-alpha-PER-SET (a distinct source + lower alpha). Switchable here — the
+# considered alternative was a single global down-weighted fold with no per-set
+# distinction (simpler, less precise).
+ORIGINAL_MASTERY_ALPHA = 0.3
+REGEN_MASTERY_ALPHA = 0.15
+
+
+def mastery_weight_for_generation(generation_index: int) -> tuple[float, str]:
+    """Return (alpha, source) for a submission against a given generation."""
+    if generation_index and generation_index > 0:
+        return REGEN_MASTERY_ALPHA, "problem_set_regen"
+    return ORIGINAL_MASTERY_ALPHA, "problem_set"
+
+
+async def _persist_problem_set(problem_set: ProblemSetData, *, regenerate: bool) -> None:
+    """Durably record a generated set in Django (best-effort), and stamp the
+    authoritative plan_version / generation_index back onto the in-memory object.
+
+    The Django row is the durable, queryable record (survives restarts) and the
+    regen counter / supersession live there. A storage failure must not fail
+    generation — the file working-copy still serves the live session.
+    """
+    if not (problem_set.student_id and problem_set.course_id and problem_set.lesson_id):
+        return
+    try:
+        import asyncio
+        from services.plan_resolver import current_plan_version
+        from services import artifact_client
+
+        pv = await asyncio.to_thread(
+            current_plan_version, str(problem_set.student_id), str(problem_set.course_id)
+        )
+        if pv is None:
+            logger.info("problem_set: no plan_version — not recorded durably (ps=%s)",
+                        problem_set.problem_set_id)
+            return
+        created = await artifact_client.create_problem_set(
+            str(problem_set.student_id), str(problem_set.course_id), str(problem_set.lesson_id),
+            plan_version=pv, ps_uid=problem_set.problem_set_id,
+            content_json={"questions": [q.model_dump() for q in problem_set.questions]},
+            regenerate=regenerate,
+        )
+        if created:
+            problem_set.plan_version = created.get("plan_version", pv)
+            problem_set.generation_index = created.get("generation_index", 0)
+        elif regenerate:
+            # The cap is normally pre-checked at the router; a None here on regen
+            # means the durable write was rejected/failed — surface it.
+            raise RuntimeError("regeneration was not recorded durably")
+    except RuntimeError:
+        raise
+    except Exception:
+        logger.warning("problem_set: durable persist failed (ps=%s)",
+                       problem_set.problem_set_id, exc_info=True)
+
+
+async def generate(request, regenerate: bool = False) -> ProblemSetData:
     """Generate a problem set grounded in session + lab context.
 
     Context priority:
@@ -511,8 +569,13 @@ Based on the breadth and depth of the material above, decide how many questions 
         questions=questions,
         submissions={},
     )
+    # Durably record in Django first (stamps plan_version + generation_index),
+    # then keep the file working-copy for the live in-session flow.
+    await _persist_problem_set(problem_set, regenerate=regenerate)
     store.save(problem_set)
-    logger.info("Problem set saved: id=%s questions=%d", problem_set.problem_set_id, len(questions))
+    logger.info("Problem set saved: id=%s questions=%d gen=%d v%d",
+                problem_set.problem_set_id, len(questions),
+                problem_set.generation_index, problem_set.plan_version)
     return problem_set
 
 

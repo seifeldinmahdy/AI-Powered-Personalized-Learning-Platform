@@ -22,7 +22,10 @@ from schemas.problem_set import (
     ProblemSetData,
     EvaluationResult,
 )
-from services.problem_set_service import generate, evaluate_submission, generate_dynamic_hint
+from services.problem_set_service import (
+    generate, evaluate_submission, generate_dynamic_hint,
+    mastery_weight_for_generation,
+)
 from services.problem_set_store import get_problem_set_store
 
 logger = logging.getLogger(__name__)
@@ -42,6 +45,39 @@ async def generate_problem_set(request: ProblemSetGenerateRequest):
     except Exception as e:
         logger.error("Problem set generation failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Generation failed: {e}")
+
+
+@router.post("/regenerate")
+async def regenerate_problem_set(request: ProblemSetGenerateRequest):
+    """Regenerate a problem set for a lesson (student-initiated, MAX 3 per
+    plan_version). The cap is pre-checked server-side so we don't spend an LLM
+    generation only to be rejected; it resets when plan_version changes. The
+    previous generation and ALL its attempts are retained (superseded), not
+    deleted — they fed mastery and stay auditable.
+    """
+    from services.plan_resolver import current_plan_version
+    from services import artifact_client
+
+    pv = await asyncio.to_thread(
+        current_plan_version, str(request.student_id), str(request.course_id)
+    )
+    if pv is not None:
+        rc = await artifact_client.get_regen_count(
+            str(request.student_id), str(request.course_id), str(request.lesson_id), pv
+        )
+        if rc and rc.get("remaining", 0) <= 0:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Regeneration limit reached ({rc.get('max')}) for this lesson.",
+            )
+    try:
+        problem_set = await generate(request, regenerate=True)
+        return problem_set.model_dump()
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        logger.error("Problem set regeneration failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Regeneration failed: {e}")
 
 
 @router.post("/submit")
@@ -66,18 +102,37 @@ async def submit_answer(request: ProblemSetSubmitRequest):
             hints_used=request.hints_used,
         )
 
-        # Fire-and-forget: update concept_mastery from binary rubric results.
-        # The LLM never touches mastery scores — only mastery.py does.
+        evaluated = [c.model_dump() for c in result.evaluated_rubric]
+        gen_idx = getattr(problem_set, "generation_index", 0) or 0
+        alpha, source = mastery_weight_for_generation(gen_idx)
+
+        # Mastery moves ONLY on this genuine new attempt (anti-farming). A
+        # regenerated set contributes with reduced alpha + a distinct source so a
+        # fresh easy variant nudges rather than dominates. The LLM never touches
+        # mastery scores — only mastery.py does.
         try:
             from services.mastery import update_concept_mastery_from_eval
             asyncio.create_task(
                 update_concept_mastery_from_eval(
                     student_id=request.student_id,
-                    evaluated_rubric=[c.model_dump() for c in result.evaluated_rubric],
+                    evaluated_rubric=evaluated,
+                    alpha=alpha, source=source,
                 )
             )
         except Exception as _me:
             logger.warning("Could not schedule mastery update: %s", _me)
+
+        # Durable, append-only attempt — a retry is a NEW row, never an overwrite.
+        try:
+            from services import artifact_client
+            await artifact_client.append_attempt(
+                str(request.student_id), request.problem_set_id,
+                question_id=request.question_id, code=request.code,
+                evaluated_rubric=evaluated, hints_used=request.hints_used,
+                score=result.final_score,
+            )
+        except Exception as _ae:
+            logger.warning("Could not record problem-set attempt: %s", _ae)
 
         return result.model_dump()
     except ValueError as e:

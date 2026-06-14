@@ -126,6 +126,10 @@ class ProblemSetData(BaseModel):
     student_id: str
     lesson_id: str
     course_id: str = ""
+    # Durable-store coordinates (Batch 10a). plan_version pins the artifact to a
+    # pathway version; generation_index marks regenerations (0 = original).
+    plan_version: int = 0
+    generation_index: int = 0
     generated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     questions: list[ProblemSetQuestion] = Field(default_factory=list)
     submissions: dict[str, SubmissionData] = Field(default_factory=dict)
