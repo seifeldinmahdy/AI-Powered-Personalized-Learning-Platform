@@ -529,7 +529,40 @@ async def generate_coding_lab(request: CodingLabGenerateRequest) -> CodingLabGen
         lab=lab,
     )
     store.save(response)
+    await persist_lab(request.student_id, request.course_id, request.lesson_id,
+                      response.model_dump(), status="generated")
     return response
+
+
+async def persist_lab(student_id: str, course_id: str, lesson_id: str,
+                      content_json: dict, *, status: str = "generated") -> None:
+    """Durably record a lab as StudentArtifact(type=lab), best-effort.
+
+    Called at generation (full content) and at completion (final state incl. all
+    notes). Keyed by plan_version so a pathway regeneration never serves stale
+    labs. A storage failure must not fail the lab flow — the file working-copy
+    still serves the live session. (Notes added mid-lab are flushed durably at
+    completion; the read-path migration off files is a later stage.)
+    """
+    if not (student_id and course_id and lesson_id):
+        return
+    try:
+        import asyncio
+        from services.plan_resolver import current_plan_version
+        from services import artifact_client
+
+        pv = await asyncio.to_thread(current_plan_version, str(student_id), str(course_id))
+        if pv is None:
+            logger.info("lab: no plan_version — not recorded durably (lesson=%s)", lesson_id)
+            return
+        lesson_key = int(lesson_id) if str(lesson_id).isdigit() else lesson_id
+        await artifact_client.upsert_artifact(
+            str(student_id), str(course_id), "lab",
+            plan_version=pv, lesson_id=lesson_key,
+            content_json=content_json, status=status,
+        )
+    except Exception:
+        logger.warning("lab: durable persist failed (lesson=%s)", lesson_id, exc_info=True)
 
 
 def _build_cell_context(cell: LabCell) -> dict[str, Any]:

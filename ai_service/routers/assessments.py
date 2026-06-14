@@ -243,7 +243,26 @@ async def submit_placement(req: SubmitPlacementRequest):
     live = LiveSessionState()
     context = UnifiedStudentContext(profile=profile, live=live)
 
-    # ── Persist ──────────────────────────────────────────────────
+    # ── Durable, immutable PlacementAttempt event ────────────────
+    # Append-only: a re-take is a NEW row, never an overwrite. The
+    # UnifiedStudentContext snapshot persisted below is DERIVED from this (the
+    # latest) submission; prior attempts stay immutable + auditable in Django.
+    try:
+        from services.artifact_client import post_placement_attempt
+        await post_placement_attempt(
+            req.student_id, req.course_id,
+            answers=[a.model_dump() for a in req.answers],
+            per_question=[{
+                "question": a.question, "chosen_option": a.chosen_option,
+                "correct_option": a.correct_option, "is_correct": a.is_correct,
+                "concept_id": str(a.concept_id) if a.concept_id else None,
+            } for a in req.answers],
+            score=score_pct, concept_results=concept_scores,
+        )
+    except Exception:
+        logger.warning("placement: could not record PlacementAttempt event", exc_info=True)
+
+    # ── Persist (derived snapshot) ───────────────────────────────
     store = get_student_context_store()
     store.save(req.student_id, req.course_id, context)
 

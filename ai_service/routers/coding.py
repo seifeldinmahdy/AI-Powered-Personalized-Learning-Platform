@@ -176,6 +176,19 @@ async def complete_lab_endpoint(req: LabCompleteRequest):
     store = get_coding_lab_store()
     store.mark_completed(req.lab_id)
 
+    # Durably flush the completed lab (final state, incl. all notes) so it is
+    # queryable / resumable. Best-effort — never block completion.
+    try:
+        import logging
+        from services.lab_service import persist_lab
+        completed = store.load(req.lab_id)
+        if completed is not None:
+            await persist_lab(req.student_id, req.course_id, req.lesson_id,
+                              completed.model_dump(), status="completed")
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "lab complete: durable persist failed (lab_id=%s)", req.lab_id, exc_info=True)
+
     # Fire lab profiler as background task — student does not wait
     asyncio.create_task(
         run_lab_profiler(
