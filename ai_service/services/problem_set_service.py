@@ -397,18 +397,20 @@ async def generate(request, regenerate: bool = False) -> ProblemSetData:
     unresolved_block = chr(10).join(str(q) for q in unresolved_qs) if unresolved_qs else "None"
 
     # Fetch course concepts + student weak-concept list for targeting
-    from services.mastery import fetch_course_concepts, fetch_concept_mastery, top_weak_concepts
+    from services.mastery import (
+        fetch_course_concepts, fetch_concept_mastery, top_weak_concepts, top_strong_concepts,
+    )
     course_concepts: list[dict] = []
     weak_concept_block = ""
+    strong_concept_block = ""
     concepts_block = ""
     if course_id:
         try:
             course_concepts = await fetch_course_concepts(course_id)
             concept_mastery = await fetch_concept_mastery(student_id)
             if concept_mastery:
-                weak = top_weak_concepts(concept_mastery, n=3)
-                # Enrich with labels
                 concept_label_map = {c["id"]: c["label"] for c in course_concepts}
+                weak = top_weak_concepts(concept_mastery, n=3)
                 weak_labeled = [
                     {**w, "label": concept_label_map.get(w["concept_id"], w["concept_id"])}
                     for w in weak
@@ -418,6 +420,19 @@ async def generate(request, regenerate: bool = False) -> ProblemSetData:
                         "\nWEAK CONCEPTS TO TARGET (prioritize in question selection and rubric criteria):\n"
                         + json.dumps(weak_labeled, indent=2)
                         + "\nInclude at least one question directly addressing the weakest concept above."
+                    )
+                # STRONG concepts back the system prompt's "push strengths harder"
+                # instruction (previously had no data). From the mastery model.
+                strong = top_strong_concepts(concept_mastery, n=3)
+                strong_labeled = [
+                    {**s, "label": concept_label_map.get(s["concept_id"], s["concept_id"])}
+                    for s in strong
+                ]
+                if strong_labeled:
+                    strong_concept_block = (
+                        "\nSTRONG CONCEPTS (the student has mastered these — include at least one "
+                        "harder/stretch question on the strongest concept to extend them):\n"
+                        + json.dumps(strong_labeled, indent=2)
                     )
             if course_concepts:
                 concepts_block = (
@@ -445,6 +460,7 @@ STUDENT PROFILE:
 UNRESOLVED QUESTIONS FROM PREVIOUS SESSIONS (address these if relevant):
 {unresolved_block}
 {weak_concept_block}
+{strong_concept_block}
 {concepts_block}
 Based on the breadth and depth of the material above, decide how many questions are needed and what each should cover. Output ONLY a JSON array of question objects."""
 

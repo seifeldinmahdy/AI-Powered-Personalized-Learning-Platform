@@ -88,6 +88,7 @@ export interface GeneratedSlide {
   source_page_start: number;
   source_page_end: number;
   visual_type: string;
+  concept_id?: string;   // Concept this slide teaches (for tutor concept-ID matching)
 }
 
 export interface SlideGenerateResponse {

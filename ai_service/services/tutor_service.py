@@ -314,6 +314,74 @@ def _build_system_prompt(base_prompt: str, active_skills: list[str]) -> str:
     return "\n\n".join(parts)
 
 
+def _concept_label_for(session, concept_id: str) -> str:
+    """Canonical label for a concept_id, from the session's weak/strong lists."""
+    cid = str(concept_id or "")
+    if not cid:
+        return ""
+    for c in (session.weak_concepts or []) + (session.strong_concepts or []):
+        if str(c.get("concept_id")) == cid:
+            return str(c.get("label", "")).lower()
+    return ""
+
+
+def _competence_and_style_skills(session, current_concept_id: str = "") -> list[str]:
+    """Pure skill selection for competence + how-to-learn signals.
+
+    Competence (DIFFICULTY_TOPIC / STRENGTH_TOPIC) is matched by concept_id when
+    the current slide's concept is known (authoritative, reliable) — fixing the
+    old brittleness where a weak concept whose LABEL didn't string-overlap the
+    subtopic silently failed to activate. Falls back to label overlap only when
+    no concept_id is available. Style/pace/recurrent come from the flattened
+    Batch-7 claims (how-to-learn). No session mutation — unit-testable.
+    """
+    from schemas.profile import flatten_profile_for_readers
+
+    cid = str(current_concept_id or "")
+    combined_lower = f"{(session.current_subtopic or '').lower()} {(session.current_topic or '').lower()}"
+
+    def _matches(concepts) -> bool:
+        if cid:  # authoritative concept-ID match
+            return any(str(c.get("concept_id")) == cid for c in (concepts or []))
+        for c in (concepts or []):  # degraded fallback: label overlap
+            lbl = str(c.get("label", "")).lower()
+            if lbl and (lbl in combined_lower or combined_lower in lbl):
+                return True
+        return False
+
+    skills: list[str] = []
+    if _matches(session.weak_concepts):
+        skills.append("DIFFICULTY_TOPIC")
+    if _matches(session.strong_concepts):
+        skills.append("STRENGTH_TOPIC")
+
+    flat = flatten_profile_for_readers(session.student_profile_data or {})
+    style_hint = " ".join(
+        [(flat.get("preferred_modality") or "")] + list(flat.get("recommended_approaches", []))
+    ).lower()
+    if any(w in style_hint for w in ("visual", "diagram", "spatial")):
+        skills.append("VISUAL_LEARNER")
+    elif any(w in style_hint for w in ("hands", "practical", "doing", "concrete")):
+        skills.append("HANDS_ON_LEARNER")
+
+    pace_hint = (flat.get("pace") or "").lower()
+    if any(w in pace_hint for w in ("slow", "more time")):
+        skills.append("PACE_SLOW")
+    elif any(w in pace_hint for w in ("fast", "quick", "skip")):
+        skills.append("PACE_FAST")
+
+    recurrent = flat.get("recurrent_process_mistakes", [])
+    if recurrent:
+        match_text = (combined_lower + " " + _concept_label_for(session, cid)).strip()
+        recurrent_lower = [str(m).lower() for m in recurrent]
+        if any(
+            m in match_text or any(w in m for w in match_text.split() if len(w) > 3)
+            for m in recurrent_lower
+        ):
+            skills.append("RECURRENT_MISTAKE")
+    return skills
+
+
 # ── Session dataclass ──
 @dataclass
 class TutorSession:
@@ -348,6 +416,10 @@ class TutorSession:
     student_profile_data: Optional[dict] = None
     # Structured weak concepts from concept_mastery [{concept_id, label, score, evidence}]
     weak_concepts: list = field(default_factory=list)
+    # Structured strong concepts from concept_mastery (same shape) — backs the
+    # STRENGTH_TOPIC skill. Competence is read from the mastery model, never the
+    # qualitative profile.
+    strong_concepts: list = field(default_factory=list)
 
     # ── Socratic attempt tracking ─────────────────────────────────────
     # Tracks how many times the student has attempted to answer the
@@ -610,12 +682,15 @@ async def _fetch_and_attach_profile(session: TutorSession) -> None:
             )
         # Populate structured weak concepts for skill targeting
         try:
-            from services.mastery import fetch_concept_mastery, top_weak_concepts
+            from services.mastery import (
+                fetch_concept_mastery, top_weak_concepts, top_strong_concepts,
+            )
             cm = await fetch_concept_mastery(session.student_id)
             if cm:
                 session.weak_concepts = top_weak_concepts(cm, n=3)
+                session.strong_concepts = top_strong_concepts(cm, n=3)
         except Exception as _wce:
-            logger.debug("Could not fetch weak concepts for tutor session: %s", _wce)
+            logger.debug("Could not fetch weak/strong concepts for tutor session: %s", _wce)
         logger.info(
             "Profile attached to session %s for student %s",
             session.session_id, session.student_id
@@ -785,62 +860,41 @@ async def generate_lecture_chunk(
     topic_name = session.current_topic or "General Review"
     subtopic_name = session.current_subtopic
 
-    # Competence (difficulty) comes from the MASTERY MODEL (weak_concepts), never
-    # the qualitative profile. How-to-learn signals come from the flattened
-    # claims and are treated as SOFT HINTS.
-    subtopic_lower = (subtopic_name or "").lower()
-    topic_lower = (topic_name or "").lower()
-    combined_lower = f"{subtopic_lower} {topic_lower}"
+    # Resolve the AUTHORITATIVE concept for the current slide (provenance set by
+    # the frontend from mastery_metadata.topic_matched), so competence skills
+    # match by concept_id rather than brittle subtopic string overlap.
+    current_concept_id = ""
+    try:
+        from services.session_store import get_session_store
+        live_data = get_session_store().get_session(session.session_id)
+        if live_data and getattr(live_data, "live", None) is not None:
+            current_concept_id = getattr(live_data.live, "current_concept_id", "") or ""
+    except Exception:
+        pass
 
-    # ── DIFFICULTY: low-mastery concepts (authoritative, from concept_mastery) ──
-    is_difficulty_topic = False
-    for wc in (session.weak_concepts or []):
-        wc_label = str(wc.get("label", "")).lower()
-        if wc_label and (wc_label in combined_lower or combined_lower in wc_label):
-            is_difficulty_topic = True
-            break
-    if is_difficulty_topic:
-        active_skills.append("DIFFICULTY_TOPIC")
+    # Competence (weak/strong, concept-ID matched) + how-to-learn (style/pace) +
+    # recurrent-mistake skills. Pure helper; competence is read from the MASTERY
+    # MODEL, never the qualitative profile.
+    active_skills += _competence_and_style_skills(session, current_concept_id)
 
-    # ── Soft hints from claims (flattened v2 profile) ──
+    # Unresolved-question surfacing — kept inline (it mutates the module-global
+    # TUTOR_SKILLS to inject the specific question; that race is a separate,
+    # out-of-scope fix). Match against subtopic/topic AND the resolved concept
+    # label so it isn't purely subtopic-string dependent.
     from schemas.profile import flatten_profile_for_readers
     flat = flatten_profile_for_readers(session.student_profile_data or {})
-
-    style_hint = " ".join(
-        [(flat.get("preferred_modality") or "")] + list(flat.get("recommended_approaches", []))
-    ).lower()
-    if "visual" in style_hint or "diagram" in style_hint or "spatial" in style_hint:
-        active_skills.append("VISUAL_LEARNER")
-    elif any(w in style_hint for w in ("hands", "practical", "doing", "concrete")):
-        active_skills.append("HANDS_ON_LEARNER")
-
-    pace_hint = (flat.get("pace") or "").lower()
-    if any(w in pace_hint for w in ("slow", "more time")):
-        active_skills.append("PACE_SLOW")
-    elif any(w in pace_hint for w in ("fast", "quick", "skip")):
-        active_skills.append("PACE_FAST")
-
-    # Unresolved-question surfacing — find one relevant to the current subtopic.
+    combined_lower = f"{(session.current_subtopic or '').lower()} {(session.current_topic or '').lower()}"
+    unresolved_match_text = (combined_lower + " " + _concept_label_for(session, current_concept_id)).strip()
     if not hasattr(session, "_surfaced_unresolved"):
         session._surfaced_unresolved = set()
     for q in flat.get("unresolved_questions", []):
         q_words = [w for w in q.lower().split() if len(w) > 4]
-        if q not in session._surfaced_unresolved and any(w in combined_lower for w in q_words):
+        if q not in session._surfaced_unresolved and any(w in unresolved_match_text for w in q_words):
             original_skill = TUTOR_SKILLS["SURFACE_UNRESOLVED"]
             TUTOR_SKILLS["SURFACE_UNRESOLVED"] = original_skill + f' The specific unresolved question is: "{q}"'
             active_skills.append("SURFACE_UNRESOLVED")
             session._surfaced_unresolved.add(q)
             break
-
-    # Recurrent PROCESS mistakes (from claims) relevant to the current topic.
-    recurrent = flat.get("recurrent_process_mistakes", [])
-    if recurrent:
-        recurrent_lower = [str(m).lower() for m in recurrent]
-        if any(
-            m in combined_lower or any(w in m for w in combined_lower.split() if len(w) > 3)
-            for m in recurrent_lower
-        ):
-            active_skills.append("RECURRENT_MISTAKE")
 
     # ── Remove ENGAGEMENT_ADAPT if more specific profile skills were activated ──
     profile_specific_skills = {

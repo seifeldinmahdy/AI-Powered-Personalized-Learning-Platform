@@ -206,6 +206,7 @@ export default function LiveSession() {
                       current_slide_index: 0,
                       current_slide_title: parsed[0].title,
                       current_slide_content: parsed[0].body_content?.map((i: any) => i.text).join('\n') || '',
+                      current_concept_id: parsed[0].concept_id || '',
                       current_topic: currentSession.session_title,
                       visited_slides_push: 0
                     })
@@ -236,6 +237,7 @@ export default function LiveSession() {
                       current_slide_index: 0,
                       current_slide_title: persisted.slides[0].title,
                       current_slide_content: persisted.slides[0].body_content?.map(i => i.text).join('\n') || '',
+                      current_concept_id: persisted.slides[0].concept_id || '',
                       current_topic: currentSession.session_title,
                       visited_slides_push: 0,
                     }),
@@ -298,6 +300,7 @@ export default function LiveSession() {
                             current_slide_index: 0,
                             current_slide_title: slideResponse.slides[0].title,
                             current_slide_content: slideResponse.slides[0].body_content?.map(i => i.text).join('\n') || '',
+                            current_concept_id: slideResponse.slides[0].concept_id || '',
                             current_topic: currentSession.session_title,
                             visited_slides_push: 0
                           })
@@ -568,6 +571,7 @@ export default function LiveSession() {
             current_slide_index: nextIdx,
             current_slide_title: slides[nextIdx].title,
             current_slide_content: slides[nextIdx].body_content?.map((i) => i.text).join('\n') || '',
+            current_concept_id: slides[nextIdx].concept_id || '',
             visited_slides_push: nextIdx
           })
         }).catch(console.error);
@@ -591,6 +595,7 @@ export default function LiveSession() {
             current_slide_index: nextIdx,
             current_slide_title: slides[nextIdx].title,
             current_slide_content: slides[nextIdx].body_content?.map((i) => i.text).join('\n') || '',
+            current_concept_id: slides[nextIdx].concept_id || '',
             visited_slides_push: nextIdx
           })
         }).catch(console.error);

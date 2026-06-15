@@ -57,7 +57,8 @@ class LiveSessionState(BaseModel):
     current_slide_content: str = Field(default="", description="Full text/content of the current slide")
     current_topic: str = Field(default="", description="Topic currently being taught")
     current_subtopic: str = Field(default="", description="Subtopic currently being taught")
-    
+    current_concept_id: str = Field(default="", description="Concept.id the current slide teaches (slide provenance; for concept-ID skill matching)")
+
     running_summary: str = Field(default="", description="Summarized context of the lesson so far")
     
     tutor_transcript: list[dict] = Field(

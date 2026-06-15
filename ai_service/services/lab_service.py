@@ -370,16 +370,31 @@ def _build_payload(request: CodingLabGenerateRequest, session: dict[str, Any]) -
     }
 
 
-def _generate_checklist(request: CodingLabGenerateRequest, session: dict[str, Any]) -> list[LabChecklistItem]:
+def _generate_checklist(
+    request: CodingLabGenerateRequest,
+    session: dict[str, Any],
+    profile_context: str = "",
+) -> list[LabChecklistItem]:
     system = (
         "You design personalized programming labs after an AI tutoring session. "
         "Return raw JSON only. Build a checklist the lab MUST satisfy before it is generated."
     )
+    # Personalize the lab's BACKBONE, not just the cells: the checklist must
+    # reflect the student's remediation/strength targets and learning style.
+    profile_block = ""
+    if profile_context and profile_context != "No profile available":
+        profile_block = (
+            f"\n\nSTUDENT PROFILE (personalize the checklist to it):\n{profile_context}\n"
+            "- Add a checklist item for each REMEDIATION TARGET (extra practice on weak concepts).\n"
+            "- Add a stretch checklist item for the STRENGTH TARGETS.\n"
+            "- Reflect the student's learning style and effective approaches in the items."
+        )
     user = (
         "Create a checklist for a coding lab using this session data. "
         "The checklist must cover concept recap, syntax practice, implementation tasks, "
         "student personalization, and tutor tips.\n\n"
-        f"{json.dumps(_build_payload(request, session), indent=2)}\n\n"
+        f"{json.dumps(_build_payload(request, session), indent=2)}"
+        f"{profile_block}\n\n"
         'Return exactly: {"checklist":[{"id":"C1","item":"...","reason":"..."}]}'
     )
     data = _chat_json(
@@ -435,8 +450,8 @@ def _generate_lab(
             f"\n\nSTUDENT PROFILE:\n{profile_context}\n\n"
             "Use this profile to:\n"
             "- Adapt explanation cell language to match the student's learning style signals\n"
-            "- Add more detailed explanation for topics listed in topics_of_difficulty\n"
-            "- Use faster pacing and more challenging tasks for topics in topics_of_strength\n"
+            "- Add more detailed explanation + a dedicated remediation cell for the REMEDIATION TARGETS listed above\n"
+            "- Use faster pacing and a harder stretch task for the STRENGTH TARGETS listed above\n"
             "- Apply the recommended_approaches when deciding how to structure explanations\n"
             "- If unresolved_questions is non-empty and relevant to this lab topic, "
             "address them explicitly in explanation cells"
@@ -484,10 +499,15 @@ async def generate_coding_lab(request: CodingLabGenerateRequest) -> CodingLabGen
         topic = request.lesson_title or session.get("current_topic", "")
         profile_context = _extract_relevant_profile_context(profile_data, topic=topic)
 
-        # Append weak-concept remediation targets derived from concept_mastery
+        # Append weak/strong-concept targets derived from concept_mastery (the
+        # MASTERY MODEL — competence is read here to BUILD content, and is NOT
+        # added back into the qualitative profile context above).
         course_id = getattr(request, "course_id", "") or ""
         if course_id:
-            from services.mastery import fetch_concept_mastery, fetch_course_concepts, top_weak_concepts
+            from services.mastery import (
+                fetch_concept_mastery, fetch_course_concepts,
+                top_weak_concepts, top_strong_concepts,
+            )
             try:
                 cm = await fetch_concept_mastery(request.student_id)
                 if cm:
@@ -500,13 +520,20 @@ async def generate_coding_lab(request: CodingLabGenerateRequest) -> CodingLabGen
                             f"\nREMEDIATION TARGETS: {', '.join(labels)}. "
                             "Include one dedicated remediation coding cell addressing the weakest concept."
                         )
+                    strong = top_strong_concepts(cm, n=3)
+                    if strong:
+                        s_labels = [label_map.get(s["concept_id"], s["concept_id"]) for s in strong]
+                        profile_context += (
+                            f"\nSTRENGTH TARGETS: {', '.join(s_labels)}. "
+                            "Include one harder/stretch task on the strongest concept to extend the student."
+                        )
             except Exception as _we:
-                logger.debug("Could not fetch weak concepts for lab: %s", _we)
+                logger.debug("Could not fetch weak/strong concepts for lab: %s", _we)
     except Exception as exc:
         logger.warning("lab_profile_fetch_failed: %s — continuing without profile", exc)
 
     try:
-        checklist = _generate_checklist(request, session)
+        checklist = _generate_checklist(request, session, profile_context=profile_context)
     except Exception as exc:
         logger.warning("lab_checklist_fallback lab_id=%s error=%s", lab_id, exc)
         checklist = _fallback_checklist(request, session)

@@ -144,6 +144,9 @@ class SlideOut(BaseModel):
     source_page_start: int = 0
     source_page_end: int = 0
     visual_type: str = ""
+    # The Concept.id this slide teaches (provenance) — the frontend forwards it to
+    # the tutor session so skill matching is concept-ID based, not string-overlap.
+    concept_id: str = ""
     mastery_metadata: Optional[SlideMasteryMetadata] = None
 
 
@@ -586,6 +589,7 @@ def _generate_session_slides(
             source_page_start=chunk_in.page_start,
             source_page_end=chunk_in.page_end,
             visual_type=visual_type,
+            concept_id=str(topic_matched or getattr(chunk_in, "concept_id", "") or ""),
             mastery_metadata=mastery_meta,
         ))
         slide_num += 1

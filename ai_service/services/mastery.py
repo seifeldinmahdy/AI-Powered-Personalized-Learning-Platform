@@ -98,6 +98,38 @@ def top_weak_concepts(concept_mastery: dict, n: int = 3) -> list[dict]:
     )[:n]
 
 
+# A concept counts as a STRENGTH only above this score AND with real evidence —
+# the 0.5 prior of a never-attempted concept must not read as a strength.
+STRONG_SCORE_THRESHOLD = 0.75
+STRONG_MIN_EVIDENCE = 1
+
+
+def top_strong_concepts(
+    concept_mastery: dict,
+    n: int = 3,
+    min_score: float = STRONG_SCORE_THRESHOLD,
+    min_evidence: int = STRONG_MIN_EVIDENCE,
+) -> list[dict]:
+    """Return up to n strongest concepts (high score, real evidence).
+
+    Symmetric to ``top_weak_concepts``. Filters out concepts below ``min_score``
+    or with less than ``min_evidence`` independent demonstrations, so an
+    unattempted 0.5-prior concept is never surfaced as a strength. Sorted by
+    (score desc, evidence desc).
+    """
+    entries = [
+        {"concept_id": k, **v}
+        for k, v in concept_mastery.items()
+        if float(v.get("score", 0.0)) >= min_score
+        and int(v.get("evidence", 0)) >= min_evidence
+    ]
+    return sorted(
+        entries,
+        key=lambda e: (e.get("score", 0.0), e.get("evidence", 0)),
+        reverse=True,
+    )[:n]
+
+
 def outcomes_from_eval(evaluated_rubric: list) -> list[dict]:
     """Aggregate evaluated rubric criteria into per-concept OUTCOMES (no EMA).
 

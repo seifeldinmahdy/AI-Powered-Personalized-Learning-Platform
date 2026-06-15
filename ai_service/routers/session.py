@@ -81,6 +81,10 @@ class UpdateLiveSessionRequest(BaseModel):
     current_slide_content: Optional[str] = None
     current_topic: Optional[str] = None
     current_subtopic: Optional[str] = None
+    # Authoritative concept the current slide teaches (slide provenance:
+    # mastery_metadata.topic_matched). Lets the tutor match weak/strong concepts
+    # by concept_id instead of brittle subtopic string overlap.
+    current_concept_id: Optional[str] = None
     visited_slides_push: Optional[int] = None
     time_spent_update: Optional[Dict[str, float]] = None
     tutor_event_push: Optional[Dict[str, Any]] = None
@@ -110,6 +114,8 @@ async def update_session_state(session_id: str, request: UpdateLiveSessionReques
         live_kwargs["current_topic"] = request.current_topic
     if request.current_subtopic is not None:
         live_kwargs["current_subtopic"] = request.current_subtopic
+    if request.current_concept_id is not None:
+        live_kwargs["current_concept_id"] = request.current_concept_id
 
     # For lists and dicts, we need to merge the existing with the new
     if request.visited_slides_push is not None or request.time_spent_update is not None or request.tutor_event_push is not None:
