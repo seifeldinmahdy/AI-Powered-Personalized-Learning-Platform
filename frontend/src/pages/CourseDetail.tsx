@@ -126,20 +126,13 @@ export default function CourseDetail() {
     setEnrolling(true);
     try {
       if (enrollment) {
+        // Already enrolled + pathway built → the resume/progress view, which
+        // shows where they are and offers "continue to current lesson".
         if (enrollment.is_pathway_ready) {
-          if (enrollment.current_lesson) {
-            navigate(`/course/${id}/lesson/${enrollment.current_lesson}`);
-          } else {
-            const first = Object.values(lessonMap).flat()[0];
-            if (first) navigate(`/course/${id}/lesson/${first.id}`);
-            else if (modules.length > 0) {
-              const lessons = await getLessons(modules[0].id);
-              if (lessons.length > 0) { navigate(`/course/${id}/lesson/${lessons[0].id}`); return; }
-              navigate("/dashboard");
-            } else navigate("/dashboard");
-          }
+          navigate(`/course/${id}/pathway`);
           return;
         }
+        // Enrolled but placement not finished → (resume) assessment.
         navigate(`/courses/${id}/assessment`, { state: { enrollmentId: enrollment.id, courseTitle: course.title } });
         return;
       }
@@ -325,7 +318,6 @@ export default function CourseDetail() {
               enrollment={enrollment}
               courseId={id}
               onStart={handleStart}
-              onGeneratePathway={() => navigate(`/course/${id}/pathway`)}
               onRated={(avg) => setCourse((prev) => (prev ? { ...prev, avg_rating: String(avg) } : prev))}
             />
           </aside>
@@ -336,7 +328,7 @@ export default function CourseDetail() {
 }
 
 function CtaPanel({
-  course, price, isEnrolled, enrolling, enrollment, courseId, onStart, onGeneratePathway, onRated,
+  course, price, isEnrolled, enrolling, enrollment, courseId, onStart, onRated,
 }: {
   course: Course;
   price: number;
@@ -345,7 +337,6 @@ function CtaPanel({
   enrollment: EnrollmentInfo | null;
   courseId: number;
   onStart: () => void;
-  onGeneratePathway: () => void;
   onRated: (avg: number) => void;
 }) {
   const [hovered, setHovered] = useState(0);
@@ -399,12 +390,6 @@ function CtaPanel({
       <button onClick={onStart} disabled={enrolling} className="btn btn-primary" style={{ width: "100%", justifyContent: "space-between" }}>
         {enrolling ? "WORKING…" : primaryLabel} <span>→</span>
       </button>
-
-      {isEnrolled && (
-        <button onClick={onGeneratePathway} className="btn btn-ghost-dark" style={{ width: "100%", justifyContent: "space-between" }}>
-          GENERATE PATHWAY <span>→</span>
-        </button>
-      )}
 
             {/* Capstone entry — appears once the coursework is finished */}
             {isEnrolled && enrollment && parseFloat(enrollment.progress_percentage ?? '0') >= 100 && (

@@ -15,7 +15,7 @@ import { useAuth } from "../contexts/AuthContext";
  */
 export function useAdminIdleTimer(timeoutMs = 20 * 60 * 1000) {
   const { logout } = useAuth();
-  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const reset = useCallback(() => {
     clearTimeout(timer.current);

@@ -68,64 +68,51 @@ export function SlidesViewer({
     onSlideChange?.(newIndex);
   };
 
+  const arrowStyle = (side: 'left' | 'right'): React.CSSProperties => ({
+    position: 'absolute', [side]: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 20,
+    padding: 8, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--hairline)',
+    color: 'var(--text-primary)', cursor: 'pointer', display: 'flex',
+  });
+
   return (
-    <div className="flex-1 flex flex-col bg-background" style={{ minHeight: 0 }}>
-      <div
-        className="flex-1 flex items-center justify-center bg-gradient-to-br from-muted/20 to-background relative"
-        style={{ minHeight: 0, padding: '24px 56px', ...(isFullscreen ? { paddingLeft: 360 } : {}) }}
-      >
+    <div className="codex" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)', minHeight: 0 }}>
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', minHeight: 0, padding: '24px 56px', ...(isFullscreen ? { paddingLeft: 360 } : {}) }}>
         {/* Left arrow */}
         {totalSlides > 1 && (
-          <button
-            onClick={handlePrev}
-            className="absolute z-20 p-2 rounded-full bg-card/80 border border-border shadow-md hover:bg-card hover:border-secondary transition-all"
-            style={{ left: 12, top: '50%', transform: 'translateY(-50%)' }}
-            title="Previous slide"
-          >
+          <button onClick={handlePrev} style={arrowStyle('left')} title="Previous slide">
             <ChevronLeft size={20} />
           </button>
         )}
 
         {/* Right arrow */}
         {totalSlides > 1 && (
-          <button
-            onClick={handleNext}
-            className="absolute z-20 p-2 rounded-full bg-card/80 border border-border shadow-md hover:bg-card hover:border-secondary transition-all"
-            style={{ right: 12, top: '50%', transform: 'translateY(-50%)' }}
-            title="Next slide"
-          >
+          <button onClick={handleNext} style={arrowStyle('right')} title="Next slide">
             <ChevronRight size={20} />
           </button>
         )}
 
-        {/* Slide card - fixed to container height */}
-        <div className="w-full max-w-5xl bg-card rounded-2xl shadow-2xl border-2 border-border flex flex-col" style={{ height: '100%', overflow: 'hidden' }}>
-          {/* Slide Header - fixed */}
-          <div className="px-8 py-4 border-b border-border bg-gradient-to-r from-primary/5 to-secondary/5 flex items-center justify-between" style={{ flexShrink: 0 }}>
+        {/* Slide card — fixed to container height */}
+        <div className="paper-card" style={{ width: '100%', maxWidth: 1024, height: '100%', borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* Slide Header — fixed */}
+          <div style={{ padding: '16px 32px', borderBottom: '1px solid var(--bg-paper-line)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
             <div>
-              {moduleLabel && (
-                <div className="inline-block px-2 py-1 bg-secondary/10 text-secondary rounded text-xs font-semibold mb-1">
-                  {moduleLabel}
-                </div>
-              )}
-              <h3 className="mb-0">{lessonTitle}</h3>
+              {moduleLabel && <div className="tag-steel" style={{ marginBottom: 6 }}>{moduleLabel}</div>}
+              <h3 className="t-heading" style={{ margin: 0, fontSize: 18, color: 'var(--text-primary)' }}>{lessonTitle}</h3>
             </div>
-            <div className="flex items-center gap-2">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {lessonId && (
                 <button
                   onClick={handleBookmarkToggle}
                   disabled={bookmarkLoading}
-                  className="p-2 rounded-lg border border-border hover:border-secondary transition-colors disabled:opacity-50"
+                  style={{ padding: 8, borderRadius: 8, border: '1px solid var(--bg-paper-line)', background: 'transparent', color: currentSlideBookmark ? 'var(--accent-primary)' : 'var(--text-primary)', cursor: 'pointer', display: 'flex', opacity: bookmarkLoading ? 0.5 : 1 }}
                   title={currentSlideBookmark ? 'Remove bookmark' : 'Bookmark this slide'}
                 >
-                  {currentSlideBookmark
-                    ? <BookmarkCheck size={18} className="text-secondary" />
-                    : <Bookmark size={18} />}
+                  {currentSlideBookmark ? <BookmarkCheck size={18} /> : <Bookmark size={18} />}
                 </button>
               )}
               <button
                 onClick={onFullscreenToggle}
-                className="p-2 rounded-lg border border-border hover:border-secondary transition-colors"
+                style={{ padding: 8, borderRadius: 8, border: '1px solid var(--bg-paper-line)', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex' }}
                 title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
               >
                 {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
@@ -133,40 +120,34 @@ export function SlidesViewer({
             </div>
           </div>
 
-          {/* Slide Content - SCROLLABLE */}
-          <div className="p-12" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto' }}>
-            <div className="max-w-3xl mx-auto">
+          {/* Slide Content — scrollable */}
+          <div style={{ padding: 48, flex: '1 1 0%', minHeight: 0, overflowY: 'auto' }}>
+            <div style={{ maxWidth: 768, marginInline: 'auto' }}>
               {currentSlide ? (
                 <SlideContent content={currentSlide.content_json} />
               ) : (
-                <div className="text-center text-muted-foreground py-20">
-                  <p>No slide content available.</p>
-                </div>
+                <div className="t-body steel" style={{ textAlign: 'center', padding: '80px 0' }}>No slide content available.</div>
               )}
             </div>
           </div>
 
-          {/* Slide Footer - fixed */}
-          <div className="px-8 py-3 border-t border-border bg-muted/20 flex items-center justify-between" style={{ flexShrink: 0 }}>
-            <span className="text-sm text-muted-foreground font-mono">
-              Slide {currentIndex + 1} of {totalSlides}
-            </span>
-            <div className="flex gap-2">
-              {slides.map((_, i) => (
-                <button
-                  key={i}
-                  onClick={() => onSlideChange?.(i)}
-                  className={`h-1.5 rounded-full transition-all cursor-pointer ${
-                    i === currentIndex
-                      ? 'bg-secondary w-6'
-                      : i < currentIndex
-                      ? 'bg-accent w-1.5'
-                      : 'bg-muted w-1.5'
-                  }`}
-                />
-              ))}
+          {/* Slide Footer — fixed */}
+          <div style={{ padding: '12px 32px', borderTop: '1px solid var(--bg-paper-line)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+            <span className="t-mono steel">SLIDE {currentIndex + 1} / {totalSlides}</span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {slides.map((_, i) => {
+                const active = i === currentIndex;
+                const visited = i < currentIndex;
+                return (
+                  <button
+                    key={i}
+                    onClick={() => onSlideChange?.(i)}
+                    style={{ width: active ? 24 : 6, height: 4, borderRadius: 0, border: 'none', padding: 0, cursor: 'pointer', background: active ? 'var(--accent-primary)' : visited ? 'var(--steel-light)' : 'var(--steel)', opacity: visited || active ? 1 : 0.4, transition: 'width 200ms ease' }}
+                  />
+                );
+              })}
             </div>
-            <span className="text-sm text-muted-foreground">{lessonTitle}</span>
+            <span className="t-mono steel" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lessonTitle}</span>
           </div>
         </div>
       </div>
@@ -187,28 +168,26 @@ function SlideContent({ content }: { content: Record<string, unknown> }) {
   return (
     <>
       {title && (
-        <div className="mb-12">
-          <div className="w-20 h-1.5 bg-gradient-to-r from-secondary to-accent rounded-full mb-6" />
-          <h1 className="mb-4">{title}</h1>
-          {subtitle && (
-            <p className="text-xl text-foreground/70 leading-relaxed">{subtitle}</p>
-          )}
+        <div style={{ marginBottom: 40 }}>
+          <div style={{ width: 80, height: 4, background: 'var(--accent-primary)', marginBottom: 24 }} />
+          <h1 className="t-heading" style={{ fontSize: 'clamp(26px,4vw,34px)', color: 'var(--text-primary)', marginBottom: 16 }}>{title}</h1>
+          {subtitle && <p className="t-body" style={{ fontSize: 19, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{subtitle}</p>}
         </div>
       )}
 
       {body && (
-        <div className="mb-10 bg-gradient-to-r from-primary/10 via-secondary/10 to-accent/10 border-l-4 border-secondary rounded-r-2xl p-6">
-          <p className="text-foreground/80 leading-relaxed text-lg">{body}</p>
+        <div style={{ marginBottom: 32, background: 'var(--bg-surface)', borderLeft: '3px solid var(--accent-primary)', borderRadius: '0 8px 8px 0', padding: 24 }}>
+          <p className="t-body" style={{ margin: 0, color: 'var(--text-primary)', lineHeight: 1.6, fontSize: 17 }}>{body}</p>
         </div>
       )}
 
       {code && (
-        <div className="mb-10">
-          <div className="bg-[#1e1e1e] rounded-xl overflow-hidden shadow-lg border border-[#3e3e42]">
-            <div className="px-6 py-3 bg-[#252526] border-b border-[#3e3e42]">
-              <span className="text-sm font-mono text-[#cccccc]">{codeLanguage}</span>
+        <div style={{ marginBottom: 32 }}>
+          <div style={{ background: 'var(--code-bg)', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--hairline)' }}>
+            <div style={{ padding: '10px 18px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+              <span className="t-mono" style={{ color: '#9CA3AF' }}>{codeLanguage}</span>
             </div>
-            <pre className="p-6 text-base font-mono text-[#d4d4d4]">
+            <pre className="codeblock" style={{ margin: 0, borderRadius: 0, fontSize: 14, overflowX: 'auto' }}>
               <code>{code}</code>
             </pre>
           </div>
@@ -216,32 +195,27 @@ function SlideContent({ content }: { content: Record<string, unknown> }) {
       )}
 
       {items && items.length > 0 && (
-        <div className="mb-10 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div style={{ marginBottom: 32, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
           {items.map((item, i) => (
-            <div
-              key={i}
-              className="bg-card border-2 border-border rounded-xl p-5 hover:border-secondary hover:shadow-lg transition-all"
-            >
-              <p className="text-sm text-foreground/80">{item}</p>
+            <div key={i} style={{ background: 'var(--bg-surface)', border: '1px solid var(--hairline)', borderRadius: 8, padding: 20 }}>
+              <p className="t-body" style={{ margin: 0, fontSize: 14, color: 'var(--text-primary)' }}>{item}</p>
             </div>
           ))}
         </div>
       )}
 
       {callout && (
-        <div className="bg-accent/5 border border-accent/20 rounded-xl p-6">
-          <div className="flex items-start gap-3">
-            <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center flex-shrink-0 text-white font-bold">
-              !
-            </div>
-            <p className="text-sm text-foreground/80">{callout}</p>
+        <div style={{ background: 'rgba(220,38,38,0.05)', border: '1px solid rgba(220,38,38,0.2)', borderRadius: 8, padding: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--error-red)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#fff', fontWeight: 700 }}>!</div>
+            <p className="t-body" style={{ margin: 0, fontSize: 14, color: 'var(--text-primary)' }}>{callout}</p>
           </div>
         </div>
       )}
 
       {/* Fallback: render raw JSON if none of the known fields are present */}
       {!title && !body && !code && !items && !callout && (
-        <pre className="text-sm text-foreground/70 whitespace-pre-wrap">
+        <pre className="t-mono" style={{ color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>
           {JSON.stringify(content, null, 2)}
         </pre>
       )}

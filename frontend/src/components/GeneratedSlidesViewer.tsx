@@ -1,5 +1,5 @@
-import { Maximize2, Minimize2, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
-import type { GeneratedSlide, SlideContentItem, SlideCodeBlock, SlideVisual, SlideEquationItem } from '../services/pathway';
+import { Maximize2, Minimize2, ChevronLeft, ChevronRight, Eye, Copy } from 'lucide-react';
+import type { GeneratedSlide, SlideContentItem, SlideCodeBlock } from '../services/pathway';
 import { VisualRenderer } from './VisualRenderer';
 import { EquationRenderer } from './EquationRenderer';
 
@@ -24,34 +24,24 @@ export function GeneratedSlidesViewer({
   const totalSlides = slides.length;
 
   const handlePrev = () => {
-    if (currentIndex > 0) {
-      onSlideChange?.(currentIndex - 1);
-    } else {
-      // Wrap to last slide
-      onSlideChange?.(totalSlides - 1);
-    }
+    if (currentIndex > 0) onSlideChange?.(currentIndex - 1);
+    else onSlideChange?.(totalSlides - 1); // wrap to last
   };
 
   const handleNext = () => {
-    if (currentIndex < totalSlides - 1) {
-      onSlideChange?.(currentIndex + 1);
-    } else {
-      // Wrap to first slide
-      onSlideChange?.(0);
-    }
+    if (currentIndex < totalSlides - 1) onSlideChange?.(currentIndex + 1);
+    else onSlideChange?.(0); // wrap to first
   };
 
   return (
-    <div className="flex-1 flex flex-col bg-background" style={{ minHeight: 0 }}>
+    <div className="codex" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)', minHeight: 0 }}>
       <div
-        className="flex-1 flex items-center justify-center bg-gradient-to-br from-muted/20 to-background relative"
-        style={{ minHeight: 0, padding: '24px 56px', ...(isFullscreen ? { paddingLeft: 360 } : {}) }}
+        style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', minHeight: 0, padding: '24px 56px', ...(isFullscreen ? { paddingLeft: 360 } : {}) }}
       >
         {/* Left arrow */}
         <button
           onClick={handlePrev}
-          className="absolute z-20 p-2 rounded-full bg-card/80 border border-border shadow-md hover:bg-card hover:border-secondary transition-all"
-          style={{ left: 12, top: '50%', transform: 'translateY(-50%)' }}
+          style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 20, padding: 8, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--hairline)', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex' }}
           title="Previous slide"
         >
           <ChevronLeft size={20} />
@@ -60,74 +50,64 @@ export function GeneratedSlidesViewer({
         {/* Right arrow */}
         <button
           onClick={handleNext}
-          className="absolute z-20 p-2 rounded-full bg-card/80 border border-border shadow-md hover:bg-card hover:border-secondary transition-all"
-          style={{ right: 12, top: '50%', transform: 'translateY(-50%)' }}
+          style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 20, padding: 8, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--hairline)', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex' }}
           title="Next slide"
         >
           <ChevronRight size={20} />
         </button>
 
-        {/* Slide card - fixed to container height */}
-        <div className="w-full max-w-5xl bg-card rounded-2xl shadow-2xl border-2 border-border flex flex-col" style={{ height: '100%', overflow: 'hidden' }}>
-          {/* Slide Header - fixed */}
-          <div className="px-8 py-4 border-b border-border bg-gradient-to-r from-primary/5 to-secondary/5 flex items-center justify-between" style={{ flexShrink: 0 }}>
+        {/* Slide card — fixed to container height */}
+        <div className="paper-card" style={{ width: '100%', maxWidth: 1024, height: '100%', borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* Slide Header — fixed */}
+          <div style={{ padding: '16px 32px', borderBottom: '1px solid var(--bg-paper-line)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
             <div>
-              <div className="flex items-center gap-2 mb-1">
-                <span className="inline-block px-2 py-0.5 bg-secondary/10 text-secondary rounded text-xs font-semibold">
-                  {currentSlide?.slide_type ?? 'Content'}
-                </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <span className="tag-steel">{currentSlide?.slide_type ?? 'Content'}</span>
                 {currentSlide?.visual_type && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-accent/10 text-accent rounded text-xs font-semibold">
-                    <Eye size={10} />
-                    {currentSlide.visual_type}
+                  <span className="tag-steel" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--accent-primary)', borderColor: 'var(--accent-primary)' }}>
+                    <Eye size={10} /> {currentSlide.visual_type}
                   </span>
                 )}
               </div>
-              <h3 className="mb-0">{sessionTitle}</h3>
+              <h3 className="t-label" style={{ margin: 0, color: 'var(--accent-primary)' }}>{sessionTitle}</h3>
             </div>
             <button
               onClick={onFullscreenToggle}
-              className="p-2 rounded-lg border border-border hover:border-secondary transition-colors"
+              style={{ padding: 8, borderRadius: 8, border: '1px solid var(--bg-paper-line)', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex' }}
               title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
             >
               {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
             </button>
           </div>
 
-          {/* Slide Content - SCROLLABLE */}
-          <div className="p-12" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto' }}>
-            <div className="max-w-3xl mx-auto">
+          {/* Slide Content — scrollable */}
+          <div style={{ padding: 48, flex: '1 1 0%', minHeight: 0, overflowY: 'auto' }}>
+            <div style={{ maxWidth: 768, marginInline: 'auto' }}>
               {currentSlide ? (
                 <SlideRenderer slide={currentSlide} />
               ) : (
-                <div className="text-center text-muted-foreground py-20">
-                  <p>No slide content available.</p>
-                </div>
+                <div className="t-body steel" style={{ textAlign: 'center', padding: '80px 0' }}>No slide content available.</div>
               )}
             </div>
           </div>
 
-          {/* Slide Footer - fixed */}
-          <div className="px-8 py-3 border-t border-border bg-muted/20 flex items-center justify-between" style={{ flexShrink: 0 }}>
-            <span className="text-sm text-muted-foreground font-mono">
-              Slide {currentIndex + 1} of {totalSlides}
-            </span>
-            <div className="flex gap-2">
-              {slides.map((_, i) => (
-                <button
-                  key={i}
-                  onClick={() => onSlideChange?.(i)}
-                  className={`h-1.5 rounded-full transition-all cursor-pointer ${
-                    i === currentIndex
-                      ? 'bg-secondary w-6'
-                      : i < currentIndex
-                      ? 'bg-accent w-1.5'
-                      : 'bg-muted w-1.5'
-                  }`}
-                />
-              ))}
+          {/* Slide Footer — fixed */}
+          <div style={{ padding: '12px 32px', borderTop: '1px solid var(--bg-paper-line)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+            <span className="t-mono steel">SLIDE {currentIndex + 1} / {totalSlides}</span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {slides.map((_, i) => {
+                const active = i === currentIndex;
+                const visited = i < currentIndex;
+                return (
+                  <button
+                    key={i}
+                    onClick={() => onSlideChange?.(i)}
+                    style={{ width: active ? 24 : 6, height: 4, borderRadius: 0, border: 'none', padding: 0, cursor: 'pointer', background: active ? 'var(--accent-primary)' : visited ? 'var(--steel-light)' : 'var(--steel)', opacity: visited || active ? 1 : 0.4, transition: 'width 200ms ease' }}
+                  />
+                );
+              })}
             </div>
-            <span className="text-sm text-muted-foreground">{sessionTitle}</span>
+            <span className="t-mono steel" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sessionTitle}</span>
           </div>
         </div>
       </div>
@@ -152,15 +132,11 @@ function SlideRenderer({ slide }: { slide: GeneratedSlide }) {
 
 function TitleSlide({ slide }: { slide: GeneratedSlide }) {
   return (
-    <div className="flex flex-col items-center justify-center min-h-[400px] text-center">
-      <div className="w-24 h-1.5 bg-gradient-to-r from-secondary to-accent rounded-full mb-8" />
-      <h1 className="text-4xl font-bold mb-6 bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text">
-        {slide.title}
-      </h1>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 400, textAlign: 'center' }}>
+      <div style={{ width: 96, height: 4, background: 'var(--accent-primary)', marginBottom: 32 }} />
+      <h1 className="t-display" style={{ fontSize: 'clamp(34px,5vw,48px)', color: 'var(--text-primary)', marginBottom: 24 }}>{slide.title}</h1>
       {slide.body_content.map((item, i) => (
-        <p key={i} className="text-lg text-foreground/60 mb-2">
-          {item.text}
-        </p>
+        <p key={i} className="t-body" style={{ fontSize: 18, color: 'var(--text-secondary)', marginBottom: 8 }}>{item.text}</p>
       ))}
     </div>
   );
@@ -169,20 +145,12 @@ function TitleSlide({ slide }: { slide: GeneratedSlide }) {
 function AgendaSlide({ slide }: { slide: GeneratedSlide }) {
   return (
     <>
-      <div className="mb-8">
-        <div className="w-16 h-1.5 bg-gradient-to-r from-secondary to-accent rounded-full mb-4" />
-        <h1 className="text-2xl font-bold">{slide.title}</h1>
-      </div>
-      <div className="space-y-3">
+      <SlideHeader title={slide.title} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {slide.body_content.map((item, i) => (
-          <div
-            key={i}
-            className="flex items-center gap-4 p-4 bg-gradient-to-r from-secondary/5 to-transparent rounded-xl border border-border/50"
-          >
-            <div className="w-8 h-8 rounded-lg bg-secondary/10 flex items-center justify-center text-secondary font-bold text-sm shrink-0">
-              {i + 1}
-            </div>
-            <span className="text-foreground/80">{item.text}</span>
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 16, padding: 16, background: 'var(--bg-surface)', border: '1px solid var(--hairline)', borderRadius: 8 }}>
+            <div className="t-mono" style={{ width: 32, height: 32, flexShrink: 0, borderRadius: 8, background: 'rgba(37,99,235,0.08)', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>{i + 1}</div>
+            <span className="t-body" style={{ fontSize: 15, color: 'var(--text-primary)' }}>{item.text}</span>
           </div>
         ))}
       </div>
@@ -193,20 +161,12 @@ function AgendaSlide({ slide }: { slide: GeneratedSlide }) {
 function SummarySlide({ slide }: { slide: GeneratedSlide }) {
   return (
     <>
-      <div className="mb-8">
-        <div className="w-16 h-1.5 bg-gradient-to-r from-accent to-primary rounded-full mb-4" />
-        <h1 className="text-2xl font-bold">{slide.title}</h1>
-      </div>
-      <div className="space-y-3">
+      <SlideHeader title={slide.title} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {slide.body_content.map((item, i) => (
-          <div
-            key={i}
-            className="flex items-start gap-3 p-4 bg-accent/5 border border-accent/20 rounded-xl"
-          >
-            <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-white text-xs font-bold shrink-0 mt-0.5">
-              {i + 1}
-            </div>
-            <p className="text-foreground/80">{item.text}</p>
+          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: 16, background: 'rgba(22,163,74,0.05)', border: '1px solid rgba(22,163,74,0.2)', borderRadius: 8 }}>
+            <div style={{ width: 24, height: 24, flexShrink: 0, marginTop: 2, borderRadius: 6, background: 'var(--accent-success)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>{i + 1}</div>
+            <p className="t-body" style={{ margin: 0, fontSize: 15, color: 'var(--text-primary)' }}>{item.text}</p>
           </div>
         ))}
       </div>
@@ -219,9 +179,9 @@ function SummarySlide({ slide }: { slide: GeneratedSlide }) {
 function SlideHeader({ title }: { title: string }) {
   if (!title) return null;
   return (
-    <div className="mb-6">
-      <div className="w-20 h-1.5 bg-gradient-to-r from-secondary to-accent rounded-full mb-4" />
-      <h1 className="text-2xl font-bold">{title}</h1>
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ width: 80, height: 4, background: 'var(--accent-primary)', marginBottom: 16 }} />
+      <h1 className="t-heading" style={{ fontSize: 'clamp(24px,3.5vw,30px)', color: 'var(--text-primary)' }}>{title}</h1>
     </div>
   );
 }
@@ -229,7 +189,7 @@ function SlideHeader({ title }: { title: string }) {
 function BulletList({ items }: { items: GeneratedSlide['body_content'] }) {
   if (!items || items.length === 0) return null;
   return (
-    <div className="space-y-3">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {items.map((item, i) => (
         <ContentItemRenderer key={i} item={item} />
       ))}
@@ -248,23 +208,14 @@ function ContentSlide({ slide }: { slide: GeneratedSlide }) {
     return (
       <>
         <SlideHeader title={slide.title} />
-
-        {/* Text content first */}
         {slide.body_content.length > 0 && (
-          <div className="mb-6">
+          <div style={{ marginBottom: 24 }}>
             <BulletList items={slide.body_content} />
           </div>
         )}
-
-        {/* Equations below the text */}
         {hasEquations && (
-          <div className="p-5 rounded-2xl border border-indigo-400/20 bg-gradient-to-br from-indigo-500/5 to-purple-500/5">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-1.5 h-4 rounded-full bg-gradient-to-b from-indigo-400 to-purple-500" />
-              <span className="text-xs font-semibold tracking-widest uppercase text-indigo-400/80">
-                Key Equations
-              </span>
-            </div>
+          <div style={{ padding: 20, borderRadius: 8, border: '1px solid var(--hairline)', borderLeft: '2px solid var(--accent-primary)', background: 'var(--bg-surface)' }}>
+            <div className="t-label" style={{ color: 'var(--accent-primary)', marginBottom: 12 }}>KEY EQUATIONS</div>
             <EquationRenderer equations={slide.equation_block!} />
           </div>
         )}
@@ -277,28 +228,17 @@ function ContentSlide({ slide }: { slide: GeneratedSlide }) {
     return (
       <>
         <SlideHeader title={slide.title} />
-
-        <div className="grid grid-cols-2 gap-6 items-start">
-          {/* Left column: equations + bullets */}
-          <div className="space-y-4">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, alignItems: 'start' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {hasEquations && (
-              <div className="p-4 rounded-xl border border-indigo-400/20 bg-gradient-to-br from-indigo-500/5 to-purple-500/5">
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="w-1.5 h-4 rounded-full bg-gradient-to-b from-indigo-400 to-purple-500" />
-                  <span className="text-xs font-semibold tracking-widest uppercase text-indigo-400/80">
-                    Equations
-                  </span>
-                </div>
+              <div style={{ padding: 16, borderRadius: 8, border: '1px solid var(--hairline)', borderLeft: '2px solid var(--accent-primary)', background: 'var(--bg-surface)' }}>
+                <div className="t-label" style={{ color: 'var(--accent-primary)', marginBottom: 12 }}>EQUATIONS</div>
                 <EquationRenderer equations={slide.equation_block!} />
               </div>
             )}
-            {slide.body_content.length > 0 && (
-              <BulletList items={slide.body_content} />
-            )}
+            {slide.body_content.length > 0 && <BulletList items={slide.body_content} />}
           </div>
-
-          {/* Right column: diagram */}
-          <div className="flex items-start justify-center">
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center' }}>
             {slide.visual && <VisualRenderer visual={slide.visual} />}
           </div>
         </div>
@@ -313,7 +253,7 @@ function ContentSlide({ slide }: { slide: GeneratedSlide }) {
         <SlideHeader title={slide.title} />
         {slide.code_block && <CodeBlockRenderer code={slide.code_block} />}
         {slide.body_content.length > 0 && (
-          <div className="mt-6">
+          <div style={{ marginTop: 24 }}>
             <BulletList items={slide.body_content} />
           </div>
         )}
@@ -327,14 +267,14 @@ function ContentSlide({ slide }: { slide: GeneratedSlide }) {
     return (
       <>
         <SlideHeader title={slide.title} />
-        <div className="grid grid-cols-2 gap-6 items-start">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, alignItems: 'start' }}>
           <BulletList items={slide.body_content} />
-          <div className="flex items-start justify-center">
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center' }}>
             {slide.visual && <VisualRenderer visual={slide.visual} />}
           </div>
         </div>
         {hasEquations && (
-          <div className="mt-6">
+          <div style={{ marginTop: 24 }}>
             <EquationRenderer equations={slide.equation_block!} />
           </div>
         )}
@@ -347,7 +287,7 @@ function ContentSlide({ slide }: { slide: GeneratedSlide }) {
     <>
       <SlideHeader title={slide.title} />
       {slide.body_content.length > 0 && (
-        <div className="mb-8">
+        <div style={{ marginBottom: 32 }}>
           <BulletList items={slide.body_content} />
         </div>
       )}
@@ -363,14 +303,12 @@ function ContentSlide({ slide }: { slide: GeneratedSlide }) {
 function ContentItemRenderer({ item }: { item: SlideContentItem }) {
   const ht = item.highlight_type;
 
-  // Definition: term + description
+  // Definition: term + description (blue accent — the "define" callout)
   if (ht === 'definition' && item.term) {
     return (
-      <div className="bg-gradient-to-r from-blue-500/10 via-blue-400/5 to-transparent border-l-4 border-blue-500 rounded-r-xl p-5">
-        <span className="font-bold text-blue-600 dark:text-blue-400">
-          {item.term}
-        </span>
-        <span className="text-foreground/80 ml-2">{item.text}</span>
+      <div style={{ background: 'rgba(37,99,235,0.05)', borderLeft: '3px solid var(--accent-primary)', borderRadius: '0 8px 8px 0', padding: 18 }}>
+        <span style={{ fontWeight: 700, color: 'var(--accent-primary)' }}>{item.term}</span>
+        <span className="t-body" style={{ color: 'var(--text-primary)', marginLeft: 8 }}>{item.text}</span>
       </div>
     );
   }
@@ -378,42 +316,38 @@ function ContentItemRenderer({ item }: { item: SlideContentItem }) {
   // Key concept
   if (ht === 'key_concept') {
     return (
-      <div className="flex items-start gap-3 p-4 bg-secondary/5 border border-secondary/20 rounded-xl">
-        <div className="w-2 h-2 rounded-full bg-secondary mt-2 shrink-0" />
-        <p className="text-foreground/90 font-medium">{item.text}</p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: 16, background: 'var(--bg-surface)', border: '1px solid var(--hairline)', borderRadius: 8 }}>
+        <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent-primary)', marginTop: 8, flexShrink: 0 }} />
+        <p className="t-body" style={{ margin: 0, color: 'var(--text-primary)', fontWeight: 500 }}>{item.text}</p>
       </div>
     );
   }
 
-  // Example
+  // Example (green accent)
   if (ht === 'example') {
     return (
-      <div className="flex items-start gap-3 p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-xl">
-        <span className="text-emerald-600 font-semibold text-xs mt-0.5 shrink-0">
-          Example:
-        </span>
-        <p className="text-foreground/80 italic">{item.text}</p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: 16, background: 'rgba(22,163,74,0.05)', border: '1px solid rgba(22,163,74,0.2)', borderRadius: 8 }}>
+        <span className="t-label" style={{ color: 'var(--accent-success)', marginTop: 2, flexShrink: 0 }}>EXAMPLE</span>
+        <p className="t-body" style={{ margin: 0, color: 'var(--text-primary)', fontStyle: 'italic', fontFamily: 'var(--ff-editorial)' }}>{item.text}</p>
       </div>
     );
   }
 
-  // Attention / warning
+  // Attention / warning (red accent)
   if (ht === 'attention') {
     return (
-      <div className="flex items-start gap-3 p-4 bg-amber-500/5 border border-amber-500/20 rounded-xl">
-        <div className="w-6 h-6 rounded-full bg-amber-500 flex items-center justify-center text-white text-xs font-bold shrink-0">
-          !
-        </div>
-        <p className="text-foreground/80 font-medium">{item.text}</p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: 16, background: 'rgba(220,38,38,0.05)', border: '1px solid rgba(220,38,38,0.2)', borderRadius: 8 }}>
+        <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--error-red)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>!</div>
+        <p className="t-body" style={{ margin: 0, color: 'var(--text-primary)', fontWeight: 500 }}>{item.text}</p>
       </div>
     );
   }
 
-  // Default bullet
+  // Default bullet — square bullet, editorial restraint
   return (
-    <div className="flex items-start gap-3 pl-2">
-      <div className="w-1.5 h-1.5 rounded-full bg-foreground/30 mt-2.5 shrink-0" />
-      <p className="text-foreground/80">{item.text}</p>
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 0, paddingLeft: 4 }}>
+      <span className="sq-bullet" style={{ marginTop: 9 }} />
+      <p className="t-body" style={{ margin: 0, color: 'var(--text-primary)' }}>{item.text}</p>
     </div>
   );
 }
@@ -422,22 +356,22 @@ function ContentItemRenderer({ item }: { item: SlideContentItem }) {
 
 function CodeBlockRenderer({ code }: { code: SlideCodeBlock }) {
   return (
-    <div className="mb-8">
-      <div className="bg-[#1e1e1e] rounded-xl overflow-hidden shadow-lg border border-[#3e3e42]">
-        <div className="px-6 py-3 bg-[#252526] border-b border-[#3e3e42] flex items-center justify-between">
-          <span className="text-sm font-mono text-[#cccccc]">{code.language}</span>
+    <div style={{ marginBottom: 32 }}>
+      <div style={{ background: 'var(--code-bg)', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--hairline)' }}>
+        <div style={{ padding: '10px 18px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span className="t-mono" style={{ color: '#9CA3AF' }}>{code.language}</span>
           <button
             onClick={() => navigator.clipboard.writeText(code.code)}
-            className="text-xs text-[#888] hover:text-white transition-colors px-2 py-1 rounded border border-[#3e3e42] hover:border-[#555]"
+            className="t-label"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6, color: '#9CA3AF', padding: '4px 8px', cursor: 'pointer' }}
           >
-            Copy
+            <Copy size={11} /> COPY
           </button>
         </div>
-        <pre className="p-6 text-sm font-mono text-[#d4d4d4] overflow-x-auto">
+        <pre className="codeblock" style={{ margin: 0, borderRadius: 0, overflowX: 'auto' }}>
           <code>{code.code}</code>
         </pre>
       </div>
     </div>
   );
 }
-

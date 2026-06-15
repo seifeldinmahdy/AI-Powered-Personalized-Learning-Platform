@@ -273,7 +273,7 @@ export async function checkRelevance(question: string, lessonTitle: string): Pro
 
 export type IntentName = 'On-Topic Question' | 'Off-Topic Question' | 'Emotional-State' | 'Pace-Related' | 'Repeat/clarification';
 
-export async function classifyIntent(text: string, sessionContext = ''): Promise<IntentPrediction | null> {
+export async function classifyIntent(text: string, sessionId = ''): Promise<IntentPrediction | null> {
   try {
     const res = await fetch(`${AI_URL}/intent/classify`, {
       method: 'POST',
