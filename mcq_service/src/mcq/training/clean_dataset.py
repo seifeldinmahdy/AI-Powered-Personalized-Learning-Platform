@@ -55,6 +55,51 @@ def _alpha_ratio(text: str) -> float:
 _GARBAGE_MIN_CHUNK_LEN = 60
 _GARBAGE_MIN_QUESTION_LEN = 25
 
+# PDF font-glyph extraction artifacts, e.g. "/uni25CF" (● filled circle) dumped
+# from scatter plots, figures, and symbol legends. These are NEVER legitimate
+# educational prose: a chunk peppered with them is a figure/plot dump that the
+# teacher LLM then fabricated an ungrounded MCQ from (the question reads clean
+# but answers nothing in the chunk). "/uniXXXX" also defeats _alpha_ratio because
+# the token is mostly letters (u,n,i,C,F), so it must be detected explicitly and
+# stripped before any text-content measurement.
+_GLYPH_ARTIFACT_RE = re.compile(r'/uni[0-9A-Fa-f]{4}')
+_MAX_GLYPH_ARTIFACTS = 3          # >= this many in a chunk → figure/symbol dump
+
+# A long chunk with almost no real words is a table/figure/axis-label dump with
+# no linguistic content for a question to be grounded in. Measured AFTER glyph
+# stripping (each "/uniXXXX" would otherwise contribute a spurious "uni" word).
+_REAL_WORD_RE = re.compile(r'[A-Za-z]{3,}')
+_LOW_CONTENT_MIN_LEN = 200        # only applied to substantial chunks
+_LOW_CONTENT_MIN_WORDS = 12       # fewer real (3+ letter) words than this → dump
+
+# Chunks that are mostly single characters separated by whitespace: OCR letter-
+# spacing garble ("D=m o d e l . f i t _ t r a n s f o r m") or figure/scatter-
+# plot character walls ("o\no\no\no" point markers). Both pass the alpha-ratio
+# test (the chars ARE letters) yet carry no readable content, so the teacher LLM
+# fabricates an ungrounded MCQ. Detected by COVERAGE — the fraction of the chunk
+# consumed by such runs — NOT mere presence: a single spaced artifact inside
+# otherwise-good prose stays (coverage stays low), but a chunk that is mostly
+# spaced noise is dropped. _SINGLE_CHAR runs of length 1-char+space x6 capture
+# both letter-spacing and per-line single-char point markers.
+_SPACED_RUN_RE = re.compile(r'(?:\S\s){6,}')
+_MAX_SPACED_COVERAGE = 0.30       # >= this fraction of the chunk is spaced noise
+_MAX_SINGLE_CHAR_FRAC = 0.30      # one non-ws char making up >this → symbol wall
+
+
+def _char_dump_fraction(text: str) -> tuple[float, float]:
+    """Return (spaced-run coverage, dominant-char fraction) for *text* (0..1).
+
+    Coverage = fraction of chars consumed by 6+ single-char+space runs.
+    Dominant-char fraction = share of the most common non-whitespace character
+    (only meaningful on chunks of >=40 non-ws chars).
+    """
+    if not text:
+        return 0.0, 0.0
+    coverage = sum(len(m.group()) for m in _SPACED_RUN_RE.finditer(text)) / len(text)
+    non_ws = [c for c in text if not c.isspace()]
+    char_frac = Counter(non_ws).most_common(1)[0][1] / len(non_ws) if len(non_ws) >= 40 else 0.0
+    return coverage, char_frac
+
 
 def _garbage_reason(sample: dict, min_alpha_ratio: float = _MIN_ALPHA_RATIO) -> str | None:
     """Deterministic garbage detector — returns a reason code or None.
@@ -68,13 +113,43 @@ def _garbage_reason(sample: dict, min_alpha_ratio: float = _MIN_ALPHA_RATIO) -> 
     Deliberately conservative to avoid quarantining valid symbolic content:
     only long ``chunk``/``question`` fields are tested, and the (often numeric
     or Big-O) answer/distractor fields are never tested.
+
+    Also catches "generated from nothing" samples: a source ``chunk`` that is a
+    PDF figure/plot dump (a wall of "/uniXXXX" glyph artifacts, or a long passage
+    with almost no real words) carries no content to ground a question in, yet
+    the teacher LLM still fabricated a clean-looking MCQ from it.
     """
     def _is_noise(text: str, min_len: int) -> bool:
         t = text.strip()
         non_ws = sum(1 for c in t if not c.isspace())
         return non_ws >= min_len and _alpha_ratio(t) < min_alpha_ratio
 
-    if _is_noise(sample.get("chunk", "") or "", _GARBAGE_MIN_CHUNK_LEN):
+    chunk = sample.get("chunk", "") or ""
+
+    # 1. PDF glyph-artifact dump (figures/plots): "/uniXXXX" never appears in
+    #    legitimate prose, and it inflates the alpha ratio, so detect it directly.
+    if len(_GLYPH_ARTIFACT_RE.findall(chunk)) >= _MAX_GLYPH_ARTIFACTS:
+        return "garbage_chunk:glyph_artifacts"
+
+    # Strip glyph tokens before any text-content measurement (each "/uniXXXX"
+    # would otherwise count as a spurious "uni" word and as alphabetic chars).
+    chunk_text = _GLYPH_ARTIFACT_RE.sub(" ", chunk)
+
+    # 2. Long chunk with almost no real words = table/figure/axis-label dump.
+    non_ws = sum(1 for c in chunk_text if not c.isspace())
+    if non_ws >= _LOW_CONTENT_MIN_LEN and \
+            len(_REAL_WORD_RE.findall(chunk_text)) < _LOW_CONTENT_MIN_WORDS:
+        return "garbage_chunk:low_text_content"
+
+    # 2b. Chunk mostly single chars separated by whitespace: OCR letter-spacing
+    #     garble or scatter-plot character walls. Coverage-gated so a minor
+    #     spaced artifact in otherwise-good prose is NOT flagged.
+    coverage, char_frac = _char_dump_fraction(chunk)
+    if coverage >= _MAX_SPACED_COVERAGE or char_frac > _MAX_SINGLE_CHAR_FRAC:
+        return "garbage_chunk:char_dump"
+
+    # 3. Symbol-wall / low-alpha chunk (pipe-tables, garbled extractions).
+    if _is_noise(chunk_text, _GARBAGE_MIN_CHUNK_LEN):
         return "garbage_chunk:low_alpha_ratio"
     if _is_noise(sample.get("question", "") or "", _GARBAGE_MIN_QUESTION_LEN):
         return "garbage_question:low_alpha_ratio"
@@ -103,6 +178,17 @@ _ANSWER_PREFIX_RE = re.compile(
 
 # Bare letter answer: just "A", "B", "C", or "D" with nothing else.
 _BARE_LETTER_RE = re.compile(r'^[A-D]$')
+
+# Distractor-strategy labels the generator leaked into the distractor TEXT
+# (e.g. "wrong_concept: <the actual wrong answer>"). These are internal
+# generation tags, not part of the answer — ~95% of distractors carry one. Left
+# in, the DG model would learn to emit them on every distractor. Only these
+# three exact known tags are stripped; legitimate distractors that happen to
+# start with a word + colon ("SyntaxError: ...", "from x import y") are untouched.
+_DISTRACTOR_TAG_RE = re.compile(
+    r'^\s*(?:wrong_concept|wrong_application|partial_knowledge)\s*:\s*',
+    re.IGNORECASE,
+)
 
 # Validation: any remaining option-label pattern in cleaned text.
 _RESIDUAL_LABEL_RE = re.compile(
@@ -201,7 +287,18 @@ _BOOK_REF_PATTERNS: list[re.Pattern] = [
     re.compile(r'\bscipy\b', re.IGNORECASE),
     re.compile(r'\btextbook\b', re.IGNORECASE),
     re.compile(r'\bas shown in\b', re.IGNORECASE),
-    re.compile(r'\brefer to\b', re.IGNORECASE),
+    # Only treat "refer to" as a book reference when it points at a book artifact
+    # (figure/table/section/above/passage/…). A bare "\brefer to\b" wrongly drops
+    # legitimate definition questions phrased "what does the term X refer to?" —
+    # 197 of them (mostly Type 4a) in a 5k dataset, with zero genuine book refs
+    # caught by the broad form that the narrow form misses.
+    re.compile(
+        r'\brefer(?:s|ring|red)?\s+to\s+(?:the\s+)?'
+        r'(?:figure|fig\b|table|section|chapter|example|listing|appendix|'
+        r'equation|eq\b|graph|plot|diagram|image|above|below|preceding|'
+        r'following|passage|text|book|chunk|excerpt|snippet)',
+        re.IGNORECASE,
+    ),
     re.compile(r'\bsee (figure|table|listing|example)\b', re.IGNORECASE),
 ]
 
@@ -417,7 +514,15 @@ def clean_sample(sample: dict) -> tuple[dict | None, str | None]:
     # ── Step 5: Validate the cleaned object ──────────────────────────────
     q = sample["question"]
     ca = sample["correct_answer"]
-    ds = sample["distractors"]
+
+    # Strip leaked distractor-strategy tags ("wrong_concept: ...") before
+    # validation, so dup/equals-answer checks see the real text and the DG
+    # target is clean. Only the 3 known tags are removed (see _DISTRACTOR_TAG_RE).
+    ds = [
+        _DISTRACTOR_TAG_RE.sub("", d, count=1).strip() if isinstance(d, str) else d
+        for d in sample["distractors"]
+    ]
+    sample["distractors"] = ds
 
     # Check: no residual option labels in question
     if _RESIDUAL_LABEL_RE.search(q):

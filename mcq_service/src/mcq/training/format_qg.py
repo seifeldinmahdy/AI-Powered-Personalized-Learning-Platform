@@ -150,7 +150,7 @@ def _build_qg_training_messages(sample: dict) -> list[dict[str, str]]:
 def format_qg_data(
     input_path: str,
     output_path: str,
-    tokenizer_name: str = "unsloth/Qwen3-4B-Instruct",
+    tokenizer_name: str = "unsloth/Qwen3-4B-Instruct-2507",
 ) -> int:
     """Convert cleaned QG data to chat-formatted training examples.
 
@@ -216,6 +216,12 @@ def format_qg_data(
                         add_generation_prompt=False,
                     )
 
+                # Qwen3-2507's template injects an empty "<think></think>" block
+                # into every assistant turn even with enable_thinking=False. Strip
+                # it so the QG model emits QUESTION/ANSWER/EXPLANATION directly
+                # (saves tokens; inference anchors at "assistant\n", stays consistent).
+                text = text.replace("<think>\n\n</think>\n\n", "")
+
                 # Strip any residual box-drawing characters from the rendered text.
                 # This catches any that may have leaked through the chunk field.
                 if _BOX_DRAWING_RE.search(text):
@@ -258,7 +264,7 @@ def main():
         help="Path to write formatted qg_formatted.jsonl.",
     )
     parser.add_argument(
-        "--tokenizer", default="unsloth/Qwen3-4B-Instruct",
+        "--tokenizer", default="unsloth/Qwen3-4B-Instruct-2507",
         help="HuggingFace tokenizer to use for chat template formatting.",
     )
     args = parser.parse_args()
