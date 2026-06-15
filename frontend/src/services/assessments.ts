@@ -44,38 +44,36 @@ export interface SubmitPlacementPayload {
 }
 
 /** Generate placement-test questions for a course topic via the AI microservice.
- *  Falls back to a built-in static bank if the service is unavailable. */
+ *  Throws if the service is unavailable or returns no questions — callers are
+ *  expected to surface a clear error rather than render an empty quiz. We do not
+ *  substitute fabricated questions, which would be wrong for the actual course. */
 export async function generateAssessmentQuestions(
     topic: string,
     count = 6,
 ): Promise<AssessmentQuestion[]> {
-    try {
-        const res = await fetch(`${AI_SERVICE}/assessments/generate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ course_title: topic, num_questions: count }),
-        });
-        if (!res.ok) throw new Error('AI service error');
-        const data = await res.json();
-        if (Array.isArray(data.questions)) {
-            // Map correct_answer string to correct index
-            return data.questions.map((q: any, idx: number) => {
-                const correctIndex = q.options.findIndex(
-                    (opt: string) => opt === q.correct_answer
-                );
-                return {
-                    id: idx + 1,
-                    question: q.question,
-                    options: q.options,
-                    correct: correctIndex >= 0 ? correctIndex : 0,
-                    topic: q.topic || 'General',
-                };
-            });
-        }
-    } catch {
-        // fall through to static bank
+    const res = await fetch(`${AI_SERVICE}/assessments/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ course_title: topic, num_questions: count }),
+    });
+    if (!res.ok) throw new Error(`Assessment service returned ${res.status}`);
+    const data = await res.json();
+    if (!Array.isArray(data.questions) || data.questions.length === 0) {
+        throw new Error('Assessment service returned no questions');
     }
-    return buildStaticBank(topic, count);
+    // Map correct_answer string to correct index
+    return data.questions.map((q: any, idx: number) => {
+        const correctIndex = q.options.findIndex(
+            (opt: string) => opt === q.correct_answer
+        );
+        return {
+            id: idx + 1,
+            question: q.question,
+            options: q.options,
+            correct: correctIndex >= 0 ? correctIndex : 0,
+            topic: q.topic || 'General',
+        };
+    });
 }
 
 /** A category group with its questions, returned by the categorized endpoint. */
@@ -86,7 +84,9 @@ export interface CategoryGroup {
 }
 
 /** Generate placement-test questions grouped by LLM-derived categories.
- *  Falls back to flat generation if the categorized endpoint is unavailable. */
+ *  Falls back to flat generation if the categorized endpoint is unavailable or
+ *  returns no questions. Throws if no real questions can be produced at all —
+ *  the caller surfaces an error+retry rather than rendering a blank quiz. */
 export async function generateCategorizedQuestions(
     courseTitle: string,
     courseId: string,
@@ -102,32 +102,40 @@ export async function generateCategorizedQuestions(
                 total_questions: totalQuestions,
             }),
         });
-        if (!res.ok) throw new Error('Categorized endpoint error');
-        const data = await res.json();
-        if (Array.isArray(data.categories)) {
-            let globalId = 1;
-            return data.categories.map((cat: any) => ({
-                name: cat.name || 'General',
-                description: cat.description || '',
-                questions: (cat.questions || []).map((q: any) => {
-                    const correctIndex = q.options?.findIndex(
-                        (opt: string) => opt === q.correct_answer
-                    ) ?? 0;
-                    return {
-                        id: globalId++,
-                        question: q.question,
-                        options: q.options || [],
-                        correct: correctIndex >= 0 ? correctIndex : 0,
-                        topic: q.topic || cat.name || 'General',
-                    };
-                }),
-            })).filter((cat: CategoryGroup) => cat.questions.length > 0);
+        if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data.categories)) {
+                let globalId = 1;
+                const mapped: CategoryGroup[] = data.categories.map((cat: any) => ({
+                    name: cat.name || 'General',
+                    description: cat.description || '',
+                    questions: (cat.questions || []).map((q: any) => {
+                        const correctIndex = q.options?.findIndex(
+                            (opt: string) => opt === q.correct_answer
+                        ) ?? 0;
+                        return {
+                            id: globalId++,
+                            question: q.question,
+                            options: q.options || [],
+                            correct: correctIndex >= 0 ? correctIndex : 0,
+                            topic: q.topic || cat.name || 'General',
+                        };
+                    }),
+                })).filter((cat: CategoryGroup) => cat.questions.length > 0);
+
+                const total = mapped.reduce((n, c) => n + c.questions.length, 0);
+                if (total > 0) return mapped;
+                console.warn('Categorized endpoint returned 0 questions — falling back to flat generation.');
+            }
+        } else {
+            console.warn(`Categorized endpoint returned ${res.status} — falling back to flat generation.`);
         }
     } catch (e) {
-        console.warn('Categorized generation failed, falling back to flat:', e);
+        console.warn('Categorized generation failed — falling back to flat generation:', e);
     }
 
-    // Fallback: use flat generation and wrap in a single category
+    // Fallback: flat generation wrapped in a single category. This throws if the
+    // service is unavailable or returns nothing, which propagates to the caller.
     const flat = await generateAssessmentQuestions(courseTitle, totalQuestions);
     return [{ name: 'General', description: `General knowledge of ${courseTitle}.`, questions: flat }];
 }
@@ -164,94 +172,4 @@ export async function updatePlacementScore(
     score: number,
 ): Promise<void> {
     await api.patch(`/courses/enrollments/${enrollmentId}/`, { placement_score: score });
-}
-
-// ── Static fallback bank ──────────────────────────────────────────────────────
-
-function buildStaticBank(topic: string, count: number): AssessmentQuestion[] {
-    const t = topic.toLowerCase();
-    const bank: AssessmentQuestion[] = [
-        {
-            id: 1,
-            question: `What is the primary purpose of a variable in ${topic}?`,
-            options: [
-                'To store data that can be used later',
-                'To define the structure of a program',
-                'To execute a set of instructions',
-                'To connect to a database',
-            ],
-            correct: 0,
-            topic: 'Variables',
-        },
-        {
-            id: 2,
-            question: 'Which of the following is an example of a loop construct?',
-            options: ['if / else', 'for / while', 'try / catch', 'class / object'],
-            correct: 1,
-            topic: 'Loops',
-        },
-        {
-            id: 3,
-            question: 'What does a function return when no return statement is specified?',
-            options: ['0', 'An empty string', 'null / None / undefined (depends on language)', 'An error'],
-            correct: 2,
-            topic: 'Functions',
-        },
-        {
-            id: 4,
-            question: 'What is Big-O notation used to describe?',
-            options: [
-                'The size of a program in bytes',
-                'The time or space complexity of an algorithm',
-                'The number of lines of code',
-                'The version of a programming language',
-            ],
-            correct: 1,
-            topic: 'Algorithms',
-        },
-        {
-            id: 5,
-            question: `Which data structure follows the Last-In-First-Out (LIFO) principle?`,
-            options: ['Queue', 'Array', 'Stack', 'Linked list'],
-            correct: 2,
-            topic: 'Data Structures',
-        },
-        {
-            id: 6,
-            question: 'What is recursion?',
-            options: [
-                'A loop that runs forever',
-                'A function that calls itself',
-                'A method of sorting data',
-                'A way to import libraries',
-            ],
-            correct: 1,
-            topic: 'Recursion',
-        },
-        {
-            id: 7,
-            question: `In ${topic}, what keyword is typically used to define a class?`,
-            options: [
-                t.includes('python') ? 'class' : 'class',
-                'def',
-                'struct',
-                'module',
-            ],
-            correct: 0,
-            topic: 'OOP',
-        },
-        {
-            id: 8,
-            question: 'Which of the following best describes an API?',
-            options: [
-                'A graphical user interface',
-                'A set of rules that allows programs to communicate',
-                'A type of database',
-                'A programming language',
-            ],
-            correct: 1,
-            topic: 'APIs',
-        },
-    ];
-    return bank.slice(0, count);
 }

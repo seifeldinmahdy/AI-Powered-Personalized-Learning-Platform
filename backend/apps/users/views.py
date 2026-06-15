@@ -128,6 +128,65 @@ class UserViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_400_BAD_REQUEST)
 
     # ---------------------------------------------------------
+    # 2b. Social OAuth (Google / GitHub / Facebook)
+    # Endpoint: POST /api/users/oauth/
+    # Body: { provider, code, redirect_uri }
+    # ---------------------------------------------------------
+    @action(detail=False, methods=['post'], permission_classes=[AllowAny], authentication_classes=[])
+    def oauth(self, request):
+        from .oauth import fetch_identity, OAuthError
+
+        provider = (request.data.get('provider') or '').strip().lower()
+        code = request.data.get('code')
+        redirect_uri = request.data.get('redirect_uri')
+
+        if provider not in ('google', 'github', 'facebook'):
+            return Response({'error': 'Unsupported provider'}, status=status.HTTP_400_BAD_REQUEST)
+        if not code or not redirect_uri:
+            return Response({'error': 'Missing authorization code or redirect URI'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            identity = fetch_identity(provider, code, redirect_uri)
+        except OAuthError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            return Response({'error': 'Social sign-in failed. Please try again.'},
+                            status=status.HTTP_502_BAD_GATEWAY)
+
+        email = identity['email'].strip().lower()
+        full_name = identity.get('name') or email.split('@')[0]
+
+        # Find-or-create the user by email.
+        user = User.objects.filter(email__iexact=email).first()
+        if user is None:
+            base_username = email.split('@')[0] or 'user'
+            username = base_username
+            suffix = 1
+            while User.objects.filter(username=username).exists():
+                suffix += 1
+                username = f"{base_username}{suffix}"
+            user = User.objects.create_user(username=username, email=email, role='student')
+            user.set_unusable_password()  # password login disabled for social accounts
+            if full_name:
+                user.first_name = full_name[:150]
+            user.save()
+
+        if not user.is_active:
+            return Response({'error': 'Account is disabled'}, status=status.HTTP_403_FORBIDDEN)
+
+        tokens = self._get_tokens_for_user(user)
+        return Response({
+            'status': 'success',
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'role': user.role,
+            'access': tokens['access'],
+            'refresh': tokens['refresh'],
+        })
+
+    # ---------------------------------------------------------
     # 3. Profile Action (GET / PATCH)
     # Endpoint: GET  /api/users/me/
     #           PATCH /api/users/me/

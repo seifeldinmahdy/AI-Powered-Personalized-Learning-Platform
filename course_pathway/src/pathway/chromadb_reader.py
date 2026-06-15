@@ -157,6 +157,88 @@ class ChromaDBReader:
                 courses.add(course)
         return sorted(courses)
 
+    def resolve_course(self, course_id: str, course_title: str = "") -> str:
+        """Map an external course identifier to a ChromaDB ``course`` value.
+
+        ChromaDB stores chunks keyed by their source-book name (e.g.
+        "Think Python 2nd Edition"), while the platform identifies courses by
+        a numeric Django id (e.g. "11") and a human title. This resolves the
+        best-matching book so chunk queries actually hit data.
+
+        Resolution order:
+          1. Exact match on ``course_id`` (legacy: id already *is* the book).
+          2. Case-insensitive exact match on ``course_id`` or ``course_title``.
+          3. Fuzzy match on ``course_title`` (keyword overlap + sequence ratio).
+
+        Returns the original ``course_id`` unchanged if nothing matches, so the
+        caller still raises a clear "no chunks" error rather than guessing.
+        """
+        import re
+        from difflib import SequenceMatcher
+
+        available = self.get_available_courses()
+        if not available:
+            return course_id
+
+        # 1. Exact id match (the original design, where id == book name)
+        if course_id in available:
+            return course_id
+
+        # 2. Case-insensitive exact match on id or title
+        lower_map = {c.lower(): c for c in available}
+        for candidate in (course_id, course_title):
+            if candidate and candidate.lower() in lower_map:
+                return lower_map[candidate.lower()]
+
+        # 3. Fuzzy match on the human title (the only meaningful signal —
+        #    a numeric id carries no lexical overlap with a book name)
+        if not course_title:
+            return course_id
+
+        def _normalise(s: str) -> str:
+            return re.sub(r"[^a-z0-9 ]", " ", s.lower()).strip()
+
+        def _tokens(s: str) -> set[str]:
+            return {w for w in _normalise(s).split() if len(w) > 2}
+
+        title_tokens = _tokens(course_title)
+        best_match = course_id
+        best_score = 0.0
+
+        for book in available:
+            book_tokens = _tokens(book)
+            if title_tokens and book_tokens:
+                overlap = len(title_tokens & book_tokens) / len(title_tokens | book_tokens)
+            else:
+                overlap = 0.0
+            seq_ratio = SequenceMatcher(
+                None, _normalise(course_title), _normalise(book)
+            ).ratio()
+            score = 0.6 * overlap + 0.4 * seq_ratio
+            if score > best_score:
+                best_score = score
+                best_match = book
+
+        # Require a minimal signal before trusting the guess
+        if best_score < 0.15:
+            logger.warning(
+                "course_resolution_low_confidence",
+                course_id=course_id,
+                course_title=course_title,
+                best_match=best_match,
+                score=round(best_score, 3),
+            )
+            return course_id
+
+        logger.info(
+            "course_resolved",
+            course_id=course_id,
+            course_title=course_title,
+            resolved=best_match,
+            score=round(best_score, 3),
+        )
+        return best_match
+
     def get_topics_by_difficulty(
         self, course_id: str, difficulty: str,
     ) -> list[str]:

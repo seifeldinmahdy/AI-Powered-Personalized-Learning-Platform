@@ -15,7 +15,7 @@ import { getCourseById } from "../services/courses";
    submit-placement → results → pathway). Everything rendered comes from the
    real PlacementResult; no fabricated percentile / week estimates / tiers. */
 
-type Phase = "preferences" | "loading" | "quiz" | "submitting" | "results";
+type Phase = "preferences" | "loading" | "quiz" | "submitting" | "results" | "error";
 
 interface LocationState {
   enrollmentId?: number;
@@ -71,6 +71,7 @@ export default function Assessment() {
   const [placementResult, setPlacementResult] = useState<PlacementResult | null>(null);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [durationSec, setDurationSec] = useState(0);
+  const [errorMsg, setErrorMsg] = useState("");
 
   const allQuestions = useMemo(() => categories.flatMap((c) => c.questions), [categories]);
 
@@ -114,12 +115,20 @@ export default function Assessment() {
         await api.patch(`/courses/enrollments/${enrollmentId}/`, { is_assessment_started: true });
       } catch { /* ignore */ }
     }
-    const cats = await generateCategorizedQuestions(courseTitle, String(id), 50);
-    setCategories(cats);
-    setCurrentQuestionIndex(0);
-    setShowCategoryCard(true);
-    setStartedAt(Date.now());
-    setPhase("quiz");
+    try {
+      const cats = await generateCategorizedQuestions(courseTitle, String(id), 50);
+      const total = cats.reduce((n, c) => n + c.questions.length, 0);
+      if (total === 0) throw new Error("No questions were generated.");
+      setCategories(cats);
+      setCurrentQuestionIndex(0);
+      setShowCategoryCard(true);
+      setStartedAt(Date.now());
+      setPhase("quiz");
+    } catch (e) {
+      console.error("Assessment generation failed:", e);
+      setErrorMsg(e instanceof Error ? e.message : "Something went wrong generating your assessment.");
+      setPhase("error");
+    }
   };
 
   const handleSubmit = useCallback(async () => {
@@ -265,6 +274,25 @@ export default function Assessment() {
           <div style={{ position: "absolute", height: "100%", width: "40%", background: "var(--accent-primary)", animation: "paiIndeterminate 1.1s ease-in-out infinite" }} />
         </div>
         <style>{`@keyframes paiIndeterminate { 0%{left:-40%} 100%{left:100%} }`}</style>
+      </div>
+    );
+  }
+
+  // ── PHASE: error ──
+  if (phase === "error") {
+    return (
+      <div className="codex" style={{ ...SHELL, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18, textAlign: "center", padding: 24 }}>
+        <div className="t-label" style={{ color: "var(--error-red)" }}>GENERATION FAILED</div>
+        <div className="t-display" style={{ fontSize: "clamp(28px,4vw,48px)", color: "var(--text-primary)", maxWidth: 620 }}>
+          We couldn't build your assessment.
+        </div>
+        <p className="t-body" style={{ color: "var(--text-secondary)", fontSize: 15, maxWidth: 520 }}>
+          {errorMsg ? `${errorMsg} ` : ""}The AI service may be temporarily unavailable or rate-limited. Please try again in a moment.
+        </p>
+        <div style={{ display: "flex", gap: 12, marginTop: 8, flexWrap: "wrap", justifyContent: "center" }}>
+          <button onClick={handleStartQuiz} className="btn btn-primary" style={{ padding: "16px 28px" }}>TRY AGAIN →</button>
+          <button onClick={() => navigate(`/courses/${id}`)} className="btn" style={{ background: "transparent", color: "var(--steel-light)", padding: "16px 20px" }}>EXIT</button>
+        </div>
       </div>
     );
   }

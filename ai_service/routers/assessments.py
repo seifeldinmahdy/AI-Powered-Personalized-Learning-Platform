@@ -116,8 +116,28 @@ async def generate_categorized_endpoint(req: GenerateCategorizedRequest):
             questions_per_category=base_per_cat,
         )
 
+        # Guard: if every category came back empty (e.g. the upstream LLM is
+        # rate-limited or down), fail loudly with a 502 instead of returning a
+        # valid-but-empty 200 that the client would silently render as a blank quiz.
+        total_generated = sum(len(c.get("questions", [])) for c in result)
+        if total_generated == 0:
+            logger.error(
+                "Categorized generation produced 0 questions for course '%s' "
+                "(%d categories) — upstream LLM likely unavailable or rate-limited",
+                req.course_title, len(categories),
+            )
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Question generation produced no questions. The AI model may be "
+                    "unavailable or rate-limited. Please try again."
+                ),
+            )
+
         return {"categories": result}
 
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:

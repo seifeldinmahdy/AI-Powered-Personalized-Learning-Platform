@@ -156,11 +156,18 @@ class PathwayGenerator:
             mastery=context.mastery_level,
         )
 
-        # 2. Load ALL chunks from ChromaDB
-        chunks = self._reader.get_all_course_chunks(context.course_id)
+        # 2. Resolve the Django course id/title to the ChromaDB book name, then
+        #    load ALL chunks. The store/cache stays keyed by context.course_id;
+        #    only the chunk queries use the resolved book.
+        chroma_course = self._reader.resolve_course(
+            context.course_id, context.course_title
+        )
+        chunks = self._reader.get_all_course_chunks(chroma_course)
         if not chunks:
             raise ValueError(
-                f"No chunks found for course '{context.course_id}'. "
+                f"No chunks found for course '{context.course_id}'"
+                f"{f' (title: {context.course_title!r})' if context.course_title else ''}"
+                f" — resolved to '{chroma_course}'. "
                 f"Available courses: {self._reader.get_available_courses()}"
             )
 
@@ -176,7 +183,7 @@ class PathwayGenerator:
             }
             diff_tier = mastery_to_diff.get(context.mastery_level, "intermediate")
             difficulty_topics = self._reader.get_topics_by_difficulty(
-                context.course_id, diff_tier
+                chroma_course, diff_tier
             )
 
             context = self._synthetic_gen.generate(

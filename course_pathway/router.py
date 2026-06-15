@@ -88,6 +88,7 @@ def _get_generator():
 class GenerateRequest(BaseModel):
     student_id: str
     course_id: str
+    course_title: str = ""
     mastery_level: str = "Intermediate"
     composition_mode: str = "balanced"
     language_proficiency: str = "Intermediate"
@@ -143,6 +144,7 @@ async def generate_pathway(request: GenerateRequest):
         context = StudentContext(
             student_id=request.student_id,
             course_id=request.course_id,
+            course_title=request.course_title,
             mastery_level=request.mastery_level,
             composition_mode=request.composition_mode,
             language_proficiency=request.language_proficiency,
@@ -174,6 +176,7 @@ async def regenerate_pathway(request: GenerateRequest):
         context = StudentContext(
             student_id=request.student_id,
             course_id=request.course_id,
+            course_title=request.course_title,
             mastery_level=request.mastery_level,
             composition_mode=request.composition_mode,
             language_proficiency=request.language_proficiency,
@@ -259,9 +262,11 @@ async def get_session_chunks(request: SessionChunksRequest):
             )
 
         # The session already has SessionChunk objects with chunk_id and raw_text
-        # But we also need topic, page_start, page_end from ChromaDB metadata
-        # Fetch all course chunks from ChromaDB for metadata lookup
-        all_chunks = gen._reader.get_all_course_chunks(request.course_id)
+        # But we also need topic, page_start, page_end from ChromaDB metadata.
+        # Use the session's resolved book name (ChromaDB 'course' key) rather than
+        # the Django course id, which doesn't match ChromaDB metadata.
+        chroma_course = session.book or gen._reader.resolve_course(request.course_id)
+        all_chunks = gen._reader.get_all_course_chunks(chroma_course)
         chunk_map = {c.chunk_id: c for c in all_chunks}
 
         result = []

@@ -24,11 +24,61 @@ import argparse
 import json
 import re
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import structlog
+from tqdm import tqdm
 
 logger = structlog.get_logger(__name__)
+
+# Minimum fraction of non-whitespace characters that must be alphabetic for a
+# text field to count as real language. Below this, the field is symbol-noise
+# (mangled PDF tables, pipe-tables, decorative separators) — e.g. a chunk that
+# extracted as only "|" border characters scores ~0. Tunable via CLI.
+_MIN_ALPHA_RATIO = 0.40
+
+
+def _alpha_ratio(text: str) -> float:
+    """Fraction of non-whitespace chars in *text* that are alphabetic (0..1)."""
+    non_ws = [c for c in text if not c.isspace()]
+    if not non_ws:
+        return 0.0
+    return sum(1 for c in non_ws if c.isalpha()) / len(non_ws)
+
+
+# Minimum non-whitespace length before the alpha-ratio test is meaningful.
+# The heuristic only makes sense on LONG fields: a symbol-wall garbage chunk is
+# hundreds of chars, whereas a short legit answer ("O(1)", "0.05", "x²") is
+# naturally symbol/number-heavy and must NOT be flagged. So we never test the
+# answer/distractors at all, and we gate the chunk/question on a length floor.
+_GARBAGE_MIN_CHUNK_LEN = 60
+_GARBAGE_MIN_QUESTION_LEN = 25
+
+
+def _garbage_reason(sample: dict, min_alpha_ratio: float = _MIN_ALPHA_RATIO) -> str | None:
+    """Deterministic garbage detector — returns a reason code or None.
+
+    Catches samples grounded in (or composed of) non-linguistic noise that the
+    option/box-drawing/book-reference cleaners do not: most importantly a source
+    ``chunk`` that survived as symbol-only junk (pipe-tables, garbled PDF table
+    extractions), which the teacher LLM then hallucinated a fabricated MCQ from.
+    ``|`` is plain ASCII so it slips past the Unicode box-drawing filters.
+
+    Deliberately conservative to avoid quarantining valid symbolic content:
+    only long ``chunk``/``question`` fields are tested, and the (often numeric
+    or Big-O) answer/distractor fields are never tested.
+    """
+    def _is_noise(text: str, min_len: int) -> bool:
+        t = text.strip()
+        non_ws = sum(1 for c in t if not c.isspace())
+        return non_ws >= min_len and _alpha_ratio(t) < min_alpha_ratio
+
+    if _is_noise(sample.get("chunk", "") or "", _GARBAGE_MIN_CHUNK_LEN):
+        return "garbage_chunk:low_alpha_ratio"
+    if _is_noise(sample.get("question", "") or "", _GARBAGE_MIN_QUESTION_LEN):
+        return "garbage_question:low_alpha_ratio"
+    return None
 
 # ── Compiled patterns ─────────────────────────────────────────────────────────
 
@@ -105,6 +155,33 @@ def _box_drawing_free(sample: dict) -> dict:
             _strip_box_drawing(d) if isinstance(d, str) else d
             for d in s['distractors']
         ]
+    return s
+
+
+# ── URL / email strip ─────────────────────────────────────────────────────────
+_CLEAN_EMAIL_RE = re.compile(
+    r'\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b'
+)
+_CLEAN_URL_RE = re.compile(
+    r'https?://\S+'
+    r'|(?<!\w)www\.\S+'
+    r'|(?<!\w)ftp://\S+',
+)
+
+
+def _strip_urls_and_emails(text: str) -> str:
+    """Remove all email addresses and URLs from *text*, collapsing extra spaces."""
+    text = _CLEAN_EMAIL_RE.sub("", text)
+    text = _CLEAN_URL_RE.sub("", text)
+    return re.sub(r'  +', ' ', text).strip()
+
+
+def _url_email_free(sample: dict) -> dict:
+    """Strip emails/URLs from chunk and question fields in-place (copy)."""
+    s = dict(sample)
+    for field in ('chunk', 'question'):
+        if field in s and isinstance(s[field], str):
+            s[field] = _strip_urls_and_emails(s[field])
     return s
 
 
@@ -200,17 +277,20 @@ def _fuzzy_match(text_a: str, text_b: str) -> bool:
     return _norm(text_a) == _norm(text_b)
 
 
-def clean_sample(sample: dict) -> dict | None:
-    """Clean a single MCQ sample. Returns the cleaned dict or None if invalid.
+def clean_sample(sample: dict) -> tuple[dict | None, str | None]:
+    """Clean a single MCQ sample.
+
+    Returns ``(cleaned_sample, None)`` on success, or ``(None, reason)`` if the
+    sample fails any validation step (the reason is a short machine-readable
+    code, used to populate the quarantine record for human review).
 
     Steps:
     1. Detect and strip embedded A/B/C/D options from the question stem.
     2. Strip option-label prefix from correct_answer.
     3. Validate the cleaned object (residual labels, distractor count, etc.).
-    4. Strip all Unicode box-drawing characters from every string field.
-    5. Re-run the book-reference regex filter; drop if any pattern fires.
-
-    Returns None if the sample fails any validation step.
+    4. Strip email addresses and URLs from chunk and question fields.
+    5. Strip all Unicode box-drawing characters from every string field.
+    6. Re-run the book-reference regex filter; drop if any pattern fires.
     """
     question = sample.get("question", "")
     correct_answer = sample.get("correct_answer", "")
@@ -235,7 +315,7 @@ def clean_sample(sample: dict) -> dict | None:
                 chunk_hash=chunk_hash,
                 n_options=len(parsed_options),
             )
-            return None
+            return None, "few_embedded_options"
 
         # ── Step 4: Identify correct answer and rebuild distractors ──────
         clean_answer = _strip_answer_prefix(correct_answer)
@@ -255,7 +335,7 @@ def clean_sample(sample: dict) -> dict | None:
                     chunk_hash=chunk_hash,
                     answer=correct_answer,
                 )
-                return None
+                return None, "bare_letter_no_match"
 
         # Try to match clean_answer against parsed options
         correct_label = None
@@ -292,7 +372,7 @@ def clean_sample(sample: dict) -> dict | None:
                 answer=repr(clean_answer[:80]),
                 options=[repr(t[:40]) for _, t in parsed_options],
             )
-            return None
+            return None, "answer_not_in_options"
 
         # Build new distractors from the remaining options
         new_distractors = [
@@ -342,23 +422,23 @@ def clean_sample(sample: dict) -> dict | None:
     # Check: no residual option labels in question
     if _RESIDUAL_LABEL_RE.search(q):
         logger.warning("clean_validate_residual_in_question", chunk_hash=chunk_hash)
-        return None
+        return None, "residual_option_label_in_question"
 
     # Check: no leading option label in answer
     if _ANSWER_PREFIX_RE.match(ca):
         logger.warning("clean_validate_prefix_in_answer", chunk_hash=chunk_hash, answer=ca[:60])
-        return None
+        return None, "option_prefix_in_answer"
 
     # Check: exactly 3 distractors
     if len(ds) != 3:
         logger.warning("clean_validate_wrong_distractor_count", chunk_hash=chunk_hash, count=len(ds))
-        return None
+        return None, "distractor_count_not_3"
 
     # Check: no distractor is identical to the correct answer
     for d in ds:
         if _fuzzy_match(d, ca):
             logger.warning("clean_validate_distractor_equals_answer", chunk_hash=chunk_hash)
-            return None
+            return None, "distractor_equals_answer"
 
     # Check: no two distractors are identical
     for i in range(len(ds)):
@@ -370,7 +450,7 @@ def clean_sample(sample: dict) -> dict | None:
                     d1=ds[i][:40],
                     d2=ds[j][:40],
                 )
-                return None
+                return None, "duplicate_distractors"
 
     # Check: no distractor contains option label prefix
     for d in ds:
@@ -380,21 +460,147 @@ def clean_sample(sample: dict) -> dict | None:
                 chunk_hash=chunk_hash,
                 distractor=d[:60],
             )
-            return None
+            return None, "distractor_has_prefix"
 
-    # ── Step 7: Strip Unicode box-drawing characters ──────────────────────
+    # ── Step 7: Strip email addresses and URLs from chunk/question ───────
+    sample = _url_email_free(sample)
+    if not sample.get("question", "").strip():
+        logger.debug("clean_question_emptied_by_url_strip", chunk_hash=chunk_hash)
+        return None, "question_emptied_by_url_strip"
+
+    # ── Step 8: Strip Unicode box-drawing characters ──────────────────────
     sample = _box_drawing_free(sample)
 
-    # ── Step 8: Book-reference regex re-filter ───────────────────────────
+    # ── Step 9: Book-reference regex re-filter ────────────────────────────
     if not _passes_book_regex_filter(sample):
         logger.debug(
             "clean_book_regex_dropped",
             chunk_hash=chunk_hash,
             question=sample.get("question", "")[:80],
         )
-        return None
+        return None, "book_reference"
 
-    return sample
+    return sample, None
+
+
+# ── LLM re-validation stage — the same 4 judges used during generation ────────
+# Judge A (regex) + deterministic type-eligibility + Judges B/C/D (LLM) are
+# imported wholesale from data_generator so the post-hoc criteria are byte-for-
+# byte identical to the live pipeline. This is a second, independent pass: it
+# re-scores already-generated samples and quarantines any that no longer pass.
+
+
+def _load_judge_pipeline():
+    """Import data_generator and build the 3 judge RoleClients + key manager.
+
+    Returns ``(dg_module, key_mgr, judge_b, judge_c, judge_d)``. Raises on
+    misconfiguration (no judge keys) so the caller can fall back to
+    deterministic-only cleaning.
+    """
+    import sys
+    pkg_src = str(Path(__file__).resolve().parent.parent.parent)
+    if pkg_src not in sys.path:
+        sys.path.insert(0, pkg_src)
+    from mcq.training import data_generator as dg  # type: ignore
+
+    if not (dg.JUDGE_B_KEYS and dg.JUDGE_C_KEYS and dg.JUDGE_D_KEYS):
+        raise RuntimeError(
+            "No judge keys available (set OLLAMA_API_KEY_* / NVIDIA keys in .env)."
+        )
+
+    key_mgr = dg.SharedKeyManager(
+        role_keys={
+            "generation": dg.GENERATION_KEYS,
+            "judge_b":    dg.JUDGE_B_KEYS,
+            "judge_c":    dg.JUDGE_C_KEYS,
+            "judge_d":    dg.JUDGE_D_KEYS,
+            "fallback":   dg.FALLBACK_KEYS,
+        },
+        fail_threshold=dg.CONFIG["key_fail_threshold"],
+        base_cooldown=dg.CONFIG["key_cooldown"],
+    )
+    fb = dg.FALLBACK_KEYS
+    judge_b = dg.RoleClient(key_mgr, dg.JUDGE_B_KEYS + fb, dg.JUDGE_MODEL, "judge_b")
+    judge_c = dg.RoleClient(key_mgr, dg.JUDGE_C_KEYS + fb, dg.JUDGE_MODEL, "judge_c")
+    judge_d = dg.RoleClient(key_mgr, dg.JUDGE_D_KEYS + fb, dg.JUDGE_MODEL, "judge_d")
+    return dg, key_mgr, judge_b, judge_c, judge_d
+
+
+def _llm_judge_sample(dg, sample: dict, judge_b, judge_c, judge_d) -> tuple[bool, str]:
+    """Run the full 4-judge decision on ONE sample. Returns (accepted, reason).
+
+    Mirrors data_generator._judge_once exactly: regex pre-filter, deterministic
+    type-eligibility gate, then Judges B/C/D in one parallel round-trip, fed to
+    the same _decide(). Never raises — on an unexpected error it fails OPEN
+    (accept), so a transient API hiccup never quarantines a good sample.
+    """
+    try:
+        if not dg._passes_regex_filter(sample):
+            return False, "judge_a:regex"
+        if not dg._is_type_eligible(
+            sample.get("mastery_level", "Intermediate"),
+            sample.get("score_category", "moderate"),
+            sample.get("question_type", "4a"),
+        ):
+            return False, "judge_b:type_not_eligible"
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            fb = ex.submit(dg._run_judge_b, sample, judge_b)
+            fc = ex.submit(dg._run_judge_c, sample, judge_c)
+            fd = ex.submit(dg._run_judge_d, sample, judge_d)
+            b_result, c_result, d_result = fb.result(), fc.result(), fd.result()
+        return dg._decide(b_result, c_result, d_result, sample)
+    except Exception as exc:  # noqa: BLE001 — fail-open on any judging error
+        logger.warning("llm_judge_error_failopen", error=str(exc)[:120])
+        return True, "judge_error_failopen"
+
+
+def _llm_validate(
+    survivors: list[dict],
+    workers: int,
+) -> tuple[list[dict], list[tuple[dict, str]]]:
+    """Re-judge every deterministically-clean sample with the 4-judge pipeline.
+
+    Returns ``(accepted, rejected)`` where rejected is a list of
+    ``(sample, reason)``. If the judge pipeline can't be built (no keys), every
+    sample is accepted unchanged and a warning is logged.
+    """
+    if not survivors:
+        return [], []
+    try:
+        dg, key_mgr, judge_b, judge_c, judge_d = _load_judge_pipeline()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("llm_stage_disabled", reason=str(exc)[:160])
+        print(f"  ⚠  LLM stage skipped — {exc}")
+        return survivors, []
+
+    print(
+        f"  LLM re-validation: {len(survivors)} samples through Judges B/C/D "
+        f"({dg.JUDGE_MODEL}), {workers} parallel workers ..."
+    )
+    accepted: list[dict] = []
+    rejected: list[tuple[dict, str]] = []
+
+    # n sample-workers, each fires 3 inner judge calls in parallel.
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {
+            pool.submit(_llm_judge_sample, dg, s, judge_b, judge_c, judge_d): s
+            for s in survivors
+        }
+        for fut in tqdm(
+            as_completed(futs), total=len(futs), desc="LLM judging",
+            unit="mcq", dynamic_ncols=True, colour="magenta",
+        ):
+            sample = futs[fut]
+            ok, reason = fut.result()
+            if ok:
+                accepted.append(sample)
+            else:
+                rejected.append((sample, f"llm:{reason}"))
+            if key_mgr.all_dead:
+                logger.error("llm_stage_all_keys_dead_aborting")
+                break
+
+    return accepted, rejected
 
 
 def _print_report(
@@ -449,15 +655,39 @@ def _print_report(
     print(f"\n{'=' * W}\n")
 
 
-def clean_dataset(input_path: str, output_path: str) -> int:
-    """Clean all samples in a JSONL file and write cleaned output.
+def clean_dataset(
+    input_path: str,
+    output_path: str,
+    quarantine_path: str | None = None,
+    use_llm: bool = True,
+    llm_workers: int = 6,
+    min_alpha_ratio: float = _MIN_ALPHA_RATIO,
+) -> int:
+    """Clean + validate a JSONL dataset, quarantining garbage for human review.
+
+    Two stages:
+      1. Deterministic — garbage detector (alpha-ratio), embedded-option
+         stripping, box-drawing strip, book-reference re-filter.
+      2. LLM (optional, default on) — re-runs the SAME 4-judge pipeline used
+         during generation (Judge A regex + type-eligibility + Judges B/C/D).
+
+    Anything rejected by either stage is written to ``quarantine_path`` with a
+    ``_reject_stage`` + ``_reject_reason`` so you can eyeball it later; genuine
+    false positives can be moved back into the cleaned output by hand. Nothing
+    is silently dropped.
 
     Parameters
     ----------
     input_path :
-        Path to the raw or merged JSONL file.
+        Path to the raw/merged JSONL file (e.g. mcq_raw.jsonl).
     output_path :
-        Path to write the cleaned JSONL file.
+        Path to write the cleaned, validated JSONL (e.g. mcq_raw_cleaned.jsonl).
+    quarantine_path :
+        Where rejected samples go. Defaults to ``<output>_quarantine.jsonl``.
+    use_llm :
+        Run the LLM 4-judge re-validation stage (needs API keys in .env).
+    llm_workers :
+        Parallel sample-workers for the LLM stage (each fires 3 judge calls).
 
     Returns
     -------
@@ -467,15 +697,20 @@ def clean_dataset(input_path: str, output_path: str) -> int:
     in_p = Path(input_path)
     out_p = Path(output_path)
     out_p.parent.mkdir(parents=True, exist_ok=True)
+    if quarantine_path is None:
+        quar_p = out_p.with_name(out_p.stem + "_quarantine.jsonl")
+    else:
+        quar_p = Path(quarantine_path)
+    quar_p.parent.mkdir(parents=True, exist_ok=True)
 
     total = 0
     already_clean = 0
     cleaned = 0
-    skipped = 0
     box_drawing_stripped = 0
-    book_regex_dropped = 0
-    output_samples: list[dict] = []
+    survivors: list[dict] = []
+    quarantined: list[tuple[dict, str, str]] = []  # (sample, stage, reason)
 
+    # ── Stage 1: deterministic clean + garbage filter ─────────────────────
     with open(in_p, "r", encoding="utf-8") as fin:
         for line in fin:
             line = line.strip()
@@ -487,13 +722,20 @@ def clean_dataset(input_path: str, output_path: str) -> int:
                 sample = json.loads(line)
             except json.JSONDecodeError:
                 logger.warning("clean_skip_invalid_json", line=line[:80])
-                skipped += 1
+                quarantined.append(({"_raw_line": line[:500]}, "parse", "invalid_json"))
+                continue
+
+            # Garbage detector first — symbol-noise chunks/questions are quarantined
+            # before any cleaning is attempted.
+            garbage = _garbage_reason(sample, min_alpha_ratio)
+            if garbage:
+                logger.debug("clean_garbage_quarantined", reason=garbage,
+                             chunk_hash=sample.get("_chunk_hash", "???"))
+                quarantined.append((sample, "garbage", garbage))
                 continue
 
             original_question = sample.get("question", "")
             had_embedded = _find_options_start(original_question) is not None
-
-            # Track whether box-drawing chars are present before cleaning
             had_box_drawing = any(
                 _BOX_DRAWING_RE.search(sample.get(f, ""))
                 for f in ("question", "correct_answer", "explanation", "chunk")
@@ -503,12 +745,10 @@ def clean_dataset(input_path: str, output_path: str) -> int:
                 if isinstance(d, str)
             )
 
-            result = clean_sample(sample)
+            result, reason = clean_sample(sample)
 
             if result is None:
-                # Distinguish book-regex drops from other failures
-                # (clean_sample already logged the specific reason)
-                skipped += 1
+                quarantined.append((sample, "deterministic", reason or "unknown"))
             else:
                 if had_box_drawing:
                     box_drawing_stripped += 1
@@ -516,12 +756,37 @@ def clean_dataset(input_path: str, output_path: str) -> int:
                     cleaned += 1
                 else:
                     already_clean += 1
-                output_samples.append(result)
+                survivors.append(result)
 
-    # Write output
+    det_quarantined = len(quarantined)
+    print(
+        f"\n  Stage 1 (deterministic): {len(survivors)} passed, "
+        f"{det_quarantined} quarantined of {total}."
+    )
+
+    # ── Stage 2: LLM 4-judge re-validation ────────────────────────────────
+    llm_rejected = 0
+    if use_llm:
+        survivors, rejected = _llm_validate(survivors, llm_workers)
+        llm_rejected = len(rejected)
+        for s, reason in rejected:
+            quarantined.append((s, "llm", reason))
+        print(f"  Stage 2 (LLM judges): {len(survivors)} accepted, {llm_rejected} quarantined.")
+    else:
+        print("  Stage 2 (LLM judges): SKIPPED (--skip-llm)")
+
+    # ── Write cleaned output ──────────────────────────────────────────────
     with open(out_p, "w", encoding="utf-8") as fout:
-        for s in output_samples:
+        for s in survivors:
             fout.write(json.dumps(s) + "\n")
+
+    # ── Write quarantine (with reason metadata for human review) ──────────
+    with open(quar_p, "w", encoding="utf-8") as fq:
+        for s, stage, reason in quarantined:
+            rec = dict(s)
+            rec["_reject_stage"] = stage
+            rec["_reject_reason"] = reason
+            fq.write(json.dumps(rec) + "\n")
 
     logger.info(
         "clean_dataset_complete",
@@ -529,34 +794,68 @@ def clean_dataset(input_path: str, output_path: str) -> int:
         already_clean=already_clean,
         cleaned=cleaned,
         box_drawing_stripped=box_drawing_stripped,
-        book_regex_dropped=book_regex_dropped,
-        skipped=skipped,
+        deterministic_quarantined=det_quarantined,
+        llm_quarantined=llm_rejected,
+        kept=len(survivors),
         output=str(out_p),
+        quarantine=str(quar_p),
     )
 
     _print_report(
-        total, already_clean, cleaned, skipped,
-        box_drawing_stripped, book_regex_dropped,
-        output_samples,
+        total, already_clean, cleaned, len(quarantined),
+        box_drawing_stripped, det_quarantined,
+        survivors,
     )
-    return len(output_samples)
+    print(f"  Cleaned output:   {len(survivors):>5}  -> {out_p}")
+    print(f"  Quarantined:      {len(quarantined):>5}  -> {quar_p}")
+    print(f"    (review {quar_p.name}; move any false positives back into {out_p.name})\n")
+    return len(survivors)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Clean MCQ dataset — strip embedded options, box-drawing chars, and book references.",
+        description=(
+            "Clean + validate an MCQ dataset: deterministic garbage/option/"
+            "box-drawing/book-reference filtering, then an LLM 4-judge "
+            "re-validation. Rejects are quarantined (not dropped) for review."
+        ),
     )
     parser.add_argument(
         "--input", required=True,
-        help="Input JSONL file (e.g. mcq_raw_accepted.jsonl).",
+        help="Input JSONL file (e.g. mcq_raw.jsonl).",
     )
     parser.add_argument(
         "--output", required=True,
-        help="Output cleaned JSONL file.",
+        help="Output cleaned JSONL file (e.g. mcq_raw_cleaned.jsonl).",
+    )
+    parser.add_argument(
+        "--quarantine", default=None,
+        help="Quarantine JSONL for rejected samples "
+             "(default: <output>_quarantine.jsonl).",
+    )
+    parser.add_argument(
+        "--skip-llm", action="store_true", default=False,
+        help="Deterministic cleaning only — skip the LLM 4-judge stage.",
+    )
+    parser.add_argument(
+        "--llm-workers", type=int, default=6,
+        help="Parallel sample-workers for the LLM stage (default 6).",
+    )
+    parser.add_argument(
+        "--min-alpha-ratio", type=float, default=_MIN_ALPHA_RATIO,
+        help=f"Min fraction of alphabetic chars for chunk/question/answer to be "
+             f"considered real text (default {_MIN_ALPHA_RATIO}).",
     )
     args = parser.parse_args()
 
-    n = clean_dataset(args.input, args.output)
+    n = clean_dataset(
+        args.input,
+        args.output,
+        quarantine_path=args.quarantine,
+        use_llm=not args.skip_llm,
+        llm_workers=args.llm_workers,
+        min_alpha_ratio=args.min_alpha_ratio,
+    )
     print(f"Cleaned dataset: {n} samples -> {args.output}")
 
 

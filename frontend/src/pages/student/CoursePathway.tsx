@@ -23,7 +23,25 @@ const LOADING_MESSAGES = [
 ];
 
 type Phase = "init" | "generating" | "ready" | "error";
-type SessionStatus = "done" | "current" | "upcoming" | "start";
+type SessionStatus = "done" | "current" | "upcoming" | "start" | "locked";
+
+// ── progress-view derivations (all from real enrollment data) ──
+const MASTERY_TIERS = ["NOVICE", "INTERMEDIATE", "EXPERT"];
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+function tierFromScore(s: number | null): string | null {
+  if (s == null) return null;
+  if (s < 40) return "NOVICE";
+  if (s < 70) return "INTERMEDIATE";
+  return "EXPERT";
+}
+function nextTier(t: string): string | null {
+  const i = MASTERY_TIERS.indexOf(t);
+  return i >= 0 && i < MASTERY_TIERS.length - 1 ? MASTERY_TIERS[i + 1] : null;
+}
+function fmtDate(d: Date): string {
+  return d.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }).toUpperCase();
+}
 
 interface EnrollmentRow {
   id: number;
@@ -32,6 +50,9 @@ interface EnrollmentRow {
   progress_percentage: string;
   is_pathway_ready: boolean;
   current_pathway: PathwayPlan | Record<string, never> | null;
+  placement_score: number | null;
+  enrolled_at: string;
+  last_accessed: string;
 }
 
 interface StudentContextProfile {
@@ -59,6 +80,9 @@ export default function CoursePathway() {
   const [firstLessonId, setFirstLessonId] = useState<number | null>(null);
   const [currentLessonId, setCurrentLessonId] = useState<number | null>(null);
   const [progressPct, setProgressPct] = useState(0);
+  const [placementScore, setPlacementScore] = useState<number | null>(null);
+  const [enrolledAt, setEnrolledAt] = useState<string>("");
+  const [lastAccessed, setLastAccessed] = useState<string>("");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -103,6 +127,9 @@ export default function CoursePathway() {
       if (enrollment) {
         setCurrentLessonId(enrollment.current_lesson);
         setProgressPct(Math.max(0, Math.min(100, parseFloat(enrollment.progress_percentage) || 0)));
+        setPlacementScore(typeof enrollment.placement_score === "number" ? enrollment.placement_score : null);
+        setEnrolledAt(enrollment.enrolled_at || "");
+        setLastAccessed(enrollment.last_accessed || "");
       }
 
       // PROGRESS MODE — saved pathway already exists, don't regenerate
@@ -126,9 +153,17 @@ export default function CoursePathway() {
           if (ctxRes.ok) ctx = (await ctxRes.json()).profile;
         } catch (e) { console.warn("Could not fetch student context, using defaults", e); }
 
+        // Resolve the course title so the backend can map the Django course id
+        // to its ChromaDB book name. Fetch fresh to avoid racing the title effect.
+        let title = courseTitle;
+        if (!title) {
+          try { title = (await getCourseById(Number(courseId))).title; } catch { /* ignore */ }
+        }
+
         const result = await generatePathway({
           student_id: ctx?.student_id || String(studentId),
-          course_id: ctx?.course_id || "pythonlearn",
+          course_id: String(courseId),
+          course_title: title,
           mastery_level: ctx?.mastery_level || "Novice",
           composition_mode: ctx?.composition_mode || "balanced",
           language_proficiency: ctx?.language_proficiency || "Intermediate",
@@ -214,6 +249,129 @@ export default function CoursePathway() {
     ? (firstLessonId === null ? "PREPARING COURSE…" : "BEGIN COURSE")
     : progressPct >= 100 ? "REVIEW COURSE" : "CONTINUE LEARNING";
 
+  const goToCurrent = () => {
+    sessionStorage.setItem("pathway_plan", JSON.stringify(plan));
+    if (resumeLessonId) navigate(`/course/${courseId}/lesson/${resumeLessonId}`);
+  };
+
+  // ── PROGRESS MODE — the "where am I" view (dashboard re-entry) ──
+  if (isProgress) {
+    const isComplete = progressPct >= 100;
+    const position = isComplete ? total : Math.min(doneCount + 1, total);
+    const currentSession = plan.sessions[position - 1] ?? plan.sessions[plan.sessions.length - 1];
+
+    // measured pace from real timestamps (sessions completed / weeks since enrolment)
+    const now = Date.now();
+    const enrolledMs = enrolledAt ? new Date(enrolledAt).getTime() : now;
+    const weeksElapsed = Math.max((now - enrolledMs) / (7 * 86_400_000), 1 / 7);
+    const pace = doneCount > 0 ? doneCount / weeksElapsed : 0;
+    const remaining = total - doneCount;
+    const estDate = pace > 0 && remaining > 0 ? new Date(now + (remaining / pace) * 7 * 86_400_000) : null;
+
+    // activity status from real last_accessed (no invented deadline)
+    const lastMs = lastAccessed ? new Date(lastAccessed).getTime() : 0;
+    const daysIdle = lastMs ? (now - lastMs) / 86_400_000 : Infinity;
+    const activity = isComplete ? "COMPLETE" : doneCount === 0 ? "NOT STARTED" : daysIdle <= 10 ? "ON TRACK" : "IDLE";
+    const activityColor = activity === "ON TRACK" || activity === "COMPLETE" ? "var(--accent-success)"
+      : activity === "IDLE" ? "var(--accent-warm)" : "var(--text-secondary)";
+
+    const tier = tierFromScore(placementScore);
+    const goal = tier ? nextTier(tier) : null;
+
+    const statusForP = (i: number): SessionStatus =>
+      i < doneCount ? "done" : i === doneCount && !isComplete ? "current" : "locked";
+
+    const stats: Array<[string, string, string]> = [
+      ["EST. COMPLETION", isComplete ? "DONE" : estDate ? fmtDate(estDate) : "—", "var(--text-primary)"],
+      ["TOTAL SESSIONS", String(total), "var(--text-primary)"],
+      ["CURRENT POSITION", `${pad2(position)} / ${pad2(total)}`, "var(--accent-primary)"],
+      ["PACE", pace > 0 ? `${pace.toFixed(1)}/WK` : "—", activityColor],
+    ];
+
+    return (
+      <div className="codex" style={{ flex: 1, overflowY: "auto", background: "var(--bg-primary)" }}>
+        <style>{`
+          .pai-pw-grid { display: grid; grid-template-columns: 1fr; gap: 28px; }
+          @media (min-width: 920px) {
+            .pai-pw-grid { grid-template-columns: minmax(280px, 320px) 1fr; gap: 40px; align-items: start; }
+            .pai-pw-aside { position: sticky; top: 24px; }
+          }
+          @media print { .pai-pw-noprint { display: none !important; } }
+        `}</style>
+        <div style={{ padding: `clamp(24px,4vw,44px) ${pad} 80px`, maxWidth: 1180, marginInline: "auto" }}>
+          <button onClick={() => navigate(-1)} className="t-label pai-pw-noprint" style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-secondary)", marginBottom: 26 }}>← BACK</button>
+
+          <div className="pai-pw-grid">
+            {/* ── sidebar: where you are ── */}
+            <aside className="pai-pw-aside" style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderRadius: 10, padding: 26 }}>
+              <div className="t-label" style={{ color: "var(--accent-primary)" }}>{isComplete ? "COURSE COMPLETE" : "CURRENT SESSION"}</div>
+              <div className="t-display" style={{ fontSize: "clamp(56px,9vw,88px)", color: "var(--accent-primary)", lineHeight: 0.9, marginTop: 8 }}>{pad2(position)}</div>
+              <div className="t-heading" style={{ fontSize: 20, color: "var(--text-primary)", marginTop: 12 }}>{currentSession?.session_title}</div>
+              <div className="t-mono steel" style={{ marginTop: 8 }}>SESSION {pad2(position)} OF {pad2(total)}</div>
+
+              <div style={{ marginTop: 20 }}>
+                <div className="progress"><i style={{ width: `${Math.max(2, progressPct)}%` }} /></div>
+                <div className="t-mono" style={{ color: "var(--accent-primary)", marginTop: 8 }}>{Math.round(progressPct)}% COMPLETE</div>
+              </div>
+
+              {currentSession?.topics_covered?.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 18 }}>
+                  {currentSession.topics_covered.slice(0, 6).map((t, i) => (
+                    <span key={i} className="t-mono" style={{ color: "var(--steel-light)", border: "1px solid var(--hairline)", padding: "3px 7px", borderRadius: 4 }}>{t}</span>
+                  ))}
+                </div>
+              )}
+
+              <button onClick={goToCurrent} className="btn btn-red pai-pw-noprint" style={{ marginTop: 24, width: "100%", justifyContent: "space-between", padding: "18px 22px" }}>
+                {isComplete ? "REVIEW COURSE" : "RESUME SESSION"} <span>→</span>
+              </button>
+            </aside>
+
+            {/* ── main: the full plan ── */}
+            <main style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 12 }}>YOUR PATHWAY · IN PROGRESS</div>
+                  <div className="t-display" style={{ fontSize: "clamp(32px,5vw,56px)", color: "var(--text-primary)", lineHeight: 0.96 }}>
+                    {courseTitle || "Your learning pathway"}<span style={{ color: "var(--accent-primary)" }}>.</span>
+                  </div>
+                  {tier && (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 16 }}>
+                      <span className="t-label" style={{ color: "var(--text-secondary)", border: "1px solid var(--hairline)", padding: "5px 10px", borderRadius: 6 }}>
+                        {tier}{goal ? ` → ${goal}` : ""}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <button onClick={() => window.print()} className="btn pai-pw-noprint" style={{ flexShrink: 0 }}>EXPORT PDF</button>
+              </div>
+
+              {/* stat strip */}
+              <div style={{ marginTop: 28, background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderRadius: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))" }}>
+                {stats.map(([label, v, color], i) => (
+                  <div key={label} style={{ padding: "20px 22px", borderRight: i < stats.length - 1 ? "1px solid var(--hairline)" : "none" }}>
+                    <div className="t-label" style={{ color: "var(--text-secondary)" }}>{label}</div>
+                    <div className="t-display" style={{ fontSize: "clamp(24px,3vw,34px)", marginTop: 10, color }}>{v}</div>
+                    {label === "PACE" && <div className="t-mono" style={{ color: activityColor, marginTop: 4 }}>{activity}</div>}
+                  </div>
+                ))}
+              </div>
+
+              {/* sessions */}
+              <div style={{ marginTop: 36 }}>
+                <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 18 }}>THE PLAN · {total} SESSIONS</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {plan.sessions.map((s, i) => <SessionRow key={s.session_number} session={s} status={statusForP(i)} />)}
+                </div>
+              </div>
+            </main>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── GENERATE MODE — first reveal after placement ──
   return (
     <div className="codex" style={{ flex: 1, overflowY: "auto", background: "var(--bg-primary)" }}>
       <div style={{ padding: `clamp(28px,4vw,48px) ${pad} 80px`, maxWidth: 1080, marginInline: "auto" }}>
@@ -282,16 +440,17 @@ export default function CoursePathway() {
 function SessionRow({ session, status }: { session: PathwaySession; status: SessionStatus }) {
   const extra = session.topics_covered.length - 5;
   const leftBorder = status === "done" ? "3px solid var(--accent-success)" : status === "current" || status === "start" ? "3px solid var(--accent-primary)" : "1px solid var(--hairline)";
-  const numColor = status === "done" ? "var(--accent-success)" : status === "upcoming" ? "var(--steel-light)" : "var(--accent-primary)";
+  const numColor = status === "done" ? "var(--accent-success)" : status === "upcoming" || status === "locked" ? "var(--steel-light)" : "var(--accent-primary)";
 
   const tag =
-    status === "done" ? { label: "✓ DONE", color: "var(--accent-success)" }
+    status === "done" ? { label: "✓ MASTERED", color: "var(--accent-success)" }
       : status === "current" ? { label: "CURRENT", color: "var(--accent-primary)" }
         : status === "start" ? { label: "START HERE", color: "var(--accent-primary)" }
-          : null;
+          : status === "locked" ? { label: "🔒 LOCKED", color: "var(--steel-light)" }
+            : null;
 
   return (
-    <div style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderLeft: leftBorder, borderRadius: 8, padding: 24, display: "flex", gap: 22, opacity: status === "upcoming" ? 0.92 : 1 }}>
+    <div style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderLeft: leftBorder, borderRadius: 8, padding: 24, display: "flex", gap: 22, opacity: status === "upcoming" ? 0.92 : status === "locked" ? 0.7 : 1 }}>
       <div className="t-display" style={{ fontSize: "clamp(34px,5vw,52px)", color: numColor, lineHeight: 0.9, flexShrink: 0, minWidth: 52 }}>{String(session.session_number).padStart(2, "0")}</div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>

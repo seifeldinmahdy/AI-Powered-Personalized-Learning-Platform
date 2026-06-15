@@ -30,12 +30,13 @@ import random
 import sys
 import threading
 import time
-from collections import Counter
+from collections import Counter, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import requests
 import structlog
 from dotenv import load_dotenv
 from tqdm import tqdm
@@ -60,43 +61,77 @@ logger = structlog.get_logger(__name__)
 #   FALLBACK_KEYS    = [key_9, key_10]          — cycling fallback on hard failure
 #
 # Total: 2 gen + 6 judge (2 per judge) + 2 fallback = 10 keys.
-# GENERATION_MODEL & JUDGE_MODEL = gpt-oss:120b for both generation and judging.
+# GENERATION_MODEL = gpt-oss:120b (data quality). JUDGE_MODEL = nemotron-3-nano:30b
+#   — a lighter, GPU-time-cheaper judge validated to match gpt-oss:120b's
+#     accept/reject verdicts; judges run 3x per MCQ so this is the quota win.
 # All 10 keys are registered in one SharedKeyManager; each role prefers its own
 # keys, then borrows any idle key from another role, then shares a single key
 # (no parallelism), and the run stops only when every key is permanently dead.
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEMPORARY: NVIDIA API backend (OpenAI-compatible) ─────────────────────────────
+# When USE_NVIDIA=1, the whole pipeline talks to NVIDIA's hosted NIM endpoint
+# instead of Ollama Cloud. Same role layout (1 gen + 3 judges) but each role gets
+# ONE NVIDIA key, and every key is throttled to NVIDIA_RPM_PER_KEY requests/min by
+# a per-key sliding-window limiter (NVIDIA free tier = 40 RPM/key). Flip the flag
+# back to 0 in .env to instantly restore the Ollama Cloud path — nothing below is
+# deleted, only bypassed. See NvidiaClient + _make_ollama_client.
+# ═══════════════════════════════════════════════════════════════════════════════
+USE_NVIDIA: bool = os.getenv("USE_NVIDIA", "0").strip().lower() in ("1", "true", "yes")
+NVIDIA_BASE_URL: str = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+# All 4 keys belong to ONE NVIDIA account, so the 40 RPM cap is POOLED across
+# every key (gen + all judges). One account-wide limiter enforces it; stay
+# strictly under 40 (margin for jitter).
+NVIDIA_RPM: int = int(os.getenv("NVIDIA_RPM", "38"))
+NVIDIA_MAX_TOKENS: int = int(os.getenv("NVIDIA_MAX_TOKENS", "8192"))
+NVIDIA_REASONING_BUDGET: int = int(os.getenv("NVIDIA_REASONING_BUDGET", "4096"))
+
 # ── Key resolution — each role has named env vars ───────────────────────────
-GENERATION_KEYS: list[str] = [
-    k for k in [
-        os.getenv("OLLAMA_API_KEY_1"),
-        os.getenv("OLLAMA_API_KEY_2"),
-    ] if k
-]
-JUDGE_B_KEYS: list[str] = [
-    k for k in [
-        os.getenv("OLLAMA_API_KEY_3"),
-        os.getenv("OLLAMA_API_KEY_4"),
-    ] if k
-]
-JUDGE_C_KEYS: list[str] = [
-    k for k in [
-        os.getenv("OLLAMA_API_KEY_5"),
-        os.getenv("OLLAMA_API_KEY_6"),
-    ] if k
-]
-JUDGE_D_KEYS: list[str] = [
-    k for k in [
-        os.getenv("OLLAMA_API_KEY_7"),
-        os.getenv("OLLAMA_API_KEY_8"),
-    ] if k
-]
-FALLBACK_KEYS: list[str] = [
-    k for k in [
-        os.getenv("OLLAMA_API_KEY_9"),
-        os.getenv("OLLAMA_API_KEY_10"),
-    ] if k
-]
+if USE_NVIDIA:
+    # One NVIDIA key per role. No fallback pool (the per-key rate limiter, not
+    # key rotation, is the safety mechanism here).
+    GENERATION_KEYS: list[str] = [k for k in [os.getenv("NVIDIA_API_KEY_GEN")] if k]
+    JUDGE_B_KEYS: list[str] = [k for k in [os.getenv("NVIDIA_API_KEY_JUDGE_B")] if k]
+    JUDGE_C_KEYS: list[str] = [k for k in [os.getenv("NVIDIA_API_KEY_JUDGE_C")] if k]
+    JUDGE_D_KEYS: list[str] = [k for k in [os.getenv("NVIDIA_API_KEY_JUDGE_D")] if k]
+    FALLBACK_KEYS: list[str] = []
+else:
+    # 13 keys: 3 gen + 3 judge B + 3 judge C + 2 judge D + 2 fallback
+    # Keys 11/12/13 are the 3rd slot for gen/judge-B/judge-C respectively.
+    GENERATION_KEYS: list[str] = [
+        k for k in [
+            os.getenv("OLLAMA_API_KEY_1"),
+            os.getenv("OLLAMA_API_KEY_2"),
+            os.getenv("OLLAMA_API_KEY_11"),
+        ] if k
+    ]
+    JUDGE_B_KEYS: list[str] = [
+        k for k in [
+            os.getenv("OLLAMA_API_KEY_3"),
+            os.getenv("OLLAMA_API_KEY_4"),
+            os.getenv("OLLAMA_API_KEY_12"),
+        ] if k
+    ]
+    JUDGE_C_KEYS: list[str] = [
+        k for k in [
+            os.getenv("OLLAMA_API_KEY_5"),
+            os.getenv("OLLAMA_API_KEY_6"),
+            os.getenv("OLLAMA_API_KEY_13"),
+        ] if k
+    ]
+    JUDGE_D_KEYS: list[str] = [
+        k for k in [
+            os.getenv("OLLAMA_API_KEY_7"),
+            os.getenv("OLLAMA_API_KEY_8"),
+        ] if k
+    ]
+    FALLBACK_KEYS: list[str] = [
+        k for k in [
+            os.getenv("OLLAMA_API_KEY_9"),
+            os.getenv("OLLAMA_API_KEY_10"),
+        ] if k
+    ]
 
 # Backward-compat aliases (used by legacy checks; map to first key of each set)
 JUDGE_B_KEY: str | None = JUDGE_B_KEYS[0] if JUDGE_B_KEYS else None
@@ -105,7 +140,7 @@ JUDGE_D_KEY: str | None = JUDGE_D_KEYS[0] if JUDGE_D_KEYS else None
 
 # Model names — set via env vars with safe defaults
 GENERATION_MODEL: str = os.getenv("GENERATION_MODEL", "gpt-oss:120b")
-JUDGE_MODEL:      str = os.getenv("JUDGE_MODEL", "gpt-oss:120b")
+JUDGE_MODEL:      str = os.getenv("JUDGE_MODEL", "nemotron-3-nano:30b")
 
 # ── Unified CONFIG dict — preserved for internal use ────────────────────────
 CONFIG = {
@@ -120,18 +155,20 @@ CONFIG = {
     "chunk_overlap": 80,
     "max_retries": 3,
     "retry_delay": 2,
-    "num_workers": 2,  # matches the 2 generation keys
+    "num_workers": 3,  # matches the 3 generation keys
     # Parallel evaluation workers draining the judge queue. Evaluation is the
     # bottleneck (3 judge calls + ~50% regeneration per item vs 1 cheap call per
     # draft), so it needs more threads than generation. They borrow idle
     # gen/fallback keys via the SharedKeyManager.
-    "num_eval_workers": 4,
+    # 6 workers × 3 parallel judges = 18 concurrent judge slots; SharedKeyManager
+    # queues excess workers until a key is free (3+3+2 = 8 dedicated judge keys
+    # plus gen/fallback as borrowable spares).
+    "num_eval_workers": 6,
     # How many TOTAL judging rounds an MCQ gets before it is given up on.
     # 1 = judge once, discard on reject. N = on reject, regenerate with the
     # judges' feedback and re-judge, up to N rounds total. Each extra round
-    # costs ~1 generation + up to 3 judge calls. 3 = two regeneration attempts,
-    # which recovers more borderline chunks at a modest throughput cost.
-    "max_eval_retries": 3,
+    # costs ~1 generation + up to 3 judge calls. 3 = two regeneration attempts.
+    "max_eval_retries": 2,
     # How many consecutive API errors on a key before marking it failed
     "key_fail_threshold": 3,
     # Seconds to wait before re-trying a failed key
@@ -393,6 +430,15 @@ _SANITIZE_BOX_CHARS_RE = re.compile(r'[\u2500-\u257f]+')
 _SANITIZE_BOX_LINE_RE = re.compile(r'^[\u2500-\u257f\s]+$')
 # PDF page-number prefix at start of line: "55 " with no other digits following
 _SANITIZE_PAGE_PREFIX_RE = re.compile(r'^\d{1,4} +(?=[A-Z])', re.MULTILINE)
+# Email addresses and URLs — never useful training content, strip before LLM.
+_SANITIZE_EMAIL_RE = re.compile(
+    r'\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b'
+)
+_SANITIZE_URL_RE = re.compile(
+    r'https?://\S+'
+    r'|(?<!\w)www\.\S+'
+    r'|(?<!\w)ftp://\S+',
+)
 
 
 def sanitize_chunk(text: str) -> str | None:
@@ -476,6 +522,10 @@ def sanitize_chunk(text: str) -> str | None:
         # ── Remove forward/backward references ─────────────────────────
         stripped = _SANITIZE_FORWARD_RE.sub("", stripped).strip()
 
+        # ── Strip email addresses and URLs ─────────────────────────────
+        stripped = _SANITIZE_EMAIL_RE.sub("", stripped).strip()
+        stripped = _SANITIZE_URL_RE.sub("", stripped).strip()
+
         if stripped:
             result_lines.append(stripped)
 
@@ -503,6 +553,14 @@ def sanitize_chunk(text: str) -> str | None:
 
     # Discard if too short after cleaning
     if len(cleaned.split()) < 40:
+        return None
+
+    # Discard chunks that are mostly non-alphabetic noise (pipe tables, garbled
+    # PDF tables, symbol-heavy extraction artifacts). "|" is plain ASCII so it
+    # slips past the Unicode box-drawing filter above; this catches it and any
+    # similar symbol-dominated garbage by requiring ≥40% alpha chars.
+    non_ws = [c for c in cleaned if not c.isspace()]
+    if non_ws and (sum(1 for c in non_ws if c.isalpha()) / len(non_ws)) < 0.40:
         return None
 
     return cleaned
@@ -1087,7 +1145,181 @@ def _build_tasks(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _make_ollama_client(api_key: str, model: str | None = None):
+# ═══════════════════════════════════════════════════════════════════════════════
+# NVIDIA CLIENT (TEMPORARY)  — OpenAI-compatible NIM backend with per-key throttle
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class _RateLimiter:
+    """Thread-safe sliding-window limiter: at most ``max_per_min`` acquires/60s.
+
+    Shared across every thread that uses the same NVIDIA key, so concurrent
+    generation/eval workers collectively never exceed the free-tier RPM cap.
+    """
+
+    def __init__(self, max_per_min: int) -> None:
+        self._max = max(1, max_per_min)
+        self._window = 60.0
+        self._calls: deque[float] = deque()
+        self._lock = threading.Lock()
+
+    def acquire(self) -> None:
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                while self._calls and now - self._calls[0] >= self._window:
+                    self._calls.popleft()
+                if len(self._calls) < self._max:
+                    self._calls.append(now)
+                    return
+                # Window full — wait until the oldest call ages out.
+                sleep_for = self._window - (now - self._calls[0]) + 0.02
+            time.sleep(min(max(sleep_for, 0.01), 5.0))
+
+
+# ONE account-wide limiter shared by every key. All 4 keys are the same NVIDIA
+# account, so the 40 RPM cap is pooled across gen + every judge — a single
+# limiter (not per-key) is what actually keeps the account under the cap.
+_NV_GLOBAL_LIMITER: _RateLimiter | None = None
+_NV_LIMITER_LOCK = threading.Lock()
+
+
+def _nv_limiter() -> _RateLimiter:
+    global _NV_GLOBAL_LIMITER
+    with _NV_LIMITER_LOCK:
+        if _NV_GLOBAL_LIMITER is None:
+            _NV_GLOBAL_LIMITER = _RateLimiter(NVIDIA_RPM)
+        return _NV_GLOBAL_LIMITER
+
+
+class NvidiaClient:
+    """Drop-in replacement for ``OllamaClient`` backed by NVIDIA's NIM endpoint.
+
+    Mirrors ``OllamaClient.chat()`` / ``.chat_json()`` exactly so RoleClient,
+    the judges, and the generation/regeneration paths use it unchanged. The
+    OpenAI-compatible REST shape is ``POST /chat/completions`` returning
+    ``choices[0].message.content`` (we ignore the separate ``reasoning_content``
+    that the reasoning models emit). Every request first passes through the
+    per-key rate limiter so the 40 RPM/key free-tier cap is never exceeded.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        api_key: str,
+        max_retries: int = 2,
+        timeout: int = 180,
+    ) -> None:
+        self._endpoint = base_url.rstrip("/") + "/chat/completions"
+        self._model = model
+        self._api_key = api_key
+        self._max_retries = max_retries
+        self._timeout = timeout
+        self._limiter = _nv_limiter()
+        # Nemotron is a reasoning model and wants an explicit reasoning_budget;
+        # gpt-oss does not take that field.
+        self._is_reasoning = "nemotron" in model.lower()
+
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.3,
+        json_mode: bool = False,  # accepted for signature parity; prompt-driven
+        timeout_override: int | None = None,
+        num_predict: int | None = None,
+    ) -> str:
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": temperature,
+            "top_p": 1,
+            "max_tokens": num_predict or NVIDIA_MAX_TOKENS,
+            "stream": False,
+        }
+        if self._is_reasoning:
+            payload["reasoning_budget"] = NVIDIA_REASONING_BUDGET
+
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        eff_timeout = timeout_override if timeout_override is not None else self._timeout
+
+        last_error: Exception | None = None
+        for attempt in range(1, self._max_retries + 1):
+            self._limiter.acquire()  # blocks to stay under the RPM cap
+            try:
+                resp = requests.post(
+                    self._endpoint, headers=headers, json=payload, timeout=eff_timeout
+                )
+                if resp.status_code == 429:
+                    # Should be rare given the limiter; treat as transient backoff.
+                    raise RuntimeError(f"429 rate limit: {resp.text[:160]}")
+                resp.raise_for_status()
+                content = resp.json()["choices"][0]["message"].get("content") or ""
+                if not content.strip():
+                    raise RuntimeError("empty content from model")
+                return content
+            except (requests.RequestException, KeyError, ValueError, RuntimeError) as exc:
+                last_error = exc
+                logger.warning(
+                    "nvidia_api_error",
+                    attempt=attempt,
+                    model=self._model,
+                    error=str(exc)[:160],
+                )
+                if attempt < self._max_retries:
+                    time.sleep(2 ** attempt)
+
+        raise RuntimeError(
+            f"NVIDIA API failed after {self._max_retries} attempts: {last_error}"
+        )
+
+    def chat_json(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.3,
+        timeout_override: int | None = None,
+        num_predict: int | None = None,
+    ) -> dict[str, Any]:
+        """Chat expecting JSON — same 3-tier tolerant parse as OllamaClient."""
+        raw = self.chat(
+            messages,
+            temperature=temperature,
+            json_mode=True,
+            timeout_override=timeout_override,
+            num_predict=num_predict,
+        )
+        # Tier 1 — strict
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+        # Tier 2 — extract the bare {...} object
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start >= 0 and end > start:
+            candidate = raw[start:end]
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+            # Tier 3 — repair (missing commas, unescaped quotes, truncation)
+            try:
+                from json_repair import repair_json  # type: ignore
+                repaired = repair_json(candidate, return_objects=True)
+                if isinstance(repaired, dict):
+                    logger.warning("json_repaired", original_len=len(raw))
+                    return repaired
+            except Exception:
+                pass
+        raise json.JSONDecodeError(
+            f"Could not parse JSON from model output (len={len(raw)})", raw, 0
+        )
+
+
+def _make_ollama_client(api_key: str, model: str | None = None, max_retries: int = 3):
     """Create an OllamaClient with a specific API key and optional model override.
 
     Parameters
@@ -1097,7 +1329,24 @@ def _make_ollama_client(api_key: str, model: str | None = None):
     model :
         Model name.  Defaults to ``GENERATION_MODEL`` (small, fast).
         Pass ``JUDGE_MODEL`` to create a judge client.
+    max_retries :
+        Inner per-call retry budget. RoleClient passes ``1`` (fail fast): the
+        SharedKeyManager is the retry/rotation layer, so retrying the SAME key
+        in here would just hammer a quota-dead key (3 hits + ~6s of backoff)
+        before the manager ever gets a chance to cool it and rotate away.
     """
+    # TEMPORARY NVIDIA backend: same interface, OpenAI-compatible NIM endpoint,
+    # with the per-key rate limiter doing the throttling (its own 2 internal
+    # retries replace key rotation, since each role has a single NVIDIA key).
+    if USE_NVIDIA:
+        return NvidiaClient(
+            base_url=NVIDIA_BASE_URL,
+            model=model or GENERATION_MODEL,
+            api_key=api_key,
+            max_retries=2,
+            timeout=180,
+        )
+
     pathway_src = str(
         Path(__file__).resolve().parent.parent.parent.parent.parent / "course_pathway" / "src"
     )
@@ -1110,7 +1359,7 @@ def _make_ollama_client(api_key: str, model: str | None = None):
         host=CONFIG["ollama_host"],
         model=model or GENERATION_MODEL,
         api_key=api_key,
-        max_retries=3,
+        max_retries=max_retries,
         timeout=180,
     )
 
@@ -1438,12 +1687,17 @@ class SharedKeyManager:
         self._fail_threshold = fail_threshold
         self._base_cd        = base_cooldown
         self._quota_cd       = quota_cooldown
+        self._max_quota_cd   = 1800.0   # cap escalating quota cooldown at 30 min
         self._grace          = grace_period
         self._lock           = threading.RLock()
 
         self._errors:        dict[str, int]   = {k: 0 for k in self._all_keys}
         self._cooling_until: dict[str, float] = {k: 0.0 for k in self._all_keys}
         self._in_use:        dict[str, int]   = {k: 0 for k in self._all_keys}
+        # Consecutive quota (429) failures per key — drives escalating cooldown
+        # so an exhausted key is parked for progressively longer, not re-polled
+        # every two minutes while a healthy parallel key carries the load.
+        self._quota_strikes: dict[str, int]   = {k: 0 for k in self._all_keys}
 
         self._outage_start: float | None = None
         self._last_pause_print: float = 0.0
@@ -1552,24 +1806,53 @@ class SharedKeyManager:
                 self._in_use[key] -= 1
 
     def report_success(self, key: str) -> None:
-        """Clear the error count and any cooldown for a key that just worked."""
+        """Clear error count, quota strikes, and cooldown for a recovered key."""
         with self._lock:
             self._errors[key] = 0
+            self._quota_strikes[key] = 0
             self._cooling_until[key] = 0.0
 
     def report_error(self, key: str, is_quota: bool = False) -> None:
-        """Record an error; cool the key down once it crosses the threshold."""
+        """Cool a failed key. Quota errors park it immediately; flaky ones wait.
+
+        A quota / rate-limit (429) error means the key is genuinely out of
+        budget right now — there is no point trying it again soon — so we cool
+        it IMMEDIATELY (no strike threshold) and grow the cooldown on each
+        consecutive quota failure (120s → 240s → 480s … capped at 30 min). The
+        ``pick()`` ranking already prefers healthy keys, so once a key is cooled
+        the working parallel key takes over and the dead key stops getting calls
+        until its (long) cooldown lapses.
+
+        A transient error (timeout, 5xx, network blip) is treated as flaky: it
+        only cools the key after ``fail_threshold`` consecutive strikes.
+        """
         with self._lock:
-            self._errors[key] = self._errors.get(key, 0) + 1
-            if self._errors[key] >= self._fail_threshold:
-                cd = self._quota_cd if is_quota else self._base_cd
+            if is_quota:
+                self._quota_strikes[key] = self._quota_strikes.get(key, 0) + 1
+                cd = min(
+                    self._quota_cd * (2 ** (self._quota_strikes[key] - 1)),
+                    self._max_quota_cd,
+                )
                 self._cooling_until[key] = time.time() + cd
                 self._errors[key] = 0
                 logger.warning(
                     "key_cooling_down",
                     key=key[:8] + "...",
-                    cooldown_s=cd,
-                    reason="quota" if is_quota else "error",
+                    cooldown_s=round(cd),
+                    strike=self._quota_strikes[key],
+                    reason="quota",
+                )
+                return
+            # Transient error — only cool after repeated consecutive strikes.
+            self._errors[key] = self._errors.get(key, 0) + 1
+            if self._errors[key] >= self._fail_threshold:
+                self._cooling_until[key] = time.time() + self._base_cd
+                self._errors[key] = 0
+                logger.warning(
+                    "key_cooling_down",
+                    key=key[:8] + "...",
+                    cooldown_s=round(self._base_cd),
+                    reason="error",
                 )
 
 
@@ -1610,7 +1893,9 @@ class RoleClient:
         with self._clients_lock:
             c = self._clients.get(key)
             if c is None:
-                c = _make_ollama_client(key, model=self._model)
+                # max_retries=1: fail fast on a bad key and let the manager
+                # cool + rotate it, instead of retrying the same dead key.
+                c = _make_ollama_client(key, model=self._model, max_retries=1)
                 self._clients[key] = c
             return c
 
@@ -1700,7 +1985,7 @@ def _passes_regex_filter(mcq: dict) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# JUDGE B — FULL PERSONALIZATION ADHERENCE  (JUDGE_B_KEY, gpt-oss:120b)
+# JUDGE B — FULL PERSONALIZATION ADHERENCE  (JUDGE_B_KEYS, JUDGE_MODEL)
 # G-Eval: reasoning written BEFORE each sub-check answer.
 # HD-Eval: 9 atomic YES/NO sub-checks; score derived in Python, never by LLM.
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2090,7 +2375,7 @@ def _run_judge_b(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# JUDGE C — DISTRACTOR QUALITY  (JUDGE_C_KEY, gpt-oss:120b)
+# JUDGE C — DISTRACTOR QUALITY  (JUDGE_C_KEYS, JUDGE_MODEL)
 # G-Eval: reasoning before each YES/NO.
 # HD-Eval: 5 atomic hard checks + 1 advisory; verdict computed in Python.
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2221,7 +2506,7 @@ def _run_judge_c(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# JUDGE D — FACTUAL CORRECTNESS  (JUDGE_D_KEY, gpt-oss:120b)
+# JUDGE D — FACTUAL CORRECTNESS  (JUDGE_D_KEYS, JUDGE_MODEL)
 # G-Eval: reasoning before each check.
 # HD-Eval: decomposes factual correctness into per-claim verification +
 #          answerability + ambiguity + explanation; verdict computed in Python.
@@ -3456,6 +3741,11 @@ def main():
 
     # ── Print pipeline config ────────────────────────────────────────────
     print()
+    if USE_NVIDIA:
+        print(f"  Backend:          NVIDIA NIM ({NVIDIA_BASE_URL})")
+        print(f"  Rate limit:       {NVIDIA_RPM} req/min ACCOUNT-WIDE (pooled across all keys, cap = 40)")
+    else:
+        print(f"  Backend:          Ollama Cloud ({CONFIG['ollama_host']})")
     print(f"  Generation model: {GENERATION_MODEL}")
     print(f"  Judge model:      {JUDGE_MODEL}")
     print(f"  Generation keys:  {len(gen_keys)} primary + {len(fallback)} fallback")

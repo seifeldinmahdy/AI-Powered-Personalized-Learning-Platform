@@ -33,7 +33,12 @@ class StudentContext(BaseModel):
     """
 
     student_id: str = Field(..., description="Unique student identifier")
-    course_id: str = Field(..., description="Course identifier (matches ChromaDB 'course' metadata)")
+    course_id: str = Field(..., description="Course identifier (Django id; also the store/cache key)")
+    course_title: str = Field(
+        default="",
+        description="Human course title, used to resolve the ChromaDB 'course' "
+                    "(book) when course_id is not itself a book name.",
+    )
     mastery_level: Literal["Novice", "Intermediate", "Expert"] = Field(
         ..., description="Overall mastery tier from the placement test"
     )
