@@ -168,7 +168,7 @@ export default function AdminDashboard() {
                   placeholder="Search courses..."
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  className="admin-input pl-11 w-full"
+                  className="admin-input pl-12 w-full"
                 />
               </div>
               <div className="relative flex-shrink-0 min-w-[200px]">

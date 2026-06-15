@@ -1,12 +1,31 @@
-import { useState, useEffect } from 'react';
-import { Search, Loader2, Users, Trophy, Flame, Clock, BookOpen, Star } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Search, Loader2, Users, Trophy, Flame, Clock, BookOpen, Star, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { getAdminStudents, type AdminStudent } from '../../services/admin';
+
+type StudentSortKey = 'username' | 'current_xp' | 'current_streak' | 'total_minutes_learned' | 'enrollments' | 'achievements' | 'joined';
+type SortDir = 'asc' | 'desc';
+
+interface SortState {
+  key: StudentSortKey | null;
+  dir: SortDir | null;
+}
+
+const COLUMN_HEADERS: { key: StudentSortKey; label: string }[] = [
+  { key: 'username', label: 'Student' },
+  { key: 'current_xp', label: 'Level / XP' },
+  { key: 'current_streak', label: 'Streak' },
+  { key: 'total_minutes_learned', label: 'Time Learned' },
+  { key: 'enrollments', label: 'Enrollments' },
+  { key: 'achievements', label: 'Achievements' },
+  { key: 'joined', label: 'Joined' },
+];
 
 export default function AdminStudents() {
     const [students, setStudents] = useState<AdminStudent[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
+    const [sort, setSort] = useState<SortState>({ key: null, dir: null });
 
     useEffect(() => {
         getAdminStudents()
@@ -15,10 +34,81 @@ export default function AdminStudents() {
             .finally(() => setLoading(false));
     }, []);
 
-    const filtered = students.filter(s =>
-        s.username.toLowerCase().includes(search.toLowerCase()) ||
-        s.email.toLowerCase().includes(search.toLowerCase())
-    );
+    // Reset sort when the search filter changes
+    useEffect(() => {
+        setSort({ key: null, dir: null });
+    }, [search]);
+
+    const handleSort = (key: StudentSortKey) => {
+        setSort(prev => {
+            if (prev.key !== key) {
+                return { key, dir: 'asc' };
+            }
+            if (prev.dir === 'asc') {
+                return { key, dir: 'desc' };
+            }
+            return { key: null, dir: null };
+        });
+    };
+
+    const filtered = useMemo(() => {
+        let result = students.filter(s =>
+            s.username.toLowerCase().includes(search.toLowerCase()) ||
+            s.email.toLowerCase().includes(search.toLowerCase())
+        );
+
+        if (sort.key && sort.dir) {
+            result = [...result].sort((a, b) => {
+                let cmp = 0;
+                switch (sort.key) {
+                    case 'username':
+                        cmp = a.username.toLowerCase().localeCompare(b.username.toLowerCase());
+                        break;
+                    case 'current_xp':
+                        cmp = a.current_xp - b.current_xp;
+                        break;
+                    case 'current_streak':
+                        cmp = a.current_streak - b.current_streak;
+                        break;
+                    case 'total_minutes_learned':
+                        cmp = a.total_minutes_learned - b.total_minutes_learned;
+                        break;
+                    case 'enrollments':
+                        cmp = a.enrollments - b.enrollments;
+                        break;
+                    case 'achievements':
+                        cmp = a.achievements - b.achievements;
+                        break;
+                    case 'joined':
+                        cmp = new Date(a.joined).getTime() - new Date(b.joined).getTime();
+                        break;
+                }
+                return sort.dir === 'asc' ? cmp : -cmp;
+            });
+        }
+
+        return result;
+    }, [students, search, sort]);
+
+    const SortHeader = ({ column }: { column: { key: StudentSortKey; label: string } }) => {
+        const active = sort.key === column.key;
+        const dir = active ? sort.dir : null;
+        let Icon = ArrowUpDown;
+        if (dir === 'asc') Icon = ArrowUp;
+        if (dir === 'desc') Icon = ArrowDown;
+        return (
+            <th
+                onClick={() => handleSort(column.key)}
+                className="cursor-pointer select-none"
+                style={{ userSelect: 'none' }}
+            >
+                <span className="inline-flex items-center gap-1">
+                    {column.label}
+                    <Icon size={14} className={active ? 'opacity-100' : 'opacity-40'} />
+                </span>
+            </th>
+        );
+    };
 
     if (loading) {
         return (
@@ -74,7 +164,7 @@ export default function AdminStudents() {
     }
 
     return (
-        <div>
+        <div className="admin-animate-page">
             {/* Header */}
             <div className="mb-8">
                 <h1 className="admin-heading-md mb-2">Students</h1>
@@ -115,7 +205,7 @@ export default function AdminStudents() {
                     placeholder="Search by username or email..."
                     value={search}
                     onChange={e => setSearch(e.target.value)}
-                    className="admin-input w-full pl-11"
+                    className="admin-input w-full pl-12"
                 />
             </div>
 
@@ -125,13 +215,7 @@ export default function AdminStudents() {
                     <table className="admin-table">
                         <thead>
                             <tr>
-                                <th>Student</th>
-                                <th>Level / XP</th>
-                                <th>Streak</th>
-                                <th>Time Learned</th>
-                                <th>Enrollments</th>
-                                <th>Achievements</th>
-                                <th>Joined</th>
+                                {COLUMN_HEADERS.map(col => <SortHeader key={col.key} column={col} />)}
                             </tr>
                         </thead>
                         <tbody>

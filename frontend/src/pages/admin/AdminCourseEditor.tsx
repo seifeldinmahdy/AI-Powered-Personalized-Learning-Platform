@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router';
+import { useParams, useNavigate, Link } from 'react-router';
 import { toast } from 'sonner';
 import {
-  ChevronDown, ChevronRight, Plus, Trash2, Edit, Check, X, Loader2, ArrowLeft, BookOpen,
+  ChevronDown, ChevronRight, Plus, Trash2, Edit, Check, X, Loader2, BookOpen,
   Sparkles, RefreshCw, GraduationCap, MessageSquare, Hammer, ChevronRightIcon,
 } from 'lucide-react';
 import {
@@ -46,9 +46,9 @@ const CLO_COLUMNS: Column<CLODraft>[] = [
 ];
 
 const SENTIMENT_BADGE: Record<string, string> = {
-  positive: 'bg-green-100 text-green-700',
-  mixed: 'bg-amber-100 text-amber-700',
-  negative: 'bg-red-100 text-red-700',
+  positive: 'admin-badge-green',
+  mixed: 'admin-badge-amber',
+  negative: 'admin-badge',
 };
 
 export default function AdminCourseEditor() {
@@ -356,98 +356,122 @@ export default function AdminCourseEditor() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 size={32} className="animate-spin text-secondary" />
+        <Loader2 size={32} className="animate-spin" style={{ color: 'var(--admin-ink-secondary)' }} />
       </div>
     );
   }
 
   return (
-    <div className="max-w-3xl mx-auto py-8 px-4 space-y-10">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <button onClick={() => navigate('/admin')} className="p-2 rounded-xl hover:bg-muted/60 transition-colors">
-          <ArrowLeft size={18} className="text-muted-foreground" />
-        </button>
-        <div className="p-2 rounded-xl bg-gradient-to-br from-primary/20 to-secondary/20">
-          <BookOpen size={22} className="text-primary" />
-        </div>
-        <div>
-          <h1 className="text-xl font-bold">{course?.title ?? 'Course Editor'}</h1>
-          <p className="text-sm text-muted-foreground">Manage modules, lessons, and learning outcomes</p>
+    <div className="admin-animate-page space-y-10">
+      {/* Breadcrumb header */}
+      <div className="mb-8">
+        <nav aria-label="Breadcrumb" className="mb-3">
+          <ol className="flex items-center gap-2 admin-label">
+            <li>
+              <Link to="/admin" className="hover:text-[var(--admin-accent)] transition-colors">
+                Admin
+              </Link>
+            </li>
+            <li className="flex items-center gap-2">
+              <span style={{ color: 'var(--admin-hairline)' }}>/</span>
+              <Link to="/admin/content" className="hover:text-[var(--admin-accent)] transition-colors">
+                Content
+              </Link>
+            </li>
+            <li className="flex items-center gap-2">
+              <span style={{ color: 'var(--admin-hairline)' }}>/</span>
+              <span style={{ color: 'var(--admin-ink)' }}>{course?.title ?? 'Course Editor'}</span>
+            </li>
+          </ol>
+        </nav>
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 flex items-center justify-center bg-[var(--admin-paper-dark)] text-white rounded-[var(--admin-radius-md)] flex-shrink-0">
+            <BookOpen size={22} />
+          </div>
+          <div>
+            <h1 className="admin-heading-md">{course?.title ?? 'Course Editor'}</h1>
+            <p className="admin-body-lg" style={{ color: 'var(--admin-ink-secondary)' }}>
+              Manage modules, lessons, and learning outcomes
+            </p>
+          </div>
         </div>
       </div>
 
       {/* ── Modules ── */}
-      <div className="space-y-3">
+      <section className="space-y-3">
         {modules.map((mod, modIdx) => (
-          <div key={mod.data.id} className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
+          <div key={mod.data.id} className="admin-card overflow-hidden">
             {/* Module header */}
-            <div className="flex items-center gap-3 px-4 py-3">
-              <button onClick={() => toggleModule(modIdx)} className="text-muted-foreground hover:text-foreground transition-colors">
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--admin-hairline-light)]">
+              <button onClick={() => toggleModule(modIdx)} className="text-[var(--admin-ink-secondary)] hover:text-[var(--admin-ink)] transition-colors">
                 {mod.expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
               </button>
               {mod.editing ? (
                 <div className="flex-1 flex items-center gap-2">
                   <input
-                    className="flex-1 border border-border rounded-lg px-3 py-1.5 text-sm bg-input-background focus:outline-none focus:ring-1 focus:ring-ring"
+                    className="admin-input flex-1"
+                    style={{ paddingTop: 8, paddingBottom: 8 }}
                     value={mod.editTitle}
                     onChange={(e) => updateModuleField(modIdx, 'editTitle', e.target.value)}
                     placeholder="Module title"
                   />
                   <input
-                    className="w-16 border border-border rounded-lg px-2 py-1.5 text-sm bg-input-background focus:outline-none focus:ring-1 focus:ring-ring"
+                    className="admin-input"
+                    style={{ width: 64, paddingTop: 8, paddingBottom: 8 }}
                     value={mod.editOrder}
                     onChange={(e) => updateModuleField(modIdx, 'editOrder', e.target.value)}
                     placeholder="#"
                     type="number"
                   />
-                  <button onClick={() => handleSaveModule(modIdx)} className="p-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20"><Check size={14} /></button>
-                  <button onClick={() => updateModuleField(modIdx, 'editing', false)} className="p-1.5 rounded-lg bg-muted text-muted-foreground hover:bg-muted/80"><X size={14} /></button>
+                  <button onClick={() => handleSaveModule(modIdx)} className="admin-btn admin-btn-icon" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}><Check size={14} /></button>
+                  <button onClick={() => updateModuleField(modIdx, 'editing', false)} className="admin-btn admin-btn-ghost admin-btn-icon"><X size={14} /></button>
                 </div>
               ) : (
                 <div className="flex-1 flex items-center gap-2">
-                  <span className="font-semibold text-sm">{mod.data.title}</span>
-                  <span className="text-xs text-muted-foreground">#{mod.data.module_order}</span>
-                  <span className="text-xs text-muted-foreground ml-1">· {mod.lessons.length} lessons</span>
+                  <span className="font-semibold text-sm" style={{ color: 'var(--admin-ink)' }}>{mod.data.title}</span>
+                  <span className="text-xs" style={{ color: 'var(--admin-ink-secondary)' }}>#{mod.data.module_order}</span>
+                  <span className="text-xs" style={{ color: 'var(--admin-ink-secondary)' }}>· {mod.lessons.length} lessons</span>
                 </div>
               )}
               {!mod.editing && (
                 <div className="flex items-center gap-1">
-                  <button onClick={() => updateModuleField(modIdx, 'editing', true)} className="p-1.5 rounded-lg hover:bg-muted/60 text-muted-foreground"><Edit size={13} /></button>
-                  <button onClick={() => handleDeleteModule(modIdx)} className="p-1.5 rounded-lg hover:bg-destructive/10 text-destructive"><Trash2 size={13} /></button>
+                  <button onClick={() => updateModuleField(modIdx, 'editing', true)} className="admin-btn admin-btn-ghost admin-btn-icon"><Edit size={13} /></button>
+                  <button onClick={() => handleDeleteModule(modIdx)} className="admin-btn admin-btn-ghost-danger admin-btn-icon"><Trash2 size={13} /></button>
                 </div>
               )}
             </div>
 
             {/* Lessons */}
             {mod.expanded && (
-              <div className="border-t border-border">
+              <div>
                 {mod.lessons.map((lesson, lessonIdx) => (
-                  <div key={lesson.data.id} className="flex items-center gap-3 px-6 py-2.5 border-b border-border/50 last:border-b-0">
+                  <div key={lesson.data.id} className="flex items-center gap-3 px-6 py-2.5 border-b border-[var(--admin-hairline-light)] last:border-b-0">
                     {lesson.editing ? (
                       <div className="flex-1 flex items-center gap-2">
                         <input
-                          className="flex-1 border border-border rounded-lg px-3 py-1 text-sm bg-input-background focus:outline-none focus:ring-1 focus:ring-ring"
+                          className="admin-input flex-1"
+                          style={{ paddingTop: 6, paddingBottom: 6 }}
                           value={lesson.editTitle}
                           onChange={(e) => updateLessonField(modIdx, lessonIdx, 'editTitle', e.target.value)}
                           placeholder="Lesson title"
                         />
                         <input
-                          className="w-14 border border-border rounded-lg px-2 py-1 text-sm bg-input-background focus:outline-none focus:ring-1 focus:ring-ring"
+                          className="admin-input"
+                          style={{ width: 56, paddingTop: 6, paddingBottom: 6 }}
                           value={lesson.editOrder}
                           onChange={(e) => updateLessonField(modIdx, lessonIdx, 'editOrder', e.target.value)}
                           placeholder="#"
                           type="number"
                         />
-                        <button onClick={() => handleSaveLesson(modIdx, lessonIdx)} className="p-1 rounded-lg bg-primary/10 text-primary hover:bg-primary/20"><Check size={13} /></button>
-                        <button onClick={() => updateLessonField(modIdx, lessonIdx, 'editing', false)} className="p-1 rounded-lg bg-muted text-muted-foreground hover:bg-muted/80"><X size={13} /></button>
+                        <button onClick={() => handleSaveLesson(modIdx, lessonIdx)} className="admin-btn admin-btn-icon" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}><Check size={13} /></button>
+                        <button onClick={() => updateLessonField(modIdx, lessonIdx, 'editing', false)} className="admin-btn admin-btn-ghost admin-btn-icon"><X size={13} /></button>
                       </div>
                     ) : (
                       <>
-                        <span className="text-xs text-muted-foreground w-5">{lesson.data.lesson_order}.</span>
-                        <span className="flex-1 text-sm">{lesson.data.title}</span>
-                        <button onClick={() => updateLessonField(modIdx, lessonIdx, 'editing', true)} className="p-1 rounded-lg hover:bg-muted/60 text-muted-foreground"><Edit size={12} /></button>
-                        <button onClick={() => handleDeleteLesson(modIdx, lessonIdx)} className="p-1 rounded-lg hover:bg-destructive/10 text-destructive"><Trash2 size={12} /></button>
+                        <span className="text-xs" style={{ color: 'var(--admin-ink-secondary)', width: 20 }}>{lesson.data.lesson_order}.</span>
+                        <span className="flex-1 text-sm" style={{ color: 'var(--admin-ink)' }}>{lesson.data.title}</span>
+                        <button onClick={() => updateLessonField(modIdx, lessonIdx, 'editing', true)} className="admin-btn admin-btn-ghost admin-btn-icon"><Edit size={12} /></button>
+                        <button onClick={() => handleDeleteLesson(modIdx, lessonIdx)} className="admin-btn admin-btn-ghost-danger admin-btn-icon"><Trash2 size={12} /></button>
                       </>
                     )}
                   </div>
@@ -458,26 +482,29 @@ export default function AdminCourseEditor() {
                   <div className="flex items-center gap-2 px-6 py-2.5">
                     <input
                       autoFocus
-                      className="flex-1 border border-border rounded-lg px-3 py-1.5 text-sm bg-input-background focus:outline-none focus:ring-1 focus:ring-ring"
+                      className="admin-input flex-1"
+                      style={{ paddingTop: 6, paddingBottom: 6 }}
                       value={mod.newLessonTitle}
                       onChange={(e) => updateModuleField(modIdx, 'newLessonTitle', e.target.value)}
                       placeholder="New lesson title"
                       onKeyDown={(e) => e.key === 'Enter' && handleAddLesson(modIdx)}
                     />
                     <input
-                      className="w-14 border border-border rounded-lg px-2 py-1.5 text-sm bg-input-background focus:outline-none focus:ring-1 focus:ring-ring"
+                      className="admin-input"
+                      style={{ width: 56, paddingTop: 6, paddingBottom: 6 }}
                       value={mod.newLessonOrder}
                       onChange={(e) => updateModuleField(modIdx, 'newLessonOrder', e.target.value)}
                       placeholder="#"
                       type="number"
                     />
-                    <button onClick={() => handleAddLesson(modIdx)} className="p-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20"><Check size={14} /></button>
-                    <button onClick={() => updateModuleField(modIdx, 'addingLesson', false)} className="p-1.5 rounded-lg bg-muted text-muted-foreground"><X size={14} /></button>
+                    <button onClick={() => handleAddLesson(modIdx)} className="admin-btn admin-btn-icon" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}><Check size={14} /></button>
+                    <button onClick={() => updateModuleField(modIdx, 'addingLesson', false)} className="admin-btn admin-btn-ghost admin-btn-icon"><X size={14} /></button>
                   </div>
                 ) : (
                   <button
                     onClick={() => updateModuleField(modIdx, 'addingLesson', true)}
-                    className="w-full flex items-center gap-2 px-6 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+                    className="w-full flex items-center gap-2 px-6 py-2.5 text-sm transition-colors hover:bg-[var(--admin-paper-muted)]"
+                    style={{ color: 'var(--admin-ink-secondary)' }}
                   >
                     <Plus size={13} /> Add Lesson
                   </button>
@@ -489,53 +516,55 @@ export default function AdminCourseEditor() {
 
         {/* Add module */}
         {addingModule ? (
-          <div className="bg-card rounded-2xl border border-border shadow-sm p-4 flex items-center gap-2">
+          <div className="admin-card p-4 flex items-center gap-2">
             <input
               autoFocus
-              className="flex-1 border border-border rounded-lg px-3 py-2 text-sm bg-input-background focus:outline-none focus:ring-1 focus:ring-ring"
+              className="admin-input flex-1"
               value={newModuleTitle}
               onChange={(e) => setNewModuleTitle(e.target.value)}
               placeholder="New module title"
               onKeyDown={(e) => e.key === 'Enter' && handleAddModule()}
             />
             <input
-              className="w-16 border border-border rounded-lg px-2 py-2 text-sm bg-input-background focus:outline-none focus:ring-1 focus:ring-ring"
+              className="admin-input"
+              style={{ width: 64 }}
               value={newModuleOrder}
               onChange={(e) => setNewModuleOrder(e.target.value)}
               placeholder="#"
               type="number"
             />
-            <button onClick={handleAddModule} className="p-2 rounded-xl bg-primary/10 text-primary hover:bg-primary/20"><Check size={15} /></button>
-            <button onClick={() => setAddingModule(false)} className="p-2 rounded-xl bg-muted text-muted-foreground hover:bg-muted/80"><X size={15} /></button>
+            <button onClick={handleAddModule} className="admin-btn admin-btn-icon" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}><Check size={15} /></button>
+            <button onClick={() => setAddingModule(false)} className="admin-btn admin-btn-ghost admin-btn-icon"><X size={15} /></button>
           </div>
         ) : (
           <button
             onClick={() => setAddingModule(true)}
-            className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl border-2 border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+            className="w-full flex items-center justify-center gap-2 py-3 admin-card border-dashed border-2 transition-colors hover:bg-[var(--admin-paper-muted)]"
+            style={{ color: 'var(--admin-ink-secondary)', borderColor: 'var(--admin-hairline)' }}
           >
             <Plus size={15} /> Add Module
           </button>
         )}
-      </div>
+      </section>
 
       {/* ── Course Learning Outcomes ── */}
       <section>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <GraduationCap size={20} className="text-primary" />
-            <h2 className="text-lg font-bold mb-0">Learning Outcomes (CLOs)</h2>
+            <GraduationCap size={20} style={{ color: 'var(--admin-accent)' }} />
+            <h2 className="admin-heading-xs">Learning Outcomes (CLOs)</h2>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setCloTab(cloTab === 'list' ? 'draft' : 'list')}
-              className="px-3 py-1.5 rounded-xl text-xs border border-border text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+              className="admin-btn admin-btn-ghost admin-btn-sm"
             >
               {cloTab === 'list' ? 'View Drafts' : 'View Saved'}
             </button>
             <button
               onClick={handleSuggestCLOs}
               disabled={suggestingCLOs}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-60 transition-colors"
+              className="admin-btn admin-btn-primary admin-btn-sm flex items-center gap-2"
             >
               {suggestingCLOs ? (
                 <Loader2 size={14} className="animate-spin" />
@@ -548,39 +577,39 @@ export default function AdminCourseEditor() {
         </div>
 
         {cloTab === 'list' ? (
-          <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
+          <div className="admin-card overflow-hidden">
             {cloLoading ? (
               <div className="flex items-center justify-center py-10">
-                <Loader2 size={24} className="animate-spin text-secondary" />
+                <Loader2 size={24} className="animate-spin" style={{ color: 'var(--admin-ink-secondary)' }} />
               </div>
             ) : clos.length === 0 ? (
-              <div className="py-10 text-center text-muted-foreground text-sm">
+              <div className="py-10 text-center text-sm" style={{ color: 'var(--admin-ink-secondary)' }}>
                 No CLOs yet. Use "Suggest CLOs (AI)" to generate drafts, then approve and save them.
               </div>
             ) : (
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50">
+              <table className="admin-table">
+                <thead>
                   <tr>
-                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground w-20">Code</th>
-                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Outcome Statement</th>
-                    <th className="px-4 py-3 text-left font-semibold text-muted-foreground w-32">Bloom Level</th>
-                    <th className="px-4 py-3 w-12" />
+                    <th style={{ width: '5rem' }}>Code</th>
+                    <th>Outcome Statement</th>
+                    <th style={{ width: '8rem' }}>Bloom Level</th>
+                    <th style={{ width: '3rem' }} />
                   </tr>
                 </thead>
                 <tbody>
                   {clos.map((clo) => (
-                    <tr key={clo.id} className="border-t border-border hover:bg-muted/30 transition-colors">
-                      <td className="px-4 py-3 font-mono text-xs text-primary">{clo.code}</td>
-                      <td className="px-4 py-3 text-foreground">{clo.text}</td>
-                      <td className="px-4 py-3">
-                        <span className="px-2 py-0.5 rounded-full text-xs bg-secondary/10 text-secondary capitalize">
+                    <tr key={clo.id}>
+                      <td className="font-mono text-xs" style={{ color: 'var(--admin-accent)' }}>{clo.code}</td>
+                      <td style={{ color: 'var(--admin-ink)' }}>{clo.text}</td>
+                      <td>
+                        <span className="admin-badge" style={{ background: 'var(--admin-paper-muted)', color: 'var(--admin-ink-secondary)' }}>
                           {clo.bloom_level}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
+                      <td>
                         <button
                           onClick={() => handleDeleteCLO(clo.id)}
-                          className="p-1.5 rounded-lg hover:bg-destructive/10 text-destructive"
+                          className="admin-btn admin-btn-ghost-danger admin-btn-icon"
                         >
                           <Trash2 size={13} />
                         </button>
@@ -592,8 +621,8 @@ export default function AdminCourseEditor() {
             )}
           </div>
         ) : (
-          <div className="bg-card rounded-2xl border border-border shadow-sm p-4">
-            <p className="text-sm text-muted-foreground mb-4">
+          <div className="admin-card p-4">
+            <p className="text-sm mb-4" style={{ color: 'var(--admin-ink-secondary)' }}>
               Review AI-generated CLO drafts. Approve or edit each row, then click "Save Approved".
             </p>
             <AIDraftReviewTable<CLODraft>
@@ -610,25 +639,25 @@ export default function AdminCourseEditor() {
       {/* ── Capstone Project ── */}
       <section>
         <div className="flex items-center gap-2 mb-4">
-          <Hammer size={20} className="text-primary" />
-          <h2 className="text-lg font-bold mb-0">Capstone Project</h2>
+          <Hammer size={20} style={{ color: 'var(--admin-accent)' }} />
+          <h2 className="admin-heading-xs">Capstone Project</h2>
         </div>
         <button
           onClick={() => navigate(`/admin/courses/${id}/capstone`)}
-          className="w-full bg-card rounded-2xl border border-border shadow-sm p-5 flex items-center justify-between hover:border-primary/40 hover:shadow-md transition-all group"
+          className="w-full admin-card p-5 flex items-center justify-between hover:border-[var(--admin-accent)] transition-all group text-left"
         >
           <div className="flex items-center gap-4">
-            <div className="p-2.5 rounded-xl bg-gradient-to-br from-primary/20 to-secondary/20">
-              <Hammer size={20} className="text-primary" />
+            <div className="w-12 h-12 flex items-center justify-center bg-[var(--admin-paper-dark)] text-white rounded-[var(--admin-radius-md)]">
+              <Hammer size={20} />
             </div>
-            <div className="text-left">
-              <p className="font-semibold text-sm">Manage Capstone</p>
-              <p className="text-xs text-muted-foreground">
+            <div>
+              <p className="font-semibold text-sm" style={{ color: 'var(--admin-ink)' }}>Manage Capstone</p>
+              <p className="text-xs" style={{ color: 'var(--admin-ink-secondary)' }}>
                 Configure the project, rubric, proposals, and submissions
               </p>
             </div>
           </div>
-          <ChevronRightIcon size={18} className="text-muted-foreground group-hover:text-primary transition-colors" />
+          <ChevronRightIcon size={18} style={{ color: 'var(--admin-ink-secondary)' }} />
         </button>
       </section>
 
@@ -636,39 +665,42 @@ export default function AdminCourseEditor() {
       <section>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <MessageSquare size={20} className="text-primary" />
-            <h2 className="text-lg font-bold mb-0">Student Survey Summary</h2>
+            <MessageSquare size={20} style={{ color: 'var(--admin-accent)' }} />
+            <h2 className="admin-heading-xs">Student Survey Summary</h2>
           </div>
           <button
             onClick={handleRefreshSummary}
             disabled={refreshingSummary}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground hover:border-primary/40 disabled:opacity-60 transition-colors"
+            className="admin-btn admin-btn-ghost admin-btn-sm flex items-center gap-2"
           >
             {refreshingSummary ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
             Refresh
           </button>
         </div>
 
-        <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
+        <div className="admin-card p-6">
           {summaryLoading ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 size={24} className="animate-spin text-secondary" />
+              <Loader2 size={24} className="animate-spin" style={{ color: 'var(--admin-ink-secondary)' }} />
             </div>
           ) : summary === null ? (
-            <p className="text-sm text-muted-foreground text-center py-6">
+            <p className="text-sm text-center py-6" style={{ color: 'var(--admin-ink-secondary)' }}>
               No survey summary yet. Students must complete the course and submit surveys first. Then click "Refresh" to generate a summary.
             </p>
           ) : (
             <div className="space-y-6">
               {/* Header row */}
               <div className="flex items-center gap-4">
-                <span className={`px-3 py-1 rounded-full text-sm font-semibold capitalize ${SENTIMENT_BADGE[summary.sentiment] ?? 'bg-muted text-muted-foreground'}`}>
+                <span
+                  className={`admin-badge text-sm capitalize ${SENTIMENT_BADGE[summary.sentiment] ?? 'admin-badge-gray'}`}
+                  style={summary.sentiment === 'negative' ? { background: 'var(--admin-error)', color: '#fff' } : undefined}
+                >
                   {summary.sentiment} overall
                 </span>
-                <span className="text-sm text-muted-foreground">
+                <span className="text-sm" style={{ color: 'var(--admin-ink-secondary)' }}>
                   Based on {summary.response_count} response{summary.response_count !== 1 ? 's' : ''}
                 </span>
-                <span className="text-xs text-muted-foreground ml-auto">
+                <span className="text-xs ml-auto" style={{ color: 'var(--admin-ink-secondary)' }}>
                   Last updated: {new Date(summary.generated_at).toLocaleString()}
                 </span>
               </div>
@@ -676,10 +708,10 @@ export default function AdminCourseEditor() {
               {/* Themes */}
               {summary.recurring_themes.length > 0 && (
                 <div>
-                  <h4 className="text-sm font-semibold mb-2">Recurring Themes</h4>
+                  <h4 className="text-sm font-semibold mb-2" style={{ color: 'var(--admin-ink)' }}>Recurring Themes</h4>
                   <div className="flex flex-wrap gap-2">
                     {summary.recurring_themes.map((t, i) => (
-                      <span key={i} className="px-2.5 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">
+                      <span key={i} className="admin-badge" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}>
                         {t.theme} ({t.count})
                       </span>
                     ))}
@@ -690,25 +722,25 @@ export default function AdminCourseEditor() {
               {/* Praise + Complaints */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <h4 className="text-sm font-semibold text-green-700 mb-2">What students liked</h4>
+                  <h4 className="text-sm font-semibold mb-2" style={{ color: 'var(--admin-success)' }}>What students liked</h4>
                   <ul className="space-y-1.5">
                     {summary.top_praise.map((p, i) => (
-                      <li key={i} className="text-sm text-foreground flex items-start gap-2">
-                        <span className="text-green-500 mt-0.5">+</span> {p}
+                      <li key={i} className="text-sm flex items-start gap-2" style={{ color: 'var(--admin-ink)' }}>
+                        <span className="mt-0.5" style={{ color: 'var(--admin-success)' }}>+</span> {p}
                       </li>
                     ))}
-                    {summary.top_praise.length === 0 && <li className="text-xs text-muted-foreground">None yet</li>}
+                    {summary.top_praise.length === 0 && <li className="text-xs" style={{ color: 'var(--admin-ink-secondary)' }}>None yet</li>}
                   </ul>
                 </div>
                 <div>
-                  <h4 className="text-sm font-semibold text-red-600 mb-2">Areas to improve</h4>
+                  <h4 className="text-sm font-semibold mb-2" style={{ color: 'var(--admin-error)' }}>Areas to improve</h4>
                   <ul className="space-y-1.5">
                     {summary.top_complaints.map((c, i) => (
-                      <li key={i} className="text-sm text-foreground flex items-start gap-2">
-                        <span className="text-red-400 mt-0.5">−</span> {c}
+                      <li key={i} className="text-sm flex items-start gap-2" style={{ color: 'var(--admin-ink)' }}>
+                        <span className="mt-0.5" style={{ color: 'var(--admin-error)' }}>−</span> {c}
                       </li>
                     ))}
-                    {summary.top_complaints.length === 0 && <li className="text-xs text-muted-foreground">None yet</li>}
+                    {summary.top_complaints.length === 0 && <li className="text-xs" style={{ color: 'var(--admin-ink-secondary)' }}>None yet</li>}
                   </ul>
                 </div>
               </div>
@@ -716,12 +748,12 @@ export default function AdminCourseEditor() {
               {/* Per-CLO perception */}
               {Object.keys(summary.per_clo_perception).length > 0 && (
                 <div>
-                  <h4 className="text-sm font-semibold mb-2">Per-CLO Student Perception</h4>
+                  <h4 className="text-sm font-semibold mb-2" style={{ color: 'var(--admin-ink)' }}>Per-CLO Student Perception</h4>
                   <div className="space-y-2">
                     {Object.entries(summary.per_clo_perception).map(([cloText, perception]) => (
                       <div key={cloText} className="flex items-start gap-3 text-sm">
-                        <span className="text-muted-foreground shrink-0 font-medium w-56 truncate" title={cloText}>{cloText}</span>
-                        <span className="text-foreground">{perception}</span>
+                        <span className="shrink-0 font-medium truncate" style={{ color: 'var(--admin-ink-secondary)', width: '14rem' }} title={cloText}>{cloText}</span>
+                        <span style={{ color: 'var(--admin-ink)' }}>{perception}</span>
                       </div>
                     ))}
                   </div>

@@ -144,7 +144,7 @@ export default function ContentManagement() {
             placeholder="Search courses..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="admin-input w-full pl-11"
+            className="admin-input w-full pl-12"
             id="content-search"
           />
         </div>
@@ -217,10 +217,18 @@ export default function ContentManagement() {
 
             <div className="flex items-center gap-2">
               <button
-                onClick={() => navigate(`/admin/courses/${course.id}/editor`, { replace: false })}
-                className="admin-btn admin-btn-secondary text-xs px-3 py-1.5 flex items-center gap-1"
+                onClick={() => navigate(`/courses/${course.id}`)}
+                className="admin-btn admin-btn-ghost admin-btn-icon text-xs"
+                title="View course"
               >
-                <Edit2 size={12} /> Edit
+                <Eye size={14} />
+              </button>
+              <button
+                onClick={() => navigate(`/admin/courses/${course.id}/editor`)}
+                className="admin-btn admin-btn-ghost admin-btn-icon text-xs"
+                title="Edit course"
+              >
+                <Edit2 size={14} />
               </button>
               <button
                 onClick={() => handleDelete(course.id)}

@@ -8,7 +8,7 @@ export function AdminLayout() {
   useAdminIdleTimer();
 
   return (
-    <div className="admin-scope min-h-screen flex bg-[var(--admin-paper)]">
+    <div className="admin-scope min-h-screen flex items-start bg-[var(--admin-paper)]">
       <AdminSidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <AdminTopBar />

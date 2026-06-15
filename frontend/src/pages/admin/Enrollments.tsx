@@ -13,10 +13,12 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import api from "../../services/api";
+import { getAdminStudents, type AdminStudent } from "../../services/admin";
 
 /* ─── Types ─── */
 interface AdminEnrollment {
   id: number;
+  student_id: number;
   student_username: string;
   student_email: string;
   course_title: string;
@@ -32,6 +34,7 @@ type SortDir = "asc" | "desc";
 
 export default function Enrollments() {
   const [enrollments, setEnrollments] = useState<AdminEnrollment[]>([]);
+  const [students, setStudents] = useState<Map<number, AdminStudent>>(new Map());
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "pathway" | "no_pathway">("all");
@@ -49,19 +52,34 @@ export default function Enrollments() {
   const fetchEnrollments = async () => {
     setLoading(true);
     try {
-      const res = await api.get("/courses/enrollments/");
-      const data = Array.isArray(res.data) ? res.data : res.data.results ?? [];
-      const mapped = data.map((e: Record<string, unknown>) => ({
-        id: e.id as number,
-        student_username: (e.student_username || (e.student as Record<string, unknown>)?.username || "—") as string,
-        student_email: (e.student_email || (e.student as Record<string, unknown>)?.email || "") as string,
-        course_title: (e.course_title || (e.course as Record<string, unknown>)?.title || "—") as string,
-        course_id: (e.course_id || (e.course as Record<string, unknown>)?.id || 0) as number,
-        progress_percentage: (e.progress_percentage || 0) as number,
-        enrolled_at: (e.enrolled_at || "") as string,
-        is_pathway_ready: (e.is_pathway_ready || false) as boolean,
-        current_pathway: (e.current_pathway || null) as Record<string, unknown> | null,
-      }));
+      const [enrollRes, studentList] = await Promise.all([
+        api.get("/courses/enrollments/"),
+        getAdminStudents(),
+      ]);
+      const studentMap = new Map(studentList.map((s) => [s.id, s]));
+      setStudents(studentMap);
+
+      const data = Array.isArray(enrollRes.data) ? enrollRes.data : enrollRes.data.results ?? [];
+      const mapped = data.map((e: Record<string, unknown>) => {
+        const rawStudentId = (e.student_id ?? e.student) as number | string | undefined;
+        const studentId = typeof rawStudentId === "string" ? Number(rawStudentId) : Number(rawStudentId ?? 0);
+        const rawStudentObj = e.student as Record<string, unknown> | undefined;
+        const student = studentMap.get(studentId);
+        const username = student?.username || (rawStudentObj?.username as string) || (e.student_username as string);
+        const email = student?.email || (rawStudentObj?.email as string) || (e.student_email as string) || "";
+        return {
+          id: e.id as number,
+          student_id: studentId,
+          student_username: username || "Unknown",
+          student_email: email,
+          course_title: (e.course_title || (e.course as Record<string, unknown>)?.title || "—") as string,
+          course_id: (e.course_id || (e.course as Record<string, unknown>)?.id || 0) as number,
+          progress_percentage: (e.progress_percentage || 0) as number,
+          enrolled_at: (e.enrolled_at || "") as string,
+          is_pathway_ready: (e.is_pathway_ready || false) as boolean,
+          current_pathway: (e.current_pathway || null) as Record<string, unknown> | null,
+        };
+      });
       setEnrollments(mapped);
     } catch {
       toast.error("Failed to load enrollments");
@@ -153,8 +171,8 @@ export default function Enrollments() {
 
   const SortHeader = ({ label, sortKeyVal }: { label: string; sortKeyVal: SortKey }) => (
     <th
-      className="px-6 py-4 text-left text-xs font-semibold cursor-pointer select-none hover:text-[var(--admin-ink)]"
-      style={{ color: "var(--admin-ink-secondary)" }}
+      className="px-6 py-4 text-left text-xs font-semibold cursor-pointer hover:text-[var(--admin-ink)]"
+      style={{ color: "var(--admin-ink-secondary)", userSelect: "none" }}
       onClick={() => toggleSort(sortKeyVal)}
     >
       <span className="inline-flex items-center gap-1">
@@ -226,7 +244,7 @@ export default function Enrollments() {
   }
 
   return (
-    <div>
+    <div className="admin-animate-page">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
@@ -282,7 +300,7 @@ export default function Enrollments() {
               placeholder="Search student or course..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="admin-input w-full pl-11"
+              className="admin-input w-full pl-12"
               id="enrollment-search"
             />
           </div>
@@ -356,9 +374,17 @@ export default function Enrollments() {
               {filtered.map((e) => (
                 <tr key={e.id}>
                   <td>
-                    <div>
-                      <p className="text-sm font-semibold" style={{ color: "var(--admin-ink)" }}>{e.student_username}</p>
-                      <p className="text-xs" style={{ color: "var(--admin-ink-tertiary)" }}>{e.student_email}</p>
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-9 h-9 rounded-lg flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
+                        style={{ background: 'var(--admin-accent)' }}
+                      >
+                        {e.student_username.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold" style={{ color: "var(--admin-ink)" }}>{e.student_username}</p>
+                        <p className="text-xs" style={{ color: "var(--admin-ink-tertiary)" }}>{e.student_email}</p>
+                      </div>
                     </div>
                   </td>
                   <td>
