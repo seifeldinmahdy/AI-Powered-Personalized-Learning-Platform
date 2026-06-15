@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Settings as SettingsIcon,
   Users,
@@ -11,9 +11,13 @@ import {
   Clock,
   Filter,
   Info,
+  Search,
+  CalendarDays,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../../contexts/AuthContext";
+import { Link } from "react-router";
 import api from "../../services/api";
 import { getAuditLogs, type AuditLogEntry } from "../../services/admin";
 
@@ -30,15 +34,15 @@ export default function Settings() {
       <div className="flex items-center gap-3 mb-8">
         <div
           className="w-12 h-12 rounded-xl flex items-center justify-center"
-          style={{ background: "var(--admin-accent)", color: "var(--admin-ink)" }}
+          style={{ background: "var(--admin-accent)", color: "#fff" }}
         >
           <SettingsIcon size={22} />
         </div>
         <div>
-          <h1 className="admin-heading" id="settings-title">
+          <h1 className="admin-heading-md" id="settings-title">
             Settings
           </h1>
-          <p className="admin-subheading">Users, roles, and audit trail</p>
+          <p className="admin-body-lg">Users, roles, and audit trail</p>
         </div>
       </div>
 
@@ -53,7 +57,7 @@ export default function Settings() {
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
               style={{
                 background: tab === t ? "var(--admin-accent)" : "transparent",
-                color: tab === t ? "var(--admin-ink)" : "var(--admin-muted)",
+                color: tab === t ? "#fff" : "var(--admin-ink-secondary)",
               }}
             >
               <Icon size={16} />
@@ -86,7 +90,10 @@ function UsersRolesTab() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<UserEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [toggling, setToggling] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState<"all" | "admin" | "student">("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -131,32 +138,20 @@ function UsersRolesTab() {
 
   const isSelf = (u: UserEntry) => currentUser?.id === u.id;
 
-  const handleToggleRole = async (user: UserEntry) => {
-    if (isSelf(user)) {
-      toast.error("You cannot change your own role");
-      return;
-    }
-
-    const newRole = user.role === "admin" ? "student" : "admin";
-    const action = newRole === "admin" ? "promote" : "demote";
-    if (
-      !confirm(
-        `Are you sure you want to ${action} "${user.username}" to ${newRole}?`
-      )
-    )
-      return;
-
-    setToggling(user.id);
-    try {
-      await api.patch(`/users/${user.id}/`, { role: newRole });
-      toast.success(`${user.username} ${action}d to ${newRole}`);
-      fetchUsers();
-    } catch {
-      toast.error(`Failed to ${action} user`);
-    } finally {
-      setToggling(null);
-    }
-  };
+  const filtered = useMemo(() => {
+    return users.filter((u) => {
+      const matchSearch =
+        search === "" ||
+        u.username.toLowerCase().includes(search.toLowerCase()) ||
+        u.email.toLowerCase().includes(search.toLowerCase());
+      const matchRole =
+        roleFilter === "all" || u.role === roleFilter;
+      const joinDate = u.date_joined ? new Date(u.date_joined) : null;
+      const matchDateFrom = !dateFrom || (joinDate && joinDate >= new Date(dateFrom));
+      const matchDateTo = !dateTo || (joinDate && joinDate <= new Date(dateTo + "T23:59:59"));
+      return matchSearch && matchRole && matchDateFrom && matchDateTo;
+    });
+  }, [users, search, roleFilter, dateFrom, dateTo]);
 
   const adminCount = users.filter((u) => u.role === "admin").length;
   const studentCount = users.filter((u) => u.role === "student").length;
@@ -164,7 +159,7 @@ function UsersRolesTab() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 size={32} className="animate-spin" style={{ color: "var(--admin-accent)" }} />
+        <div className="admin-loading-spinner" />
       </div>
     );
   }
@@ -176,49 +171,102 @@ function UsersRolesTab() {
         {[
           { label: "Total Users", value: users.length, icon: Users, color: "var(--admin-accent)" },
           { label: "Admins", value: adminCount, icon: Crown, color: "var(--admin-accent)" },
-          { label: "Students", value: studentCount, icon: UserCheck, color: "var(--admin-lime)" },
+          { label: "Students", value: studentCount, icon: UserCheck, color: "var(--admin-success)" },
         ].map((s) => {
           const Icon = s.icon;
           return (
             <div key={s.label} className="admin-card flex items-center gap-4 p-4">
-              <Icon size={20} style={{ color: s.color }} />
+              <div
+                className="w-10 h-10 rounded-lg flex items-center justify-center"
+                style={{ background: `${s.color}22` }}
+              >
+                <Icon size={20} style={{ color: s.color }} />
+              </div>
               <div>
                 <p className="text-xl font-bold" style={{ color: "var(--admin-ink)" }}>{s.value}</p>
-                <p className="text-xs" style={{ color: "var(--admin-muted)" }}>{s.label}</p>
+                <p className="text-xs" style={{ color: "var(--admin-ink-secondary)" }}>{s.label}</p>
               </div>
             </div>
           );
         })}
       </div>
 
-      {/* User Table */}
+      {/* Filters */}
+      <div className="admin-card p-4 mb-6">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Search */}
+          <div className="relative flex-1 min-w-[200px] max-w-sm">
+            <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--admin-ink-tertiary)" }} />
+            <input
+              type="text"
+              placeholder="Search by name or email..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="admin-input w-full pl-11"
+            />
+          </div>
+
+          {/* Role filter */}
+          <div className="flex items-center gap-1 admin-card p-1">
+            {(["all", "admin", "student"] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setRoleFilter(f)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                style={{
+                  background: roleFilter === f ? "var(--admin-accent)" : "transparent",
+                  color: roleFilter === f ? "#fff" : "var(--admin-ink-secondary)",
+                }}
+              >
+                {f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1) + "s"}
+              </button>
+            ))}
+          </div>
+
+          {/* Date range */}
+          <div className="flex items-center gap-2">
+            <CalendarDays size={16} style={{ color: "var(--admin-ink-tertiary)" }} />
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="admin-input text-sm py-1.5"
+              title="Joined from"
+            />
+            <span className="text-xs" style={{ color: "var(--admin-ink-tertiary)" }}>to</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="admin-input text-sm py-1.5"
+              title="Joined to"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* User Table — Actions column removed; replaced with profile link for students */}
       <div className="admin-card overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="admin-table">
             <thead>
-              <tr style={{ borderBottom: "2px solid var(--admin-border)" }}>
-                <th className="px-6 py-4 text-left text-xs font-semibold" style={{ color: "var(--admin-muted)" }}>User</th>
-                <th className="px-6 py-4 text-left text-xs font-semibold" style={{ color: "var(--admin-muted)" }}>Role</th>
-                <th className="px-6 py-4 text-left text-xs font-semibold" style={{ color: "var(--admin-muted)" }}>Joined</th>
-                <th className="px-6 py-4 text-left text-xs font-semibold" style={{ color: "var(--admin-muted)" }}>Actions</th>
+              <tr>
+                <th>User</th>
+                <th>Role</th>
+                <th>Joined</th>
+                <th>Profile</th>
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => (
-                <tr
-                  key={u.id}
-                  className="transition-colors"
-                  style={{ borderBottom: "1px solid var(--admin-border)" }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--admin-surface)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                >
-                  <td className="px-6 py-4">
+              {filtered.map((u) => (
+                <tr key={u.id}>
+                  <td>
                     <div className="flex items-center gap-3">
                       <div
                         className="w-9 h-9 rounded-lg flex items-center justify-center font-bold text-sm"
                         style={{
-                          background: u.role === "admin" ? "var(--admin-accent)" : "var(--admin-surface)",
-                          color: u.role === "admin" ? "var(--admin-ink)" : "var(--admin-muted)",
+                          background: u.role === "admin" ? "var(--admin-accent)" : "var(--admin-paper-muted)",
+                          color: u.role === "admin" ? "#fff" : "var(--admin-ink-secondary)",
                         }}
                       >
                         {u.username.slice(0, 2).toUpperCase()}
@@ -227,56 +275,56 @@ function UsersRolesTab() {
                         <p className="text-sm font-semibold" style={{ color: "var(--admin-ink)" }}>
                           {u.username}
                           {isSelf(u) && (
-                            <span className="ml-1.5 text-xs font-normal" style={{ color: "var(--admin-muted)" }}>
+                            <span className="ml-1.5 text-xs font-normal" style={{ color: "var(--admin-ink-tertiary)" }}>
                               (you)
                             </span>
                           )}
                         </p>
-                        <p className="text-xs" style={{ color: "var(--admin-muted)" }}>{u.email}</p>
+                        <p className="text-xs" style={{ color: "var(--admin-ink-tertiary)" }}>{u.email}</p>
                       </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4">
+                  <td>
                     <span
                       className="admin-badge text-xs px-2.5 py-1 rounded-lg flex items-center gap-1 w-fit"
                       style={{
-                        background: u.role === "admin" ? "var(--admin-accent)22" : "var(--admin-surface)",
-                        color: u.role === "admin" ? "var(--admin-accent)" : "var(--admin-muted)",
+                        background: u.role === "admin" ? "var(--admin-accent)22" : "var(--admin-paper-muted)",
+                        color: u.role === "admin" ? "var(--admin-accent)" : "var(--admin-ink-secondary)",
                       }}
                     >
                       {u.role === "admin" ? <Shield size={12} /> : <UserCheck size={12} />}
                       {u.role}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-xs" style={{ color: "var(--admin-muted)" }}>
+                  <td className="text-sm" style={{ color: "var(--admin-ink-secondary)" }}>
                     {u.date_joined ? new Date(u.date_joined).toLocaleDateString() : "—"}
                   </td>
-                  <td className="px-6 py-4">
-                    {isSelf(u) ? (
-                      <span className="text-xs" style={{ color: "var(--admin-muted)" }}>—</span>
-                    ) : (
-                      <button
-                        onClick={() => handleToggleRole(u)}
-                        disabled={toggling === u.id}
-                        className="admin-btn admin-btn-secondary text-xs px-3 py-1.5 flex items-center gap-1"
+                  <td>
+                    {u.role === "student" ? (
+                      <Link
+                        to={`/admin/students/${u.id}`}
+                        className="admin-btn admin-btn-ghost text-xs px-3 py-1.5 inline-flex items-center gap-1"
                       >
-                        {toggling === u.id ? (
-                          <Loader2 size={12} className="animate-spin" />
-                        ) : u.role === "admin" ? (
-                          <UserCheck size={12} />
-                        ) : (
-                          <Crown size={12} />
-                        )}
-                        {u.role === "admin" ? "Demote" : "Promote"}
-                      </button>
+                        <ExternalLink size={12} />
+                        View Profile
+                      </Link>
+                    ) : (
+                      <span className="text-xs" style={{ color: "var(--admin-ink-tertiary)" }}>—</span>
                     )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {filtered.length === 0 && (
+            <div className="py-16 text-center" style={{ color: "var(--admin-ink-tertiary)" }}>
+              <Users size={48} className="mx-auto mb-4 opacity-40" />
+              <p>No users match your filters</p>
+            </div>
+          )}
         </div>
       </div>
+      <p className="admin-body-sm mt-3">{filtered.length} of {users.length} users shown</p>
     </div>
   );
 }
@@ -313,7 +361,7 @@ function AuditLogTab() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 size={32} className="animate-spin" style={{ color: "var(--admin-accent)" }} />
+        <div className="admin-loading-spinner" />
       </div>
     );
   }
@@ -323,10 +371,10 @@ function AuditLogTab() {
       {/* Info banner */}
       <div
         className="admin-card p-4 mb-4 flex items-start gap-3"
-        style={{ background: "var(--admin-accent)08", borderColor: "var(--admin-accent)33" }}
+        style={{ background: "var(--admin-accent-subtle)", borderColor: "var(--admin-accent)33" }}
       >
         <Info size={18} className="flex-shrink-0 mt-0.5" style={{ color: "var(--admin-accent)" }} />
-        <div className="text-sm" style={{ color: "var(--admin-muted)" }}>
+        <div className="text-sm" style={{ color: "var(--admin-ink-secondary)" }}>
           <strong style={{ color: "var(--admin-ink)" }}>Audit logs</strong> track every privileged
           admin action — student creation, role changes, retraining triggers, and course deletions.
           Each entry records who performed the action, when, from which IP, and what changed.
@@ -336,11 +384,11 @@ function AuditLogTab() {
       {/* Toolbar */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <Filter size={14} style={{ color: "var(--admin-muted)" }} />
+          <Filter size={14} style={{ color: "var(--admin-ink-tertiary)" }} />
           <select
             value={actionFilter}
             onChange={(e) => setActionFilter(e.target.value)}
-            className="admin-input text-sm py-1.5"
+            className="admin-input admin-select text-sm py-1.5"
           >
             <option value="all">All Actions</option>
             {actionTypes.map((a) => (
@@ -348,14 +396,14 @@ function AuditLogTab() {
             ))}
           </select>
         </div>
-        <button onClick={fetchLogs} className="admin-btn admin-btn-secondary flex items-center gap-2 text-xs">
+        <button onClick={fetchLogs} className="admin-btn admin-btn-ghost flex items-center gap-2 text-xs">
           <RefreshCw size={14} /> Refresh
         </button>
       </div>
 
       {/* Log Entries */}
       {logs.length === 0 ? (
-        <div className="admin-card py-16 text-center" style={{ color: "var(--admin-muted)" }}>
+        <div className="admin-card py-16 text-center" style={{ color: "var(--admin-ink-tertiary)" }}>
           <ScrollText size={48} className="mx-auto mb-4 opacity-40" />
           <p>No audit log entries found</p>
         </div>
@@ -367,7 +415,7 @@ function AuditLogTab() {
                 <div className="flex items-center gap-3">
                   <div
                     className="w-8 h-8 rounded-lg flex items-center justify-center"
-                    style={{ background: "var(--admin-surface)" }}
+                    style={{ background: "var(--admin-paper-muted)" }}
                   >
                     <Shield size={14} style={{ color: "var(--admin-accent)" }} />
                   </div>
@@ -383,18 +431,18 @@ function AuditLogTab() {
                         {log.action}
                       </span>
                       {log.target_type && (
-                        <span className="text-xs" style={{ color: "var(--admin-muted)" }}>
+                        <span className="text-xs" style={{ color: "var(--admin-ink-tertiary)" }}>
                           on {log.target_type}
                           {log.target_id ? ` #${log.target_id}` : ""}
                         </span>
                       )}
                     </div>
                     <div className="flex items-center gap-3 mt-0.5">
-                      <span className="text-xs flex items-center gap-1" style={{ color: "var(--admin-muted)" }}>
+                      <span className="text-xs flex items-center gap-1" style={{ color: "var(--admin-ink-tertiary)" }}>
                         <Clock size={10} /> {new Date(log.created_at).toLocaleString()}
                       </span>
                       {log.ip_address && (
-                        <span className="text-xs" style={{ color: "var(--admin-muted)" }}>
+                        <span className="text-xs" style={{ color: "var(--admin-ink-tertiary)" }}>
                           IP: {log.ip_address}
                         </span>
                       )}

@@ -278,7 +278,10 @@
   outline: none;
   border-color: var(--admin-ink);
   border-width: 2px;
-  padding: 11px 15px;
+  /* Only adjust vertical/right padding so Tailwind pl-* utilities (search icons) stay intact */
+  padding-top: 11px;
+  padding-bottom: 11px;
+  padding-right: 15px;
 }
 
 .admin-scope .admin-input-error {
@@ -438,6 +441,44 @@
 
 .admin-scope .admin-status-dot-neutral {
   background-color: var(--admin-ink-tertiary);
+}
+
+/* Loading spinner */
+.admin-scope .admin-loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--admin-paper-muted);
+  border-top-color: var(--admin-ink);
+  border-radius: 50%;
+  animation: admin-spin 0.8s linear infinite;
+}
+
+@keyframes admin-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Skeleton placeholders for non-blocking loading states */
+.admin-scope .admin-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--admin-paper-muted) 0%,
+    var(--admin-paper-elevated) 50%,
+    var(--admin-paper-muted) 100%
+  );
+  background-size: 200% 100%;
+  animation: admin-skeleton-shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--admin-radius-md);
+}
+
+@keyframes admin-skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 
 /* Page transition animations */

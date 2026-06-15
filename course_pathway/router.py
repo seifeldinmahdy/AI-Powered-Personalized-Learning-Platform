@@ -270,6 +270,7 @@ async def pathway_versions(student_id: str, course_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
 @router.get("/current", response_model=PlanSummary)
 async def current_pathway(student_id: str, course_id: str):
     """Read-only: return the CURRENT authoritative plan (no generation).

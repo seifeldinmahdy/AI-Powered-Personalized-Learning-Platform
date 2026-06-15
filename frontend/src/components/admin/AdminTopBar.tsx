@@ -26,7 +26,7 @@ export function AdminTopBar() {
     }, []);
 
   return (
-    <header className="h-14 px-8 flex items-center bg-[var(--admin-paper-elevated)] border-b border-[var(--admin-hairline)]">
+    <header className="h-14 px-8 lg:pl-8 pl-16 flex items-center bg-[var(--admin-paper-elevated)] border-b border-[var(--admin-hairline)]">
       {/* Breadcrumb */}
       <nav aria-label="Breadcrumb">
         <ol className="flex items-center gap-2 admin-label">

@@ -8,12 +8,10 @@ import {
   TrendingUp,
   Clock,
   Search,
-  Filter,
   Eye,
   Loader2,
   X,
   Check,
-  FolderOpen,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
@@ -38,6 +36,7 @@ export default function AdminDashboard() {
 
   const [showForm, setShowForm] = useState(false);
   const [editingCourse, setEditingCourse] = useState<AdminCourse | null>(null);
+  const [previewCourse, setPreviewCourse] = useState<AdminCourse | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -84,13 +83,15 @@ export default function AdminDashboard() {
   };
 
   const handleDelete = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this course? This action cannot be undone.')) return;
     setDeletingId(id);
     try {
       await deleteCourse(id);
       setCourses(cs => cs.filter(c => c.id !== id));
       toast.success('Course deleted');
-    } catch {
-      toast.error('Failed to delete course');
+    } catch (err: any) {
+      const message = err?.response?.data?.detail || err?.response?.data?.error || err?.message || 'Failed to delete course';
+      toast.error(message);
     } finally {
       setDeletingId(null);
     }
@@ -110,7 +111,7 @@ export default function AdminDashboard() {
 
   if (loading) return (
     <div className="flex-1 flex items-center justify-center min-h-[60vh]">
-      <Loader2 size={40} className="animate-spin text-[var(--admin-accent)]" />
+      <div className="admin-loading-spinner" />
     </div>
   );
 
@@ -161,21 +162,20 @@ export default function AdminDashboard() {
 
             <div className="px-6 py-4 border-b border-[var(--admin-hairline)] bg-[var(--admin-paper-muted)] flex gap-4">
               <div className="flex-1 relative">
-                <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--admin-ink-tertiary)]" />
+                <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--admin-ink-tertiary)] pointer-events-none" />
                 <input
                   type="text"
                   placeholder="Search courses..."
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  className="admin-input pl-11"
+                  className="admin-input pl-11 w-full"
                 />
               </div>
-              <div className="relative">
-                <Filter size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--admin-ink-tertiary)]" />
+              <div className="relative flex-shrink-0 min-w-[200px]">
                 <select
                   value={filterStatus}
                   onChange={e => setFilterStatus(e.target.value)}
-                  className="admin-input admin-select pl-11 pr-10"
+                  className="admin-input admin-select w-full"
                 >
                   <option value="all">All Status</option>
                   {STATUSES.map(s => <option key={s} value={s.toLowerCase()}>{s}</option>)}
@@ -204,14 +204,11 @@ export default function AdminDashboard() {
                       <td><span className={getStatusBadge(course.status)}>{course.status}</span></td>
                       <td>
                         <div className="flex gap-2">
-                          <button onClick={() => navigate(`/courses/${course.id}`)} className="admin-btn admin-btn-ghost admin-btn-icon" title="View">
+                          <button onClick={() => setPreviewCourse(course)} className="admin-btn admin-btn-ghost admin-btn-icon" title="Preview Course">
                             <Eye size={16} />
                           </button>
-                          <button onClick={() => openEdit(course)} className="admin-btn admin-btn-ghost admin-btn-icon" title="Edit">
+                          <button onClick={() => openEdit(course)} className="admin-btn admin-btn-ghost admin-btn-icon" title="Edit Details">
                             <Edit size={16} />
-                          </button>
-                          <button onClick={() => navigate(`/admin/courses/${course.id}/editor`)} className="admin-btn admin-btn-ghost admin-btn-icon" title="Manage Content">
-                            <FolderOpen size={16} />
                           </button>
                           <button
                             onClick={() => handleDelete(course.id)}
@@ -294,6 +291,54 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+
+      {/* Course Preview Modal */}
+      {previewCourse && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="admin-card w-full max-w-lg shadow-2xl">
+            <div className="px-6 py-4 border-b border-[var(--admin-hairline)] flex items-center justify-between">
+              <h3 className="admin-heading-xs">Course Preview</h3>
+              <button onClick={() => setPreviewCourse(null)} className="admin-btn admin-btn-ghost admin-btn-icon">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="admin-input-label">Title</label>
+                <p className="admin-body-md">{previewCourse.title}</p>
+              </div>
+              <div>
+                <label className="admin-input-label">Description</label>
+                <p className="admin-body-md">{previewCourse.description || 'No description'}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="admin-input-label">Difficulty</label>
+                  <p className="admin-body-md">{previewCourse.difficulty}</p>
+                </div>
+                <div>
+                  <label className="admin-input-label">Status</label>
+                  <p className="admin-body-md">{previewCourse.status}</p>
+                </div>
+              </div>
+              {previewCourse.tags.length > 0 && (
+                <div>
+                  <label className="admin-input-label">Tags</label>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {previewCourse.tags.map(tag => (
+                      <span key={tag} className="admin-badge admin-badge-ghost-gray text-xs px-2 py-1">{tag}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t border-[var(--admin-hairline)] flex gap-3 justify-end">
+              <button onClick={() => setPreviewCourse(null)} className="admin-btn admin-btn-ghost">Close</button>
+              <button onClick={() => { setPreviewCourse(null); navigate(`/admin/courses/${previewCourse.id}/editor`); }} className="admin-btn admin-btn-primary">Open Editor</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Course Create/Edit Modal */}
       {showForm && (

@@ -55,8 +55,9 @@ export default function ContentManagement() {
       await deleteCourse(id);
       setCourses((prev) => prev.filter((c) => c.id !== id));
       toast.success("Course deleted");
-    } catch {
-      toast.error("Failed to delete course");
+    } catch (err: any) {
+      const message = err?.response?.data?.detail || err?.response?.data?.error || err?.message || "Failed to delete course";
+      toast.error(message);
     } finally {
       setDeleting(null);
     }
@@ -65,10 +66,19 @@ export default function ContentManagement() {
   const difficulties = [...new Set(courses.map((c) => c.difficulty?.toLowerCase()).filter(Boolean))];
   const statuses = [...new Set(courses.map((c) => c.status?.toLowerCase()).filter(Boolean))];
 
+  // Compute avg rating safely - default to 0 when no valid ratings
+  const avgRating = useMemo(() => {
+    const ratings = courses
+      .map((c) => Number(c.avg_rating))
+      .filter((r) => Number.isFinite(r) && r > 0);
+    if (ratings.length === 0) return "0.0";
+    return (ratings.reduce((s, r) => s + r, 0) / ratings.length).toFixed(1);
+  }, [courses]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-32">
-        <Loader2 size={32} className="animate-spin" style={{ color: "var(--admin-accent)" }} />
+        <div className="admin-loading-spinner" />
       </div>
     );
   }
@@ -92,18 +102,16 @@ export default function ContentManagement() {
           {
             label: "Published",
             value: courses.filter((c) => c.status?.toLowerCase() === "published").length,
-            icon: Eye, color: "var(--admin-lime)",
+            icon: Eye, color: "var(--admin-success)",
           },
           {
             label: "Draft",
             value: courses.filter((c) => c.status?.toLowerCase() === "draft").length,
-            icon: Edit2, color: "var(--admin-muted)",
+            icon: Edit2, color: "var(--admin-ink-tertiary)",
           },
           {
             label: "Avg. Rating",
-            value: courses.length
-              ? (courses.reduce((s, c) => s + (c.avg_rating || 0), 0) / courses.length).toFixed(1)
-              : "—",
+            value: avgRating,
             icon: BarChart3, color: "var(--admin-accent)",
           },
         ].map((card) => {
@@ -120,7 +128,7 @@ export default function ContentManagement() {
                 <p className="text-2xl font-bold" style={{ color: "var(--admin-ink)" }}>
                   {card.value}
                 </p>
-                <p className="text-xs" style={{ color: "var(--admin-muted)" }}>{card.label}</p>
+                <p className="text-xs" style={{ color: "var(--admin-ink-secondary)" }}>{card.label}</p>
               </div>
             </div>
           );
@@ -130,7 +138,7 @@ export default function ContentManagement() {
       {/* Filters */}
       <div className="flex items-center gap-3 mb-6 flex-wrap">
         <div className="relative flex-1 max-w-md">
-          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: "var(--admin-muted)" }} />
+          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--admin-ink-tertiary)" }} />
           <input
             type="text"
             placeholder="Search courses..."
@@ -143,7 +151,7 @@ export default function ContentManagement() {
         <select
           value={difficultyFilter}
           onChange={(e) => setDifficultyFilter(e.target.value)}
-          className="admin-input"
+          className="admin-input admin-select"
           id="content-difficulty-filter"
         >
           <option value="all">All Difficulties</option>
@@ -154,7 +162,7 @@ export default function ContentManagement() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="admin-input"
+          className="admin-input admin-select"
           id="content-status-filter"
         >
           <option value="all">All Statuses</option>
@@ -177,7 +185,7 @@ export default function ContentManagement() {
                 >
                   {course.title}
                 </h3>
-                <p className="text-xs mt-1 line-clamp-2" style={{ color: "var(--admin-muted)" }}>
+                <p className="text-xs mt-1 line-clamp-2" style={{ color: "var(--admin-ink-secondary)" }}>
                   {course.description || "No description"}
                 </p>
               </div>
@@ -186,12 +194,12 @@ export default function ContentManagement() {
                 style={{
                   background:
                     course.status?.toLowerCase() === "published"
-                      ? "var(--admin-lime)22"
-                      : "var(--admin-surface)",
+                      ? "var(--admin-success)22"
+                      : "var(--admin-paper-muted)",
                   color:
                     course.status?.toLowerCase() === "published"
-                      ? "var(--admin-lime)"
-                      : "var(--admin-muted)",
+                      ? "var(--admin-success)"
+                      : "var(--admin-ink-tertiary)",
                 }}
               >
                 {course.status || "Draft"}
@@ -202,16 +210,14 @@ export default function ContentManagement() {
               <span className="flex items-center gap-1">
                 <Users size={12} /> {course.difficulty || "—"}
               </span>
-              {course.avg_rating > 0 && (
-                <span className="flex items-center gap-1">
-                  ★ {course.avg_rating}
-                </span>
-              )}
+              <span className="flex items-center gap-1">
+                ★ {(course.avg_rating != null && !isNaN(course.avg_rating)) ? Number(course.avg_rating).toFixed(1) : "0.0"}
+              </span>
             </div>
 
             <div className="flex items-center gap-2">
               <button
-                onClick={() => navigate(`/admin/courses/${course.id}`)}
+                onClick={() => navigate(`/admin/courses/${course.id}/editor`, { replace: false })}
                 className="admin-btn admin-btn-secondary text-xs px-3 py-1.5 flex items-center gap-1"
               >
                 <Edit2 size={12} /> Edit
@@ -221,8 +227,8 @@ export default function ContentManagement() {
                 disabled={deleting === course.id}
                 className="admin-btn text-xs px-3 py-1.5 flex items-center gap-1"
                 style={{
-                  border: "1px solid var(--admin-border)",
-                  color: "var(--admin-red, #ff4444)",
+                  border: "1px solid var(--admin-hairline)",
+                  color: "var(--admin-error)",
                 }}
               >
                 {deleting === course.id ? (
@@ -237,7 +243,7 @@ export default function ContentManagement() {
         ))}
 
         {filtered.length === 0 && (
-          <div className="col-span-full py-16 text-center" style={{ color: "var(--admin-muted)" }}>
+          <div className="col-span-full py-16 text-center" style={{ color: "var(--admin-ink-tertiary)" }}>
             <BookOpen size={48} className="mx-auto mb-4 opacity-40" />
             <p>No courses found</p>
           </div>

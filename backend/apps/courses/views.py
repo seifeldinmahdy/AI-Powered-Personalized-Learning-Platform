@@ -35,10 +35,11 @@ def _svc_headers():
 
 
 class CourseViewSet(viewsets.ModelViewSet):
-    """CRUD operations for courses. Supports search and filtering."""
+    """CRUD operations for courses. Supports search and filtering.
+    Read access is public so the course catalog works; writes are admin-only."""
 
     serializer_class = CourseSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAdminOrReadOnly]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ["title", "description", "tags"]
     ordering_fields = ["created_at", "title", "price", "avg_rating"]
@@ -88,6 +89,8 @@ class CourseViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         cache.delete(f"course_detail_{instance.pk}")
+        if hasattr(cache, 'delete_pattern'):
+            cache.delete_pattern("course_list_*")
         instance.delete()
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
