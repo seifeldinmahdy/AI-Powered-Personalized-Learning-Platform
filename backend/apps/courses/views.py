@@ -34,6 +34,14 @@ def _svc_headers():
     return {"X-Service-Key": os.getenv("INTERNAL_SERVICE_KEY", "")}
 
 
+class IsAdminOrReadOnly(permissions.BasePermission):
+    """Allow full access to admins; read-only to everyone else."""
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin'
+
+
 class CourseViewSet(viewsets.ModelViewSet):
     """CRUD operations for courses. Supports search and filtering.
     Read access is public so the course catalog works; writes are admin-only."""
@@ -134,14 +142,6 @@ class CourseViewSet(viewsets.ModelViewSet):
         Course.objects.filter(pk=course.pk).update(avg_rating=round(avg, 2))
 
         return Response({"avg_rating": round(avg, 2), "your_rating": obj.rating})
-
-
-class IsAdminOrReadOnly(permissions.BasePermission):
-    """Allow full access to admins; read-only to everyone else."""
-    def has_permission(self, request, view):
-        if request.method in permissions.SAFE_METHODS:
-            return True
-        return request.user.is_authenticated and getattr(request.user, 'role', None) == 'admin'
 
 
 class ModuleViewSet(viewsets.ModelViewSet):

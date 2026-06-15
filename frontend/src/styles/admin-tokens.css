@@ -56,6 +56,13 @@
   /* Transitions */
   --admin-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --admin-ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
+
+  /* Legacy aliases used by some admin pages */
+  --admin-muted: var(--admin-ink-tertiary);
+  --admin-lime: var(--admin-success);
+  --admin-surface: var(--admin-paper-muted);
+  --admin-border: var(--admin-hairline);
+  --admin-red: var(--admin-error);
 }
 
 .admin-scope {
@@ -121,6 +128,22 @@
   line-height: 1.3;
   letter-spacing: -0.01em;
   font-weight: 600;
+}
+
+/* Legacy heading aliases used by some admin pages */
+.admin-scope .admin-heading {
+  font-family: var(--admin-font-display);
+  font-size: 44px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+
+.admin-scope .admin-subheading {
+  font-family: var(--admin-font-body);
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--admin-ink-secondary);
 }
 
 .admin-scope .admin-body-lg {

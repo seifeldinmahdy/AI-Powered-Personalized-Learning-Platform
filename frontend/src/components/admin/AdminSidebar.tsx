@@ -10,6 +10,8 @@ import {
   Shield,
   Menu,
   X,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useAuth } from "../../contexts/AuthContext";
@@ -42,6 +44,17 @@ export function AdminSidebar() {
   useEffect(() => {
     setMobileOpen(false);
   }, [location.pathname]);
+
+  // Close mobile drawer when entering desktop breakpoint
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 1024) {
+        setMobileOpen(false);
+      }
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   const isActive = (path: string) => {
     if (path === "/admin") {
@@ -78,7 +91,7 @@ export function AdminSidebar() {
           className="hidden lg:flex items-center justify-center w-8 h-8 rounded-[var(--admin-radius-md)] hover:bg-[var(--admin-paper-muted)] transition-colors text-[var(--admin-ink-secondary)]"
           title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
-          {collapsed ? <Menu size={16} /> : <X size={16} />}
+          {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
         </button>
       </div>
 
@@ -144,13 +157,14 @@ export function AdminSidebar() {
 
   return (
     <>
-      {/* Mobile hamburger button — shown only on small screens */}
+      {/* Mobile hamburger button — toggles the drawer */}
       <button
-        onClick={() => setMobileOpen(true)}
+        onClick={() => setMobileOpen(o => !o)}
         className="lg:hidden fixed top-4 left-4 z-[60] w-10 h-10 flex items-center justify-center rounded-[var(--admin-radius-md)] bg-[var(--admin-paper-elevated)] border border-[var(--admin-hairline)] shadow-sm text-[var(--admin-ink)]"
-        aria-label="Open sidebar"
+        aria-label={mobileOpen ? "Close sidebar" : "Open sidebar"}
+        aria-expanded={mobileOpen}
       >
-        <Menu size={20} />
+        {mobileOpen ? <X size={20} /> : <Menu size={20} />}
       </button>
 
       {/* Mobile overlay */}
@@ -161,35 +175,27 @@ export function AdminSidebar() {
         />
       )}
 
-      {/* Mobile drawer */}
+      {/* Single sidebar that behaves as a mobile drawer or desktop sticky panel */}
       <aside
         className={`
-          lg:hidden fixed top-0 left-0 z-[55] h-screen w-64
+          fixed lg:sticky top-0 left-0 z-[55] lg:z-auto h-screen
+          ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+          ${collapsed ? 'lg:w-20' : 'lg:w-64'}
+          w-64
           flex flex-col bg-[var(--admin-paper-elevated)] border-r border-[var(--admin-hairline)]
-          transform transition-transform duration-300 ease-in-out
-          ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}
+          transition-all duration-300 ease-in-out flex-shrink-0
         `}
       >
-        <div className="absolute top-4 right-4">
+        {/* Mobile-only close button inside the drawer */}
+        <div className="absolute top-4 right-4 lg:hidden">
           <button
             onClick={() => setMobileOpen(false)}
             className="w-8 h-8 flex items-center justify-center rounded-[var(--admin-radius-md)] hover:bg-[var(--admin-paper-muted)] text-[var(--admin-ink-secondary)]"
+            aria-label="Close sidebar"
           >
             <X size={18} />
           </button>
         </div>
-        {sidebarContent}
-      </aside>
-
-      {/* Desktop sidebar — sticky */}
-      <aside
-        className={`
-          hidden lg:flex flex-col sticky top-0 h-screen
-          bg-[var(--admin-paper-elevated)] border-r border-[var(--admin-hairline)]
-          transition-[width] duration-300 ease-in-out flex-shrink-0
-          ${collapsed ? 'w-20' : 'w-64'}
-        `}
-      >
         {sidebarContent}
       </aside>
     </>
