@@ -1,568 +1,430 @@
-import { useParams, useNavigate, Link } from 'react-router';
-import { useState, useEffect } from 'react';
-import {
-    BookOpen, Star, Users, Clock, ChevronDown, ChevronRight,
-    Lock, CheckCircle, GraduationCap, Loader2, ArrowLeft, Tag,
-} from 'lucide-react';
-import { toast } from 'sonner';
-import { getCourseById, submitCourseRating, type Course } from '../services/courses';
-import { getModules, getLessons, type Module, type Lesson } from '../services/lessons';
-import { getEnrollments } from '../services/api';
-import { getLessonCompletions } from '../services/progress';
+import { useParams, useNavigate, Link } from "react-router";
+import { useState, useEffect } from "react";
+import { toast } from "sonner";
+import { getCourseById, submitCourseRating, type Course } from "../services/courses";
+import { getModules, getLessons, type Module, type Lesson } from "../services/lessons";
+import { getEnrollments, enroll } from "../services/api";
+import { getLessonCompletions } from "../services/progress";
+import { DIFF_COLOR } from "../components/personifai/CourseCards";
 import { CapstoneStartCTA } from '../components/CapstoneStartCTA';
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+/* Single course page — codex. Every value shown is pulled from the database
+   (course, modules, lessons, enrollment, completions, rating). Nothing is
+   fabricated: there is no invented "duration" estimate, no fake enrollment
+   counts, and lessons are not shown as artificially "locked". */
 
-function difficultyColor(d: string) {
-    switch (d) {
-        case 'Beginner': return 'bg-emerald-100 text-emerald-700';
-        case 'Intermediate': return 'bg-amber-100 text-amber-700';
-        case 'Advanced': return 'bg-rose-100 text-rose-700';
-        default: return 'bg-muted text-muted-foreground';
+function parseSyllabus(raw: Course["syllabus"]): string[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw as string[];
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map(String);
+      if (parsed && typeof parsed === "object") return Object.values(parsed).map(String);
+      return [raw];
+    } catch {
+      return raw.split("\n").map((s) => s.trim()).filter(Boolean);
     }
+  }
+  if (typeof raw === "object") return Object.values(raw as Record<string, unknown>).map(String);
+  return [];
 }
-
-function estimateDuration(lessonCount: number) {
-    const hours = Math.round((lessonCount * 30) / 60);
-    return hours < 1 ? `${lessonCount * 30}m` : `~${hours}h`;
-}
-
-function parseSyllabus(raw: Course['syllabus']): string[] {
-    if (!raw) return [];
-    if (Array.isArray(raw)) return raw as string[];
-    if (typeof raw === 'string') {
-        try {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed)) return parsed;
-            return [raw];
-        } catch {
-            return raw.split('\n').filter(Boolean);
-        }
-    }
-    if (typeof raw === 'object') {
-        const obj = raw as Record<string, unknown>;
-        return Object.values(obj).map(String);
-    }
-    return [];
-}
-
-// ── component ─────────────────────────────────────────────────────────────────
 
 interface EnrollmentInfo {
-    id: number;
-    course: number;
-    current_lesson: number | null;
-    placement_score: number | null;
-    is_pathway_ready: boolean;
-    is_assessment_started: boolean;
-    progress_percentage?: string;
+  id: number;
+  course: number;
+  current_lesson: number | null;
+  placement_score: number | null;
+  is_pathway_ready: boolean;
+  is_assessment_started: boolean;
+  progress_percentage: string;
+  current_score: number;
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ transition: "transform 220ms cubic-bezier(.7,0,.2,1)", transform: open ? "rotate(180deg)" : "none", flexShrink: 0 }}>
+      <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
 export default function CourseDetail() {
-    const { courseId } = useParams<{ courseId: string }>();
-    const navigate = useNavigate();
+  const { courseId } = useParams<{ courseId: string }>();
+  const navigate = useNavigate();
+  const id = Number(courseId);
 
-    const [course, setCourse] = useState<Course | null>(null);
-    const [modules, setModules] = useState<Module[]>([]);
-    const [lessonMap, setLessonMap] = useState<Record<number, Lesson[]>>({});
-    const [expandedModules, setExpandedModules] = useState<Set<number>>(new Set());
-    const [enrollment, setEnrollment] = useState<EnrollmentInfo | null>(null);
-    const [completedLessonIds, setCompletedLessonIds] = useState<Set<number>>(new Set());
-    const [loading, setLoading] = useState(true);
-    const [enrolling, setEnrolling] = useState(false);
-    const [error, setError] = useState('');
+  const [course, setCourse] = useState<Course | null>(null);
+  const [modules, setModules] = useState<Module[]>([]);
+  const [lessonMap, setLessonMap] = useState<Record<number, Lesson[]>>({});
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [enrollment, setEnrollment] = useState<EnrollmentInfo | null>(null);
+  const [completedIds, setCompletedIds] = useState<Set<number>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [enrolling, setEnrolling] = useState(false);
+  const [error, setError] = useState("");
 
-    const id = Number(courseId);
+  useEffect(() => {
+    if (isNaN(id)) { setError("Invalid course ID"); setLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const [courseData, mods, enrollRes] = await Promise.all([
+          getCourseById(id),
+          getModules(id),
+          getEnrollments().catch(() => ({ data: [] })),
+        ]);
+        if (cancelled) return;
+        setCourse(courseData);
+        const sortedMods = mods.sort((a, b) => a.module_order - b.module_order);
+        setModules(sortedMods);
 
-    useEffect(() => {
-        if (isNaN(id)) { setError('Invalid course ID'); setLoading(false); return; }
-        let cancelled = false;
+        const raw = enrollRes.data;
+        const list: EnrollmentInfo[] = Array.isArray(raw) ? raw : (raw as { results?: EnrollmentInfo[] }).results ?? [];
+        const found = list.find((e) => e.course === id) ?? null;
+        setEnrollment(found);
 
-        async function load() {
-            try {
-                const [courseData, mods, enrollRes] = await Promise.all([
-                    getCourseById(id),
-                    getModules(id),
-                    getEnrollments().catch(() => ({ data: [] })),
-                ]);
-                if (cancelled) return;
-                setCourse(courseData);
-                setModules(mods.sort((a, b) => a.module_order - b.module_order));
-
-                const list: EnrollmentInfo[] = Array.isArray(enrollRes.data)
-                    ? enrollRes.data
-                    : (enrollRes.data as { results?: EnrollmentInfo[] }).results ?? [];
-                const found = list.find((e) => e.course === id) ?? null;
-                setEnrollment(found);
-
-                // Load completed lessons if enrolled
-                if (found) {
-                    try {
-                        const completions = await getLessonCompletions(found.id);
-                        const ids = new Set(
-                            completions
-                                .filter((c) => c.status === 'Completed')
-                                .map((c) => c.lesson)
-                        );
-                        if (!cancelled) setCompletedLessonIds(ids);
-                    } catch { /* non-critical */ }
-                }
-
-                // Expand first module by default
-                if (mods.length > 0) setExpandedModules(new Set([mods[0].id]));
-
-                // Load lessons for the first module eagerly
-                if (mods.length > 0) {
-                    try {
-                        const lessons = await getLessons(mods[0].id);
-                        if (!cancelled) setLessonMap({ [mods[0].id]: lessons.sort((a, b) => a.lesson_order - b.lesson_order) });
-                    } catch { /* non-critical */ }
-                }
-            } catch {
-                if (!cancelled) setError('Failed to load course details.');
-            } finally {
-                if (!cancelled) setLoading(false);
-            }
+        if (found) {
+          try {
+            const comps = await getLessonCompletions(found.id);
+            if (!cancelled) setCompletedIds(new Set(comps.filter((c) => c.status === "Completed").map((c) => c.lesson)));
+          } catch { /* non-critical */ }
         }
-        load();
-        return () => { cancelled = true; };
-    }, [id]);
 
-    const toggleModule = async (modId: number) => {
-        setExpandedModules((prev) => {
-            const next = new Set(prev);
-            if (next.has(modId)) { next.delete(modId); return next; }
-            next.add(modId);
-            return next;
-        });
-        if (!lessonMap[modId]) {
-            try {
-                const lessons = await getLessons(modId);
-                setLessonMap((prev) => ({ ...prev, [modId]: lessons.sort((a, b) => a.lesson_order - b.lesson_order) }));
-            } catch { /* ignore */ }
+        if (sortedMods.length > 0) {
+          setExpanded(new Set([sortedMods[0].id]));
+          try {
+            const lessons = await getLessons(sortedMods[0].id);
+            if (!cancelled) setLessonMap({ [sortedMods[0].id]: lessons.sort((a, b) => a.lesson_order - b.lesson_order) });
+          } catch { /* non-critical */ }
         }
-    };
+      } catch {
+        if (!cancelled) setError("Failed to load course details.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [id]);
 
-    const handleStartAssessment = async () => {
-        if (!course) return;
-        setEnrolling(true);
-        try {
-            // If already enrolled, navigate based on pathway/assessment progress
-            if (enrollment) {
-                if (enrollment.is_pathway_ready) {
-                    if (enrollment.current_lesson) {
-                        navigate(`/course/${id}/lesson/${enrollment.current_lesson}`);
-                    } else {
-                        // Find the first lesson of the first module
-                        const firstLesson = Object.values(lessonMap).flat()[0];
-                        if (firstLesson) {
-                            navigate(`/course/${id}/lesson/${firstLesson.id}`);
-                        } else if (modules.length > 0) {
-                            // Lessons not loaded yet — fetch first module's lessons
-                            try {
-                                const lessons = await getLessons(modules[0].id);
-                                if (lessons.length > 0) {
-                                    navigate(`/course/${id}/lesson/${lessons[0].id}`);
-                                    return;
-                                }
-                            } catch { /* ignore */ }
-                        }
-                        navigate('/dashboard');
-                    }
-                    return;
-                } else if (enrollment.is_assessment_started) {
-                    // Resume assessment
-                    navigate(`/courses/${id}/assessment`, {
-                        state: { enrollmentId: enrollment.id, courseTitle: course.title },
-                    });
-                    return;
-                } else {
-                    // Start assessment flow
-                    navigate(`/courses/${id}/assessment`, {
-                        state: { enrollmentId: enrollment.id, courseTitle: course.title },
-                    });
-                    return;
-                }
-            }
-            // Otherwise enroll first, then send to assessment
-            const { enroll } = await import('../services/api');
-            const { data } = await enroll(id);
-            navigate(`/courses/${id}/assessment`, {
-                state: { enrollmentId: data.id, courseTitle: course.title },
-            });
-        } catch {
-            alert('Failed to start. Please try again.');
-        } finally {
-            setEnrolling(false);
-        }
-    };
-
-    const handleGeneratePathway = () => {
-        navigate(`/course/${id}/pathway`);
-    };
-
-    // ── loading / error ───────────────────────────────────────────────────────
-
-    if (loading) {
-        return (
-            <div className="flex-1 flex items-center justify-center">
-                <Loader2 size={40} className="animate-spin text-secondary" />
-            </div>
-        );
+  const toggleModule = async (modId: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(modId) ? next.delete(modId) : next.add(modId);
+      return next;
+    });
+    if (!lessonMap[modId]) {
+      try {
+        const lessons = await getLessons(modId);
+        setLessonMap((prev) => ({ ...prev, [modId]: lessons.sort((a, b) => a.lesson_order - b.lesson_order) }));
+      } catch { /* ignore */ }
     }
+  };
 
-    if (error || !course) {
-        return (
-            <div className="flex-1 flex flex-col items-center justify-center gap-4">
-                <p className="text-destructive">{error || 'Course not found.'}</p>
-                <Link to="/courses" className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
-                    <ArrowLeft size={16} /> Back to Courses
-                </Link>
-            </div>
-        );
+  const handleStart = async () => {
+    if (!course) return;
+    setEnrolling(true);
+    try {
+      if (enrollment) {
+        if (enrollment.is_pathway_ready) {
+          if (enrollment.current_lesson) {
+            navigate(`/course/${id}/lesson/${enrollment.current_lesson}`);
+          } else {
+            const first = Object.values(lessonMap).flat()[0];
+            if (first) navigate(`/course/${id}/lesson/${first.id}`);
+            else if (modules.length > 0) {
+              const lessons = await getLessons(modules[0].id);
+              if (lessons.length > 0) { navigate(`/course/${id}/lesson/${lessons[0].id}`); return; }
+              navigate("/dashboard");
+            } else navigate("/dashboard");
+          }
+          return;
+        }
+        navigate(`/courses/${id}/assessment`, { state: { enrollmentId: enrollment.id, courseTitle: course.title } });
+        return;
+      }
+      const { data } = await enroll(id);
+      navigate(`/courses/${id}/assessment`, { state: { enrollmentId: data.id, courseTitle: course.title } });
+    } catch {
+      toast.error("Failed to start. Please try again.");
+    } finally {
+      setEnrolling(false);
     }
+  };
 
-    const syllabus = parseSyllabus(course.syllabus);
-    const isEnrolled = !!enrollment;
-
+  if (loading) {
     return (
-        <div className="flex-1 overflow-y-auto bg-background">
-            {/* ── Hero banner ─────────────────────────────────────────────── */}
-            <div className="bg-gradient-to-br from-primary via-secondary to-accent text-white">
-                <div className="max-w-6xl mx-auto px-6 py-10">
-                    <Link
-                        to="/courses"
-                        className="inline-flex items-center gap-2 text-white/70 hover:text-white text-sm mb-6 no-underline transition-colors"
-                    >
-                        <ArrowLeft size={16} /> All Courses
-                    </Link>
-
-                    <div className="flex flex-col md:flex-row md:items-start gap-6">
-                        {/* Left: info */}
-                        <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-3">
-                                <span className={`px-2.5 py-1 rounded-lg text-xs font-bold ${difficultyColor(course.difficulty)}`}>
-                                    {course.difficulty}
-                                </span>
-                                {parseFloat(course.price) === 0 && (
-                                    <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-500/90 text-white">FREE</span>
-                                )}
-                            </div>
-
-                            <h1 className="text-3xl font-bold mb-3 text-white">{course.title}</h1>
-                            <p className="text-white/80 text-base mb-5 leading-relaxed max-w-2xl">
-                                {course.description || 'No description available.'}
-                            </p>
-
-                            {/* Stats row */}
-                            <div className="flex flex-wrap items-center gap-5 text-sm text-white/80">
-                                <span className="flex items-center gap-1.5">
-                                    <BookOpen size={15} />
-                                    {course.total_lessons_count} lessons
-                                </span>
-                                <span className="flex items-center gap-1.5">
-                                    <Clock size={15} />
-                                    {estimateDuration(course.total_lessons_count)}
-                                </span>
-                                {parseFloat(course.avg_rating) > 0 && (
-                                    <span className="flex items-center gap-1.5">
-                                        <Star size={15} className="fill-amber-300 text-amber-300" />
-                                        {course.avg_rating}
-                                    </span>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Right: CTA card (desktop) */}
-                        <div className="hidden md:block w-72 shrink-0">
-                            <CtaCard
-                                course={course}
-                                isEnrolled={isEnrolled}
-                                enrolling={enrolling}
-                                onStart={handleStartAssessment}
-                                onGeneratePathway={handleGeneratePathway}
-                                enrollment={enrollment}
-                                courseId={id}
-                                onRatingSubmit={(avg) => setCourse((prev) => prev ? { ...prev, avg_rating: String(avg) } : prev)}
-                            />
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* ── Body ────────────────────────────────────────────────────── */}
-            <div className="max-w-6xl mx-auto px-6 py-10 flex flex-col md:flex-row gap-8">
-                {/* Main content */}
-                <div className="flex-1 space-y-8">
-
-                    {/* Tags */}
-                    {course.tags?.length > 0 && (
-                        <div className="flex flex-wrap gap-2 items-center">
-                            <Tag size={15} className="text-muted-foreground" />
-                            {course.tags.map((tag, i) => (
-                                <span key={i} className="px-2.5 py-1 bg-muted rounded-lg text-xs text-muted-foreground font-medium">
-                                    {tag}
-                                </span>
-                            ))}
-                        </div>
-                    )}
-
-                    {/* What you'll learn */}
-                    {syllabus.length > 0 && (
-                        <section className="bg-card rounded-2xl border border-border p-6">
-                            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                                <GraduationCap size={20} className="text-secondary" />
-                                What you'll learn
-                            </h2>
-                            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                {syllabus.map((item, i) => (
-                                    <li key={i} className="flex items-start gap-2 text-sm text-foreground">
-                                        <CheckCircle size={16} className="text-emerald-500 mt-0.5 shrink-0" />
-                                        {item}
-                                    </li>
-                                ))}
-                            </ul>
-                        </section>
-                    )}
-
-                    {/* Course content accordion */}
-                    <section>
-                        <h2 className="text-lg font-semibold mb-4">
-                            Course Content
-                            <span className="ml-2 text-sm font-normal text-muted-foreground">
-                                ({modules.length} modules · {course.total_lessons_count} lessons)
-                            </span>
-                        </h2>
-
-                        {modules.length === 0 && (
-                            <div className="bg-card rounded-2xl border border-border p-8 text-center text-muted-foreground text-sm">
-                                No modules available yet.
-                            </div>
-                        )}
-
-                        <div className="space-y-2">
-                            {modules.map((mod) => {
-                                const isOpen = expandedModules.has(mod.id);
-                                const lessons = lessonMap[mod.id] ?? [];
-                                return (
-                                    <div key={mod.id} className="bg-card rounded-2xl border border-border overflow-hidden">
-                                        <button
-                                            onClick={() => toggleModule(mod.id)}
-                                            className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-muted/40 transition-colors"
-                                        >
-                                            <span className="font-medium text-sm">{mod.title}</span>
-                                            <ChevronDown
-                                                size={18}
-                                                className={`text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`}
-                                            />
-                                        </button>
-
-                                        {isOpen && (
-                                            <div className="border-t border-border divide-y divide-border">
-                                                {lessons.length === 0 && (
-                                                    <p className="px-5 py-3 text-xs text-muted-foreground">Loading…</p>
-                                                )}
-                                                {lessons.map((lesson) => {
-                                                    const done = completedLessonIds.has(lesson.id);
-                                                    const isCurrent = enrollment?.current_lesson === lesson.id;
-                                                    return (
-                                                        <div key={lesson.id} className={`flex items-center gap-3 px-5 py-3 ${isCurrent ? 'bg-secondary/5' : ''}`}>
-                                                            {done ? (
-                                                                <CheckCircle size={14} className="text-emerald-500 shrink-0" />
-                                                            ) : (
-                                                                <Lock size={14} className="text-muted-foreground shrink-0" />
-                                                            )}
-                                                            <span className={`text-sm flex-1 ${done ? 'text-foreground' : 'text-muted-foreground'}`}>
-                                                                {lesson.title}
-                                                            </span>
-                                                            {isCurrent && (
-                                                                <span className="text-xs px-2 py-0.5 bg-secondary/10 text-secondary rounded-full font-medium">
-                                                                    Current
-                                                                </span>
-                                                            )}
-                                                            {done && (
-                                                                <span className="text-xs text-emerald-500 font-medium">Done</span>
-                                                            )}
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </section>
-                </div>
-
-                {/* Sidebar CTA (mobile / sticky desktop) */}
-                <div className="md:hidden">
-                    <CtaCard
-                        course={course}
-                        isEnrolled={isEnrolled}
-                        enrolling={enrolling}
-                        onStart={handleStartAssessment}
-                        onGeneratePathway={handleGeneratePathway}
-                        enrollment={enrollment}
-                        courseId={id}
-                        onRatingSubmit={(avg) => setCourse((prev) => prev ? { ...prev, avg_rating: String(avg) } : prev)}
-                    />
-                </div>
-            </div>
-        </div>
+      <div className="codex" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-primary)" }}>
+        <span className="t-mono steel">LOADING COURSE…</span>
+      </div>
     );
+  }
+
+  if (error || !course) {
+    return (
+      <div className="codex" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18, background: "var(--bg-primary)" }}>
+        <span className="t-heading" style={{ fontSize: 24, color: "var(--text-primary)" }}>{error || "Course not found."}</span>
+        <Link to="/courses" className="t-label" style={{ color: "var(--accent-primary)", textDecoration: "none" }}>← ALL COURSES</Link>
+      </div>
+    );
+  }
+
+  const syllabus = parseSyllabus(course.syllabus);
+  const isEnrolled = !!enrollment;
+  const diffColor = DIFF_COLOR[course.difficulty] || "#6E665A";
+  const rating = parseFloat(course.avg_rating);
+  const price = parseFloat(course.price);
+  const progress = enrollment ? parseFloat(enrollment.progress_percentage) || 0 : 0;
+  const pad = "clamp(20px,5vw,64px)";
+
+  return (
+    <div className="codex" style={{ flex: 1, overflowY: "auto", background: "var(--bg-primary)" }}>
+      <style>{`
+        .cd-grid { display:grid; grid-template-columns: minmax(0,1fr) 340px; gap: 44px; align-items:start; }
+        .cd-aside { position: sticky; top: 24px; }
+        @media (max-width: 900px) {
+          .cd-grid { grid-template-columns: 1fr; gap: 32px; }
+          .cd-main { grid-row: 2; }
+          .cd-aside { grid-row: 1; position: static; }
+        }
+      `}</style>
+
+      <div style={{ padding: `clamp(24px,3vw,40px) ${pad} 64px`, maxWidth: 1180, marginInline: "auto" }}>
+        {/* Back */}
+        <Link to="/courses" className="t-label" style={{ color: "var(--text-secondary)", textDecoration: "none", display: "inline-block", marginBottom: 28 }}>← ALL COURSES</Link>
+
+        {/* Header */}
+        <div style={{ marginBottom: 40 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 18, flexWrap: "wrap" }}>
+            <span className="tag-red" style={{ color: diffColor, borderColor: diffColor }}>{course.difficulty || "COURSE"}</span>
+            <span className="tag-steel">{price > 0 ? `$${course.price}` : "FREE"}</span>
+            {course.status && course.status !== "Published" ? <span className="tag-steel">{course.status.toUpperCase()}</span> : null}
+          </div>
+
+          <div className="t-display" style={{ fontSize: "clamp(38px,6vw,72px)", color: "var(--text-primary)", maxWidth: 920 }}>{course.title}</div>
+
+          {course.description ? (
+            <p className="t-body" style={{ color: "var(--text-secondary)", fontSize: 16, lineHeight: 1.6, maxWidth: 680, marginTop: 20 }}>{course.description}</p>
+          ) : null}
+
+          {/* Real stat row */}
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginTop: 24 }} className="t-mono steel">
+            <span>{course.total_lessons_count} LESSONS</span>
+            <span>{modules.length} MODULES</span>
+            {rating > 0 ? <span style={{ color: "var(--text-primary)" }}>★ {course.avg_rating}</span> : <span>UNRATED</span>}
+          </div>
+
+          {/* Enrolled progress */}
+          {isEnrolled && (
+            <div style={{ maxWidth: 540, marginTop: 28 }}>
+              <div className="progress"><i style={{ width: `${Math.max(2, progress)}%` }} /></div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10, gap: 8 }}>
+                <span className="t-mono" style={{ color: "var(--accent-primary)" }}>{Math.round(progress)}% COMPLETE</span>
+                {enrollment?.placement_score != null && (
+                  <span className="t-mono steel">PLACEMENT · {Math.round(enrollment.placement_score)}/100</span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="cd-grid">
+          {/* Main */}
+          <div className="cd-main" style={{ display: "flex", flexDirection: "column", gap: 40 }}>
+            {/* Tags */}
+            {course.tags && course.tags.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {course.tags.map((t, i) => (
+                  <span key={i} className="t-mono" style={{ color: "var(--steel-light)", border: "1px solid var(--hairline)", padding: "4px 8px", borderRadius: 4 }}>{t}</span>
+                ))}
+              </div>
+            )}
+
+            {/* What you'll learn */}
+            {syllabus.length > 0 && (
+              <section>
+                <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 18 }}>WHAT YOU'LL LEARN</div>
+                <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
+                  {syllabus.map((item, i) => (
+                    <li key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                      <span style={{ width: 6, height: 6, background: "var(--accent-success)", marginTop: 8, flexShrink: 0 }} />
+                      <span className="t-body" style={{ fontSize: 14, color: "var(--text-primary)" }}>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {/* Course content */}
+            <section>
+              <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 18 }}>
+                COURSE CONTENT · {modules.length} MODULES · {course.total_lessons_count} LESSONS
+              </div>
+
+              {modules.length === 0 ? (
+                <div style={{ padding: "40px 24px", textAlign: "center", border: "1px solid var(--hairline)", borderRadius: 8, background: "var(--bg-surface)" }}>
+                  <span className="t-mono steel">NO MODULES AVAILABLE YET</span>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {modules.map((mod, mi) => {
+                    const open = expanded.has(mod.id);
+                    const lessons = lessonMap[mod.id] ?? [];
+                    return (
+                      <div key={mod.id} style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderRadius: 8, overflow: "hidden" }}>
+                        <button onClick={() => toggleModule(mod.id)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "18px 20px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left", color: "var(--text-primary)" }}>
+                          <span style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                            <span className="t-mono" style={{ color: "var(--steel-light)" }}>{String(mi + 1).padStart(2, "0")}</span>
+                            <span style={{ fontFamily: "var(--ff-body)", fontWeight: 600, fontSize: 15 }}>{mod.title}</span>
+                          </span>
+                          <Chevron open={open} />
+                        </button>
+                        {open && (
+                          <div style={{ borderTop: "1px solid var(--hairline)" }}>
+                            {lessons.length === 0 ? (
+                              <div style={{ padding: "14px 20px" }}><span className="t-mono steel">LOADING…</span></div>
+                            ) : (
+                              lessons.map((lesson, li) => {
+                                const done = completedIds.has(lesson.id);
+                                const current = enrollment?.current_lesson === lesson.id;
+                                return (
+                                  <div key={lesson.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 20px", borderBottom: li < lessons.length - 1 ? "1px solid var(--hairline)" : "none", borderLeft: current ? "2px solid var(--accent-primary)" : "2px solid transparent", background: current ? "rgba(37,99,235,0.04)" : "transparent" }}>
+                                    <span style={{ width: 18, flexShrink: 0, display: "inline-flex", justifyContent: "center" }}>
+                                      {done ? (
+                                        <span style={{ width: 16, height: 16, background: "var(--accent-success)", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700 }}>✓</span>
+                                      ) : current ? (
+                                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent-primary)" }} />
+                                      ) : (
+                                        <span className="t-mono steel">{String(li + 1).padStart(2, "0")}</span>
+                                      )}
+                                    </span>
+                                    <span className="t-body" style={{ fontSize: 14, flex: 1, color: done || current ? "var(--text-primary)" : "var(--text-secondary)", fontWeight: current ? 600 : 400 }}>{lesson.title}</span>
+                                    {current && <span className="t-mono" style={{ color: "var(--accent-primary)" }}>CURRENT</span>}
+                                    {done && !current && <span className="t-mono" style={{ color: "var(--accent-success)" }}>DONE</span>}
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          </div>
+
+          {/* Aside CTA */}
+          <aside className="cd-aside">
+            <CtaPanel
+              course={course}
+              price={price}
+              isEnrolled={isEnrolled}
+              enrolling={enrolling}
+              enrollment={enrollment}
+              courseId={id}
+              onStart={handleStart}
+              onGeneratePathway={() => navigate(`/course/${id}/pathway`)}
+              onRated={(avg) => setCourse((prev) => (prev ? { ...prev, avg_rating: String(avg) } : prev))}
+            />
+          </aside>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-// ── CTA card sub-component ────────────────────────────────────────────────────
-
-function CtaCard({
-    course,
-    isEnrolled,
-    enrolling,
-    onStart,
-    onGeneratePathway,
-    enrollment,
-    courseId,
-    onRatingSubmit,
+function CtaPanel({
+  course, price, isEnrolled, enrolling, enrollment, courseId, onStart, onGeneratePathway, onRated,
 }: {
-    course: Course;
-    isEnrolled: boolean;
-    enrolling: boolean;
-    onStart: () => void;
-    onGeneratePathway: () => void;
-    enrollment: EnrollmentInfo | null;
-    courseId: number;
-    onRatingSubmit?: (newAvg: number) => void;
+  course: Course;
+  price: number;
+  isEnrolled: boolean;
+  enrolling: boolean;
+  enrollment: EnrollmentInfo | null;
+  courseId: number;
+  onStart: () => void;
+  onGeneratePathway: () => void;
+  onRated: (avg: number) => void;
 }) {
-    const [hoveredStar, setHoveredStar] = useState(0);
-    const [submittedRating, setSubmittedRating] = useState(0);
-    const [ratingLoading, setRatingLoading] = useState(false);
+  const [hovered, setHovered] = useState(0);
+  const [myRating, setMyRating] = useState(0);
+  const [rating, setRating] = useState(false);
 
-    const handleRate = async (rating: number) => {
-        if (ratingLoading) return;
-        setRatingLoading(true);
-        try {
-            const res = await submitCourseRating(courseId, rating);
-            setSubmittedRating(rating);
-            onRatingSubmit?.(res.avg_rating);
-            toast.success(`Rated ${rating} star${rating !== 1 ? 's' : ''}!`);
-        } catch {
-            toast.error('Failed to submit rating. Try again.');
-        } finally {
-            setRatingLoading(false);
-        }
-    };
+  const rate = async (stars: number) => {
+    if (rating) return;
+    setRating(true);
+    try {
+      const res = await submitCourseRating(courseId, stars);
+      setMyRating(stars);
+      onRated(res.avg_rating);
+      toast.success(`Rated ${stars} star${stars !== 1 ? "s" : ""}`);
+    } catch {
+      toast.error("Failed to submit rating.");
+    } finally {
+      setRating(false);
+    }
+  };
 
-    return (
-        <div className="bg-card rounded-2xl border border-border shadow-lg p-6 space-y-4">
-            {/* Price */}
-            <div className="text-center">
-                {parseFloat(course.price) === 0 ? (
-                    <span className="text-3xl font-bold text-emerald-600">Free</span>
-                ) : (
-                    <span className="text-3xl font-bold text-foreground">${course.price}</span>
-                )}
-            </div>
+  const primaryLabel = !isEnrolled
+    ? "START ASSESSMENT & ENROLL"
+    : enrollment?.is_pathway_ready
+      ? "CONTINUE LEARNING"
+      : enrollment?.is_assessment_started
+        ? "RESUME ASSESSMENT"
+        : "START ASSESSMENT";
 
-            {/* Stats */}
-            <ul className="space-y-2 text-sm text-muted-foreground">
-                <li className="flex items-center gap-2">
-                    <BookOpen size={15} className="text-secondary" />
-                    {course.total_lessons_count} lessons
-                </li>
-                <li className="flex items-center gap-2">
-                    <Clock size={15} className="text-secondary" />
-                    {estimateDuration(course.total_lessons_count)} estimated
-                </li>
-                <li className="flex items-center gap-2">
-                    <GraduationCap size={15} className="text-secondary" />
-                    {course.difficulty} level
-                </li>
-            </ul>
+  return (
+    <div style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderRadius: 8, padding: 26, display: "flex", flexDirection: "column", gap: 20 }}>
+      <div>
+        <div className="t-display" style={{ fontSize: 40, color: price > 0 ? "var(--text-primary)" : "var(--accent-success)" }}>
+          {price > 0 ? `$${course.price}` : "Free"}
+        </div>
+      </div>
 
-            {/* CTA button */}
-            {isEnrolled ? (
-                <button
-                    onClick={onStart}
-                    disabled={enrolling}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold text-sm hover:shadow-lg transition-all disabled:opacity-60"
-                >
-                    {enrolling ? (
-                        <><Loader2 size={16} className="animate-spin" /> Loading…</>
-                    ) : (
-                        <>
-                            {enrollment?.is_pathway_ready 
-                                ? 'Continue Learning' 
-                                : enrollment?.is_assessment_started 
-                                    ? 'Resume Assessment' 
-                                    : 'Start Assessment'} 
-                            <ChevronRight size={16} />
-                        </>
-                    )}
-                </button>
-            ) : (
-                <button
-                    onClick={onStart}
-                    disabled={enrolling}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-primary to-secondary text-white rounded-xl font-semibold text-sm hover:shadow-lg transition-all disabled:opacity-60"
-                >
-                    {enrolling ? (
-                        <><Loader2 size={16} className="animate-spin" /> Enrolling…</>
-                    ) : (
-                        <>Start Assessment & Enroll <ChevronRight size={16} /></>
-                    )}
-                </button>
-            )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingTop: 4, borderTop: "1px solid var(--hairline)" }}>
+        {[
+          ["LESSONS", `${course.total_lessons_count}`],
+          ["LEVEL", course.difficulty || "—"],
+          ...(parseFloat(course.avg_rating) > 0 ? [["RATING", `★ ${course.avg_rating}`]] : []),
+        ].map(([k, v]) => (
+          <div key={k} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12 }}>
+            <span className="t-label" style={{ color: "var(--text-secondary)" }}>{k}</span>
+            <span className="t-mono" style={{ color: "var(--text-primary)" }}>{v}</span>
+          </div>
+        ))}
+      </div>
+
+      <button onClick={onStart} disabled={enrolling} className="btn btn-primary" style={{ width: "100%", justifyContent: "space-between" }}>
+        {enrolling ? "WORKING…" : primaryLabel} <span>→</span>
+      </button>
+
+      {isEnrolled && (
+        <button onClick={onGeneratePathway} className="btn btn-ghost-dark" style={{ width: "100%", justifyContent: "space-between" }}>
+          GENERATE PATHWAY <span>→</span>
+        </button>
+      )}
 
             {/* Capstone entry — appears once the coursework is finished */}
             {isEnrolled && enrollment && parseFloat(enrollment.progress_percentage ?? '0') >= 100 && (
                 <CapstoneStartCTA courseId={courseId} variant="card" />
             )}
 
-            {/* Star rating — enrolled students only */}
-            {isEnrolled && (
-                <div className="pt-1">
-                    <p className="text-xs text-muted-foreground text-center mb-2">
-                        {submittedRating > 0 ? 'Your rating' : 'Rate this course'}
-                    </p>
-                    <div className="flex justify-center gap-1">
-                        {[1, 2, 3, 4, 5].map((star) => (
-                            <button
-                                key={star}
-                                disabled={ratingLoading}
-                                onClick={() => handleRate(star)}
-                                onMouseEnter={() => setHoveredStar(star)}
-                                onMouseLeave={() => setHoveredStar(0)}
-                                className="transition-transform hover:scale-110 disabled:opacity-50"
-                            >
-                                <Star
-                                    size={22}
-                                    className={
-                                        star <= (hoveredStar || submittedRating)
-                                            ? 'fill-amber-400 text-amber-400'
-                                            : 'text-muted-foreground'
-                                    }
-                                />
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            )}
-
-            {/* Generate Pathway button */}
-            <button
-                onClick={onGeneratePathway}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-secondary text-secondary rounded-xl font-semibold text-sm hover:bg-secondary/5 transition-all"
-            >
-                Generate Pathway
-                <ChevronRight size={16} />
-            </button>
-
-            {!isEnrolled && (
-                <p className="text-xs text-center text-muted-foreground">
-                    A short placement quiz helps us personalise your learning path.
-                </p>
-            )}
+      {isEnrolled ? (
+        <div style={{ paddingTop: 4 }}>
+          <div className="t-label" style={{ color: "var(--text-secondary)", textAlign: "center", marginBottom: 10 }}>{myRating > 0 ? "YOUR RATING" : "RATE THIS COURSE"}</div>
+          <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
+            {[1, 2, 3, 4, 5].map((star) => (
+              <button key={star} disabled={rating} onClick={() => rate(star)} onMouseEnter={() => setHovered(star)} onMouseLeave={() => setHovered(0)} style={{ background: "transparent", border: "none", cursor: rating ? "default" : "pointer", padding: 0, fontSize: 22, lineHeight: 1, color: star <= (hovered || myRating) ? "var(--ink-black)" : "var(--steel)" }}>★</button>
+            ))}
+          </div>
         </div>
-    );
+      ) : (
+        <p className="t-mono steel" style={{ textAlign: "center", lineHeight: 1.5, margin: 0 }}>
+          A short placement survey personalizes your pathway before the first slide.
+        </p>
+      )}
+    </div>
+  );
 }

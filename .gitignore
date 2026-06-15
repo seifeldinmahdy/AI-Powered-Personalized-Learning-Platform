@@ -21,6 +21,7 @@ staticfiles/
 frontend/node_modules/
 frontend/build/
 frontend/.env.local
+frontend/personifai-design/
 
 # Environment
 .env
@@ -54,6 +55,11 @@ ai_service/models/clean_question_model/
 mlruns/
 Intent_Classifier_Model/mlruns/
 Intent_Classifier_Model/data/
+Intent_Classifier_Model/kaggle_train.ipynb
+Obsidian_vault/Cloud Grad/.obsidian/
+Agents.md
+.playwright-mcp
+docs/*
 # HuggingFace / PyTorch cache
 .cache/
 *.lock
@@ -86,3 +92,8 @@ Intent_Classifier_Model/kaggle_train.ipynb
 # TTS/ASR benchmark testing (separate sibling project)
 TTS testing/
 .venv_benchmark/
+# Personal/Agent files
+AGENTS.md
+Obsidian_vault/
+docs/
+.playwright-mcp/

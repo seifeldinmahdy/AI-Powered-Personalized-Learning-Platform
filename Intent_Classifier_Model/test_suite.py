@@ -7,7 +7,6 @@ Tests: model init, dataset tokenization, forward pass, predict, compound splitte
 import unittest
 import os
 import sys
-import json
 import tempfile
 import torch
 import pandas as pd
@@ -318,10 +317,6 @@ class TestAutoTrainerState(unittest.TestCase):
                     f.write(backup)
 
 
-if __name__ == '__main__':
-    unittest.main(verbosity=2)
-
-
 # ─────────────────────────────────────────────────────────────────────
 # 8. REPEAT/CLARIFICATION INTENT COVERAGE
 # ─────────────────────────────────────────────────────────────────────
@@ -505,7 +500,7 @@ class TestIntentServiceWrapper(unittest.TestCase):
         return int(preds[0]), float(probs[0][preds[0]]), probs[0]
 
     def test_classify_returns_valid_label_ids(self):
-        """All predictions should have label_id in [0, 4]."""
+        """All predictions should have label_id in [0, 5]."""
         for text, context, _ in self.CASES:
             label_id, _, _ = self._classify(text, context)
             self.assertIn(label_id, range(6), f"Invalid label_id for: {text!r}")

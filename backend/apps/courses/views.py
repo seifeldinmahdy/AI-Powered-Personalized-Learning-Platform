@@ -304,7 +304,8 @@ def course_resume(request, course_id):
 @permission_classes([permissions.IsAuthenticated])
 def admin_stats(request):
     """Summary stats for the admin dashboard."""
-    if request.user.role != "admin":
+    from apps.core.permissions import IsVerifiedAdmin
+    if not IsVerifiedAdmin().has_permission(request, None):
         return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
 
     from apps.users.models import User
@@ -404,7 +405,7 @@ def evaluate_student_code(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    fastapi_url = "http://127.0.0.1:8001/api/coding/evaluate"
+    fastapi_url = f"{settings.AI_SERVICE_URL}/api/coding/evaluate"
     payload = {"question": question, "code": user_code}
 
     try:
@@ -438,7 +439,7 @@ def evaluate_student_code_graded(request):
         payload["rubric"] = rubric
 
     try:
-        ai_response = requests.post("http://127.0.0.1:8001/api/coding/evaluate-graded", json=payload)
+        ai_response = requests.post(f"{settings.AI_SERVICE_URL}/api/coding/evaluate-graded", json=payload)
         return Response(ai_response.json(), status=status.HTTP_200_OK)
     except requests.exceptions.ConnectionError:
         return Response(
@@ -456,7 +457,8 @@ def get_coding_rubric(request):
         return Response({"error": "Missing 'question'"}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
-        ai_response = requests.post("http://127.0.0.1:8001/api/coding/rubric", json={"question": question})
+        rubric_url = f"{settings.AI_SERVICE_URL}/api/coding/rubric"
+        ai_response = requests.post(rubric_url, json={"question": question})
         return Response(ai_response.json(), status=status.HTTP_200_OK)
     except requests.exceptions.ConnectionError:
         return Response(
@@ -478,7 +480,7 @@ def get_coding_hint(request):
 
     try:
         ai_response = requests.post(
-            "http://127.0.0.1:8001/api/coding/hint",
+            f"{settings.AI_SERVICE_URL}/api/coding/hint",
             json={"question": question, "code": code, "hint_level": hint_level}
         )
         return Response(ai_response.json(), status=status.HTTP_200_OK)

@@ -198,7 +198,9 @@ class PathwayGenerator:
         if not chunks:
             raise ValueError(
                 f"Course corpus is empty: no chunks found for corpus_id="
-                f"'{context.corpus_id}' (course_id='{context.course_id}'). "
+                f"'{context.corpus_id}' (course_id='{context.course_id}'"
+                f"{f' (title: {context.course_title!r})' if context.course_title else ''}"
+                f" — resolved to '{chroma_course}'). "
                 f"Add sources to this course's corpus and index them."
             )
 

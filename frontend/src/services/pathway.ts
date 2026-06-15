@@ -34,6 +34,7 @@ export interface PathwayPlan {
 export interface GeneratePathwayRequest {
   student_id: string;
   course_id: string;
+  course_title?: string;
   mastery_level?: string;
   composition_mode?: string;
   language_proficiency?: string;

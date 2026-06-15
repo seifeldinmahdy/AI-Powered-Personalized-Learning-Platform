@@ -5,7 +5,8 @@ comprehensive per-class/epoch metric tracking.
 """
 
 import os
-import shutil
+import random
+import argparse
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -13,7 +14,6 @@ from torch.cuda.amp import GradScaler
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
-from transformers import get_linear_schedule_with_warmup
 import time
 import json
 import math
@@ -33,7 +33,7 @@ from TinyBert import IntentClassifier, IntentDataset
 INTENT_NAMES = ['On-Topic Question', 'Off-Topic Question', 'Emotional-State', 'Pace-Related', 'Repeat/clarification', 'Debugging/Code-Sharing']
 DEFAULT_CONFIDENCE_THRESHOLD = 0.65
 BASE_DIR = Path(__file__).resolve().parent
-REAL_UTTERANCE_PATH = str(BASE_DIR / 'data' / 'real_utterances.csv')
+DEFAULT_REAL_UTTERANCE_PATH = str(BASE_DIR / 'data' / 'real_utterances.csv')
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -167,10 +167,29 @@ def evaluate_model_full(classifier, loader):
 # ─────────────────────────────────────────────────────────────────────
 
 def main():
+    # ── Reproducibility ──────────────────────────────────────────────────────────
+    torch.manual_seed(42)
+    random.seed(42)
+    np.random.seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(42)
+    # ─────────────────────────────────────────────────────────────────────────────
+    # ── CLI / env overrides ─────────────────────────────────────────
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--train-csv', default=os.getenv('INTENT_TRAIN_CSV', str(BASE_DIR / 'data' / 'train.csv')))
+    parser.add_argument('--val-csv', default=os.getenv('INTENT_VAL_CSV', str(BASE_DIR / 'data' / 'val.csv')))
+    parser.add_argument('--test-csv', default=os.getenv('INTENT_TEST_CSV', str(BASE_DIR / 'data' / 'test.csv')))
+    parser.add_argument('--best-model-path', default=os.getenv('INTENT_BEST_MODEL_PATH', 'best_model.pt'))
+    parser.add_argument('--results-path', default=os.getenv('INTENT_RESULTS_PATH', 'training_results.json'))
+    parser.add_argument('--feedback-test-csv', default=os.getenv('INTENT_FEEDBACK_TEST_CSV', ''))
+    parser.add_argument('--real-utterance-csv', default=os.getenv('INTENT_REAL_UTTERANCE_CSV', DEFAULT_REAL_UTTERANCE_PATH))
+    args = parser.parse_args()
+
     # ── Hyperparameters ─────────────────────────────────────────────
-    TRAIN_PATH  = str(BASE_DIR / 'data' / 'train.csv')
-    VAL_PATH    = str(BASE_DIR / 'data' / 'val.csv')
-    TEST_PATH   = str(BASE_DIR / 'data' / 'test.csv')
+    TRAIN_PATH  = args.train_csv
+    VAL_PATH    = args.val_csv
+    TEST_PATH   = args.test_csv
+    best_model_path = args.best_model_path
     BATCH_SIZE  = 32
     EPOCHS      = 20
     BERT_LR     = 2e-5       # Lower LR for BERT backbone
@@ -204,19 +223,26 @@ def main():
     train_df, val_df, test_df = load_data(TRAIN_PATH, VAL_PATH, TEST_PATH)
 
     # ── Mix real utterances into training ───────────────────────────
-    if os.path.exists(REAL_UTTERANCE_PATH):
-        real_df = pd.read_csv(REAL_UTTERANCE_PATH)
-        real_df = real_df.sample(frac=1, random_state=42).reset_index(drop=True)
-        split_idx = int(len(real_df) * 0.70)
-        real_train_df = real_df.iloc[:split_idx]
-        real_eval_df  = real_df.iloc[split_idx:]
-        # Oversample real training data 2x so model learns from it
-        real_train_oversampled = pd.concat([real_train_df] * 2, ignore_index=True)
-        train_df = pd.concat([train_df, real_train_oversampled], ignore_index=True)
-        train_df = train_df.sample(frac=1, random_state=42).reset_index(drop=True)
-        print(f"[+] Mixed {len(real_train_oversampled)} real utterance rows into training. Train total: {len(train_df)}")
+    real_utterance_path = args.real_utterance_csv
+    real_eval_df = None
+    if os.path.exists(real_utterance_path):
+        try:
+            real_df = pd.read_csv(real_utterance_path)
+            real_df = real_df.sample(frac=1, random_state=42).reset_index(drop=True)
+            split_idx = int(len(real_df) * 0.70)
+            real_train_df = real_df.iloc[:split_idx]
+            real_eval_df  = real_df.iloc[split_idx:]
+            # Oversample real training data 2x so model learns from it
+            real_train_oversampled = pd.concat([real_train_df] * 2, ignore_index=True)
+            train_df = pd.concat([train_df, real_train_oversampled], ignore_index=True)
+            train_df = train_df.sample(frac=1, random_state=42).reset_index(drop=True)
+            print(f"[+] Mixed {len(real_train_oversampled)} real utterance rows from {real_utterance_path} into training. Train total: {len(train_df)}")
+            print(f"[+] Real eval split size: {len(real_eval_df)}")
+        except Exception as exc:
+            print(f"[!] Failed to load real utterances from {real_utterance_path}: {exc}")
+            real_eval_df = None
     else:
-        real_eval_df = None
+        print(f"[!] No real utterance file at {real_utterance_path} — training without real data.")
 
     for df in [train_df, val_df, test_df]:
         df['session_context'] = df['session_context'].apply(normalize_context)
@@ -239,6 +265,26 @@ def main():
     )
     print(f"Training on device: {device}")
 
+    import logging
+    logger = logging.getLogger(__name__)
+    # ── GroupNorm verification ────────────────────────────────────────────────────
+    norm_types = {}
+    for name, module in classifier.model.named_modules():
+        t = type(module).__name__
+        if t in ('BatchNorm1d', 'GroupNorm', 'LayerNorm'):
+            norm_types[name] = t
+    
+    if any(t == 'BatchNorm1d' for t in norm_types.values()):
+        logger.warning(
+            "BatchNorm1d detected in model. GroupNorm should have replaced it. "
+            "Layers: %s",
+            {k: v for k, v in norm_types.items() if v == 'BatchNorm1d'},
+        )
+    else:
+        logger.info("GroupNorm confirmed — no BatchNorm layers found. Norm types: %s",
+                    set(norm_types.values()))
+    # ─────────────────────────────────────────────────────────────────────────────
+
     train_dataset = IntentDataset(train_df.to_dict('records'), classifier.tokenizer, max_length=MAX_LENGTH)
     val_dataset   = IntentDataset(val_df.to_dict('records'),   classifier.tokenizer, max_length=MAX_LENGTH)
     test_dataset  = IntentDataset(test_df.to_dict('records'),  classifier.tokenizer, max_length=MAX_LENGTH)
@@ -249,7 +295,8 @@ def main():
 
     # ── Optimizer with discriminative fine-tuning ───────────────────
     class_weights = compute_class_weights(train_df['label'].values, num_classes, classifier.device)
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1, weight=class_weights)
+    label_smoothing = 0.1
+    criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing, weight=class_weights)
 
     bert_params = list(classifier.model.bert.parameters())
     head_params = [p for n, p in classifier.model.named_parameters() if not n.startswith('bert.')]
@@ -265,11 +312,11 @@ def main():
     early_stopping = EarlyStopping(patience=PATIENCE, mode='max')
 
     best_val_f1 = 0.0
-    best_model_path = "best_model.pt"
 
     # ── Training history ────────────────────────────────────────────
     history = {
         'train_loss': [],
+        'train_acc': [],
         'val_loss': [],
         'val_acc': [],
         'val_f1': []
@@ -349,27 +396,37 @@ def main():
         classifier.model.train()
         train_loss = 0
         train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS}")
+        train_correct = 0
+        train_total = 0
 
         for batch in train_pbar:
-            loss = classifier.train_step_amp(batch, optimizer, criterion, scaler=scaler)
+            loss, correct, total = classifier.train_step_amp(batch, optimizer, criterion, scaler=scaler)
             scheduler.step()
             train_loss += loss
-            train_pbar.set_postfix({'loss': f'{loss:.4f}'})
+            train_correct += correct
+            train_total += total
+            train_pbar.set_postfix({
+                'loss': f'{loss:.4f}',
+                'acc':  f'{train_correct / train_total:.4f}',
+            })
 
         avg_train_loss = train_loss / len(train_loader)
+        train_acc = train_correct / train_total
         val_loss, val_acc, val_prec, val_rec, val_f1, all_preds, all_labels = evaluate_model_full(classifier, val_loader)
 
         history['train_loss'].append(round(avg_train_loss, 4))
+        history['train_acc'].append(round(train_acc, 4))
         history['val_loss'].append(round(val_loss, 4))
         history['val_acc'].append(round(val_acc, 4))
         history['val_f1'].append(round(val_f1, 4))
 
-        print(f"Epoch {epoch+1}: Train Loss: {avg_train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f} | Val F1: {val_f1:.4f}")
+        print(f"Epoch {epoch+1}: Train Loss: {avg_train_loss:.4f} | Train Acc: {train_acc:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f} | Val F1: {val_f1:.4f}")
 
         # ── wandb per-epoch logging ──────────────────────────────────
         metrics_to_log = {
             'epoch': epoch + 1,
             'train_loss': float(avg_train_loss),
+            'train_accuracy': float(train_acc),
             'val_loss': float(val_loss),
             'val_accuracy': float(val_acc),
             'val_precision': float(val_prec),
@@ -418,17 +475,18 @@ def main():
             print(f"LRs halved — BERT: {optimizer.param_groups[0]['lr']:.2e}  HEAD: {optimizer.param_groups[-1]['lr']:.2e}")
 
             # 4. Reduce label smoothing
-            if hasattr(criterion, 'label_smoothing'):
-                criterion.label_smoothing = max(criterion.label_smoothing * 0.5, 0.01)
-                print(f"Label smoothing -> {criterion.label_smoothing:.3f}")
+            label_smoothing = max(label_smoothing * 0.5, 0.01)
+            criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing,
+                                            weight=class_weights)
+            logger.info("Label smoothing reduced to %.3f — criterion recreated", label_smoothing)
 
             # 5. Reset scheduler with short warmup from new lower LR
             remaining = EPOCHS - (epoch + 1)
             warmup    = min(200, remaining * len(train_loader) // 10)
-            scheduler = get_linear_schedule_with_warmup(
+            scheduler = WarmupCosineScheduler(
                 optimizer,
-                num_warmup_steps=warmup,
-                num_training_steps=remaining * len(train_loader),
+                warmup_steps=warmup,
+                total_steps=remaining * len(train_loader),
             )
             print(f"Scheduler reset — {warmup} warmup / {remaining * len(train_loader)} total steps")
 
@@ -484,66 +542,139 @@ def main():
         'per_class_metrics': per_class_metrics,
         'confusion_matrix': cm,
         'training_history': history,
-        'classification_report': cls_report
+        'classification_report': cls_report,
+        'real_utterance_metrics': None,
+        'real_utterance_per_class': None,
+        'real_utterance_report': None,
+        'feedback_test_metrics': None,
+        'model_checkpoint_path': None,
     }
 
     # ── Real-utterance evaluation split ─────────────────────────────
-    if os.path.exists(REAL_UTTERANCE_PATH):
+    print(f"\n{'='*60}")
+    print("REAL-UTTERANCE EVALUATION")
+    print(f"{'='*60}")
+    print(f"Looking for real utterances at: {real_utterance_path}")
+    print(f"Real eval split available: {real_eval_df is not None and len(real_eval_df) > 0}")
+
+    if os.path.exists(real_utterance_path):
+        if real_eval_df is None or len(real_eval_df) == 0:
+            print("[!] Real utterance file exists but eval split is empty — skipping eval.")
+            results['real_utterance_metrics'] = {
+                'error': 'Real eval split is empty (file loaded but no eval rows)',
+            }
+        else:
+            try:
+                real_df = real_eval_df
+                real_dataset = IntentDataset(
+                    real_df.to_dict('records'), classifier.tokenizer, max_length=MAX_LENGTH
+                )
+                real_loader = DataLoader(real_dataset, batch_size=BATCH_SIZE, shuffle=False)
+                (
+                    real_loss, real_acc, real_prec, real_rec, real_f1,
+                    real_preds, real_labels,
+                ) = evaluate_model_full(classifier, real_loader)
+
+                real_per_class_p, real_per_class_r, real_per_class_f1, real_support = (
+                    precision_recall_fscore_support(
+                        real_labels, real_preds, average=None, zero_division=0
+                    )
+                )
+                real_per_class = {}
+                for i, name in enumerate(INTENT_NAMES):
+                    if i < len(real_per_class_f1):
+                        real_per_class[name] = {
+                            'precision': round(float(real_per_class_p[i]), 4),
+                            'recall': round(float(real_per_class_r[i]), 4),
+                            'f1_score': round(float(real_per_class_f1[i]), 4),
+                            'support': int(real_support[i]),
+                        }
+
+                real_cls_report = classification_report(
+                    real_labels, real_preds, target_names=INTENT_NAMES, zero_division=0
+                )
+
+                results['real_utterance_metrics'] = {
+                    'accuracy': round(real_acc, 4),
+                    'f1_score': round(real_f1, 4),
+                    'precision': round(real_prec, 4),
+                    'recall': round(real_rec, 4),
+                    'test_loss': round(real_loss, 4),
+                }
+                results['real_utterance_per_class'] = real_per_class
+                results['real_utterance_report'] = real_cls_report
+
+                print(f"Real Acc: {real_acc:.4f} | Real F1: {real_f1:.4f}")
+                print("\nPer-class (real utterances):")
+                print(real_cls_report)
+            except Exception as e:
+                print(f"[!] Real-utterance eval failed: {e}")
+                results['real_utterance_metrics'] = {'error': str(e)}
+    else:
+        print(f"[!] No real utterance file at {real_utterance_path} — skipping.")
+        results['real_utterance_metrics'] = {
+            'error': f'No real utterance file at {real_utterance_path}',
+        }
+
+    # ── Feedback test-set evaluation ────────────────────────────────
+    feedback_test_metrics = None
+    if args.feedback_test_csv and os.path.exists(args.feedback_test_csv):
         print(f"\n{'='*60}")
-        print("REAL-UTTERANCE EVALUATION")
+        print("FEEDBACK TEST-SET EVALUATION")
         print(f"{'='*60}")
         try:
-            if real_eval_df is None or len(real_eval_df) == 0:
-                print("[!] No real eval split available — skipping.")
-                raise ValueError("Skip")
-            real_df = real_eval_df
-            real_dataset = IntentDataset(
-                real_df.to_dict('records'), classifier.tokenizer, max_length=MAX_LENGTH
-            )
-            real_loader = DataLoader(real_dataset, batch_size=BATCH_SIZE, shuffle=False)
-            (
-                real_loss, real_acc, real_prec, real_rec, real_f1,
-                real_preds, real_labels,
-            ) = evaluate_model_full(classifier, real_loader)
+            fb_test_df = pd.read_csv(args.feedback_test_csv)
+            fb_test_df['session_context'] = fb_test_df['session_context'].apply(normalize_context)
+            fb_dataset = IntentDataset(fb_test_df.to_dict('records'), classifier.tokenizer, max_length=MAX_LENGTH)
+            fb_loader = DataLoader(fb_dataset, batch_size=BATCH_SIZE, shuffle=False)
+            fb_loss, fb_acc, fb_prec, fb_rec, fb_f1, fb_preds, fb_labels = evaluate_model_full(classifier, fb_loader)
 
-            real_per_class_p, real_per_class_r, real_per_class_f1, real_support = (
-                precision_recall_fscore_support(
-                    real_labels, real_preds, average=None, zero_division=0
-                )
+            fb_per_class_p, fb_per_class_r, fb_per_class_f1, fb_support = precision_recall_fscore_support(
+                fb_labels, fb_preds, average=None, zero_division=0
             )
-            real_per_class = {}
+            fb_per_class = {}
             for i, name in enumerate(INTENT_NAMES):
-                if i < len(real_per_class_f1):
-                    real_per_class[name] = {
-                        'precision': round(float(real_per_class_p[i]), 4),
-                        'recall': round(float(real_per_class_r[i]), 4),
-                        'f1_score': round(float(real_per_class_f1[i]), 4),
-                        'support': int(real_support[i]),
+                if i < len(fb_per_class_f1):
+                    fb_per_class[name] = {
+                        'precision': round(float(fb_per_class_p[i]), 4),
+                        'recall': round(float(fb_per_class_r[i]), 4),
+                        'f1_score': round(float(fb_per_class_f1[i]), 4),
+                        'support': int(fb_support[i]),
                     }
 
-            real_cls_report = classification_report(
-                real_labels, real_preds, target_names=INTENT_NAMES, zero_division=0
-            )
-
-            results['real_utterance_metrics'] = {
-                'accuracy': round(real_acc, 4),
-                'f1_score': round(real_f1, 4),
-                'precision': round(real_prec, 4),
-                'recall': round(real_rec, 4),
-                'test_loss': round(real_loss, 4),
+            feedback_test_metrics = {
+                'accuracy': round(fb_acc, 4),
+                'f1_score': round(fb_f1, 4),
+                'precision': round(fb_prec, 4),
+                'recall': round(fb_rec, 4),
+                'test_loss': round(fb_loss, 4),
+                'per_class': fb_per_class,
             }
-            results['real_utterance_per_class'] = real_per_class
-            results['real_utterance_report'] = real_cls_report
-
-            print(f"Real Acc: {real_acc:.4f} | Real F1: {real_f1:.4f}")
-            print(f"\nPer-class (real utterances):")
-            print(real_cls_report)
+            results['feedback_test_metrics'] = feedback_test_metrics
+            print(f"Feedback Test Acc: {fb_acc:.4f} | F1: {fb_f1:.4f}")
         except Exception as e:
-            print(f"[!] Real-utterance eval failed: {e}")
-    else:
-        print(f"\n[!] No real utterance file at {REAL_UTTERANCE_PATH} — skipping.")
+            print(f"[!] Feedback test eval failed: {e}")
 
-    with open('training_results.json', 'w') as f:
+    # ── Verify checkpoint exists and record path ────────────────────
+    if os.path.exists(best_model_path):
+        results['model_checkpoint_path'] = str(Path(best_model_path).resolve())
+        print(f"[+] Model checkpoint saved at: {best_model_path}")
+    else:
+        print(f"[!] Expected checkpoint not found at {best_model_path}")
+
+    # ── Promotion gate ──────────────────────────────────────────────
+    real_f1 = None
+    if isinstance(results.get('real_utterance_metrics'), dict):
+        real_f1 = results['real_utterance_metrics'].get('f1_score')
+    results['promotion_ready'] = (
+        isinstance(real_f1, (int, float)) and real_f1 >= 0.75
+    )
+    if results['promotion_ready']:
+        print(f"\n[READY] Real-utterance F1 {real_f1:.4f} >= 0.75 — model is eligible for promotion.")
+    else:
+        print(f"\n[NOT READY] Real-utterance F1 {real_f1} below 0.75 — do not promote yet.")
+
+    with open(args.results_path, 'w') as f:
         json.dump(results, f, indent=4)
 
     # ── wandb final logging ──────────────────────────────────────────
@@ -557,7 +688,7 @@ def main():
         'epochs_trained': float(len(history['train_loss'])),
         'temperature': float(best_T),
     })
-    wandb.save('training_results.json')
+    wandb.save(args.results_path)
     if os.path.exists(best_model_path):
         wandb.save(best_model_path)
     wandb.finish()
@@ -567,12 +698,12 @@ def main():
     print(f"{'='*60}")
     print(f"Test Acc: {test_acc:.4f} | Test F1: {test_f1:.4f} | Test Loss: {test_loss:.4f}")
     print(f"Confidence threshold: {DEFAULT_CONFIDENCE_THRESHOLD}")
-    print(f"\nPer-class results (synthetic test):")
+    print("\nPer-class results (synthetic test):")
     print(cls_report)
-    print(f"Confusion Matrix:")
+    print("Confusion Matrix:")
     for row in cm:
         print(f"  {row}")
-    print(f"\n[+] Results saved to 'training_results.json'")
+    print("\n[+] Results saved to 'training_results.json'")
 
 
 if __name__ == '__main__':

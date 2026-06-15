@@ -5,13 +5,27 @@ Integrates with SharedSessionStore so that when ``session_context`` is
 empty the context is auto-populated from the shared session state.
 """
 
-from fastapi import APIRouter, HTTPException
 import logging
-from services.intent_service import get_intent_service
+import os
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Header
+from pydantic import BaseModel, Field
+from services.intent_service import get_intent_service, reload_intent_service
 from services.session_store import get_session_store
 from schemas.intent import IntentRequest, IntentResponse, ChatRequest, ChatResponse
 
+# Internal service key — must match Django's INTERNAL_SERVICE_KEY.
+# If empty, service-only endpoints like /intent/reload are disabled.
 logger = logging.getLogger(__name__)
+
+INTERNAL_SERVICE_KEY = os.getenv("INTERNAL_SERVICE_KEY", "")
+
+# A.10: Allowed root directory for model loading.
+# The /intent/reload endpoint will only load checkpoints from within this path.
+_INTENT_MODEL_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "intent_model")
+)
 
 router = APIRouter(
     prefix="/intent",
@@ -163,6 +177,67 @@ async def chat_intent(request: ChatRequest):
             status_code=500,
             detail=f"Failed to process chat: {str(e)}"
         )
+
+class ReloadModelRequest(BaseModel):
+    model_path: str = Field(default="prod_tinybert.pt", description="Checkpoint filename inside intent_model/")
+
+
+def _verify_service_key(x_service_key: str = Header(...)):
+    """Dependency: require a valid X-Service-Key header for internal endpoints."""
+    if not INTERNAL_SERVICE_KEY:
+        logger.warning("INTERNAL_SERVICE_KEY not configured; /intent/reload is disabled")
+        raise HTTPException(status_code=503, detail="Reload endpoint is not configured")
+    if not x_service_key or x_service_key != INTERNAL_SERVICE_KEY:
+        logger.warning("Invalid or missing X-Service-Key on /intent/reload")
+        raise HTTPException(status_code=401, detail="Invalid or missing service key")
+
+
+def _safe_model_path(model_path: str) -> str:
+    """Resolve and validate that the requested checkpoint stays inside intent_model/."""
+    # Only allow simple filenames
+    if not re.fullmatch(r"[\w\-. ]+", model_path):
+        raise HTTPException(status_code=400, detail="Invalid model filename")
+
+    base = os.path.dirname(os.path.abspath(__file__))
+    intent_model_dir = os.path.abspath(os.path.join(base, "..", "intent_model"))
+    full_path = os.path.abspath(os.path.join(intent_model_dir, model_path))
+    # Ensure the resolved path is still under intent_model/
+    if os.path.commonpath([full_path, intent_model_dir]) != intent_model_dir:
+        raise HTTPException(status_code=400, detail="Invalid model path")
+    return model_path
+
+
+@router.post("/reload")
+async def reload_model(
+    request: ReloadModelRequest,
+    _auth: None = Depends(_verify_service_key),
+):
+    """Reload the production intent classifier checkpoint without restarting the service.
+
+    Requires ``X-Service-Key`` header matching ``INTERNAL_SERVICE_KEY``.
+    The requested filename is constrained to the ``intent_model/`` directory.
+    """
+    safe_path = _safe_model_path(request.model_path)
+    try:
+        service = reload_intent_service(model_path=safe_path)
+        return {
+            "success": True,
+            "model_path": service.model_path,
+            "model_loaded": service.classifier is not None and getattr(service.classifier, 'model', None) is not None,
+        }
+    except FileNotFoundError as e:
+        logger.error(f"Model file missing: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Intent model is currently unavailable (model file missing)."
+        )
+    except Exception as e:
+        logger.error(f"Model reload error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to reload intent model: {str(e)}"
+        )
+
 
 @router.get("/health")
 async def intent_health():

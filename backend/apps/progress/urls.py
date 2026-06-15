@@ -6,6 +6,8 @@ router = DefaultRouter()
 router.register(r"lesson-completions", views.LessonCompletionViewSet, basename="lesson-completion")
 router.register(r"activity-logs", views.SystemActivityLogViewSet, basename="activity-log")
 router.register(r"chat-logs", views.AIChatLogViewSet, basename="chat-log")
+router.register(r"intent-feedback-buffer", views.IntentFeedbackBufferViewSet, basename="intent-feedback-buffer")
+router.register(r"intent-retraining-counter", views.IntentRetrainingCounterViewSet, basename="intent-retraining-counter")
 router.register(r"bookmarks", views.BookmarkViewSet, basename="bookmark")
 router.register(r"learning-profile", views.StudentLearningProfileViewSet, basename="learning-profile")
 
@@ -24,4 +26,5 @@ urlpatterns = [
     # Server-side lesson completion — triggered by the problem-set finish event.
     path("complete-lesson/", views.internal_complete_lesson, name="complete-lesson"),
     path("concept-mastery/<str:concept_id>/history/", views.concept_mastery_history, name="concept-mastery-history"),
+    path("trigger-retraining/", views.trigger_retraining, name="trigger_retraining"),
 ]

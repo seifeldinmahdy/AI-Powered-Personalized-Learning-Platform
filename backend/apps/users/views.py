@@ -54,7 +54,7 @@ class UserViewSet(viewsets.ModelViewSet):
                 return Response({'error': 'Invalid credentials'},
                                 status=status.HTTP_401_UNAUTHORIZED)
 
-        user = authenticate(username=login_id, password=password)
+        user = authenticate(request=request, username=login_id, password=password)
 
         if user is not None:
             if not user.is_active:
@@ -126,6 +126,65 @@ class UserViewSet(viewsets.ModelViewSet):
         except Exception:
             return Response({'error': 'Could not create account. Please try again.'},
                             status=status.HTTP_400_BAD_REQUEST)
+
+    # ---------------------------------------------------------
+    # 2b. Social OAuth (Google / GitHub / Facebook)
+    # Endpoint: POST /api/users/oauth/
+    # Body: { provider, code, redirect_uri }
+    # ---------------------------------------------------------
+    @action(detail=False, methods=['post'], permission_classes=[AllowAny], authentication_classes=[])
+    def oauth(self, request):
+        from .oauth import fetch_identity, OAuthError
+
+        provider = (request.data.get('provider') or '').strip().lower()
+        code = request.data.get('code')
+        redirect_uri = request.data.get('redirect_uri')
+
+        if provider not in ('google', 'github', 'facebook'):
+            return Response({'error': 'Unsupported provider'}, status=status.HTTP_400_BAD_REQUEST)
+        if not code or not redirect_uri:
+            return Response({'error': 'Missing authorization code or redirect URI'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            identity = fetch_identity(provider, code, redirect_uri)
+        except OAuthError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            return Response({'error': 'Social sign-in failed. Please try again.'},
+                            status=status.HTTP_502_BAD_GATEWAY)
+
+        email = identity['email'].strip().lower()
+        full_name = identity.get('name') or email.split('@')[0]
+
+        # Find-or-create the user by email.
+        user = User.objects.filter(email__iexact=email).first()
+        if user is None:
+            base_username = email.split('@')[0] or 'user'
+            username = base_username
+            suffix = 1
+            while User.objects.filter(username=username).exists():
+                suffix += 1
+                username = f"{base_username}{suffix}"
+            user = User.objects.create_user(username=username, email=email, role='student')
+            user.set_unusable_password()  # password login disabled for social accounts
+            if full_name:
+                user.first_name = full_name[:150]
+            user.save()
+
+        if not user.is_active:
+            return Response({'error': 'Account is disabled'}, status=status.HTTP_403_FORBIDDEN)
+
+        tokens = self._get_tokens_for_user(user)
+        return Response({
+            'status': 'success',
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'role': user.role,
+            'access': tokens['access'],
+            'refresh': tokens['refresh'],
+        })
 
     # ---------------------------------------------------------
     # 3. Profile Action (GET / PATCH)
@@ -302,3 +361,149 @@ class UserViewSet(viewsets.ModelViewSet):
             }
 
         return Response({'top20': top20, 'current_user': current_user_entry})
+
+    # ---------------------------------------------------------
+    # 10. Admin: Create a student account
+    # Endpoint: POST /api/users/admin-create-student/
+    # ---------------------------------------------------------
+    @action(detail=False, methods=['post'], url_path='admin-create-student',
+            permission_classes=[permissions.IsAuthenticated])
+    def admin_create_student(self, request):
+        from apps.core.permissions import IsVerifiedAdmin
+        from apps.core.audit import log_admin_action
+
+        if not IsVerifiedAdmin().has_permission(request, None):
+            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
+
+        username = request.data.get('username', '').strip()
+        email = request.data.get('email', '').strip()
+        password = request.data.get('password', '')
+
+        if not username or not email or not password:
+            return Response({'error': 'Username, email, and password are required'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if len(password) < 8:
+            return Response({'error': 'Password must be at least 8 characters'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if User.objects.filter(username=username).exists():
+            return Response({'error': 'Username already taken'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if User.objects.filter(email=email).exists():
+            return Response({'error': 'An account with this email already exists'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.create_user(
+                username=username, email=email, password=password, role='student'
+            )
+            log_admin_action(
+                request,
+                action="create_student",
+                target_type="User",
+                target_id=str(user.id),
+                snapshot_after={"username": username, "email": email},
+            )
+            return Response({
+                'status': 'success',
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'role': user.role,
+            }, status=status.HTTP_201_CREATED)
+        except Exception:
+            return Response({'error': 'Could not create account'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+    # ---------------------------------------------------------
+    # 11. Admin: Student detail with profile, enrollments, chats
+    # Endpoint: GET /api/users/admin-student-detail/<id>/
+    # ---------------------------------------------------------
+    @action(detail=False, methods=['get'], url_path='admin-student-detail/(?P<student_id>[^/.]+)',
+            permission_classes=[permissions.IsAuthenticated])
+    def admin_student_detail(self, request, student_id=None):
+        from apps.core.permissions import IsVerifiedAdmin
+
+        if not IsVerifiedAdmin().has_permission(request, None):
+            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            student = User.objects.get(pk=student_id)
+        except User.DoesNotExist:
+            return Response({'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        profile = getattr(student, 'student_profile', None)
+
+        # Enrollments
+        from apps.courses.models import Enrollment
+        enrollments = Enrollment.objects.filter(student=student).select_related('course')
+        enrollment_data = [
+            {
+                'id': e.id,
+                'course_title': e.course.title,
+                'progress_percentage': e.progress_percentage or 0,
+                'enrolled_at': e.enrolled_at,
+                'is_pathway_ready': e.is_pathway_ready,
+            }
+            for e in enrollments
+        ]
+
+        # Recent chats (last 20)
+        from apps.progress.models import AIChatLog
+        recent_chats = (
+            AIChatLog.objects.filter(user=student)
+            .select_related('lesson')
+            .order_by('-created_at')[:20]
+        )
+        chat_data = [
+            {
+                'id': c.id,
+                'lesson_title': c.lesson.title,
+                'transcript_text': c.transcript_text,
+                'ai_response_text': c.ai_response_text,
+                'predicted_intent': c.predicted_intent,
+                'confidence': c.confidence,
+                'created_at': c.created_at,
+            }
+            for c in recent_chats
+        ]
+
+        # Learning profile
+        from apps.progress.models import StudentLearningProfile
+        lp = StudentLearningProfile.objects.filter(student=student).first()
+        learning_profile_data = None
+        if lp:
+            learning_profile_data = {
+                'sessions_count': lp.sessions_count,
+                'profile_summary': lp.profile_summary,
+                'last_updated': lp.last_updated,
+            }
+
+        # Achievements
+        from apps.gamification.models import UserAchievement
+        achievements_count = UserAchievement.objects.filter(user=student).count()
+
+        return Response({
+            'id': student.id,
+            'username': student.username,
+            'email': student.email,
+            'role': student.role,
+            'date_joined': student.date_joined,
+            'profile': {
+                'level': profile.level if profile else 1,
+                'current_xp': profile.current_xp if profile else 0,
+                'current_streak': profile.current_streak if profile else 0,
+                'longest_streak': profile.longest_streak if profile else 0,
+                'total_minutes_learned': profile.total_minutes_learned if profile else 0,
+                'daily_goal_minutes': profile.daily_goal_minutes if profile else 30,
+                'days_active': profile.days_active if profile else 0,
+                'messages_count': profile.messages_count if profile else 0,
+            } if profile else None,
+            'enrollments': enrollment_data,
+            'recent_chats': chat_data,
+            'learning_profile': learning_profile_data,
+            'achievements_count': achievements_count,
+        })
+

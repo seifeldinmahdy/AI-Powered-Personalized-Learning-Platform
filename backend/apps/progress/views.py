@@ -2,14 +2,18 @@ import logging
 
 from django.conf import settings
 
+from django.apps import apps
 from django.utils import timezone
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 
+from .throttles import FeedbackThrottle, AnonFeedbackThrottle
+
 from .models import (
     LessonCompletion, SystemActivityLog, AIChatLog,
     StudentLearningProfile, Bookmark, ConceptMasteryEvent,
+    IntentFeedbackBuffer, IntentRetrainingCounter,
 )
 
 logger = logging.getLogger(__name__)
@@ -22,8 +26,11 @@ from .serializers import (
     LessonCompletionSerializer,
     SystemActivityLogSerializer,
     AIChatLogSerializer,
-    StudentLearningProfileSerializer,
+    AIChatLogFeedbackSerializer,
+    IntentFeedbackBufferSerializer,
+    IntentRetrainingCounterSerializer,
     BookmarkSerializer,
+    StudentLearningProfileSerializer,
 )
 
 
@@ -83,7 +90,7 @@ class AIChatLogViewSet(viewsets.ModelViewSet):
     """AI chat logs for the authenticated user. Filter by ?lesson_id=<id>. Supports GET + POST."""
     serializer_class = AIChatLogSerializer
     permission_classes = [permissions.IsAuthenticated]
-    http_method_names = ["get", "post", "head", "options"]
+    http_method_names = ["get", "post", "head", "options", "patch"]
 
     def get_queryset(self):
         qs = AIChatLog.objects.filter(user=self.request.user).order_by("created_at")
@@ -93,10 +100,168 @@ class AIChatLogViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
+        """Save chat log, ensuring the user is enrolled in the lesson's course."""
+        lesson = serializer.validated_data.get("lesson")
+        if lesson and not self._user_has_access(lesson):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("You are not enrolled in this lesson.")
         serializer.save(user=self.request.user)
 
+    def _user_has_access(self, lesson):
+        """Check whether the authenticated user is enrolled in the lesson's course."""
+        Enrollment = apps.get_model("courses", "Enrollment")
+        return Enrollment.objects.filter(
+            student=self.request.user,
+            course=lesson.module.course,
+        ).exists()
+
+    @action(
+        detail=True,
+        methods=["patch"],
+        url_path="feedback",
+        throttle_classes=[FeedbackThrottle, AnonFeedbackThrottle],
+    )
+    def submit_feedback(self, request, pk=None):
+        """
+        Submit 👍/👎 feedback for a tutor response.
+
+        Body:
+          {"feedback": "thumbs_up" | "thumbs_down"}
+          For thumbs_down optionally include:
+          {"corrected_intent": "On-Topic Question" | ...}
+
+        Adds the chat log to the IntentFeedbackBuffer and increments the
+        retraining counter. If the counter threshold is reached, the response
+        includes "retraining_recommended": true.
+        """
+        from .models import INTENT_CHOICES
+
+        chat_log = self.get_object()
+        serializer = AIChatLogFeedbackSerializer(chat_log, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        feedback_value = serializer.validated_data.get("feedback")
+        if feedback_value not in ("thumbs_up", "thumbs_down"):
+            return Response(
+                {"detail": "feedback must be 'thumbs_up' or 'thumbs_down'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        corrected_intent = request.data.get("corrected_intent")
+        valid_intents = {name for name, _ in INTENT_CHOICES}
+        if corrected_intent and corrected_intent not in valid_intents:
+            return Response(
+                {"detail": f"corrected_intent must be one of {sorted(valid_intents)}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if corrected_intent and corrected_intent == chat_log.predicted_intent:
+            return Response(
+                {"detail": "corrected_intent must differ from the predicted intent."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        chat_log.feedback = feedback_value
+        chat_log.feedback_at = timezone.now()
+        chat_log.save(update_fields=["feedback", "feedback_at"])
+
+        # Upsert into the dedicated feedback buffer
+        buffer_defaults = {
+            "student_input": chat_log.transcript_text,
+            "session_context": chat_log.session_context,
+            "predicted_intent": chat_log.predicted_intent or "On-Topic Question",
+            "confidence": chat_log.confidence,
+            "feedback": feedback_value,
+            "status": "pending",
+        }
+        if corrected_intent:
+            buffer_defaults["corrected_intent"] = corrected_intent
+            buffer_defaults["status"] = "relabelled"
+
+        buffer_entry, created = IntentFeedbackBuffer.objects.update_or_create(
+            chat_log=chat_log,
+            defaults=buffer_defaults,
+        )
+
+        # Increment the retraining counter
+        counter = IntentRetrainingCounter.increment()
+
+        return Response(
+            {
+                "id": chat_log.id,
+                "feedback": chat_log.feedback,
+                "feedback_at": chat_log.feedback_at,
+                "retraining_counter": counter.reviews_since_last_train,
+                "threshold": counter.threshold,
+                "retraining_recommended": counter.threshold_reached(),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
+class IntentFeedbackBufferViewSet(viewsets.ModelViewSet):
+    """
+    Admin/operator view for the reviewed utterance buffer.
+
+    Allows relabelling thumbs-down entries via PATCH corrected_intent.
+    """
+    serializer_class = IntentFeedbackBufferSerializer
+    permission_classes = [permissions.IsAdminUser]
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_queryset(self):
+        return IntentFeedbackBuffer.objects.select_related("chat_log__user", "chat_log__lesson")
+
+    def partial_update(self, request, *args, **kwargs):
+        """Permit admins to set corrected_intent on a buffer entry."""
+        instance = self.get_object()
+        corrected = request.data.get("corrected_intent")
+        if corrected:
+            if corrected == instance.predicted_intent:
+                return Response(
+                    {"detail": "Corrected intent must differ from predicted intent."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            instance.corrected_intent = corrected
+            instance.status = "relabelled"
+            instance.save(update_fields=["corrected_intent", "status"])
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+
+class IntentRetrainingCounterViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only view of the retraining counter. Admins may PATCH threshold."""
+    serializer_class = IntentRetrainingCounterSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_queryset(self):
+        # Only the singleton row exists
+        return IntentRetrainingCounter.objects.filter(pk=1)
+
+    def list(self, request, *args, **kwargs):
+        counter = IntentRetrainingCounter.get()
+        serializer = self.get_serializer(counter)
+        return Response(serializer.data)
+
+    def partial_update(self, request, *args, **kwargs):
+        if not request.user.is_staff:
+            return Response(
+                {"detail": "Only staff can update the threshold."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        counter = IntentRetrainingCounter.get()
+        threshold = request.data.get("threshold")
+        if threshold is not None:
+            try:
+                counter.threshold = max(1, int(threshold))
+                counter.save(update_fields=["threshold"])
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": "threshold must be a positive integer."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        serializer = self.get_serializer(counter)
+        return Response(serializer.data)
 
 
 class BookmarkViewSet(viewsets.ModelViewSet):
@@ -530,3 +695,51 @@ def practice_completion(request):
         })
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def trigger_retraining(request):
+    """Manually trigger intent model retraining. Admin only.
+
+    Calls the check_intent_retraining management command and returns
+    the result.  Rate-limited by AdminWriteThrottle.
+    """
+    from apps.core.permissions import IsVerifiedAdmin
+    from apps.core.audit import log_admin_action
+    from apps.core.throttles import AdminWriteThrottle
+
+    if not IsVerifiedAdmin().has_permission(request, None):
+        return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+
+    # Manual throttle check
+    throttle = AdminWriteThrottle()
+    if not throttle.allow_request(request, None):
+        return Response(
+            {"error": "Rate limit exceeded. Please wait before triggering again."},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+    try:
+        from django.core.management import call_command
+        from io import StringIO
+
+        out = StringIO()
+        call_command("check_intent_retraining", stdout=out)
+        output = out.getvalue()
+
+        log_admin_action(
+            request,
+            action="trigger_retraining",
+            target_type="IntentModel",
+        )
+
+        return Response({
+            "status": "success",
+            "output": output,
+        })
+    except Exception as e:
+        return Response(
+            {"error": f"Retraining failed: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )

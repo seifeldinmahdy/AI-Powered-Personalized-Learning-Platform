@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
-import { loginUser, signupUser, logoutUser, type AuthResponse } from "../services/auth";
+import { loginUser, signupUser, logoutUser, oauthExchange, type AuthResponse } from "../services/auth";
 
 // --------------- Types ---------------
 export type UserRole = "student" | "admin";
@@ -19,6 +19,7 @@ interface AuthContextType {
     isStudent: boolean;
     login: (email: string, password: string) => Promise<AuthResponse>;
     signup: (name: string, email: string, password: string) => Promise<AuthResponse>;
+    oauthLogin: (provider: string, code: string, redirectUri: string) => Promise<AuthResponse>;
     logout: () => Promise<void> | void;
 }
 
@@ -89,6 +90,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
         return data;
     }, []);
 
+    const oauthLogin = useCallback(async (provider: string, code: string, redirectUri: string) => {
+        const data = await oauthExchange(provider, code, redirectUri);
+        const loggedInUser: User = {
+            id: data.id,
+            username: data.username,
+            email: data.email,
+            full_name: data.username,
+            role: (data.role as UserRole) || "student",
+        };
+        localStorage.setItem("access_token", data.access);
+        localStorage.setItem("refresh_token", data.refresh);
+        setUser(loggedInUser);
+        return data;
+    }, []);
+
     const logout = useCallback(async () => {
         try {
             await logoutUser();
@@ -105,7 +121,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     return (
         <AuthContext.Provider
-            value={{ user, isAuthenticated, isAdmin, isStudent, login, signup, logout }}
+            value={{ user, isAuthenticated, isAdmin, isStudent, login, signup, oauthLogin, logout }}
         >
             {children}
         </AuthContext.Provider>

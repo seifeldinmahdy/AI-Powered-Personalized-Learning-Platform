@@ -180,9 +180,31 @@ class IntentService:
 # Global instance
 _intent_service: Optional[IntentService] = None
 
+
 def get_intent_service() -> IntentService:
     """Get or create the global intent service instance."""
     global _intent_service
     if _intent_service is None:
         _intent_service = IntentService()
     return _intent_service
+
+
+def reload_intent_service(model_path: str = "prod_tinybert.pt") -> IntentService:
+    """
+    Reload the global intent service from a new checkpoint.
+
+    Called after a feedback-aware retraining pipeline promotes a new model.
+    If the load fails, the previous service instance is preserved.
+    """
+    global _intent_service
+    previous = _intent_service
+    try:
+        new_service = IntentService(model_path=model_path)
+        _intent_service = new_service
+        logger.info("Intent service reloaded from %s", new_service.model_path)
+        return new_service
+    except Exception as exc:
+        logger.exception("Failed to reload intent service from %s", model_path)
+        if previous is not None:
+            _intent_service = previous
+        raise

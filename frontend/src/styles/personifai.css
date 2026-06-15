@@ -1,0 +1,290 @@
+/* PersonifAI — Design System
+   Adapted from personifai-design/styles.css for the live app.
+   Brutalist, refined. Typography is the interface.
+
+   Integration notes:
+   - Additive only. Does NOT touch the existing app theme vars
+     (--primary/--secondary/--accent live in index.css and stay intact).
+   - All PersonifAI tokens are namespaced (--accent-primary, --ink-black,
+     --bg-paper, --ff-*, ...) so there is no collision with index.css.
+   - Redesigned screens root in `.codex`. The most generic single-word
+     color utilities are scoped under `.codex` to prevent any leakage into
+     legacy Tailwind screens. */
+
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Instrument+Serif:ital@0;1&display=swap');
+
+:root {
+  --bg-primary: #F6EFE4;
+  --bg-surface: #EEE5D7;
+  --bg-paper: #F6EFE4;
+  --bg-paper-line: #D9D0BF;
+  --bg-paper-hover: #FCF8F2;
+  --ink-black: #13100D;
+  --accent-primary: #2563EB;
+  --accent-soft: #3E6BC6;
+  --accent-warm: #16A34A;
+  --accent-success: #16A34A;
+  --error-red: #DC2626;
+  /* legacy aliases — kept so existing class names still map cleanly */
+  --signal-red: var(--accent-primary);
+  --warm-gold: var(--accent-warm);
+  --steel: #A89E8C;
+  --steel-light: #8A8174;
+  --text-primary: #1A1611;
+  --text-secondary: #6E665A;
+  --code-bg: #1A1611;
+  --hairline: #DBD4C7;
+
+  --ff-display: "Space Grotesk", "Neue Haas Grotesk", Helvetica, sans-serif;
+  --ff-editorial: "Instrument Serif", "Editorial New", serif;
+  --ff-body: "Inter", system-ui, sans-serif;
+  --ff-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* radii */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+}
+
+.codex {
+  font-family: var(--ff-body);
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "cv11";
+}
+
+.codex,
+.codex * { letter-spacing: -0.005em; }
+
+/* Type tokens */
+.t-display    { font-family: var(--ff-display); font-weight: 700; letter-spacing: -0.04em; line-height: 0.88; }
+.t-heading    { font-family: var(--ff-display); font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; }
+.t-body       { font-family: var(--ff-body); font-weight: 400; font-size: 16px; line-height: 1.55; }
+.t-mono       { font-family: var(--ff-mono); font-weight: 400; font-size: 11px; letter-spacing: 0.02em; line-height: 1.5; }
+.t-label      { font-family: var(--ff-body); font-weight: 500; font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; }
+.t-label-13   { font-family: var(--ff-body); font-weight: 500; font-size: 13px; letter-spacing: 0.15em; text-transform: uppercase; }
+
+/* Bare color utilities — scoped under .codex to avoid leaking into legacy screens */
+.codex .red    { color: var(--signal-red); }
+.codex .gold   { color: var(--warm-gold); }
+.codex .steel  { color: var(--steel-light); }
+.codex .ink    { color: var(--ink-black); }
+.codex .paper  { color: var(--bg-paper); }
+.codex .white  { color: var(--text-primary); }
+.codex .green  { color: var(--accent-success); }
+.codex .amber  { color: var(--accent-warm); }
+.codex .bg-blue  { background: var(--accent-primary); }
+.codex .bg-amber { background: var(--accent-warm); }
+.codex .bg-green { background: var(--accent-success); }
+
+/* Tiny indicator squares (used as wordmark / status dots) */
+.dot-red { display: inline-block; width: 8px; height: 8px; background: var(--accent-primary); }
+.dot-amber { display: inline-block; width: 8px; height: 8px; background: var(--accent-warm); }
+.dot-green { display: inline-block; width: 8px; height: 8px; background: var(--accent-success); }
+.dot-red-sm { width: 6px; height: 6px; }
+.dot-red-xs { width: 4px; height: 4px; }
+
+/* Wordmark */
+.wordmark {
+  font-family: var(--ff-body);
+  font-weight: 500;
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Buttons */
+.btn {
+  font-family: var(--ff-body);
+  font-weight: 500;
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 0;
+  border-radius: 8px;
+  padding: 14px 22px;
+  cursor: pointer;
+  transition: transform 80ms cubic-bezier(.76,0,.24,1), background 150ms linear, color 150ms linear;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.btn:active { transform: scale(0.97); }
+.btn:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.btn-primary { background: var(--ink-black); color: var(--bg-paper); }
+.btn-paper { background: var(--ink-black); color: var(--bg-paper); }
+.btn-red { background: var(--signal-red); color: #fff; }
+.btn-ghost {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--text-primary);
+  padding: 16px 28px;
+}
+.btn-ghost:hover { background: var(--text-primary); color: var(--bg-primary); }
+.btn-ghost-dark {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--steel);
+}
+
+/* Inputs */
+.input {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--steel);
+  border-radius: 6px;
+  padding: 14px 14px;
+  font-family: var(--ff-body);
+  font-size: 14px;
+  color: var(--ink-black);
+  outline: none;
+  transition: border-color 120ms linear;
+}
+.input:focus { border-color: var(--ink-black); }
+.input-dark { color: var(--text-primary); }
+.input-dark:focus { border-color: var(--text-primary); }
+
+/* Card / surfaces */
+.surface { background: var(--bg-surface); }
+.paper-card {
+  background: var(--bg-paper);
+  border: 1px solid var(--bg-paper-line);
+}
+
+/* Tutor quick-prompt chip */
+.pai-chip { transition: background 120ms linear, border-color 120ms linear; }
+.pai-chip:hover { background: rgba(255,255,255,0.035); border-color: var(--steel); }
+
+/* Square bullet */
+.sq-bullet {
+  display: inline-block;
+  width: 6px; height: 6px;
+  background: var(--ink-black);
+  margin-right: 12px;
+  vertical-align: 2px;
+}
+
+/* MCQ-ish option row */
+.opt-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 16px;
+  border-radius: 6px;
+  border-left: 2px solid var(--bg-paper-line);
+  border-bottom: 1px solid var(--bg-paper-line);
+  cursor: pointer;
+  transition: border-color 120ms linear, background 120ms linear;
+}
+.opt-row:last-child { border-bottom: 0; }
+.opt-row:hover { border-left-color: var(--steel); background: var(--bg-paper-hover); }
+.opt-row.is-active { border-left-color: var(--signal-red); font-weight: 600; }
+.opt-row.is-active .opt-letter { color: var(--signal-red); }
+
+.opt-row-dark {
+  border-left-color: var(--hairline);
+  border-bottom-color: var(--hairline);
+  color: var(--text-primary);
+}
+.opt-row-dark:hover { border-left-color: var(--steel-light); background: rgba(0,0,0,0.03); }
+.opt-row-dark.is-active { border-left-color: var(--signal-red); }
+
+/* Success utilities (scoped) */
+.codex .green { color: var(--accent-success); }
+.codex .amber { color: var(--accent-warm); }
+
+/* Tag */
+.tag-red {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--ff-body);
+  font-weight: 500;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--signal-red);
+  border: 1px solid var(--signal-red);
+  padding: 5px 8px;
+  line-height: 1;
+  border-radius: 6px;
+}
+.tag-steel {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--ff-body);
+  font-weight: 500;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--steel-light);
+  border: 1px solid var(--steel);
+  padding: 5px 8px;
+  line-height: 1;
+  border-radius: 6px;
+}
+
+/* Progress bar (hard rectangle) */
+.progress {
+  width: 100%;
+  height: 2px;
+  background: var(--steel);
+  position: relative;
+  border-radius: 4px;
+}
+.progress > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--signal-red);
+  display: block;
+  border-radius: 4px;
+}
+
+/* Code block */
+.codeblock {
+  background: var(--code-bg);
+  color: #E7E9F5;
+  font-family: var(--ff-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  padding: 16px 18px;
+  border-radius: 6px;
+}
+.tok-key { color: #FF7B72; }
+.tok-fn  { color: #D2A8FF; }
+.tok-str { color: #A5D6FF; }
+.tok-com { color: #6E7793; }
+.tok-num { color: #FFA657; }
+
+/* Typewriter caret */
+.caret {
+  display: inline-block;
+  width: 0.5ch;
+  background: currentColor;
+  height: 0.95em;
+  vertical-align: -0.1em;
+  margin-left: 2px;
+  animation: paiBlink 1s steps(2,end) infinite;
+}
+@keyframes paiBlink { 50% { opacity: 0; } }
+
+/* Outlined text (filled-vs-stroke contrast) */
+.t-outline {
+  color: transparent;
+  -webkit-text-stroke: 1.5px var(--text-primary);
+}
+
+/* Hover red underline (cards) */
+.under-red { position: relative; }
+.under-red::after {
+  content: "";
+  position: absolute;
+  left: 0; bottom: -6px;
+  width: 0; height: 1px;
+  background: var(--signal-red);
+  transition: width 200ms cubic-bezier(.76,0,.24,1);
+}
+.under-red:hover::after { width: 100%; }

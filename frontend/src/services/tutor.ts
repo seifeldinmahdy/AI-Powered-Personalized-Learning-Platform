@@ -104,11 +104,35 @@ export async function askTutor(
   return res.json();
 }
 
+export interface IntentPrediction {
+  intent_name: string;
+  label_id: number;
+  confidence: number;
+  probabilities: Record<string, number>;
+  raw_prediction?: string | null;
+  raw_confidence?: number | null;
+}
+
 export interface ChatLogEntry {
   id: number;
   transcript_text: string;
   ai_response_text: string;
   created_at: string;
+  predicted_intent?: string;
+  confidence?: number;
+  intent_probabilities?: Record<string, number>;
+  feedback?: 'thumbs_up' | 'thumbs_down' | null;
+}
+
+export interface PersistChatLogPayload {
+  lesson: number;
+  transcript_text: string;
+  ai_response_text: string;
+  session_id?: string;
+  session_context?: string;
+  predicted_intent?: string;
+  confidence?: number;
+  intent_probabilities?: Record<string, number>;
 }
 
 export async function getChatHistory(lessonId: number): Promise<ChatLogEntry[]> {
@@ -126,14 +150,47 @@ export async function getChatHistory(lessonId: number): Promise<ChatLogEntry[]> 
   }
 }
 
-export function persistChatLog(lessonId: number, transcriptText: string, aiResponseText: string): void {
+export async function persistChatLog(payload: PersistChatLogPayload): Promise<ChatLogEntry | null> {
   const token = localStorage.getItem('access_token');
-  if (!token || !lessonId) return;
-  fetch(`${API_URL}/progress/chat-logs/`, {
+  if (!token || !payload.lesson) return null;
+  const res = await fetch(`${API_URL}/progress/chat-logs/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ lesson: lessonId, transcript_text: transcriptText, ai_response_text: aiResponseText }),
-  }).catch(() => {/* fire-and-forget */});
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) return null;
+  return res.json() as Promise<ChatLogEntry>;
+}
+
+export type FeedbackValue = 'thumbs_up' | 'thumbs_down';
+
+export interface FeedbackResponse {
+  id: number;
+  feedback: FeedbackValue;
+  feedback_at: string;
+  retraining_counter: number;
+  threshold: number;
+  retraining_recommended: boolean;
+}
+
+export async function submitFeedback(
+  chatLogId: number,
+  feedback: FeedbackValue,
+  correctedIntent?: string,
+): Promise<FeedbackResponse | null> {
+  const token = localStorage.getItem('access_token');
+  if (!token) return null;
+  const body: Record<string, unknown> = { feedback };
+  if (correctedIntent) {
+    body.corrected_intent = correctedIntent;
+  }
+  const res = await fetch(`${API_URL}/progress/chat-logs/${chatLogId}/feedback/`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return null;
+  return res.json() as Promise<FeedbackResponse>;
 }
 
 export async function stopTutorSession(session_id: string): Promise<void> {
@@ -216,7 +273,7 @@ export async function checkRelevance(question: string, lessonTitle: string): Pro
 
 export type IntentName = 'On-Topic Question' | 'Off-Topic Question' | 'Emotional-State' | 'Pace-Related' | 'Repeat/clarification';
 
-export async function classifyIntent(text: string, sessionId?: string): Promise<IntentName> {
+export async function classifyIntent(text: string, sessionContext = ''): Promise<IntentPrediction | null> {
   try {
     const res = await fetch(`${AI_URL}/intent/classify`, {
       method: 'POST',
@@ -226,11 +283,13 @@ export async function classifyIntent(text: string, sessionId?: string): Promise<
       // SharedSessionStore, so we never build a client-side context string.
       body: JSON.stringify({ student_input: text, session_id: sessionId }),
     });
-    if (!res.ok) return 'On-Topic Question';
+    if (!res.ok) return null;
     const data = await res.json();
-    return data.predictions?.[0]?.intent_name as IntentName ?? 'On-Topic Question';
+    const pred = data.predictions?.[0];
+    if (!pred) return null;
+    return pred as IntentPrediction;
   } catch {
-    return 'On-Topic Question';
+    return null;
   }
 }
 
@@ -296,5 +355,3 @@ export async function synthesizeAudio(text: string, emotion?: string, session_id
   }
   return btoa(binary);
 }
-
-

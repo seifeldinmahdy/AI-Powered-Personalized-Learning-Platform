@@ -1,433 +1,188 @@
-import { Header } from '../../components/Header';
-import { CircularProgress } from '../../components/CircularProgress';
+import { useEffect, useState } from "react";
+import { Link } from "react-router";
+import { useAuth } from "../../contexts/AuthContext";
 import { ConceptMasteryChart } from '../../components/ConceptMasteryChart';
 import { Play, Clock, Award, TrendingUp, BookOpen, Target, Loader2, Bookmark, MessageSquare } from 'lucide-react';
-import { Link } from 'react-router';
-import { useAuth } from '../../contexts/AuthContext';
-import { useState, useEffect } from 'react';
-import { getEnrollments } from '../../services/api';
+import { getEnrollments } from "../../services/api";
 import { getLessonCompletions, getBookmarks, getConceptMastery, type LessonCompletion, type Bookmark as BookmarkType, type ConceptMasteryEntry } from '../../services/progress';
-import { getMyAchievements, getDailyStats, type UserAchievement, type DailyStudyStats } from '../../services/gamification';
-import { getStudentProfile, type StudentProfile } from '../../services/profile';
+import { getCourses, type Course } from "../../services/courses";
+import { getStudentProfile, type StudentProfile } from "../../services/profile";
+import { EnrolledCourseCard, ExploreCourseCard, type EnrolledView } from "../../components/personifai/CourseCards";
 import { getSurveyStatus } from '../../services/surveys';
 import { CapstoneStartCTA } from '../../components/CapstoneStartCTA';
 
-interface EnrollmentData {
+interface EnrollmentRow {
   id: number;
   course: number;
   course_title: string;
   current_lesson: number | null;
   progress_percentage: string;
   current_score: number;
+  is_pathway_ready: boolean;
+  last_accessed: string | null;
+}
+
+function todayLabel(): string {
+  const now = new Date();
+  const wd = now.toLocaleDateString("en-US", { weekday: "long" });
+  const mo = now.toLocaleDateString("en-US", { month: "long" });
+  return `${wd} · ${now.getDate()} ${mo} ${now.getFullYear()}`.toUpperCase();
 }
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const displayName = user?.full_name || user?.username || 'Learner';
+  const firstName = (user?.full_name || user?.username || "Learner").split(" ")[0];
 
   const [loading, setLoading] = useState(true);
-  const [enrollments, setEnrollments] = useState<EnrollmentData[]>([]);
-  const [completions, setCompletions] = useState<LessonCompletion[]>([]);
-  const [achievements, setAchievements] = useState<UserAchievement[]>([]);
-  const [dailyStats, setDailyStats] = useState<DailyStudyStats[]>([]);
+  const [enrollments, setEnrollments] = useState<EnrollmentRow[]>([]);
   const [profile, setProfile] = useState<StudentProfile | null>(null);
-  const [bookmarks, setBookmarks] = useState<BookmarkType[]>([]);
+  const [completions, setCompletions] = useState<LessonCompletion[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
   const [conceptMastery, setConceptMastery] = useState<ConceptMasteryEntry[]>([]);
   const [surveyPendingCourseId, setSurveyPendingCourseId] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    async function load() {
-      try {
-        const [enrollRes, completionsRes, achievementsRes, statsRes, profileRes, bookmarksRes] =
-          await Promise.allSettled([
-            getEnrollments(),
-            getLessonCompletions(),
-            getMyAchievements(),
-            getDailyStats(),
-            getStudentProfile(),
-            getBookmarks(),
-          ]);
-
-        if (cancelled) return;
-
-        let loadedEnrollments: EnrollmentData[] = [];
-        if (enrollRes.status === 'fulfilled') {
-          const raw = enrollRes.value.data;
-          loadedEnrollments = Array.isArray(raw) ? raw : (raw as { results?: EnrollmentData[] }).results ?? [];
-          setEnrollments(loadedEnrollments);
-        }
-        if (completionsRes.status === 'fulfilled') setCompletions(completionsRes.value);
-        if (achievementsRes.status === 'fulfilled') setAchievements(achievementsRes.value);
-        if (statsRes.status === 'fulfilled') setDailyStats(statsRes.value);
-        if (profileRes.status === 'fulfilled') setProfile(profileRes.value);
-        if (bookmarksRes.status === 'fulfilled') setBookmarks(bookmarksRes.value);
-
-        // Load concept mastery for the active course
-        const activeEnrollment = loadedEnrollments[0];
-        if (activeEnrollment) {
-          const [cmRes, surveyRes] = await Promise.allSettled([
-            getConceptMastery(activeEnrollment.course),
-            parseFloat(activeEnrollment.progress_percentage) >= 100
-              ? getSurveyStatus(activeEnrollment.id)
-              : Promise.resolve(null),
-          ]);
-          if (!cancelled) {
-            if (cmRes.status === 'fulfilled') setConceptMastery(cmRes.value);
-            if (surveyRes.status === 'fulfilled' && surveyRes.value?.pending) {
-              setSurveyPendingCourseId(activeEnrollment.course);
-            }
-          }
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+    (async () => {
+      const [enrollRes, profileRes, completionsRes, coursesRes] = await Promise.allSettled([
+        getEnrollments(),
+        getStudentProfile(),
+        getLessonCompletions(),
+        getCourses({ ordering: "-created_at" }),
+      ]);
+      if (cancelled) return;
+      if (enrollRes.status === "fulfilled") {
+        const raw = enrollRes.value.data;
+        setEnrollments(Array.isArray(raw) ? raw : raw.results ?? []);
       }
-    }
-    load();
+      if (profileRes.status === "fulfilled") setProfile(profileRes.value);
+      if (completionsRes.status === "fulfilled") setCompletions(completionsRes.value);
+      if (coursesRes.status === "fulfilled") setCourses(coursesRes.value.results);
+      setLoading(false);
+    })();
     return () => { cancelled = true; };
   }, []);
 
-  // Derived values
-  const currentEnrollment = enrollments[0] as EnrollmentData | undefined;
-  const progress = currentEnrollment ? parseFloat(currentEnrollment.progress_percentage) : 0;
-  const completedCount = completions.filter((c) => c.status === 'Completed').length;
-  const totalMinutes = profile?.total_minutes_learned ?? 0;
-  const streak = profile?.current_streak ?? 0;
+  const courseMap = new Map(courses.map((c) => [c.id, c]));
+  const enrolledIds = new Set(enrollments.map((e) => e.course));
 
-  const formatTime = (minutes: number) => {
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    return h > 0 ? `${h}h ${m}m` : `${m}m`;
-  };
+  const enrolledViews: EnrolledView[] = enrollments.map((e) => {
+    const c = courseMap.get(e.course);
+    return {
+      courseId: e.course,
+      title: e.course_title,
+      difficulty: c?.difficulty,
+      totalLessons: c?.total_lessons_count,
+      progress: parseFloat(e.progress_percentage) || 0,
+      score: e.current_score,
+      lastAccessed: e.last_accessed,
+      resumeTo: e.is_pathway_ready && e.current_lesson
+        ? `/course/${e.course}/lesson/${e.current_lesson}`
+        : `/courses/${e.course}`,
+    };
+  });
 
-  const stats = [
-    { label: 'Total Time', value: formatTime(totalMinutes), icon: Clock, iconBg: 'bg-secondary/10', iconColor: 'text-secondary', tint: 'from-secondary/5 to-transparent' },
-    { label: 'Day Streak', value: `${streak} days`, icon: TrendingUp, iconBg: 'bg-accent/10', iconColor: 'text-accent', tint: 'from-accent/5 to-transparent' },
-    { label: 'Lessons Done', value: completedCount, icon: Target, iconBg: 'bg-primary/10', iconColor: 'text-primary', tint: 'from-primary/5 to-transparent' },
+  const exploreCourses = courses.filter((c) => !enrolledIds.has(c.id)).slice(0, 3);
+
+  const completedCount = completions.filter((c) => c.status === "Completed").length;
+  const totalHours = Math.floor((profile?.total_minutes_learned ?? 0) / 60);
+  const avgProgress = enrolledViews.length
+    ? Math.round(enrolledViews.reduce((s, e) => s + e.progress, 0) / enrolledViews.length)
+    : 0;
+
+  const stats: { label: string; value: string; sub: string }[] = [
+    { label: "HOURS", value: `${totalHours}`, sub: "total learned" },
+    { label: "STREAK", value: `${profile?.current_streak ?? 0}`, sub: "days running" },
+    { label: "LESSONS", value: `${completedCount}`, sub: "completed" },
+    { label: "LEVEL", value: `${profile?.level ?? 1}`, sub: `${profile?.current_xp ?? 0} XP` },
+    { label: "MASTERY", value: `${avgProgress}%`, sub: "avg progress" },
   ];
 
-  // Recent completed lessons
-  const recentActivity = completions
-    .filter((c) => c.status === 'Completed')
-    .slice(0, 3);
-
-  // Weekly stats
-  const weekStats = dailyStats.slice(-7);
-
-  if (loading) {
-    return (
-      <>
-        <Header title={`Welcome back, ${displayName}`} subtitle="Loading your data..." />
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 size={40} className="animate-spin text-secondary" />
-        </div>
-      </>
-    );
-  }
+  const pad = "clamp(20px,5vw,64px)";
 
   return (
-    <>
-      <Header
-        title={`Welcome back, ${displayName}`}
-        subtitle="Continue your learning journey"
-      />
+    <div className="codex" style={{ flex: 1, overflowY: "auto", background: "var(--bg-primary)" }}>
+      <div style={{ padding: `clamp(28px,4vw,48px) ${pad} 64px`, display: "flex", flexDirection: "column", gap: 40, maxWidth: 1320, marginInline: "auto" }}>
 
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-8 max-w-7xl mx-auto">
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            {stats.map((stat, index) => {
-              const Icon = stat.icon;
-              return (
-                <div
-                  key={index}
-                  className={`bg-card rounded-2xl border border-border p-6 shadow-sm hover:shadow-md transition-all bg-gradient-to-br ${stat.tint}`}
-                >
-                  <div className="flex items-center justify-between mb-4">
-                    <div className={`w-10 h-10 rounded-xl ${stat.iconBg} flex items-center justify-center`}>
-                      <Icon size={20} className={stat.iconColor} />
-                    </div>
-                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{stat.label}</span>
-                  </div>
-                  <p className="text-3xl font-bold text-foreground">{stat.value}</p>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Current Course Hero */}
-          {currentEnrollment ? (
-            <section className="mb-8">
-              <div className="bg-gradient-to-br from-primary to-secondary rounded-2xl p-8 text-white shadow-xl">
-                <div className="flex items-start justify-between gap-8">
-                  <div className="flex-1">
-                    <div className="inline-block px-3 py-1 bg-white/20 rounded-full text-xs font-semibold mb-4 backdrop-blur-sm">
-                      CURRENT COURSE
-                    </div>
-                    <h1 className="mb-3 text-white">{currentEnrollment.course_title}</h1>
-                    <p className="text-white/90 mb-6 text-lg">
-                      {completedCount} lessons completed &middot; Score: {currentEnrollment.current_score}
-                    </p>
-
-                    {/* Progress Bar */}
-                    <div className="mb-6">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm text-white/80">Progress</span>
-                        <span className="text-sm font-semibold text-white">{progress.toFixed(0)}%</span>
-                      </div>
-                      <div className="h-3 bg-white/20 rounded-full overflow-hidden backdrop-blur-sm">
-                        <div
-                          className="h-full bg-accent rounded-full transition-all duration-500"
-                          style={{ width: `${progress}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-4">
-                      <Link
-                        to={
-                          currentEnrollment.current_lesson
-                            ? `/course/${currentEnrollment.course}/lesson/${currentEnrollment.current_lesson}`
-                            : `/courses`
-                        }
-                        className="px-8 py-4 bg-white text-primary rounded-xl font-semibold hover:shadow-lg transition-all flex items-center gap-3 group"
-                      >
-                        <Play size={20} fill="currentColor" className="group-hover:scale-110 transition-transform" />
-                        <span>Resume Learning</span>
-                      </Link>
-
-                      <div className="flex gap-4 px-6 py-3 bg-white/10 rounded-xl backdrop-blur-sm">
-                        <div className="flex items-center gap-2">
-                          <Clock size={18} className="opacity-80" />
-                          <span className="text-sm font-medium">{formatTime(totalMinutes)}</span>
-                        </div>
-                        <div className="w-px bg-white/20" />
-                        <div className="flex items-center gap-2">
-                          <BookOpen size={18} className="opacity-80" />
-                          <span className="text-sm font-medium">{completedCount} done</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="hidden lg:block">
-                    <div className="relative">
-                      <div className="w-32 h-32 rounded-full bg-white/10 backdrop-blur-sm flex items-center justify-center">
-                        <CircularProgress percentage={progress} size={120} strokeWidth={8} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </section>
-          ) : (
-            <section className="mb-8">
-              <div className="bg-gradient-to-br from-primary to-secondary rounded-2xl p-8 text-white shadow-xl text-center">
-                <h2 className="text-white mb-4">No courses yet</h2>
-                <p className="text-white/80 mb-6">Browse our catalog and enroll in your first course!</p>
-                <Link
-                  to="/courses"
-                  className="inline-block px-8 py-4 bg-white text-primary rounded-xl font-semibold hover:shadow-lg transition-all"
-                >
-                  Browse Courses
-                </Link>
-              </div>
-            </section>
-          )}
-
-          {/* Capstone start banner — material complete, capstone is the terminal gate */}
-          {currentEnrollment && progress >= 100 && (
-            <section className="mb-8">
-              <CapstoneStartCTA courseId={currentEnrollment.course} variant="banner" />
-            </section>
-          )}
-
-          {/* Survey Banner */}
-          {surveyPendingCourseId !== null && (
-            <section className="mb-8">
-              <div className="bg-card rounded-2xl border-2 border-primary/30 p-6 shadow-sm flex items-center gap-5">
-                <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                  <MessageSquare size={22} className="text-primary" />
-                </div>
-                <div className="flex-1">
-                  <p className="font-semibold text-foreground mb-0.5">You completed the course!</p>
-                  <p className="text-sm text-muted-foreground">Share your feedback to help improve the course for future students.</p>
-                </div>
-                <Link
-                  to={`/survey/${surveyPendingCourseId}`}
-                  className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors shrink-0"
-                >
-                  Take Survey
-                </Link>
-              </div>
-            </section>
-          )}
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Recent Activity */}
-            <section className="lg:col-span-2">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="mb-0">Recent Activity</h2>
-              </div>
-              <div className="bg-card rounded-xl shadow-sm border border-border overflow-hidden">
-                {recentActivity.length === 0 ? (
-                  <div className="px-6 py-8 text-center text-muted-foreground">
-                    <p className="text-sm">No completed lessons yet. Start learning!</p>
-                  </div>
-                ) : (
-                  recentActivity.map((activity, index) => (
-                    <div
-                      key={activity.id}
-                      className={`flex items-center justify-between px-6 py-5 ${
-                        index !== recentActivity.length - 1 ? 'border-b border-border' : ''
-                      } hover:bg-muted/50 transition-colors group`}
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white shadow-md">
-                          <Award size={20} />
-                        </div>
-                        <div>
-                          <h4 className="mb-1 group-hover:text-primary transition-colors">
-                            {activity.lesson_title}
-                          </h4>
-                          <div className="flex items-center gap-3">
-                            <span className="text-xs text-muted-foreground">
-                              Score: {activity.score}
-                            </span>
-                            {activity.completed_at && (
-                              <>
-                                <span className="text-xs text-muted-foreground">&middot;</span>
-                                <span className="text-xs text-muted-foreground">
-                                  {new Date(activity.completed_at).toLocaleDateString()}
-                                </span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
-
-            {/* Sidebar - Achievements, Concept Mastery & Weekly Stats */}
-            <section className="space-y-8">
-              {/* Achievements */}
-              <div>
-                <h3 className="mb-4">Achievements</h3>
-                <div className="space-y-3">
-                  {achievements.length === 0 ? (
-                    <div className="bg-card rounded-xl p-4 border border-border text-center">
-                      <p className="text-xs text-muted-foreground">No achievements yet. Keep learning!</p>
-                    </div>
-                  ) : (
-                    achievements.map((ua) => (
-                      <div
-                        key={ua.id}
-                        className="bg-card rounded-xl p-4 border border-accent shadow-sm hover:shadow-md transition-all"
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
-                            {ua.achievement.icon_url ? (
-                              <img src={ua.achievement.icon_url} alt="" className="w-6 h-6" />
-                            ) : (
-                              <Award size={20} className="text-accent" />
-                            )}
-                          </div>
-                          <div className="flex-1">
-                            <h5 className="mb-1">{ua.achievement.name}</h5>
-                            <p className="text-xs text-muted-foreground">{ua.achievement.description}</p>
-                          </div>
-                          <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-white text-xs">
-                            +{ua.achievement.xp_reward}
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Concept Mastery Chart */}
-              {conceptMastery.length > 0 && (
-                <ConceptMasteryChart data={conceptMastery} />
-              )}
-
-              {/* Saved Items */}
-              <div>
-                <h3 className="mb-4">Saved Items</h3>
-                <div className="bg-card rounded-xl p-5 border border-border shadow-sm space-y-3">
-                  {bookmarks.length === 0 ? (
-                    <p className="text-xs text-muted-foreground text-center">No bookmarks yet. Bookmark slides while studying!</p>
-                  ) : (
-                    bookmarks.slice(0, 5).map((bm) => (
-                      <Link
-                        key={bm.id}
-                        to={`/course/${bm.course_id}/lesson/${bm.lesson}`}
-                        className="flex items-center gap-3 text-sm hover:text-secondary transition-colors no-underline"
-                      >
-                        <Bookmark size={14} className="text-secondary shrink-0" />
-                        <span className="flex-1 truncate text-foreground">{bm.lesson_title}</span>
-                        {bm.slide_index !== null && (
-                          <span className="text-xs text-muted-foreground shrink-0">slide {bm.slide_index + 1}</span>
-                        )}
-                      </Link>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Weekly Study Stats */}
-              <div>
-                <h3 className="mb-4">This Week</h3>
-                <div className="bg-card rounded-xl p-5 border border-border shadow-sm">
-                  {weekStats.length === 0 ? (
-                    <p className="text-xs text-muted-foreground text-center">No study data yet.</p>
-                  ) : (
-                    <>
-                      <div className="space-y-3">
-                        {weekStats.map((day) => (
-                          <div key={day.id} className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <div
-                                className={`w-2 h-2 rounded-full ${
-                                  parseFloat(day.hours_spent) > 0 ? 'bg-accent' : 'bg-muted'
-                                }`}
-                              />
-                              <span className="text-sm text-foreground">{day.study_date}</span>
-                            </div>
-                            <span
-                              className={`text-sm font-mono ${
-                                parseFloat(day.hours_spent) > 0
-                                  ? 'text-foreground font-semibold'
-                                  : 'text-muted-foreground'
-                              }`}
-                            >
-                              {parseFloat(day.hours_spent) > 0
-                                ? `${day.hours_spent}h`
-                                : '—'}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="mt-4 pt-4 border-t border-border flex items-center justify-between">
-                        <span className="text-sm text-muted-foreground">Weekly Total</span>
-                        <span className="text-lg font-bold text-primary">
-                          {weekStats
-                            .reduce((sum, d) => sum + parseFloat(d.hours_spent), 0)
-                            .toFixed(1)}
-                          h
-                        </span>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            </section>
+        {/* Greeting */}
+        <div>
+          <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 12 }}>{todayLabel()}</div>
+          <div className="t-heading" style={{ fontSize: "clamp(36px,6vw,64px)", color: "var(--text-primary)" }}>
+            Welcome back, {firstName}.<br />
+            <span style={{ color: "var(--steel-light)" }}>
+              {enrollments.length ? "Pick up where you left off." : "Let's find your first course."}
+            </span>
           </div>
         </div>
+
+        {/* Stat strip */}
+        <div style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderRadius: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+          {stats.map((s, i) => (
+            <div key={s.label} style={{ padding: "24px 26px", borderRight: "1px solid var(--hairline)", borderBottom: "1px solid var(--hairline)", ...(i === stats.length - 1 ? { borderRight: "none" } : {}) }}>
+              <div className="t-label" style={{ color: "var(--text-secondary)" }}>{s.label}</div>
+              <div className="t-display" style={{ fontSize: "clamp(32px,4vw,46px)", marginTop: 12, color: loading ? "var(--steel)" : "var(--text-primary)" }}>{loading ? "—" : s.value}</div>
+              <div className="t-mono steel" style={{ marginTop: 8 }}>{s.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Enrolled courses OR onboarding */}
+        {enrollments.length > 0 ? (
+          <section>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 22, gap: 12, flexWrap: "wrap" }}>
+              <div className="t-label" style={{ color: "var(--accent-primary)" }}>YOUR COURSES · {enrollments.length} ENROLLED</div>
+              <Link to="/courses" className="t-label" style={{ color: "var(--text-secondary)", textDecoration: "none" }}>BROWSE ALL →</Link>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 22 }}>
+              {enrolledViews.map((e) => <EnrolledCourseCard key={e.courseId} e={e} />)}
+            </div>
+          </section>
+        ) : (
+          <Onboarding loading={loading} />
+        )}
+
+        {/* Explore preview */}
+        {exploreCourses.length > 0 && (
+          <section>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 22, gap: 12, flexWrap: "wrap" }}>
+              <div className="t-label" style={{ color: "var(--accent-primary)" }}>EXPLORE · {courses.filter((c) => !enrolledIds.has(c.id)).length} AVAILABLE</div>
+              <Link to="/courses" className="t-label" style={{ color: "var(--text-secondary)", textDecoration: "none" }}>SEE FULL CATALOG →</Link>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 22 }}>
+              {exploreCourses.map((c) => <ExploreCourseCard key={c.id} course={c} />)}
+            </div>
+          </section>
+        )}
       </div>
-    </>
+    </div>
+  );
+}
+
+/* Friendly first-run state instead of a blank dashboard. */
+function Onboarding({ loading }: { loading: boolean }) {
+  const steps = [
+    { n: "01", t: "Pick a course", d: "Choose any subject from the catalog below." },
+    { n: "02", t: "Take a 5-minute placement", d: "We map exactly what you already know." },
+    { n: "03", t: "Get your own pathway", d: "Slides and checkpoints built around you." },
+  ];
+  return (
+    <section style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderRadius: 8, padding: "clamp(28px,4vw,44px)", overflow: "hidden", position: "relative" }}>
+      <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 14 }}>GET STARTED</div>
+      <div className="t-heading" style={{ fontSize: "clamp(28px,4vw,44px)", color: "var(--text-primary)", maxWidth: 720 }}>
+        You haven't enrolled yet. <span style={{ color: "var(--steel-light)" }}>Three steps to your first personalized course.</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 0, marginTop: 32, borderTop: "1px solid var(--hairline)" }}>
+        {steps.map((s, i) => (
+          <div key={s.n} style={{ padding: "24px 24px 24px 0", borderRight: i < steps.length - 1 ? "1px solid var(--hairline)" : "none", paddingLeft: i === 0 ? 0 : 24 }}>
+            <div className="t-display" style={{ fontSize: 40, color: "var(--accent-primary)", lineHeight: 1 }}>{s.n}</div>
+            <div className="t-heading" style={{ fontSize: 19, color: "var(--text-primary)", marginTop: 14 }}>{s.t}</div>
+            <div className="t-body" style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 8 }}>{s.d}</div>
+          </div>
+        ))}
+      </div>
+      <Link to="/courses" className="btn btn-primary" style={{ marginTop: 32, textDecoration: "none", display: "inline-flex" }}>
+        {loading ? "LOADING…" : "BROWSE COURSES →"}
+      </Link>
+    </section>
   );
 }

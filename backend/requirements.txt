@@ -2,6 +2,7 @@ asgiref==3.11.1
 certifi==2026.1.4
 charset-normalizer==3.4.4
 Django==5.2.11
+django-axes==7.0.1
 django-cors-headers==4.9.0
 djangorestframework==3.16.1
 djangorestframework-simplejwt==5.5.1

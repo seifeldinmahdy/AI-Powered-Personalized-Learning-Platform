@@ -109,6 +109,7 @@ def _get_generator():
 class GenerateRequest(BaseModel):
     student_id: str
     course_id: str
+    course_title: str = ""
     mastery_level: str = "Intermediate"
     composition_mode: str = "balanced"
     language_proficiency: str = "Intermediate"
@@ -186,6 +187,7 @@ def _context_from_request(request: GenerateRequest, corpus_id: str):
         student_id=request.student_id,
         course_id=request.course_id,
         corpus_id=corpus_id,
+            course_title=request.course_title,
         mastery_level=request.mastery_level,
         composition_mode=request.composition_mode,
         language_proficiency=request.language_proficiency,

@@ -155,6 +155,15 @@ CLASS_DEFINITIONS = {
             "explain that one more time pls",
             "come again??",
         ],
+        'adjacent_note': (
+            "CRITICAL: every utterance MUST contain a retrospective marker referencing "
+            "something already said: 'again', 'back', 'repeat', 'missed', 'zoned out', "
+            "'what did you just say', 'didn't catch', 'say that again'. "
+            "Without one of these, the utterance is On-Topic (asking about content) "
+            "or Off-Topic (asking about something else). "
+            "WRONG: 'can you explain recursion?' — this is On-Topic. "
+            "CORRECT: 'can you explain that again?' — has 'again'."
+        ),
     },
     'Debugging/Code-Sharing': {
         'definition': (
@@ -181,12 +190,18 @@ CLASS_DEFINITIONS = {
 # DDAIR: adjacent class definitions for boundary-aware generation
 # The model generates better utterances when it knows what the confused classes look like.
 ADJACENT_CLASSES = {
-    'On-Topic Question': ['Off-Topic Question', 'Debugging/Code-Sharing'],
-    'Off-Topic Question': ['On-Topic Question'],
-    'Emotional-State': ['Pace-Related'],
-    'Pace-Related': ['Repeat/clarification', 'Emotional-State'],
-    'Repeat/clarification': ['Pace-Related'],
-    'Debugging/Code-Sharing': ['On-Topic Question'],
+    'On-Topic Question':       ['Off-Topic Question',
+                                'Debugging/Code-Sharing',
+                                'Repeat/clarification'],
+    'Off-Topic Question':      ['On-Topic Question',
+                                'Repeat/clarification'],
+    'Emotional-State':         ['Pace-Related'],
+    'Pace-Related':            ['Repeat/clarification',
+                                'Emotional-State'],
+    'Repeat/clarification':    ['Pace-Related',
+                                'On-Topic Question',
+                                'Off-Topic Question'],
+    'Debugging/Code-Sharing':  ['On-Topic Question'],
 }
 
 
@@ -200,6 +215,9 @@ def _fetch_rag_passages_for_topic(topic: str, top_k: int = 4) -> list[str]:
     Returns empty list if RAG pipeline unavailable — generation falls back silently.
     """
     import sys
+    # Avoid pulling TensorFlow/Keras into the import chain; the RAG pipeline
+    # only needs PyTorch/SentenceTransformers for embeddings.
+    os.environ.setdefault("USE_TF", "0")
     if _RAG_PIPELINE_DIR not in sys.path:
         sys.path.insert(0, _RAG_PIPELINE_DIR)
     try:
@@ -431,7 +449,7 @@ def main():
     print(f"\n{'='*60}")
     print(f"Generating Real Utterance Test Set via Groq ({MODEL})")
     print(f"{'='*60}")
-    print(f"Target: {args.per_class} utterances × {len(LABEL_MAP)} classes = "
+    print(f"Target: {args.per_class} utterances x {len(LABEL_MAP)} classes = "
           f"{args.per_class * len(LABEL_MAP)} total\n")
 
     all_rows = []
@@ -464,11 +482,11 @@ def main():
     df.to_csv(OUTPUT_PATH, index=False)
 
     print(f"\n{'='*60}")
-    print(f"[+] Generated {len(df)} utterances → {OUTPUT_PATH}")
+    print(f"[+] Generated {len(df)} utterances -> {OUTPUT_PATH}")
     print(f"{'='*60}")
-    print(f"\nDistribution:")
+    print("\nDistribution:")
     print(df['intent_name'].value_counts().to_string())
-    print(f"\nSample utterances:")
+    print("\nSample utterances:")
     for name in LABEL_MAP:
         subset = df[df['intent_name'] == name]
         if len(subset) > 0:
