@@ -61,8 +61,8 @@ logger = structlog.get_logger(__name__)
 #   FALLBACK_KEYS    = [key_9, key_10]          — cycling fallback on hard failure
 #
 # Total: 2 gen + 6 judge (2 per judge) + 2 fallback = 10 keys.
-# GENERATION_MODEL = gpt-oss:120b (data quality). JUDGE_MODEL = nemotron-3-nano:30b
-#   — a lighter, GPU-time-cheaper judge validated to match gpt-oss:120b's
+# GENERATION_MODEL = openai/gpt-oss-120b (data quality). JUDGE_MODEL = nvidia/nemotron-3-nano-30b-a3b
+#   — a lighter, GPU-time-cheaper judge validated to match gpt-oss-120b's
 #     accept/reject verdicts; judges run 3x per MCQ so this is the quota win.
 # All 10 keys are registered in one SharedKeyManager; each role prefers its own
 # keys, then borrows any idle key from another role, then shares a single key
@@ -177,8 +177,12 @@ CONFIG = {
     "excluded_books": {
         "ScipyLectures-simple.pdf",
     },
-    # How many synthetic chunks to generate when the generator is invoked
-    "n_synthetic_chunks": 180,
+    # How many synthetic chunks to generate when the generator is invoked.
+    # Raised from 180 → 500 to give the --topup 4e (misconception) pass enough
+    # distinct source passages (~1.2x reuse vs ~3.3x at 180). The cache resumes,
+    # so this only generates the ~320 not already cached. Backed by ~110 distinct
+    # subtopics in _SYNTHETIC_TOPIC_DISTRIBUTION (temp=0.8 varies repeats).
+    "n_synthetic_chunks": 500,
     # Evaluation queue capacity — 0 = unbounded so generation workers never
     # block waiting for judges to drain the queue.
     "eval_queue_maxsize": 0,
@@ -215,6 +219,25 @@ SCORE_CATEGORY_WEIGHTS = {
     "weak": 0.25,
     "moderate": 0.25,
     "strong": 0.15,
+}
+
+# Top-up (--topup): bring every question type up to at least this many ACCEPTED
+# samples in the output file. The builder reads the current per-type counts and
+# enqueues only the deficit, oversubscribed for judge rejects (see below). Because
+# it reads current counts each run, --topup is re-runnable: a second pass fills
+# only whatever a first pass fell short of. Chunks are REUSED (a different question
+# from the same passage) since the corpus is exhausted; 4e is sourced from
+# synthetic chunks (textbook prose can't supply the misconception meta-language
+# the eligibility gate needs).
+TOPUP_FLOOR = 300
+
+# Expected gross→net judge acceptance per type, used to oversubscribe the deficit.
+# The run's overall accept rate was ~77%; 4d/4e clear the ambiguity sub-check less
+# often, so they are oversubscribed harder.
+_TOPUP_DEFAULT_ACCEPT = 0.75
+_TOPUP_ACCEPT_RATE = {
+    "4d": 0.65,
+    "4e": 0.50,
 }
 
 # Type escalation map for misconception-context examples
@@ -585,6 +608,12 @@ _SYNTHETIC_TOPIC_DISTRIBUTION: list[tuple[str, list[str]]] = [
         "tries",
         "stacks",
         "queues",
+        "doubly linked lists",
+        "circular buffers",
+        "balanced binary search trees (AVL)",
+        "disjoint set / union-find",
+        "priority queues",
+        "adjacency lists vs adjacency matrices",
     ]),
     ("algorithms", [
         "sorting algorithms",
@@ -595,12 +624,24 @@ _SYNTHETIC_TOPIC_DISTRIBUTION: list[tuple[str, list[str]]] = [
         "breadth-first search (BFS)",
         "depth-first search (DFS)",
         "divide and conquer",
+        "merge sort",
+        "quicksort",
+        "Dijkstra's shortest path",
+        "topological sort",
+        "backtracking",
+        "the two-pointer technique",
+        "the sliding window technique",
+        "memoization",
     ]),
     ("complexity", [
         "Big-O notation",
         "time vs space tradeoffs",
         "amortized analysis",
         "best average and worst case complexity",
+        "logarithmic vs linear growth",
+        "recurrence relations",
+        "constant factors and practical performance",
+        "NP-completeness basics",
     ]),
     ("python_fundamentals", [
         "Python functions and scope",
@@ -608,6 +649,11 @@ _SYNTHETIC_TOPIC_DISTRIBUTION: list[tuple[str, list[str]]] = [
         "Python generators",
         "list comprehensions and dict comprehensions",
         "Python decorators",
+        "Python slicing",
+        "the default mutable argument pitfall",
+        "variable scope and the LEGB rule",
+        "iterators and the iterator protocol",
+        "args and kwargs",
     ]),
     ("oop_concepts", [
         "inheritance in object-oriented programming",
@@ -615,6 +661,11 @@ _SYNTHETIC_TOPIC_DISTRIBUTION: list[tuple[str, list[str]]] = [
         "encapsulation",
         "composition vs inheritance",
         "abstraction and method resolution order",
+        "class vs instance attributes",
+        "dunder (magic) methods",
+        "the property decorator",
+        "static methods and class methods",
+        "multiple inheritance and the MRO",
     ]),
     ("functional_concepts", [
         "map filter and reduce",
@@ -622,17 +673,29 @@ _SYNTHETIC_TOPIC_DISTRIBUTION: list[tuple[str, list[str]]] = [
         "higher-order functions",
         "lambda expressions",
         "immutability in functional programming",
+        "partial application",
+        "function composition",
+        "pure functions and side effects",
+        "recursion vs iteration",
     ]),
     ("error_handling", [
         "exceptions and try/except in Python",
         "custom exception classes",
         "the finally block and cleanup",
         "context managers and the with statement",
+        "exception chaining",
+        "EAFP vs LBYL",
+        "raising and re-raising exceptions",
+        "assert statements and invariants",
     ]),
     ("file_and_io", [
         "file handling in Python",
         "serialization with JSON and pickle",
         "buffering and file modes",
+        "reading large files line by line",
+        "binary mode vs text mode",
+        "the csv module",
+        "path handling with pathlib",
     ]),
     ("basic_ml_concepts", [
         "overfitting and underfitting",
@@ -641,6 +704,11 @@ _SYNTHETIC_TOPIC_DISTRIBUTION: list[tuple[str, list[str]]] = [
         "loss functions",
         "gradient descent",
         "regularization in machine learning",
+        "train validation and test splits",
+        "feature scaling and normalization",
+        "the confusion matrix and precision/recall",
+        "linear regression",
+        "logistic regression",
     ]),
     ("statistics_basics", [
         "mean variance and standard deviation",
@@ -648,6 +716,11 @@ _SYNTHETIC_TOPIC_DISTRIBUTION: list[tuple[str, list[str]]] = [
         "hypothesis testing",
         "correlation vs causation",
         "sampling and sampling bias",
+        "confidence intervals",
+        "p-values and statistical significance",
+        "the central limit theorem",
+        "Bayes' theorem",
+        "covariance and correlation",
     ]),
 ]
 
@@ -1137,6 +1210,90 @@ def _build_tasks(
         )
 
     # Do NOT shuffle — tasks are in alphabetical-book, sequential-chunk order.
+    return tasks
+
+
+def _build_topup_tasks(
+    chunks: list[dict],
+    floor: int,
+    current_counts: dict[str, int],
+) -> list[dict]:
+    """Build forced-type tasks to lift every starved type up to ``floor``.
+
+    For each type currently below ``floor`` accepted samples, enqueues the
+    deficit (``floor - current``) GROSSED UP by the type's expected judge
+    acceptance rate, so the net accepted count lands near ``floor``. Types
+    already at/above ``floor`` (e.g. 4a) are skipped.
+
+    Unlike ``_build_tasks``, this intentionally IGNORES ``existing_hashes`` and
+    reuses chunks, because the corpus is exhausted and we want additional
+    *distinct questions* (different type/mastery framing) from passages already
+    used. Chunks are cycled when the eligible pool is smaller than the count.
+
+    Type 4e (misconception) is sourced from synthetic chunks — textbook prose
+    almost never contains the misconception meta-language the eligibility gate
+    keys on, so real-text 4e would be judge-rejected en masse.
+
+    score_category is held to moderate/strong (never very_weak, which would hard-
+    pin the type back to 4a). Mastery is sampled from the levels eligible for the
+    type so Judge B's mastery gate stays satisfiable.
+    """
+    import math as _math
+    import sys as _sys
+    from pathlib import Path as _Path
+    _mcq_src = str(_Path(__file__).resolve().parent.parent.parent)
+    if _mcq_src not in _sys.path:
+        _sys.path.insert(0, _mcq_src)
+    from mcq.question_types import MASTERY_TYPE_ELIGIBILITY, ALL_QUESTION_TYPES
+
+    rng = random.Random(42)
+
+    syn_chunks = [c for c in chunks if str(c.get("book", "")).startswith("synthetic:")]
+    real_chunks = [c for c in chunks if not str(c.get("book", "")).startswith("synthetic:")]
+
+    all_types = sorted(set(ALL_QUESTION_TYPES))
+
+    tasks: list[dict] = []
+    summary: dict[str, dict[str, int]] = {}
+    for qtype in all_types:
+        have = current_counts.get(qtype, 0)
+        deficit = floor - have
+        if deficit <= 0:
+            continue
+        accept = _TOPUP_ACCEPT_RATE.get(qtype, _TOPUP_DEFAULT_ACCEPT)
+        gross = int(_math.ceil(deficit / accept))
+
+        if qtype == "4e":
+            pool = syn_chunks or chunks
+        else:
+            pool = [
+                c for c in real_chunks
+                if qtype in _detect_content_eligible_types(c["text"])
+            ] or real_chunks
+        if not pool:
+            continue
+        pool = list(pool)
+        rng.shuffle(pool)
+
+        compat = [m for m, ts in MASTERY_TYPE_ELIGIBILITY.items() if qtype in ts] \
+            or list(MASTERY_TYPE_ELIGIBILITY.keys())
+
+        for i in range(gross):
+            chunk = pool[i % len(pool)]
+            tasks.append({
+                "text": chunk["text"],
+                "topic": chunk.get("topic", "General"),
+                "book": chunk.get("book", "unknown"),
+                "chunk_hash": _chunk_hash(chunk["text"]),
+                "mastery": rng.choice(compat),
+                "score_category": "moderate" if i % 2 == 0 else "strong",
+                "question_type": qtype,
+                "misconception_context": None,
+            })
+        summary[qtype] = {"have": have, "deficit": deficit, "gross": gross}
+
+    rng.shuffle(tasks)
+    logger.info("topup_tasks_built", floor=floor, total=len(tasks), per_type=summary)
     return tasks
 
 
@@ -3381,6 +3538,30 @@ def _load_existing_hashes(output_path: str) -> set[str]:
     return hashes
 
 
+def _count_existing_types(output_path: str) -> dict[str, int]:
+    """Count accepted samples per question_type in the output file.
+
+    Used by --topup to compute each type's deficit to the floor. Returns an
+    empty dict if the file does not exist yet.
+    """
+    from collections import Counter
+    counts: Counter = Counter()
+    path = Path(output_path)
+    if not path.exists():
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                counts[obj.get("question_type", "?")] += 1
+            except json.JSONDecodeError:
+                pass
+    return dict(counts)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # REPORTS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3698,6 +3879,21 @@ def main():
         ),
     )
     parser.add_argument(
+        "--topup", action="store_true", default=False,
+        help=(
+            "Targeted rebalancing pass: read the current per-type counts and "
+            "enqueue forced tasks to lift every type below the floor (default "
+            f"{TOPUP_FLOOR}) up to it, REUSING chunks (ignores existing hashes) "
+            "since the corpus is exhausted. Appends to the existing output file "
+            "— nothing already generated is touched. 4e is sourced from synthetic "
+            "chunks. Re-runnable: a second pass fills only what's still short."
+        ),
+    )
+    parser.add_argument(
+        "--topup-floor", type=int, default=None,
+        help=f"Override the per-type floor for --topup (default {TOPUP_FLOOR}).",
+    )
+    parser.add_argument(
         "--skip-judges", action="store_true", default=False,
         help=(
             "Bypass all three LLM judges and write all structurally-valid MCQs "
@@ -3876,7 +4072,17 @@ def main():
     existing_hashes = _load_existing_hashes(args.output)
 
     # ── Build task list ──────────────────────────────────────────────────
-    if args.force_type:
+    if args.topup:
+        floor = args.topup_floor or TOPUP_FLOOR
+        current_counts = _count_existing_types(args.output)
+        tasks = _build_topup_tasks(chunks, floor, current_counts)
+        print(f"  Top-up mode: lifting every type to >= {floor} accepted (chunks reused).")
+        print(f"  Current per-type counts: {dict(sorted(current_counts.items()))}")
+        print(f"  Built {len(tasks)} forced tasks (gross, pre-judge); appending to existing output.")
+        if not tasks:
+            print(f"  All types already at >= {floor}. Nothing to do.")
+            return
+    elif args.force_type:
         tasks = _build_tasks(chunks, existing_hashes, balanced_types=False)
         rng = random.Random(42)
         forced_tasks = []

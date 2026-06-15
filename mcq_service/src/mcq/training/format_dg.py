@@ -98,7 +98,7 @@ def _build_dg_training_messages(
 def format_dg_data(
     input_path: str,
     output_path: str,
-    tokenizer_name: str = "unsloth/Qwen3-4B-Instruct",
+    tokenizer_name: str = "unsloth/Qwen3-4B-Instruct-2507",
 ) -> int:
     """Convert cleaned DG data to chat-formatted training examples.
 
@@ -181,6 +181,13 @@ def format_dg_data(
                             add_generation_prompt=False,
                         )
 
+                    # Qwen3-2507's template injects an empty "<think></think>"
+                    # block into every assistant turn even with enable_thinking
+                    # =False. Strip it so the DG model learns to emit the answer
+                    # directly (saves ~8 tokens/gen; inference anchors at
+                    # "assistant\n" with no think block, so this stays consistent).
+                    text = text.replace("<think>\n\n</think>\n\n", "")
+
                     # Strip any residual box-drawing characters.
                     if _BOX_DRAWING_RE.search(text):
                         text = _BOX_DRAWING_RE.sub('', text)
@@ -223,7 +230,7 @@ def main():
         help="Path to write formatted dg_formatted.jsonl.",
     )
     parser.add_argument(
-        "--tokenizer", default="unsloth/Qwen3-4B-Instruct",
+        "--tokenizer", default="unsloth/Qwen3-4B-Instruct-2507",
         help="HuggingFace tokenizer to use for chat template formatting.",
     )
     args = parser.parse_args()
