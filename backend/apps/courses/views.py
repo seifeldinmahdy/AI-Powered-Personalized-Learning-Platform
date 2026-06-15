@@ -20,6 +20,20 @@ from django.conf import settings
 CACHE_TTL = 60 * 15  # 15 minutes
 
 
+def _is_admin(user):
+    return getattr(user, "role", None) == "admin"
+
+
+def _ai_url():
+    import os
+    return getattr(settings, "AI_SERVICE_URL", None) or os.getenv("AI_SERVICE_URL", "http://localhost:8001")
+
+
+def _svc_headers():
+    import os
+    return {"X-Service-Key": os.getenv("INTERNAL_SERVICE_KEY", "")}
+
+
 class CourseViewSet(viewsets.ModelViewSet):
     """CRUD operations for courses. Supports search and filtering."""
 
@@ -75,6 +89,30 @@ class CourseViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         cache.delete(f"course_detail_{instance.pk}")
         instance.delete()
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
+    def draft_description(self, request, pk=None):
+        """POST /api/courses/courses/<id>/draft-description/ — ADMIN. AI-drafts a
+        course description (admin reviews/edits before saving). Proxies the AI
+        authoring endpoint; passes corpus topics when available."""
+        if not _is_admin(request.user):
+            return Response({"error": "Admin only."}, status=status.HTTP_403_FORBIDDEN)
+        course = self.get_object()
+        try:
+            resp = requests.post(
+                f"{_ai_url().rstrip('/')}/authoring/course-description",
+                json={
+                    "title": course.title,
+                    "current_description": request.data.get("current_description", course.description or ""),
+                    "topics": request.data.get("topics", []),
+                },
+                headers=_svc_headers(), timeout=60,
+            )
+            return Response(resp.json(), status=resp.status_code)
+        except requests.exceptions.ConnectionError:
+            return Response({"error": "AI service offline"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
     def rate(self, request, pk=None):
@@ -391,6 +429,32 @@ def regenerate_pathway(request, course_id):
         return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
 
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def pathway_versions(request, course_id):
+    """GET /api/courses/courses/<course_id>/pathway/versions/?student_id= — ADMIN.
+
+    Lists a student's plan versions (metadata only) so an admin/instructor can
+    inspect them. Students never see this. Proxies the AI pathway store.
+    """
+    if not _is_admin(request.user):
+        return Response({"error": "Admin only."}, status=status.HTTP_403_FORBIDDEN)
+    student_id = request.query_params.get("student_id")
+    if not student_id:
+        return Response({"error": "student_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        resp = requests.get(
+            f"{_ai_url().rstrip('/')}/pathway/versions",
+            params={"student_id": str(student_id), "course_id": str(course_id)},
+            headers=_svc_headers(), timeout=30,
+        )
+        return Response(resp.json(), status=resp.status_code)
+    except requests.exceptions.ConnectionError:
+        return Response({"error": "AI service offline"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    except Exception as exc:
+        return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def evaluate_student_code(request):
@@ -649,11 +713,101 @@ class CourseCorpusViewSet(viewsets.ViewSet):
         serializer = CorpusSourceSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            serializer.save(corpus=corpus)
+            source = serializer.save(corpus=corpus)
         except Exception as exc:
             # Most likely the (corpus, book_stem) uniqueness constraint.
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        # Auto-index the selected book into this course's corpus (background on AI).
+        self._trigger_index(corpus, course_pk, source)
+        return Response(CorpusSourceSerializer(source).data, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _trigger_index(corpus, course_pk, source):
+        """Fire the AI corpus indexer for a source; record the initial status."""
+        try:
+            resp = requests.post(
+                f"{_ai_url().rstrip('/')}/corpus/index",
+                json={"book_stem": source.book_stem,
+                      "corpus_id": corpus.corpus_id, "course_id": str(course_pk)},
+                headers=_svc_headers(), timeout=30,
+            )
+            if resp.status_code == 200:
+                source.index_status = resp.json().get("status", "indexing")
+            else:
+                source.index_status = "failed"
+        except Exception:
+            source.index_status = "failed"
+        source.save(update_fields=["index_status"])
+
+    def available_books(self, request, course_pk=None):
+        """GET /api/courses/courses/<course_pk>/corpus/available-books/ — ADMIN.
+        Lists uploaded/indexed books to choose from (proxies the AI service)."""
+        if not _is_admin(request.user):
+            return Response({"error": "Admin only."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            corpus = self._get_or_create_corpus(course_pk)
+        except Course.DoesNotExist:
+            return Response({"error": "Course not found"}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            resp = requests.get(
+                f"{_ai_url().rstrip('/')}/corpus/available-books",
+                params={"corpus_id": corpus.corpus_id}, headers=_svc_headers(), timeout=30,
+            )
+            return Response(resp.json(), status=resp.status_code)
+        except requests.exceptions.ConnectionError:
+            return Response({"error": "AI service offline"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    def upload_book(self, request, course_pk=None):
+        """POST /api/courses/courses/<course_pk>/corpus/upload/ — ADMIN.
+        Forwards a PDF upload to the AI service so it can be selected/indexed."""
+        if not _is_admin(request.user):
+            return Response({"error": "Admin only."}, status=status.HTTP_403_FORBIDDEN)
+        upload = request.FILES.get("file")
+        if not upload:
+            return Response({"error": "file is required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            resp = requests.post(
+                f"{_ai_url().rstrip('/')}/corpus/upload",
+                files={"file": (upload.name, upload.read(), upload.content_type or "application/pdf")},
+                headers=_svc_headers(), timeout=120,
+            )
+            return Response(resp.json(), status=resp.status_code)
+        except requests.exceptions.ConnectionError:
+            return Response({"error": "AI service offline"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    def index_status(self, request, course_pk=None):
+        """GET /api/courses/courses/<course_pk>/corpus/index-status/?book_stem= —
+        ADMIN. Live indexing status; also syncs it onto the CorpusSource row."""
+        if not _is_admin(request.user):
+            return Response({"error": "Admin only."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            corpus = self._get_or_create_corpus(course_pk)
+        except Course.DoesNotExist:
+            return Response({"error": "Course not found"}, status=status.HTTP_404_NOT_FOUND)
+        book_stem = request.query_params.get("book_stem", "")
+        try:
+            resp = requests.get(
+                f"{_ai_url().rstrip('/')}/corpus/index-status",
+                params={"corpus_id": corpus.corpus_id, "book_stem": book_stem},
+                headers=_svc_headers(), timeout=30,
+            )
+            data = resp.json()
+            # Sync the durable status onto the source row for the UI list.
+            src = CorpusSource.objects.filter(corpus=corpus, book_stem=book_stem).first()
+            if src and data.get("status") in dict(CorpusSource.INDEX_STATUS):
+                src.index_status = data["status"]
+                src.chunk_count = int(data.get("chunks", src.chunk_count) or src.chunk_count)
+                src.save(update_fields=["index_status", "chunk_count"])
+            return Response(data, status=resp.status_code)
+        except requests.exceptions.ConnectionError:
+            return Response({"error": "AI service offline"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
     def remove_source(self, request, course_pk=None, pk=None):
         """DELETE /api/courses/courses/<course_pk>/corpus/sources/<pk>/ — admin."""

@@ -26,6 +26,12 @@ urlpatterns = [
         views.regenerate_pathway,
         name="pathway-regenerate",
     ),
+    # Admin-only: list a student's plan versions (proxies AI pathway store).
+    path(
+        "courses/<int:course_id>/pathway/versions/",
+        views.pathway_versions,
+        name="pathway-versions",
+    ),
     # Concepts (nested under course)
     path(
         "courses/<int:course_pk>/concepts/",
@@ -65,6 +71,22 @@ urlpatterns = [
         "courses/<int:course_pk>/corpus/",
         views.CourseCorpusViewSet.as_view({"get": "retrieve_corpus"}),
         name="course-corpus",
+    ),
+    # Admin authoring: available books, upload, and index status.
+    path(
+        "courses/<int:course_pk>/corpus/available-books/",
+        views.CourseCorpusViewSet.as_view({"get": "available_books"}),
+        name="corpus-available-books",
+    ),
+    path(
+        "courses/<int:course_pk>/corpus/upload/",
+        views.CourseCorpusViewSet.as_view({"post": "upload_book"}),
+        name="corpus-upload",
+    ),
+    path(
+        "courses/<int:course_pk>/corpus/index-status/",
+        views.CourseCorpusViewSet.as_view({"get": "index_status"}),
+        name="corpus-index-status",
     ),
     path(
         "courses/<int:course_pk>/corpus/sources/",

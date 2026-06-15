@@ -258,6 +258,18 @@ async def regenerate_pathway(
         raise HTTPException(status_code=500, detail=f"Regeneration failed: {e}")
 
 
+@router.get("/versions")
+async def pathway_versions(student_id: str, course_id: str):
+    """Admin/instructor: list all plan versions for a student+course (metadata
+    only — no full plan JSON). The current version is flagged is_current."""
+    try:
+        gen = _get_generator()
+        return {"versions": gen._store.list_versions(student_id, course_id)}
+    except Exception as e:
+        logger.error(f"pathway_versions error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/current", response_model=PlanSummary)
 async def current_pathway(student_id: str, course_id: str):
     """Read-only: return the CURRENT authoritative plan (no generation).

@@ -328,6 +328,13 @@ class CorpusSource(models.Model):
         help_text="Optional concept binding. Batch 4 makes concept tagging non-optional.",
     )
     is_active = models.BooleanField(default=True)
+    # Auto-index status into the course's corpus (admin authoring).
+    INDEX_STATUS = [
+        ("pending", "Pending"), ("indexing", "Indexing"),
+        ("indexed", "Indexed"), ("failed", "Failed"),
+    ]
+    index_status = models.CharField(max_length=20, choices=INDEX_STATUS, default="pending")
+    chunk_count = models.IntegerField(default=0)
     added_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
