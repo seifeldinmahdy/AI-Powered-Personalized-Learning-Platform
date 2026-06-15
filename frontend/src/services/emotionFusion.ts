@@ -21,6 +21,8 @@ export interface FusionContext {
   slide_title?: string;
   subtopic?: string;
   session_id?: string;
+  student_id?: string;   // consent enforcement + attributable retention (11b)
+  course_id?: string;
 }
 
 export interface FusionResult {
@@ -64,6 +66,8 @@ export async function fuseEmotions(
             slide_title: context.slide_title ?? '',
             subtopic: context.subtopic ?? '',
             session_id: context.session_id,
+            student_id: context.student_id ?? '',
+            course_id: context.course_id ?? '',
           }),
         }).catch(console.error);
       } catch {}

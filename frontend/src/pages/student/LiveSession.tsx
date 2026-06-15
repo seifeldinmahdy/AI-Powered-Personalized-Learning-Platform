@@ -24,6 +24,7 @@ import {
 } from '../../services/pathway';
 
 import { fuseEmotions } from '../../services/emotionFusion';
+import { getEmotionConsent, grantEmotionConsent, withdrawEmotionConsent } from '../../services/emotionConsent';
 import type { SERResult } from '../../services/tutor';
 
 const AI_URL = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001';
@@ -72,6 +73,12 @@ export default function LiveSession() {
   // ─── Emotion & FER state ──────────────────────────────────────
   const [fusedEmotion, setFusedEmotion] = useState<string | undefined>();
   const [cameraEnabled, setCameraEnabled] = useState(false);
+  // Emotion-capture consent (Batch 11b): OFF by default, explicit opt-in.
+  const [showConsentModal, setShowConsentModal] = useState(false);
+  const studentId = (() => {
+    try { return String(JSON.parse(localStorage.getItem('auth_user') || '{}').id || ''); }
+    catch { return ''; }
+  })();
 
   // ─── Student profile for Dr. Nova personalization ─────────────
   const [studentProfileSummary, setStudentProfileSummary] = useState<string | undefined>();
@@ -429,6 +436,8 @@ export default function LiveSession() {
               slide_index: currentSlide,
               subtopic: lesson?.title,
               session_id: sessionIdRef.current,
+              student_id: studentId,
+              course_id: String(courseId ?? ''),
             },
           );
 
@@ -460,16 +469,50 @@ export default function LiveSession() {
     }
   }, []);
 
-  // Toggle camera on/off
-  const handleCameraToggle = useCallback(() => {
+  // Toggle camera on/off. Enabling requires explicit emotion-capture consent —
+  // off by default; we never call getUserMedia without a prior opt-in.
+  const handleCameraToggle = useCallback(async () => {
     if (cameraEnabled) {
       stopFERPolling();
       setCameraEnabled(false);
-    } else {
-      setCameraEnabled(true);
-      startFERPolling();
+      return;
+    }
+    try {
+      const consent = await getEmotionConsent();
+      if (consent.granted) {
+        setCameraEnabled(true);
+        startFERPolling();
+      } else {
+        setShowConsentModal(true);  // ask for informed opt-in first
+      }
+    } catch {
+      // Fail closed: if we can't confirm consent, don't capture.
+      setShowConsentModal(true);
     }
   }, [cameraEnabled, startFERPolling, stopFERPolling]);
+
+  const handleGrantConsent = useCallback(async () => {
+    try {
+      await grantEmotionConsent();
+      setShowConsentModal(false);
+      setCameraEnabled(true);
+      startFERPolling();
+    } catch {
+      toast.error('Could not record consent. Please try again.');
+    }
+  }, [startFERPolling]);
+
+  const handleWithdrawConsent = useCallback(async () => {
+    stopFERPolling();
+    setCameraEnabled(false);
+    setShowConsentModal(false);
+    try {
+      await withdrawEmotionConsent();
+      toast.success('Emotion tracking withdrawn and your emotion data deleted.');
+    } catch {
+      toast.error('Could not withdraw consent. Please try again.');
+    }
+  }, [stopFERPolling]);
 
   // Cleanup webcam on unmount
   useEffect(() => {
@@ -909,6 +952,34 @@ export default function LiveSession() {
         {cameraEnabled ? <Camera size={14} /> : <CameraOff size={14} />}
         <span>{cameraEnabled ? 'Tracking On' : 'Tracking Off'}</span>
       </button>
+
+      {/* Emotion-capture consent modal (Batch 11b) — informed opt-in before any
+          webcam access. Off by default; revocable. (Styling intentionally minimal.) */}
+      {showConsentModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
+          <div className="max-w-md w-full bg-card border border-border rounded-2xl p-6 space-y-4">
+            <h2 className="text-lg font-bold">Enable emotion-aware tutoring?</h2>
+            <p className="text-sm text-muted-foreground">
+              With your permission, the tutor can use your webcam to read
+              facial-expression-derived <strong>emotion labels</strong> (e.g. “engaged”,
+              “confused”) about every 25 seconds, to adapt how it explains things.
+            </p>
+            <ul className="text-sm text-muted-foreground list-disc pl-5 space-y-1">
+              <li><strong>No video or images are stored</strong> — only short-lived emotion labels.</li>
+              <li>Used <strong>only</strong> to adapt tutor delivery. It <strong>never affects your grades</strong>, scores, mastery, or certificate.</li>
+              <li>Raw signals are deleted after the session; you can withdraw anytime (which deletes your emotion data).</li>
+            </ul>
+            <div className="flex gap-2 justify-end pt-2">
+              <button onClick={() => setShowConsentModal(false)}
+                className="px-4 py-2 rounded-lg border border-border text-sm">Not now</button>
+              <button onClick={handleWithdrawConsent}
+                className="px-4 py-2 rounded-lg border border-border text-sm text-muted-foreground">Withdraw &amp; delete</button>
+              <button onClick={handleGrantConsent}
+                className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold">I consent</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Hidden video and canvas for FER capture */}
       <video ref={videoRef} style={{ display: 'none' }} playsInline muted />

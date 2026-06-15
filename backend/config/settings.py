@@ -177,6 +177,17 @@ REMEDIATION_TRIGGER_THRESHOLD = float(
 )
 REMEDIATION_RESOLVE_THRESHOLD = float(os.getenv("REMEDIATION_RESOLVE_THRESHOLD", "0.55"))
 
+# ---------- Emotion governance (Batch 11b) ----------
+# Emotion (FER/SER) is a low-confidence, OPTIONAL auxiliary signal. Capture is
+# OFF by default and requires explicit opt-in consent before any webcam access.
+# Nothing required for learning/grading/mastery/completion depends on it.
+EMOTION_CONSENT_REQUIRED = os.getenv("EMOTION_CONSENT_REQUIRED", "True").lower() in ("true", "1", "yes")
+EMOTION_CONSENT_POLICY_VERSION = os.getenv("EMOTION_CONSENT_POLICY_VERSION", "2026-06-15")
+# Raw per-event emotion signals are short-lived: purged after the session
+# profiler consolidates them (and a TTL backstop for abandoned sessions). Only
+# the derived, qualitative low-confidence profile claim persists.
+EMOTION_RAW_RETENTION_TTL = int(os.getenv("EMOTION_RAW_RETENTION_TTL", str(24 * 3600)))
+
 # ---------- GitHub App (capstone provisioning) ----------
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
 GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "")  # PEM content

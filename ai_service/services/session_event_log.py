@@ -59,6 +59,28 @@ class SessionEventLog:
             conn.executescript(_DDL)
             conn.commit()
         logger.info("session_event_log_ready", path=self._db_path)
+        # One-time cleanup of the UNATTRIBUTABLE emotion backlog (Batch 11b):
+        # emotion rows written before student_id was threaded carry an empty
+        # student_id, so a consent withdrawal could never honour them. We can't
+        # attribute them, so we don't keep that biometric record. Idempotent —
+        # after the first run there are none (new appends carry student_id).
+        self._purge_unattributable_emotion()
+
+    def _purge_unattributable_emotion(self) -> int:
+        try:
+            with self._lock, sqlite3.connect(self._db_path) as conn:
+                cur = conn.execute(
+                    "DELETE FROM session_events WHERE event_type='emotion' "
+                    "AND (student_id IS NULL OR student_id='')"
+                )
+                conn.commit()
+                n = cur.rowcount or 0
+            if n:
+                logger.info("emotion_backlog_purged", unattributable_rows=n)
+            return n
+        except Exception as exc:
+            logger.warning("emotion_backlog_purge_failed", error=str(exc))
+            return 0
 
     def append(self, session_id: str, event_type: str, payload: dict,
                student_id: str = "", course_id: str = "") -> None:
@@ -104,6 +126,46 @@ class SessionEventLog:
                 (session_id, up_to_id),
             )
             conn.commit()
+
+    # ── Emotion retention (Batch 11b) ────────────────────────────────
+    # Raw emotion is short-lived: purged after consolidation, with a TTL backstop
+    # for abandoned sessions, and on consent withdrawal. Only the derived,
+    # qualitative profile claim persists. These purges target event_type='emotion'
+    # ONLY — slide/tutor events keep their normal lifecycle.
+
+    def purge_consumed_emotion(self, session_id: str) -> int:
+        """Delete this session's CONSUMED emotion rows (raw biometric not kept
+        past consolidation). Called right after the profiler marks consumed."""
+        with self._lock, sqlite3.connect(self._db_path) as conn:
+            cur = conn.execute(
+                "DELETE FROM session_events WHERE session_id=? AND event_type='emotion' AND consumed=1",
+                (session_id,),
+            )
+            conn.commit()
+            return cur.rowcount or 0
+
+    def purge_emotion_older_than(self, older_than_iso: str) -> int:
+        """TTL backstop: delete CONSUMED emotion rows older than the cutoff. Only
+        consumed rows are eligible, so this can NEVER race the profiler or cost a
+        session its consolidation (the retention sweep consolidates first)."""
+        with self._lock, sqlite3.connect(self._db_path) as conn:
+            cur = conn.execute(
+                "DELETE FROM session_events WHERE event_type='emotion' AND consumed=1 AND created_at < ?",
+                (older_than_iso,),
+            )
+            conn.commit()
+            return cur.rowcount or 0
+
+    def purge_student_emotion(self, student_id: str) -> int:
+        """Delete ALL of a student's raw emotion rows (consent withdrawal),
+        consumed or not — withdrawal removes the raw record entirely."""
+        with self._lock, sqlite3.connect(self._db_path) as conn:
+            cur = conn.execute(
+                "DELETE FROM session_events WHERE event_type='emotion' AND student_id=?",
+                (str(student_id),),
+            )
+            conn.commit()
+            return cur.rowcount or 0
 
     def sessions_with_unconsumed(self, older_than_iso: str | None = None) -> list[str]:
         """Distinct session_ids that still have unconsumed events (for the sweeper)."""

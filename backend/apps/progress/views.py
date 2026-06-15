@@ -1,5 +1,7 @@
 import logging
 
+from django.conf import settings
+
 from django.utils import timezone
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action, api_view, permission_classes
@@ -417,6 +419,82 @@ def concept_mastery_history(request, concept_id):
         "events": history,
         "current": fold_events(events) if events else None,
     })
+
+
+def _emotion_consent_payload(consent):
+    return {
+        "granted": bool(consent and consent.granted),
+        "granted_at": consent.granted_at.isoformat() if consent and consent.granted_at else None,
+        "withdrawn_at": consent.withdrawn_at.isoformat() if consent and consent.withdrawn_at else None,
+        "policy_version": consent.policy_version if consent else "",
+        "required": bool(getattr(settings, "EMOTION_CONSENT_REQUIRED", True)),
+        "current_policy_version": getattr(settings, "EMOTION_CONSENT_POLICY_VERSION", ""),
+    }
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def emotion_consent(request):
+    """GET the caller's emotion-capture consent state (off by default).
+
+    Also the endpoint the AI service calls (service-key + X-Student-ID) to
+    enforce consent before any emotion is fused/persisted.
+    """
+    from .models import EmotionConsent
+    consent = EmotionConsent.objects.filter(student=request.user).first()
+    return Response(_emotion_consent_payload(consent))
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def emotion_consent_grant(request):
+    """Record explicit, informed opt-in for emotion capture."""
+    from .models import EmotionConsent
+    consent, _ = EmotionConsent.objects.get_or_create(student=request.user)
+    consent.granted = True
+    consent.granted_at = timezone.now()
+    consent.withdrawn_at = None
+    consent.policy_version = request.data.get(
+        "policy_version", getattr(settings, "EMOTION_CONSENT_POLICY_VERSION", "")
+    )
+    consent.save()
+    logger.info("emotion consent GRANTED student=%s policy=%s", request.user.id, consent.policy_version)
+    return Response(_emotion_consent_payload(consent))
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def emotion_consent_withdraw(request):
+    """Withdraw consent: stops capture going forward and purges the student's
+    retained RAW emotion (best-effort call to the AI raw-emotion store). The
+    derived qualitative profile claim — not raw biometric — is unaffected."""
+    import os
+    import requests as _requests
+    from .models import EmotionConsent
+
+    consent, _ = EmotionConsent.objects.get_or_create(student=request.user)
+    consent.granted = False
+    consent.withdrawn_at = timezone.now()
+    consent.save()
+
+    purged = None
+    try:
+        ai_url = os.getenv("AI_SERVICE_URL", "http://localhost:8001").rstrip("/")
+        resp = _requests.post(
+            f"{ai_url}/emotion/purge",
+            json={"student_id": str(request.user.id)},
+            headers={"X-Service-Key": os.getenv("INTERNAL_SERVICE_KEY", "")},
+            timeout=8,
+        )
+        if resp.status_code == 200:
+            purged = resp.json().get("purged")
+    except Exception:
+        logger.warning("emotion withdraw: raw-emotion purge call failed (student=%s)", request.user.id)
+
+    logger.info("emotion consent WITHDRAWN student=%s purged=%s", request.user.id, purged)
+    data = _emotion_consent_payload(consent)
+    data["purged"] = purged
+    return Response(data)
 
 
 @api_view(['POST'])

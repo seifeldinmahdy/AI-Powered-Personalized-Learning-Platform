@@ -370,6 +370,11 @@ async def run_session_profiler(session_id: str, student_id: str, lesson_title: s
         logger.info("session profiler: no unconsumed events for session %s", session_id)
         return {"claims": 0, "consumed": 0}
 
+    # Abandoned-session sweep passes no student_id — derive it from the events
+    # (each carries the student it belongs to) so the consolidation isn't lost.
+    if not student_id:
+        student_id = next((e.get("student_id") for e in events if e.get("student_id")), "")
+
     max_id = max(e["id"] for e in events)
     by_slide = _consolidate_log_by_slide(events)
 
@@ -399,8 +404,43 @@ async def run_session_profiler(session_id: str, student_id: str, lesson_title: s
 
     # Idempotency marker: consume what we just folded.
     elog.mark_consumed(session_id, max_id)
+    # Retention boundary (Batch 11b): the derived low-confidence claim is now
+    # persisted, so the RAW emotion for this session is no longer needed — purge
+    # it. Only the qualitative claim remains; no raw biometric is retained.
+    try:
+        purged = elog.purge_consumed_emotion(session_id)
+        if purged:
+            logger.info("session profiler: purged %d raw emotion rows session=%s", purged, session_id)
+    except Exception:
+        logger.warning("session profiler: emotion purge failed session=%s", session_id)
     logger.info("session profiler: session=%s claims=%d consumed<=%d", session_id, len(claims), max_id)
     return {"claims": len(claims), "consumed": max_id}
+
+
+async def purge_emotion_retention(ttl_seconds: int) -> dict:
+    """Retention sweep for ABANDONED sessions (Batch 11b).
+
+    CONSOLIDATE BEFORE PURGE — so an abandoned session never loses its partial
+    profile to the retention purge:
+      1. Consolidate sessions with unconsumed events older than the TTL (runs the
+         profiler → writes the derived claim → purges that session's raw emotion).
+      2. TTL backstop: delete any remaining CONSUMED emotion older than the cutoff.
+    The backstop only touches consumed rows, so it can never race the profiler.
+    """
+    from datetime import datetime, timedelta, timezone as _tz
+    elog = get_session_event_log()
+    cutoff = (datetime.now(_tz.utc) - timedelta(seconds=int(ttl_seconds))).isoformat()
+
+    consolidated = 0
+    for sid in elog.sessions_with_unconsumed(older_than_iso=cutoff):
+        try:
+            await run_session_profiler(sid, student_id="", lesson_title="")
+            consolidated += 1
+        except Exception:
+            logger.warning("retention sweep: consolidation failed session=%s", sid)
+    purged = elog.purge_emotion_older_than(cutoff)
+    logger.info("emotion retention sweep: consolidated=%d purged=%d", consolidated, purged)
+    return {"consolidated": consolidated, "purged": purged}
 
 
 # ── Lab profiler: positive-action-only, evidence floor, low confidence ──

@@ -294,3 +294,29 @@ class RemediationStep(models.Model):
 
     def __str__(self):
         return f"Remediation(student={self.student_id} concept={self.concept_id} {self.status})"
+
+
+class EmotionConsent(models.Model):
+    """Per-student consent for webcam/FER emotion capture (Batch 11b).
+
+    OFF by default (no row, or granted=False = no consent). Capture requires
+    explicit, informed opt-in; consent is revocable and withdrawal stops capture
+    immediately and purges retained raw emotion. Emotion is auxiliary only — it
+    never affects grades.
+    """
+
+    student = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="emotion_consent"
+    )
+    granted = models.BooleanField(default=False)
+    granted_at = models.DateTimeField(null=True, blank=True)
+    withdrawn_at = models.DateTimeField(null=True, blank=True)
+    # The consent-text version the student agreed to (audit trail).
+    policy_version = models.CharField(max_length=40, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "emotion_consent"
+
+    def __str__(self):
+        return f"EmotionConsent(student={self.student_id} granted={self.granted})"

@@ -58,6 +58,9 @@ class RunSessionRequest(BaseModel):
 
 
 class FuseEmotionsRequest(BaseModel):
+    # Required for consent enforcement + attributable retention (Batch 11b).
+    student_id: str = Field(default="", description="Student user ID (consent + attribution)")
+    course_id: str = Field(default="", description="Course ID (attribution)")
     fer_emotion: str = Field(..., description="FER emotion label")
     fer_confidence: float = Field(default=0.0, description="FER confidence 0-1")
     ser_emotion: str = Field(..., description="SER emotion label")
@@ -202,6 +205,20 @@ async def fuse(request: FuseEmotionsRequest):
     Returns { fused_emotion, reasoning }.
     """
     try:
+        # ── Consent gate (Batch 11b) — FAIL CLOSED ──────────────
+        # No emotion is fused, persisted, or used unless the student has
+        # explicitly consented. Any uncertainty (no consent, lookup error/
+        # timeout) drops the emotion and treats it as the existing "uncertain =
+        # missing" state. Nothing downstream depends on emotion existing.
+        from services.emotion_consent import consent_granted
+        if not await consent_granted(request.student_id):
+            logger.info(
+                "Profiler /fuse-emotions: no consent (or unavailable) for student=%r — "
+                "emotion dropped, not persisted", request.student_id,
+            )
+            return {"fused_emotion": "uncertain",
+                    "reasoning": "Emotion capture not consented — signal dropped (treated as missing)."}
+
         slide_title = request.slide_title
         subtopic = request.subtopic
         slide_index = request.slide_index
@@ -274,7 +291,10 @@ async def fuse(request: FuseEmotionsRequest):
                     # abandoned session / AI-service restart.
                     try:
                         from services.session_event_log import get_session_event_log
-                        get_session_event_log().append(request.session_id, "emotion", new_signal)
+                        get_session_event_log().append(
+                            request.session_id, "emotion", new_signal,
+                            student_id=request.student_id, course_id=request.course_id,
+                        )
                     except Exception:
                         pass
                     logger.info(

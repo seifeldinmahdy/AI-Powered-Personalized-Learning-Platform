@@ -12,6 +12,10 @@ router.register(r"learning-profile", views.StudentLearningProfileViewSet, basena
 urlpatterns = [
     path("", include(router.urls)),
     path("practice-completion/", views.practice_completion, name="practice_completion"),
+    # Emotion-capture consent (Batch 11b) — off by default, opt-in, revocable.
+    path("emotion-consent/", views.emotion_consent, name="emotion-consent"),
+    path("emotion-consent/grant/", views.emotion_consent_grant, name="emotion-consent-grant"),
+    path("emotion-consent/withdraw/", views.emotion_consent_withdraw, name="emotion-consent-withdraw"),
     path("concept-mastery/", views.concept_mastery_view, name="concept-mastery"),
     # The single learning-profile write path (additive, provenance-resolved).
     path("profile/apply/", views.profile_apply, name="profile-apply"),
