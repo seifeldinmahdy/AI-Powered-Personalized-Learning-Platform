@@ -163,6 +163,20 @@ CORS_ALLOW_CREDENTIALS = True
 # ---------- FastAPI AI Service ----------
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
 
+# ---------- Mastery tiers + remediation (Batch 6 / 11a) ----------
+# Concept mastery scores are 0.0–1.0. These tiers anchor the platform's reads
+# (derive_mastery_level uses the same intermediate/expert cut points).
+MASTERY_INTERMEDIATE_THRESHOLD = float(os.getenv("MASTERY_INTERMEDIATE_THRESHOLD", "0.45"))
+MASTERY_EXPERT_THRESHOLD = float(os.getenv("MASTERY_EXPERT_THRESHOLD", "0.75"))
+# Remediation trigger/resolve, anchored to the tiers and individually tunable.
+# A concept dropping BELOW the trigger floor inserts one review step; the step
+# auto-resolves ONLY when the score recovers to the resolve bar (hysteresis above
+# the floor prevents flapping). The review action itself never resolves it.
+REMEDIATION_TRIGGER_THRESHOLD = float(
+    os.getenv("REMEDIATION_TRIGGER_THRESHOLD", str(MASTERY_INTERMEDIATE_THRESHOLD))
+)
+REMEDIATION_RESOLVE_THRESHOLD = float(os.getenv("REMEDIATION_RESOLVE_THRESHOLD", "0.55"))
+
 # ---------- GitHub App (capstone provisioning) ----------
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
 GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "")  # PEM content

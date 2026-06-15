@@ -117,6 +117,9 @@ async def submit_answer(request: ProblemSetSubmitRequest):
                     student_id=request.student_id,
                     evaluated_rubric=evaluated,
                     alpha=alpha, source=source,
+                    # Lets Django evaluate the remediation trigger (Batch 11a).
+                    plan_version=getattr(problem_set, "plan_version", 0) or 0,
+                    course_id=str(getattr(problem_set, "course_id", "") or ""),
                 )
             )
         except Exception as _me:

@@ -268,6 +268,22 @@ def course_resume(request, course_id):
                 "best_score": best_lesson_score(enrollment.id, ps.lesson_id, plan_version),
                 "sort_key": lesson_order.get(ps.lesson_id, 9999),
             })
+        # Remediation overlay (Batch 11a) — pending review steps, positioned just
+        # after the session that teaches the weak concept. Index-light (.values(),
+        # no content), consistent with the rest of the timeline.
+        from apps.progress.remediation_service import pending_for_enrollment
+        concept_session = {}
+        for s in (plan.get("sessions", []) if plan else []):
+            for cid in s.get("concept_ids", []) or []:
+                concept_session.setdefault(str(cid), s.get("session_number"))
+        for r in pending_for_enrollment(enrollment, plan_version):
+            sess = concept_session.get(str(r["concept_id"]))
+            timeline.append({
+                "kind": "remediation", "type": "remediation", "id": r["id"],
+                "concept": r["concept_id"], "status": r["status"],
+                "score_at_trigger": r["score_at_trigger"],
+                "sort_key": (sess + 0.5) if sess else 9999,
+            })
         timeline.sort(key=lambda e: e["sort_key"])
 
     return Response({

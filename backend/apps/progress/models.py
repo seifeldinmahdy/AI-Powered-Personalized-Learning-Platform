@@ -235,3 +235,62 @@ class ConceptMasteryEvent(models.Model):
 
     def __str__(self):
         return f"{self.student_id}/{self.concept_id} {self.source} {self.outcome} (a={self.alpha})"
+
+
+class RemediationStep(models.Model):
+    """Post-generation adaptivity (Batch 11a): a review step inserted when a
+    concept's event-sourced mastery drops below the trigger threshold.
+
+    This is an OVERLAY adjacent to the pathway — it never mutates the (immutable,
+    versioned) plan and never changes plan_version. It references the CURRENT
+    plan_version + the weak concept; the resume timeline positions it after the
+    session that teaches that concept. Append-only in spirit: it auto-resolves
+    only when mastery recovers (the review action itself never resolves it).
+
+    Bounding: a partial unique constraint allows at most ONE 'pending' step per
+    (enrollment, plan_version, concept), so a drop inserts exactly one and
+    further events while still below insert none. A new downward crossing after
+    recovery yields a new step.
+    """
+
+    PENDING = "pending"
+    RESOLVED = "resolved"
+    STATUS_CHOICES = [(PENDING, "Pending"), (RESOLVED, "Resolved")]
+
+    enrollment = models.ForeignKey(
+        "courses.Enrollment", on_delete=models.CASCADE, related_name="remediation_steps"
+    )
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="remediation_steps"
+    )
+    course = models.ForeignKey(
+        "courses.Course", on_delete=models.CASCADE, related_name="remediation_steps"
+    )
+    concept = models.ForeignKey(
+        "courses.Concept", on_delete=models.CASCADE, related_name="remediation_steps"
+    )
+    plan_version = models.IntegerField()
+    kind = models.CharField(max_length=20, default="review")
+    trigger_threshold = models.FloatField()
+    score_at_trigger = models.FloatField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "remediation_steps"
+        ordering = ["-created_at"]
+        constraints = [
+            # At most one OPEN remediation per (enrollment, plan_version, concept).
+            models.UniqueConstraint(
+                fields=["enrollment", "plan_version", "concept"],
+                condition=models.Q(status="pending"),
+                name="uniq_open_remediation_per_concept",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["enrollment", "plan_version", "status"]),
+        ]
+
+    def __str__(self):
+        return f"Remediation(student={self.student_id} concept={self.concept_id} {self.status})"

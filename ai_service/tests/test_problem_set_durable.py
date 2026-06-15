@@ -35,7 +35,7 @@ def test_mastery_weight_original_vs_regenerated():
 async def test_eval_update_passes_source_and_alpha(monkeypatch):
     sent = {}
 
-    async def fake_post(student_id, events):
+    async def fake_post(student_id, events, **kwargs):
         sent["student_id"] = student_id
         sent["events"] = events
 

@@ -305,7 +305,26 @@ def mastery_record(request):
         })
 
     updated = record_events(student_id, resolved) if resolved else {}
-    return Response({"updated": updated, "dropped": dropped})
+
+    # Post-generation adaptivity (Batch 11a): when the caller knows the current
+    # plan (plan_version + course_id), evaluate remediation off the just-updated
+    # read-model. Decoupled from record_events (the pure fold); best-effort.
+    remediation = None
+    plan_version = request.data.get("plan_version")
+    course_id = request.data.get("course_id")
+    if updated and plan_version is not None and course_id is not None:
+        try:
+            from apps.courses.models import Enrollment
+            from .remediation_service import evaluate_from_request
+            enrollment = Enrollment.objects.filter(
+                student_id=student_id, course_id=course_id
+            ).first()
+            if enrollment:
+                remediation = evaluate_from_request(student_id, enrollment, plan_version, updated)
+        except Exception:
+            logger.exception("remediation evaluation failed (student=%s)", student_id)
+
+    return Response({"updated": updated, "dropped": dropped, "remediation": remediation})
 
 
 @api_view(["POST"])

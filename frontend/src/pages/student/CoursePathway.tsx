@@ -1,7 +1,10 @@
 import { useParams, useNavigate } from 'react-router';
 import { useState, useEffect, useRef } from 'react';
 import { getCurrentPathway, type PathwayPlan, type PathwaySession } from '../../services/pathway';
-import { getCourseResume, type CourseResume } from '../../services/resume';
+import {
+  getCourseResume, getRemediationReview,
+  type CourseResume, type ResumeTimelineEntry, type RemediationReview,
+} from '../../services/resume';
 import { BookOpen, Clock, Layers, ChevronRight, Loader2, Sparkles } from 'lucide-react';
 
 const LOADING_MESSAGES = [
@@ -25,12 +28,31 @@ export default function CoursePathway() {
   const [fadingOut, setFadingOut] = useState(false);
   const [firstLessonId, setFirstLessonId] = useState<number | null>(null);
   const [resume, setResume] = useState<CourseResume | null>(null);
+  const [reviewOpenId, setReviewOpenId] = useState<number | null>(null);
+  const [reviewChunks, setReviewChunks] = useState<RemediationReview['chunks']>([]);
+  const [reviewLoading, setReviewLoading] = useState(false);
 
   // Resume summary (index + current plan; no content scan).
   useEffect(() => {
     if (!courseId) return;
     getCourseResume(courseId).then(setResume).catch(() => setResume(null));
   }, [courseId]);
+
+  // Open/close a remediation step's review content (fetched on demand).
+  async function openReview(e: ResumeTimelineEntry) {
+    if (e.concept == null || !courseId) return;
+    if (reviewOpenId === e.id) { setReviewOpenId(null); return; }
+    setReviewLoading(true);
+    setReviewOpenId(e.id ?? null);
+    try {
+      const r = await getRemediationReview(e.concept, courseId);
+      setReviewChunks(r.chunks);
+    } catch {
+      setReviewChunks([]);
+    } finally {
+      setReviewLoading(false);
+    }
+  }
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Cycle loading messages
@@ -252,6 +274,32 @@ export default function CoursePathway() {
             {resume.timeline.length > 0 && (
               <ul className="mt-4 space-y-1.5 border-t border-border pt-3">
                 {resume.timeline.map((e, i) => {
+                  // Remediation: a review step for a weak concept. Actionable —
+                  // clicking fetches the concept's review chunks on demand.
+                  if (e.type === 'remediation') {
+                    const open = reviewOpenId === e.id;
+                    return (
+                      <li key={`rem-${e.id ?? i}`} className="text-sm">
+                        <div
+                          onClick={() => openReview(e)}
+                          className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-amber-500/10 cursor-pointer"
+                        >
+                          <span className="text-amber-600 w-24 shrink-0">Review</span>
+                          <span className="flex-1 truncate">Needs review (mastery dropped)</span>
+                          <span className="text-xs text-amber-600">pending</span>
+                        </div>
+                        {open && (
+                          <div className="ml-26 mt-1 mb-2 text-xs text-muted-foreground space-y-1">
+                            {reviewLoading ? <p>Loading review…</p>
+                              : reviewChunks.length === 0 ? <p>No review material found.</p>
+                              : reviewChunks.map(c => (
+                                <p key={c.chunk_id} className="line-clamp-2">• {c.raw_text}</p>
+                              ))}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  }
                   const label = e.type === 'problem_set' ? 'Problem set'
                     : e.type === 'lab' ? 'Coding lab' : 'Slides';
                   const clickable = e.lesson != null;

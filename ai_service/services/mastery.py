@@ -135,21 +135,33 @@ def outcomes_from_eval(evaluated_rubric: list) -> list[dict]:
 DJANGO_API_URL = os.getenv("DJANGO_API_URL", "http://localhost:8000/api")
 
 
-async def post_mastery_events(student_id: str, events: list[dict]) -> None:
+async def post_mastery_events(student_id: str, events: list[dict],
+                              *, plan_version: int | None = None,
+                              course_id: str | None = None) -> None:
     """POST mastery events to the SINGLE Django writer (/progress/mastery/record).
 
     This is how ai_service mutates concept mastery — it no longer computes EMA or
     PATCHes the projection. ``events`` items: ``{concept_id|topic+course_id,
     outcome, source, alpha?, evidence_delta?, mistake_tag?}``.
+
+    When ``plan_version`` + ``course_id`` are supplied, Django also evaluates the
+    Batch 11a remediation trigger off the just-updated mastery read-model (a drop
+    below the threshold inserts one review step). Callers without a known plan
+    (placement baseline, capstone) omit them and no remediation is evaluated.
     """
     if not events:
         return
     service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
+    body: dict = {"events": events}
+    if plan_version is not None:
+        body["plan_version"] = plan_version
+    if course_id is not None:
+        body["course_id"] = course_id
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 f"{DJANGO_API_URL}/progress/mastery/record/",
-                json={"events": events},
+                json=body,
                 headers={"X-Student-ID": str(student_id), "X-Service-Key": service_key},
             )
             if resp.status_code not in (200, 201):
@@ -197,6 +209,8 @@ async def update_concept_mastery_from_eval(
     evaluated_rubric: list,
     alpha: float = 0.3,
     source: str = "problem_set",
+    plan_version: int | None = None,
+    course_id: str | None = None,
 ) -> None:
     """Fire-and-forget: send problem-set outcomes to the single mastery writer.
 
@@ -213,7 +227,9 @@ async def update_concept_mastery_from_eval(
             for o in outcomes
         ]
         if events:
-            await post_mastery_events(student_id, events)
+            await post_mastery_events(
+                student_id, events, plan_version=plan_version, course_id=course_id,
+            )
             logger.info(
                 "Recorded problem-set mastery for student %s: %d concept(s)",
                 student_id, len(events),

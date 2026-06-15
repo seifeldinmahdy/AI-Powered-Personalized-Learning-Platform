@@ -5,8 +5,8 @@
 import api from './api';
 
 export interface ResumeTimelineEntry {
-    kind: 'artifact' | 'problem_set';
-    type: 'slides' | 'lab' | 'problem_set';
+    kind: 'artifact' | 'problem_set' | 'remediation';
+    type: 'slides' | 'lab' | 'problem_set' | 'remediation';
     status: string;
     // artifact (slides/lab)
     id?: number;
@@ -17,6 +17,9 @@ export interface ResumeTimelineEntry {
     generation_index?: number;
     superseded?: boolean;
     best_score?: number | null;
+    // remediation
+    concept?: number;
+    score_at_trigger?: number;
 }
 
 export interface CourseResume {
@@ -67,4 +70,23 @@ export async function getProblemSetHistory(psUid: string): Promise<ProblemSetHis
 export async function getArtifactContent(artifactId: number): Promise<Record<string, unknown>> {
     const { data } = await api.get(`/artifacts/${artifactId}/content/`);
     return data;
+}
+
+export interface RemediationReview {
+    concept_id: string;
+    course_id: string;
+    chunks: { chunk_id: string; raw_text: string; topic: string }[];
+}
+
+/** Fetch a remediation step's review content — the weak concept's chunks via the
+ *  scoped RetrievalService (course material, fetched on demand). */
+export async function getRemediationReview(
+    conceptId: number | string,
+    courseId: number | string,
+): Promise<RemediationReview> {
+    const aiUrl = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001';
+    const params = new URLSearchParams({ concept_id: String(conceptId), course_id: String(courseId) });
+    const res = await fetch(`${aiUrl}/remediation/review?${params.toString()}`);
+    if (!res.ok) throw new Error('Could not load review content');
+    return res.json();
 }
