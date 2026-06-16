@@ -1,32 +1,22 @@
 import { useParams, useNavigate } from "react-router";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { getCurrentPathway, type PathwayPlan, type PathwaySession } from "../../services/pathway";
 import {
-  getCourseResume, getRemediationReview,
-  type CourseResume, type ResumeTimelineEntry, type RemediationReview,
+  getCourseResume, getRemediationReview, getProblemSetHistory, getArtifactContent,
+  type CourseResume, type ResumeTimelineEntry, type RemediationReview, type ProblemSetHistory,
 } from "../../services/resume";
 import { getCourseById } from "../../services/courses";
+import { getEnrollments } from "../../services/api";
 
-/* Course Pathway — codex, two modes on one page:
-   - GENERATE: first visit (no saved pathway) → build it, reveal the plan.
-   - PROGRESS: pathway already saved → load enrollment.current_pathway and show
-     where the student is (done / current / upcoming), derived from the real
-     enrollment.progress_percentage spread across the sessions.
-   Everything shown is real (saved PathwayPlan + course title + progress).
-   No fabricated time estimates, no hardcoded course name. */
+/* Course Pathway — read-only progress/resume view (codex / pai design system).
+   The pathway is generated ONCE, server-side, after placement; this page never
+   generates it. It reads the authoritative plan (getCurrentPathway) plus the
+   real enrollment progress and the resume timeline, and shows the student where
+   they are. Everything shown is real — no fabricated estimates, no hardcoded
+   course name. */
 
-const LOADING_MESSAGES = [
-  "Analyzing your placement results…",
-  "Mapping the book's knowledge structure…",
-  "Building your personalized curriculum…",
-  "Ordering topics for optimal learning…",
-  "Grouping content into focused sessions…",
-  "Applying adaptive difficulty calibration…",
-  "Finalizing your session plan…",
-];
-
-type Phase = "init" | "generating" | "ready" | "error";
-type SessionStatus = "done" | "current" | "upcoming" | "start" | "locked";
+type Phase = "loading" | "ready" | "empty" | "error";
+type SessionStatus = "done" | "current" | "locked";
 
 // ── progress-view derivations (all from real enrollment data) ──
 const MASTERY_TIERS = ["NOVICE", "INTERMEDIATE", "EXPERT"];
@@ -51,178 +41,118 @@ interface EnrollmentRow {
   course: number;
   current_lesson: number | null;
   progress_percentage: string;
-  is_pathway_ready: boolean;
-  current_pathway: PathwayPlan | Record<string, never> | null;
   placement_score: number | null;
   enrolled_at: string;
   last_accessed: string;
-}
-
-interface StudentContextProfile {
-  student_id?: string; course_id?: string; mastery_level?: string;
-  composition_mode?: string; language_proficiency?: string;
-  strengths?: string[]; weaknesses?: string[];
-  topic_performance?: Record<string, number>;
-  incorrectly_answered?: Array<{ question: string; chosen_option: string; correct_option: string }>;
-}
-
-function hasSessions(cp: EnrollmentRow["current_pathway"]): cp is PathwayPlan {
-  return !!cp && Array.isArray((cp as PathwayPlan).sessions) && (cp as PathwayPlan).sessions.length > 0;
 }
 
 export default function CoursePathway() {
   const { courseId } = useParams<{ courseId: string }>();
   const navigate = useNavigate();
 
-  const [phase, setPhase] = useState<Phase>("init");
-  const [mode, setMode] = useState<"generate" | "progress">("generate");
+  const [phase, setPhase] = useState<Phase>("loading");
   const [plan, setPlan] = useState<PathwayPlan | null>(null);
   const [courseTitle, setCourseTitle] = useState("");
-  const [error, setError] = useState("");
-  const [messageIndex, setMessageIndex] = useState(0);
-  const [firstLessonId, setFirstLessonId] = useState<number | null>(null);
-  const [resume, setResume] = useState<CourseResume | null>(null);
-  const [reviewOpenId, setReviewOpenId] = useState<number | null>(null);
-  const [reviewChunks, setReviewChunks] = useState<RemediationReview['chunks']>([]);
-  const [reviewLoading, setReviewLoading] = useState(false);
+  const [error] = useState("");
 
-  // Resume summary (index + current plan; no content scan).
+  // real enrollment progress signals
+  const [currentLessonId, setCurrentLessonId] = useState<number | null>(null);
+  const [progressPct, setProgressPct] = useState(0);
+  const [placementScore, setPlacementScore] = useState<number | null>(null);
+  const [enrolledAt, setEnrolledAt] = useState("");
+  const [lastAccessed, setLastAccessed] = useState("");
+
+  // resume timeline (past slides / lab / problem-sets / remediation), each row
+  // expands inline to its content, fetched on demand by type.
+  const [resume, setResume] = useState<CourseResume | null>(null);
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [entryLoading, setEntryLoading] = useState(false);
+  const [reviewChunks, setReviewChunks] = useState<RemediationReview["chunks"]>([]);
+  const [psHistory, setPsHistory] = useState<ProblemSetHistory | null>(null);
+  const [artifact, setArtifact] = useState<Record<string, unknown> | null>(null);
+
+  // ── READ the authoritative plan + progress (never generate) ──
+  useEffect(() => {
+    if (!courseId) return;
+    let cancelled = false;
+
+    (async () => {
+      const authUser = localStorage.getItem("auth_user");
+      const studentId = authUser ? JSON.parse(authUser).id : "mvp_student_001";
+
+      // course title (non-critical)
+      getCourseById(Number(courseId)).then((c) => !cancelled && setCourseTitle(c.title)).catch(() => {});
+
+      // enrollment progress signals (non-critical — view still renders without them)
+      try {
+        const res = await getEnrollments();
+        const list: EnrollmentRow[] = Array.isArray(res.data) ? res.data : res.data?.results || [];
+        const e = list.find((r) => r.course === Number(courseId));
+        if (e && !cancelled) {
+          setCurrentLessonId(e.current_lesson);
+          setProgressPct(Math.max(0, Math.min(100, parseFloat(e.progress_percentage) || 0)));
+          setPlacementScore(typeof e.placement_score === "number" ? e.placement_score : null);
+          setEnrolledAt(e.enrolled_at || "");
+          setLastAccessed(e.last_accessed || "");
+        }
+      } catch { /* ignore — non-critical */ }
+
+      // the authoritative plan (server-generated). Throws if not ready yet.
+      try {
+        const p = await getCurrentPathway(String(studentId), String(courseId));
+        if (cancelled) return;
+        if (p && Array.isArray(p.sessions) && p.sessions.length > 0) {
+          setPlan(p);
+          setPhase("ready");
+        } else {
+          setPhase("empty");
+        }
+      } catch {
+        if (!cancelled) setPhase("empty");
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [courseId]);
+
+  // resume summary (index + current plan; no content scan)
   useEffect(() => {
     if (!courseId) return;
     getCourseResume(courseId).then(setResume).catch(() => setResume(null));
   }, [courseId]);
 
-  // Open/close a remediation step's review content (fetched on demand).
-  async function openReview(e: ResumeTimelineEntry) {
-    if (e.concept == null || !courseId) return;
-    if (reviewOpenId === e.id) { setReviewOpenId(null); return; }
-    setReviewLoading(true);
-    setReviewOpenId(e.id ?? null);
+  // a stable key per timeline entry (drives the open/expand state)
+  const keyFor = (e: ResumeTimelineEntry, i: number) =>
+    e.type === "problem_set" ? `ps-${e.ps_uid ?? i}`
+      : e.type === "remediation" ? `rem-${e.id ?? i}`
+        : `art-${e.id ?? i}`;
+
+  // expand/collapse a timeline entry, fetching its content on demand by type
+  async function toggleEntry(e: ResumeTimelineEntry, key: string) {
+    if (openKey === key) { setOpenKey(null); return; }
+    setOpenKey(key);
+    setReviewChunks([]); setPsHistory(null); setArtifact(null);
+    setEntryLoading(true);
     try {
-      const r = await getRemediationReview(e.concept, courseId);
-      setReviewChunks(r.chunks);
+      if (e.type === "remediation" && e.concept != null && courseId) {
+        const r = await getRemediationReview(e.concept, courseId);
+        setReviewChunks(r.chunks);
+      } else if (e.type === "problem_set" && e.ps_uid) {
+        setPsHistory(await getProblemSetHistory(e.ps_uid));
+      } else if ((e.type === "slides" || e.type === "lab") && e.id != null) {
+        setArtifact(await getArtifactContent(e.id));
+      }
     } catch {
-      setReviewChunks([]);
+      /* leave content empty — the expanded row shows a "couldn't load" note */
     } finally {
-      setReviewLoading(false);
+      setEntryLoading(false);
     }
   }
-  const [currentLessonId, setCurrentLessonId] = useState<number | null>(null);
-  const [progressPct, setProgressPct] = useState(0);
-  const [placementScore, setPlacementScore] = useState<number | null>(null);
-  const [enrolledAt, setEnrolledAt] = useState<string>("");
-  const [lastAccessed, setLastAccessed] = useState<string>("");
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
-    if (!courseId) return;
-    getCourseById(Number(courseId)).then((c) => setCourseTitle(c.title)).catch(() => {});
-  }, [courseId]);
+  const pad = "clamp(20px,5vw,64px)";
 
-  // cycle messages only while generating
-  useEffect(() => {
-    if (phase !== "generating") return;
-    intervalRef.current = setInterval(() => setMessageIndex((p) => (p + 1) % LOADING_MESSAGES.length), 25000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [phase]);
-
-  // READ the current authoritative plan on mount — never generate here.
-  // The plan is generated once, server-side, after placement.
-  useEffect(() => {
-    if (!courseId) return;
-    let cancelled = false;
-
-    // resolve first lesson id for routing/fallback
-    import("../../services/lessons").then(async ({ getModules, getLessons }) => {
-      try {
-        const mods = await getModules(Number(courseId));
-        if (mods.length > 0) {
-          mods.sort((a, b) => a.module_order - b.module_order);
-          const lessons = await getLessons(mods[0].id);
-          if (lessons.length > 0) { lessons.sort((a, b) => a.lesson_order - b.lesson_order); if (!cancelled) setFirstLessonId(lessons[0].id); }
-          else if (!cancelled) setFirstLessonId(1);
-        } else if (!cancelled) setFirstLessonId(1);
-      } catch { if (!cancelled) setFirstLessonId(1); }
-    });
-
-    async function run() {
-      let enrollment: EnrollmentRow | undefined;
-      try {
-        const res = await getEnrollments();
-        const list: EnrollmentRow[] = Array.isArray(res.data) ? res.data : res.data?.results || [];
-        enrollment = list.find((e) => e.course === Number(courseId));
-      } catch { /* ignore */ }
-
-      if (cancelled) return;
-
-      if (enrollment) {
-        setCurrentLessonId(enrollment.current_lesson);
-        setProgressPct(Math.max(0, Math.min(100, parseFloat(enrollment.progress_percentage) || 0)));
-        setPlacementScore(typeof enrollment.placement_score === "number" ? enrollment.placement_score : null);
-        setEnrolledAt(enrollment.enrolled_at || "");
-        setLastAccessed(enrollment.last_accessed || "");
-      }
-
-      // PROGRESS MODE — saved pathway already exists, don't regenerate
-      if (enrollment && enrollment.is_pathway_ready && hasSessions(enrollment.current_pathway)) {
-        setPlan(enrollment.current_pathway);
-        setMode("progress");
-        setPhase("ready");
-        return;
-      }
-
-      // GENERATE MODE
-      setMode("generate");
-      setPhase("generating");
-      try {
-        const authUser = localStorage.getItem("auth_user");
-        const studentId = authUser ? JSON.parse(authUser).id : "mvp_student_001";
-
-        let ctx: StudentContextProfile | null = null;
-        try {
-          const ctxRes = await fetch(`${import.meta.env.VITE_AI_SERVICE_URL || "http://localhost:8001"}/student-context/${studentId}/${courseId}`);
-          if (ctxRes.ok) ctx = (await ctxRes.json()).profile;
-        } catch (e) { console.warn("Could not fetch student context, using defaults", e); }
-
-        // Resolve the course title so the backend can map the Django course id
-        // to its ChromaDB book name. Fetch fresh to avoid racing the title effect.
-        let title = courseTitle;
-        if (!title) {
-          try { title = (await getCourseById(Number(courseId))).title; } catch { /* ignore */ }
-        }
-
-        const result = await generatePathway({
-          student_id: ctx?.student_id || String(studentId),
-          course_id: String(courseId),
-          course_title: title,
-          mastery_level: ctx?.mastery_level || "Novice",
-          composition_mode: ctx?.composition_mode || "balanced",
-          language_proficiency: ctx?.language_proficiency || "Intermediate",
-          strengths: ctx?.strengths || [],
-          weaknesses: ctx?.weaknesses || [],
-          topic_performance: ctx?.topic_performance || {},
-          incorrectly_answered: ctx?.incorrectly_answered || [],
-          use_synthetic_context: false,
-        });
-        if (cancelled) return;
-
-        if (enrollment) {
-          try { await api.post(`/courses/enrollments/${enrollment.id}/save_pathway/`, { pathway: result }); }
-          catch (e) { console.error("Failed to sync pathway to backend", e); }
-        }
-        setPlan(result);
-        setPhase("ready");
-      } catch (e) {
-        if (!cancelled) { setError(e instanceof Error ? e.message : "Pathway generation failed"); setPhase("error"); }
-      }
-    }
-
-    run();
-    return () => { cancelled = true; };
-  }, [courseId]);
-
-  // ── init (brief) ──
-  if (phase === "init") {
+  // ── loading ──
+  if (phase === "loading") {
     return (
       <div className="codex" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-primary)" }}>
         <span className="t-mono steel">LOADING PATHWAY…</span>
@@ -230,336 +160,277 @@ export default function CoursePathway() {
     );
   }
 
-  // ── generating ──
-  if (phase === "generating") {
-    return (
-      <div className="codex" style={{ flex: 1, overflowY: "auto", background: "var(--bg-primary)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center", gap: 18 }}>
-        <div className="t-label" style={{ color: "var(--accent-primary)" }}>BUILDING YOUR PATHWAY</div>
-        <div className="t-display" style={{ fontSize: "clamp(30px,4vw,52px)", color: "var(--text-primary)", maxWidth: 640 }}>Designing your curriculum.</div>
-        <div className="t-mono steel" style={{ minHeight: 18, maxWidth: 480 }}>{LOADING_MESSAGES[messageIndex]}</div>
-        <div style={{ width: 200, height: 2, background: "var(--hairline)", overflow: "hidden", position: "relative", marginTop: 8 }}>
-          <div style={{ position: "absolute", height: "100%", width: "40%", background: "var(--accent-primary)", animation: "paiIndeterminate 1.1s ease-in-out infinite" }} />
-        </div>
-        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-          {LOADING_MESSAGES.map((_, i) => <span key={i} style={{ height: 6, width: i === messageIndex ? 26 : 6, background: i <= messageIndex ? "var(--accent-primary)" : "var(--hairline)", transition: "all 300ms cubic-bezier(.16,1,.3,1)" }} />)}
-        </div>
-        <div className="t-body" style={{ fontSize: 13, color: "var(--text-secondary)", maxWidth: 460, marginTop: 4 }}>This can take a few minutes as we read the book and design a curriculum just for you.</div>
-        <style>{`@keyframes paiIndeterminate { 0%{left:-40%} 100%{left:100%} }`}</style>
-      </div>
-    );
-  }
-
-  // ── error ──
-  if (phase === "error" || !plan) {
+  // ── no pathway yet (placement not finished, or still being built server-side) ──
+  if (phase === "empty" || phase === "error" || !plan) {
     return (
       <div className="codex" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 24, background: "var(--bg-primary)", textAlign: "center" }}>
-        <div className="t-heading" style={{ fontSize: 26, color: "var(--text-primary)" }}>Pathway generation failed</div>
-        <p className="t-body" style={{ color: "var(--text-secondary)", fontSize: 14, maxWidth: 460 }}>{error || "Could not load your learning pathway. Please try again."}</p>
-        <button onClick={() => window.location.reload()} className="btn btn-primary">RETRY →</button>
+        <div className="t-label" style={{ color: "var(--accent-primary)" }}>PATHWAY NOT READY</div>
+        <div className="t-heading" style={{ fontSize: 26, color: "var(--text-primary)" }}>Your pathway isn't ready yet.</div>
+        <p className="t-body" style={{ color: "var(--text-secondary)", fontSize: 14, maxWidth: 460 }}>
+          {error || "Once you complete the placement assessment, your personalized pathway is built and appears here."}
+        </p>
+        <button onClick={() => navigate(`/courses/${courseId}`)} className="btn btn-primary">GO TO COURSE →</button>
       </div>
     );
   }
 
-  // ── ready ──
+  // ── ready: read-only progress view ──
   const total = plan.total_sessions || plan.sessions.length;
-  const uniqueTopics = new Set(plan.sessions.flatMap((s) => s.topics_covered)).size;
-  const isProgress = mode === "progress";
-  // sessions completed, derived from overall progress %
-  const doneCount = isProgress ? Math.min(total, Math.floor((progressPct / 100) * total)) : 0;
-  const pad = "clamp(20px,5vw,64px)";
+  const doneCount = Math.min(total, Math.floor((progressPct / 100) * total));
+  const isComplete = progressPct >= 100;
+  const position = isComplete ? total : Math.min(doneCount + 1, total);
+  const currentSession = plan.sessions[position - 1] ?? plan.sessions[plan.sessions.length - 1];
 
-  const statusFor = (i: number): SessionStatus => {
-    if (!isProgress) return i === 0 ? "start" : "upcoming";
-    if (i < doneCount) return "done";
-    if (i === doneCount && doneCount < total) return "current";
-    return "upcoming";
-  };
+  // measured pace from real timestamps (sessions completed / weeks since enrolment)
+  const now = Date.now();
+  const enrolledMs = enrolledAt ? new Date(enrolledAt).getTime() : now;
+  const weeksElapsed = Math.max((now - enrolledMs) / (7 * 86_400_000), 1 / 7);
+  const pace = doneCount > 0 ? doneCount / weeksElapsed : 0;
+  const remaining = total - doneCount;
+  const estDate = pace > 0 && remaining > 0 ? new Date(now + (remaining / pace) * 7 * 86_400_000) : null;
 
-  const resumeLessonId = currentLessonId ?? firstLessonId;
-  const ctaLabel = !isProgress
-    ? (firstLessonId === null ? "PREPARING COURSE…" : "BEGIN COURSE")
-    : progressPct >= 100 ? "REVIEW COURSE" : "CONTINUE LEARNING";
+  // activity status from real last_accessed (no invented deadline)
+  const lastMs = lastAccessed ? new Date(lastAccessed).getTime() : 0;
+  const daysIdle = lastMs ? (now - lastMs) / 86_400_000 : Infinity;
+  const activity = isComplete ? "COMPLETE" : doneCount === 0 ? "NOT STARTED" : daysIdle <= 10 ? "ON TRACK" : "IDLE";
+  const activityColor = activity === "ON TRACK" || activity === "COMPLETE" ? "var(--accent-success)"
+    : activity === "IDLE" ? "var(--accent-warm)" : "var(--text-secondary)";
 
+  const tier = tierFromScore(placementScore);
+  const goal = tier ? nextTier(tier) : null;
+
+  const statusForP = (i: number): SessionStatus =>
+    i < doneCount ? "done" : i === doneCount && !isComplete ? "current" : "locked";
+
+  const resumeLessonId = currentLessonId ?? resume?.current_lesson ?? null;
   const goToCurrent = () => {
-    sessionStorage.setItem("pathway_plan", JSON.stringify(plan));
     if (resumeLessonId) navigate(`/course/${courseId}/lesson/${resumeLessonId}`);
   };
 
-  // ── PROGRESS MODE — the "where am I" view (dashboard re-entry) ──
-  if (isProgress) {
-    const isComplete = progressPct >= 100;
-    const position = isComplete ? total : Math.min(doneCount + 1, total);
-    const currentSession = plan.sessions[position - 1] ?? plan.sessions[plan.sessions.length - 1];
+  const stats: Array<[string, string, string]> = [
+    ["EST. COMPLETION", isComplete ? "DONE" : estDate ? fmtDate(estDate) : "—", "var(--text-primary)"],
+    ["TOTAL SESSIONS", String(total), "var(--text-primary)"],
+    ["CURRENT POSITION", `${pad2(position)} / ${pad2(total)}`, "var(--accent-primary)"],
+    ["PACE", pace > 0 ? `${pace.toFixed(1)}/WK` : "—", activityColor],
+  ];
 
-    // measured pace from real timestamps (sessions completed / weeks since enrolment)
-    const now = Date.now();
-    const enrolledMs = enrolledAt ? new Date(enrolledAt).getTime() : now;
-    const weeksElapsed = Math.max((now - enrolledMs) / (7 * 86_400_000), 1 / 7);
-    const pace = doneCount > 0 ? doneCount / weeksElapsed : 0;
-    const remaining = total - doneCount;
-    const estDate = pace > 0 && remaining > 0 ? new Date(now + (remaining / pace) * 7 * 86_400_000) : null;
-
-    // activity status from real last_accessed (no invented deadline)
-    const lastMs = lastAccessed ? new Date(lastAccessed).getTime() : 0;
-    const daysIdle = lastMs ? (now - lastMs) / 86_400_000 : Infinity;
-    const activity = isComplete ? "COMPLETE" : doneCount === 0 ? "NOT STARTED" : daysIdle <= 10 ? "ON TRACK" : "IDLE";
-    const activityColor = activity === "ON TRACK" || activity === "COMPLETE" ? "var(--accent-success)"
-      : activity === "IDLE" ? "var(--accent-warm)" : "var(--text-secondary)";
-
-    const tier = tierFromScore(placementScore);
-    const goal = tier ? nextTier(tier) : null;
-
-    const statusForP = (i: number): SessionStatus =>
-      i < doneCount ? "done" : i === doneCount && !isComplete ? "current" : "locked";
-
-    const stats: Array<[string, string, string]> = [
-      ["EST. COMPLETION", isComplete ? "DONE" : estDate ? fmtDate(estDate) : "—", "var(--text-primary)"],
-      ["TOTAL SESSIONS", String(total), "var(--text-primary)"],
-      ["CURRENT POSITION", `${pad2(position)} / ${pad2(total)}`, "var(--accent-primary)"],
-      ["PACE", pace > 0 ? `${pace.toFixed(1)}/WK` : "—", activityColor],
-    ];
-
-    return (
-      <div className="codex" style={{ flex: 1, overflowY: "auto", background: "var(--bg-primary)" }}>
-        <style>{`
-          .pai-pw-grid { display: grid; grid-template-columns: 1fr; gap: 28px; }
-          @media (min-width: 920px) {
-            .pai-pw-grid { grid-template-columns: minmax(280px, 320px) 1fr; gap: 40px; align-items: start; }
-            .pai-pw-aside { position: sticky; top: 24px; }
-          }
-          @media print { .pai-pw-noprint { display: none !important; } }
-        `}</style>
-        <div style={{ padding: `clamp(24px,4vw,44px) ${pad} 80px`, maxWidth: 1180, marginInline: "auto" }}>
-          <button onClick={() => navigate(-1)} className="t-label pai-pw-noprint" style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-secondary)", marginBottom: 26 }}>← BACK</button>
-
-          <div className="pai-pw-grid">
-            {/* ── sidebar: where you are ── */}
-            <aside className="pai-pw-aside" style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderRadius: 10, padding: 26 }}>
-              <div className="t-label" style={{ color: "var(--accent-primary)" }}>{isComplete ? "COURSE COMPLETE" : "CURRENT SESSION"}</div>
-              <div className="t-display" style={{ fontSize: "clamp(56px,9vw,88px)", color: "var(--accent-primary)", lineHeight: 0.9, marginTop: 8 }}>{pad2(position)}</div>
-              <div className="t-heading" style={{ fontSize: 20, color: "var(--text-primary)", marginTop: 12 }}>{currentSession?.session_title}</div>
-              <div className="t-mono steel" style={{ marginTop: 8 }}>SESSION {pad2(position)} OF {pad2(total)}</div>
-
-              <div style={{ marginTop: 20 }}>
-                <div className="progress"><i style={{ width: `${Math.max(2, progressPct)}%` }} /></div>
-                <div className="t-mono" style={{ color: "var(--accent-primary)", marginTop: 8 }}>{Math.round(progressPct)}% COMPLETE</div>
-              </div>
-
-              {currentSession?.topics_covered?.length > 0 && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 18 }}>
-                  {currentSession.topics_covered.slice(0, 6).map((t, i) => (
-                    <span key={i} className="t-mono" style={{ color: "var(--steel-light)", border: "1px solid var(--hairline)", padding: "3px 7px", borderRadius: 4 }}>{t}</span>
-                  ))}
-                </div>
-              )}
-
-              <button onClick={goToCurrent} className="btn btn-red pai-pw-noprint" style={{ marginTop: 24, width: "100%", justifyContent: "space-between", padding: "18px 22px" }}>
-                {isComplete ? "REVIEW COURSE" : "RESUME SESSION"} <span>→</span>
-              </button>
-            </aside>
-
-            {/* ── main: the full plan ── */}
-            <main style={{ minWidth: 0 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
-                <div style={{ minWidth: 0 }}>
-                  <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 12 }}>YOUR PATHWAY · IN PROGRESS</div>
-                  <div className="t-display" style={{ fontSize: "clamp(32px,5vw,56px)", color: "var(--text-primary)", lineHeight: 0.96 }}>
-                    {courseTitle || "Your learning pathway"}<span style={{ color: "var(--accent-primary)" }}>.</span>
-                  </div>
-                  {tier && (
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 16 }}>
-                      <span className="t-label" style={{ color: "var(--text-secondary)", border: "1px solid var(--hairline)", padding: "5px 10px", borderRadius: 6 }}>
-                        {tier}{goal ? ` → ${goal}` : ""}
-                      </span>
-                    </div>
-                  )}
-                </div>
-                <button onClick={() => window.print()} className="btn pai-pw-noprint" style={{ flexShrink: 0 }}>EXPORT PDF</button>
-              </div>
-
-              {/* stat strip */}
-              <div style={{ marginTop: 28, background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderRadius: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))" }}>
-                {stats.map(([label, v, color], i) => (
-                  <div key={label} style={{ padding: "20px 22px", borderRight: i < stats.length - 1 ? "1px solid var(--hairline)" : "none" }}>
-                    <div className="t-label" style={{ color: "var(--text-secondary)" }}>{label}</div>
-                    <div className="t-display" style={{ fontSize: "clamp(24px,3vw,34px)", marginTop: 10, color }}>{v}</div>
-                    {label === "PACE" && <div className="t-mono" style={{ color: activityColor, marginTop: 4 }}>{activity}</div>}
-                  </div>
-                ))}
-              </div>
-
-              {/* sessions */}
-              <div style={{ marginTop: 36 }}>
-                <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 18 }}>THE PLAN · {total} SESSIONS</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {plan.sessions.map((s, i) => <SessionRow key={s.session_number} session={s} status={statusForP(i)} />)}
-                </div>
-              </div>
-            </main>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ── GENERATE MODE — first reveal after placement ──
   return (
     <div className="codex" style={{ flex: 1, overflowY: "auto", background: "var(--bg-primary)" }}>
-      <div style={{ padding: `clamp(28px,4vw,48px) ${pad} 80px`, maxWidth: 1080, marginInline: "auto" }}>
-        <button onClick={() => navigate(-1)} className="t-label" style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-secondary)", marginBottom: 26 }}>← BACK</button>
+      <style>{`
+        .pai-pw-grid { display: grid; grid-template-columns: 1fr; gap: 28px; }
+        @media (min-width: 920px) {
+          .pai-pw-grid { grid-template-columns: minmax(280px, 320px) 1fr; gap: 40px; align-items: start; }
+          .pai-pw-aside { position: sticky; top: 24px; }
+        }
+        @media print { .pai-pw-noprint { display: none !important; } }
+      `}</style>
+      <div style={{ padding: `clamp(24px,4vw,44px) ${pad} 80px`, maxWidth: 1180, marginInline: "auto" }}>
+        <button onClick={() => navigate(-1)} className="t-label pai-pw-noprint" style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-secondary)", marginBottom: 26 }}>← BACK</button>
 
-        <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 14 }}>{isProgress ? "YOUR PATHWAY · IN PROGRESS" : "YOUR PERSONALIZED PATHWAY"}</div>
-        <div className="t-display" style={{ fontSize: "clamp(38px,6vw,72px)", color: "var(--text-primary)", lineHeight: 0.95 }}>
-          {courseTitle || "Your learning pathway"}<span style={{ color: "var(--accent-primary)" }}>.</span>
-        {resume && resume.completed > 0 && (
-          <div className="mb-6 rounded-2xl border border-border bg-card p-5">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="font-semibold">Continue where you left off</p>
-                <p className="text-sm text-muted-foreground">
-                  {resume.completed} of {resume.total_sessions} sessions complete
-                  {' · '}{resume.sessions_left} left
-                </p>
+        <div className="pai-pw-grid">
+          {/* ── sidebar: where you are ── */}
+          <aside className="pai-pw-aside" style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderRadius: 10, padding: 26 }}>
+            <div className="t-label" style={{ color: "var(--accent-primary)" }}>{isComplete ? "COURSE COMPLETE" : "CURRENT SESSION"}</div>
+            <div className="t-display" style={{ fontSize: "clamp(56px,9vw,88px)", color: "var(--accent-primary)", lineHeight: 0.9, marginTop: 8 }}>{pad2(position)}</div>
+            <div className="t-heading" style={{ fontSize: 20, color: "var(--text-primary)", marginTop: 12 }}>{currentSession?.session_title}</div>
+            <div className="t-mono steel" style={{ marginTop: 8 }}>SESSION {pad2(position)} OF {pad2(total)}</div>
+
+            <div style={{ marginTop: 20 }}>
+              <div className="progress"><i style={{ width: `${Math.max(2, progressPct)}%` }} /></div>
+              <div className="t-mono" style={{ color: "var(--accent-primary)", marginTop: 8 }}>{Math.round(progressPct)}% COMPLETE</div>
+            </div>
+
+            {currentSession?.topics_covered?.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 18 }}>
+                {currentSession.topics_covered.slice(0, 6).map((t, i) => (
+                  <span key={i} className="t-mono" style={{ color: "var(--steel-light)", border: "1px solid var(--hairline)", padding: "3px 7px", borderRadius: 4 }}>{t}</span>
+                ))}
               </div>
-              {resume.current_lesson && (
-                <button
-                  onClick={() => navigate(`/course/${courseId}/lesson/${resume.current_lesson}`)}
-                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-primary to-secondary text-white font-semibold flex items-center gap-2 shrink-0"
-                >
-                  Continue <ChevronRight size={18} />
-                </button>
-              )}
-            </div>
-            {resume.timeline.length > 0 && (
-              <ul className="mt-4 space-y-1.5 border-t border-border pt-3">
-                {resume.timeline.map((e, i) => {
-                  // Remediation: a review step for a weak concept. Actionable —
-                  // clicking fetches the concept's review chunks on demand.
-                  if (e.type === 'remediation') {
-                    const open = reviewOpenId === e.id;
-                    return (
-                      <li key={`rem-${e.id ?? i}`} className="text-sm">
-                        <div
-                          onClick={() => openReview(e)}
-                          className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-amber-500/10 cursor-pointer"
-                        >
-                          <span className="text-amber-600 w-24 shrink-0">Review</span>
-                          <span className="flex-1 truncate">Needs review (mastery dropped)</span>
-                          <span className="text-xs text-amber-600">pending</span>
-                        </div>
-                        {open && (
-                          <div className="ml-26 mt-1 mb-2 text-xs text-muted-foreground space-y-1">
-                            {reviewLoading ? <p>Loading review…</p>
-                              : reviewChunks.length === 0 ? <p>No review material found.</p>
-                              : reviewChunks.map(c => (
-                                <p key={c.chunk_id} className="line-clamp-2">• {c.raw_text}</p>
-                              ))}
-                          </div>
-                        )}
-                      </li>
-                    );
-                  }
-                  const label = e.type === 'problem_set' ? 'Problem set'
-                    : e.type === 'lab' ? 'Coding lab' : 'Slides';
-                  const clickable = e.lesson != null;
-                  return (
-                    <li
-                      key={`${e.type}-${e.id ?? e.ps_uid ?? i}`}
-                      onClick={clickable ? () => navigate(`/course/${courseId}/lesson/${e.lesson}`) : undefined}
-                      className={`flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg ${clickable ? 'hover:bg-muted/50 cursor-pointer' : ''}`}
-                    >
-                      <span className="text-muted-foreground w-24 shrink-0">{label}</span>
-                      <span className="flex-1 truncate">
-                        {e.session_number != null ? `Session ${e.session_number}` : `Lesson ${e.lesson}`}
-                      </span>
-                      {e.type === 'problem_set' && e.best_score != null && (
-                        <span className="font-semibold">{e.best_score}/100</span>
-                      )}
-                      <span className="text-xs text-muted-foreground capitalize">{e.status}</span>
-                    </li>
-                  );
-                })}
-              </ul>
             )}
-          </div>
-        )}
 
-        </div>
-        <p className="t-body" style={{ color: "var(--text-secondary)", fontSize: 16, marginTop: 18, maxWidth: 620 }}>
-          {isProgress
-            ? "Pick up where you left off. Your sessions, sequenced and paced around you."
-            : "Built from your placement results — sequenced, paced, and grouped into focused sessions that are yours alone."}
-        </p>
+            <button onClick={goToCurrent} disabled={!resumeLessonId} className="btn btn-red pai-pw-noprint" style={{ marginTop: 24, width: "100%", justifyContent: "space-between", padding: "18px 22px", opacity: resumeLessonId ? 1 : 0.6 }}>
+              {isComplete ? "REVIEW COURSE" : "RESUME SESSION"} <span>→</span>
+            </button>
+          </aside>
 
-        {/* progress bar (progress mode) */}
-        {isProgress && (
-          <div style={{ maxWidth: 560, marginTop: 26 }}>
-            <div className="progress"><i style={{ width: `${Math.max(2, progressPct)}%` }} /></div>
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
-              <span className="t-mono" style={{ color: "var(--accent-primary)" }}>{Math.round(progressPct)}% COMPLETE</span>
-              <span className="t-mono steel">{doneCount} OF {total} SESSIONS</span>
+          {/* ── main: the full plan ── */}
+          <main style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 0 }}>
+                <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 12 }}>YOUR PATHWAY · IN PROGRESS</div>
+                <div className="t-display" style={{ fontSize: "clamp(32px,5vw,56px)", color: "var(--text-primary)", lineHeight: 0.96 }}>
+                  {courseTitle || "Your learning pathway"}<span style={{ color: "var(--accent-primary)" }}>.</span>
+                </div>
+                {tier && (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 16 }}>
+                    <span className="t-label" style={{ color: "var(--text-secondary)", border: "1px solid var(--hairline)", padding: "5px 10px", borderRadius: 6 }}>
+                      {tier}{goal ? ` → ${goal}` : ""}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <button onClick={() => window.print()} className="btn pai-pw-noprint" style={{ flexShrink: 0 }}>EXPORT PDF</button>
             </div>
-          </div>
-        )}
 
-        {/* stat strip */}
-        <div style={{ marginTop: 32, background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderRadius: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))" }}>
-          {[
-            ["SESSIONS", `${total}`],
-            ["TOPICS", `${uniqueTopics}`],
-            ["CONTENT CHUNKS", `${plan.total_chunks}`],
-          ].map(([label, v], i) => (
-            <div key={label} style={{ padding: "22px 24px", borderRight: i < 2 ? "1px solid var(--hairline)" : "none" }}>
-              <div className="t-label" style={{ color: "var(--text-secondary)" }}>{label}</div>
-              <div className="t-display" style={{ fontSize: "clamp(30px,3.6vw,44px)", marginTop: 10, color: "var(--text-primary)" }}>{v}</div>
+            {/* stat strip */}
+            <div style={{ marginTop: 28, background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderRadius: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))" }}>
+              {stats.map(([label, v, color], i) => (
+                <div key={label} style={{ padding: "20px 22px", borderRight: i < stats.length - 1 ? "1px solid var(--hairline)" : "none" }}>
+                  <div className="t-label" style={{ color: "var(--text-secondary)" }}>{label}</div>
+                  <div className="t-display" style={{ fontSize: "clamp(24px,3vw,34px)", marginTop: 10, color }}>{v}</div>
+                  {label === "PACE" && <div className="t-mono" style={{ color: activityColor, marginTop: 4 }}>{activity}</div>}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
 
-        {/* sessions */}
-        <div style={{ marginTop: 44 }}>
-          <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 20 }}>THE PLAN · {total} SESSIONS</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {plan.sessions.map((s, i) => <SessionRow key={s.session_number} session={s} status={statusFor(i)} />)}
-          </div>
-        </div>
+            {/* resume timeline — past slides / lab / problem-sets / remediation */}
+            {resume && resume.timeline.length > 0 && (
+              <div style={{ marginTop: 36 }}>
+                <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 16 }}>YOUR HISTORY</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {resume.timeline.map((e, i) => {
+                    const k = keyFor(e, i);
+                    return (
+                      <TimelineRow
+                        key={k} e={e} courseId={courseId!} navigate={navigate}
+                        open={openKey === k} loading={entryLoading}
+                        reviewChunks={reviewChunks} psHistory={psHistory} artifact={artifact}
+                        onToggle={() => toggleEntry(e, k)}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
-        <button
-          disabled={!isProgress && firstLessonId === null}
-          onClick={() => {
-            sessionStorage.setItem("pathway_plan", JSON.stringify(plan));
-            const target = isProgress ? resumeLessonId : firstLessonId;
-            if (target) navigate(`/course/${courseId}/lesson/${target}`);
-          }}
-          className="btn btn-red"
-          style={{ marginTop: 44, width: "100%", justifyContent: "space-between", padding: "24px 32px", fontSize: 14, opacity: !isProgress && firstLessonId === null ? 0.6 : 1 }}
-        >
-          {ctaLabel} <span>→</span>
-        </button>
+            {/* sessions */}
+            <div style={{ marginTop: 36 }}>
+              <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 18 }}>THE PLAN · {total} SESSIONS</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {plan.sessions.map((s, i) => <SessionRow key={s.session_number} session={s} status={statusForP(i)} />)}
+              </div>
+            </div>
+          </main>
+        </div>
       </div>
     </div>
   );
 }
 
+function TimelineRow({ e, courseId, navigate, open, loading, reviewChunks, psHistory, artifact, onToggle }: {
+  e: ResumeTimelineEntry;
+  courseId: string;
+  navigate: ReturnType<typeof useNavigate>;
+  open: boolean;
+  loading: boolean;
+  reviewChunks: RemediationReview["chunks"];
+  psHistory: ProblemSetHistory | null;
+  artifact: Record<string, unknown> | null;
+  onToggle: () => void;
+}) {
+  const isRem = e.type === "remediation";
+  const label = e.type === "problem_set" ? "PROBLEM SET" : e.type === "lab" ? "CODING LAB" : isRem ? "REVIEW" : "SLIDES";
+  const title = isRem ? "Needs review — mastery dropped"
+    : e.session_number != null ? `Session ${e.session_number}` : `Lesson ${e.lesson}`;
+
+  return (
+    <div>
+      <div onClick={onToggle} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderLeft: `3px solid ${isRem ? "var(--accent-warm)" : "var(--hairline)"}`, borderRadius: 8, cursor: "pointer" }}>
+        <span className="t-label" style={{ color: isRem ? "var(--accent-warm)" : "var(--text-secondary)", width: 92, flexShrink: 0 }}>{label}</span>
+        <span className="t-body" style={{ flex: 1, fontSize: 14, color: "var(--text-primary)" }}>{title}</span>
+        {e.type === "problem_set" && e.best_score != null && (
+          <span className="t-mono" style={{ color: "var(--text-primary)" }}>{e.best_score}/100</span>
+        )}
+        <span className="t-mono steel" style={{ textTransform: "uppercase" }}>{e.status}</span>
+        <span className="t-mono steel">{open ? "▲" : "▼"}</span>
+      </div>
+
+      {open && (
+        <div style={{ padding: "14px 16px", marginLeft: 16, borderLeft: "2px solid var(--hairline)" }}>
+          {loading ? <span className="t-mono steel">LOADING…</span> : (
+            <>
+              {isRem && (reviewChunks.length === 0
+                ? <span className="t-mono steel">NO REVIEW MATERIAL FOUND.</span>
+                : reviewChunks.map((c) => <p key={c.chunk_id} className="t-body" style={{ fontSize: 13, color: "var(--text-secondary)", margin: "4px 0" }}>• {c.raw_text.slice(0, 220)}</p>))}
+
+              {e.type === "problem_set" && (psHistory == null
+                ? <span className="t-mono steel">COULD NOT LOAD HISTORY.</span>
+                : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div className="t-mono" style={{ color: "var(--accent-primary)" }}>
+                      BEST {psHistory.best_score ?? "—"}/100 · {psHistory.attempts.length} ATTEMPT{psHistory.attempts.length === 1 ? "" : "S"}
+                    </div>
+                    {psHistory.attempts.length === 0 ? <span className="t-mono steel">NO ATTEMPTS YET.</span>
+                      : psHistory.attempts.map((a) => (
+                        <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 14, paddingTop: 8, borderTop: "1px solid var(--hairline)" }}>
+                          <span className="t-mono" style={{ color: a.score >= 70 ? "var(--accent-success)" : "var(--text-primary)", minWidth: 56 }}>{a.score}/100</span>
+                          <span className="t-mono steel" style={{ flex: 1 }}>{a.hints_used} HINT{a.hints_used === 1 ? "" : "S"} · {a.source}</span>
+                          <span className="t-mono steel">{new Date(a.created_at).toLocaleDateString()}</span>
+                        </div>
+                      ))}
+                    {e.lesson != null && (
+                      <button onClick={() => navigate(`/course/${courseId}/lesson/${e.lesson}/problem-set`)} className="btn btn-ghost-dark" style={{ alignSelf: "flex-start", marginTop: 4 }}>OPEN PROBLEM SET →</button>
+                    )}
+                  </div>
+                ))}
+
+              {(e.type === "slides" || e.type === "lab") && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <ArtifactSummary type={e.type} content={artifact} />
+                  {e.lesson != null && (
+                    <button onClick={() => navigate(`/course/${courseId}/lesson/${e.lesson}${e.type === "lab" ? "/lab" : ""}`)} className="btn btn-ghost-dark" style={{ alignSelf: "flex-start", marginTop: 4 }}>OPEN IN LESSON →</button>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ArtifactSummary({ type, content }: { type: string; content: Record<string, unknown> | null }) {
+  if (content == null) return <span className="t-mono steel">COULD NOT LOAD CONTENT.</span>;
+  // content may be the artifact wrapper ({content_json: {...}}) or the body itself.
+  const cj = (content.content_json ?? content) as Record<string, unknown>;
+  if (type === "slides") {
+    const slides = Array.isArray(cj.slides) ? (cj.slides as Array<Record<string, unknown>>) : [];
+    if (slides.length === 0) return <span className="t-mono steel">NO SLIDE CONTENT.</span>;
+    return (
+      <div>
+        <div className="t-mono steel" style={{ marginBottom: 6 }}>{slides.length} SLIDES</div>
+        <ol style={{ margin: 0, paddingLeft: 18 }}>
+          {slides.slice(0, 12).map((s, i) => (
+            <li key={i} className="t-body" style={{ fontSize: 13, color: "var(--text-secondary)", margin: "2px 0" }}>{String(s.title ?? s.slide_title ?? `Slide ${i + 1}`)}</li>
+          ))}
+        </ol>
+      </div>
+    );
+  }
+  const problem = String(cj.problem_text ?? cj.problem ?? cj.title ?? "");
+  return problem
+    ? <p className="t-body" style={{ fontSize: 13, color: "var(--text-secondary)", margin: 0, whiteSpace: "pre-wrap" }}>{problem.slice(0, 320)}</p>
+    : <span className="t-mono steel">NO LAB CONTENT.</span>;
+}
+
 function SessionRow({ session, status }: { session: PathwaySession; status: SessionStatus }) {
   const extra = session.topics_covered.length - 5;
-  const leftBorder = status === "done" ? "3px solid var(--accent-success)" : status === "current" || status === "start" ? "3px solid var(--accent-primary)" : "1px solid var(--hairline)";
-  const numColor = status === "done" ? "var(--accent-success)" : status === "upcoming" || status === "locked" ? "var(--steel-light)" : "var(--accent-primary)";
+  const leftBorder = status === "done" ? "3px solid var(--accent-success)" : status === "current" ? "3px solid var(--accent-primary)" : "1px solid var(--hairline)";
+  const numColor = status === "done" ? "var(--accent-success)" : status === "locked" ? "var(--steel-light)" : "var(--accent-primary)";
 
   const tag =
     status === "done" ? { label: "✓ MASTERED", color: "var(--accent-success)" }
       : status === "current" ? { label: "CURRENT", color: "var(--accent-primary)" }
-        : status === "start" ? { label: "START HERE", color: "var(--accent-primary)" }
-          : status === "locked" ? { label: "🔒 LOCKED", color: "var(--steel-light)" }
-            : null;
+        : { label: "🔒 LOCKED", color: "var(--steel-light)" };
 
   return (
-    <div style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderLeft: leftBorder, borderRadius: 8, padding: 24, display: "flex", gap: 22, opacity: status === "upcoming" ? 0.92 : status === "locked" ? 0.7 : 1 }}>
+    <div style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderLeft: leftBorder, borderRadius: 8, padding: 24, display: "flex", gap: 22, opacity: status === "locked" ? 0.7 : 1 }}>
       <div className="t-display" style={{ fontSize: "clamp(34px,5vw,52px)", color: numColor, lineHeight: 0.9, flexShrink: 0, minWidth: 52 }}>{String(session.session_number).padStart(2, "0")}</div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
           <div className="t-heading" style={{ fontSize: "clamp(18px,2.4vw,24px)", color: "var(--text-primary)" }}>{session.session_title}</div>
-          {tag && <span className="t-label" style={{ color: tag.color, border: `1px solid ${tag.color}`, padding: "4px 8px", borderRadius: 6, flexShrink: 0 }}>{tag.label}</span>}
+          <span className="t-label" style={{ color: tag.color, border: `1px solid ${tag.color}`, padding: "4px 8px", borderRadius: 6, flexShrink: 0 }}>{tag.label}</span>
         </div>
 
         {session.topics_covered.length > 0 && (

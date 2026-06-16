@@ -76,8 +76,10 @@ export default function Dashboard() {
       progress: parseFloat(e.progress_percentage) || 0,
       score: e.current_score,
       lastAccessed: e.last_accessed,
-      resumeTo: e.is_pathway_ready && e.current_lesson
-        ? `/course/${e.course}/lesson/${e.current_lesson}`
+      // Enrolled + pathway ready → the resume/progress view (which then offers
+      // "continue to current lesson"). Not ready → course detail (→ assessment).
+      resumeTo: e.is_pathway_ready
+        ? `/course/${e.course}/pathway`
         : `/courses/${e.course}`,
     };
   });

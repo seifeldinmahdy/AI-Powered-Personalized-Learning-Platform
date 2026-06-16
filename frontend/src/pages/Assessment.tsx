@@ -268,7 +268,7 @@ export default function Assessment() {
       <div className="codex" style={{ ...SHELL, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18, textAlign: "center", padding: 24 }}>
         <div className="t-label" style={{ color: "var(--accent-primary)" }}>{submitting ? "ANALYZING" : "PREPARING"}</div>
         <div className="t-display" style={{ fontSize: "clamp(28px,4vw,48px)", color: "var(--text-primary)", maxWidth: 620 }}>
-          {submitting ? "Building your learning profile…" : "Generating your placement survey…"}
+          {submitting ? "Building your learning profile…" : "Generating your placement test…"}
         </div>
         <div className="t-mono steel">{submitting ? "Scoring every domain" : `Tailored to ${courseTitle}`}</div>
         <div style={{ width: 180, height: 2, background: "var(--hairline)", overflow: "hidden", marginTop: 8, position: "relative" }}>

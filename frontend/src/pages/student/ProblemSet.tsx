@@ -6,6 +6,8 @@ import {
     generateProblemSet,
     regenerateProblemSet,
     getStudentProblemSets,
+    getRegenerationCount,
+    getProblemSetBestScore,
     submitAnswer,
     getDynamicHint,
     notifySummaryViewed,
@@ -16,6 +18,7 @@ import {
     type RubricCriterion,
     type RubricCheck,
 } from '../../services/problemSet';
+import { getCurrentPathway } from '../../services/pathway';
 import {
     Loader2, Sparkles, Send, CheckCircle2, XCircle, BookOpen,
     Lightbulb, ChevronDown, ChevronUp, ArrowLeft, ArrowRight, Trophy,
@@ -23,21 +26,24 @@ import {
 } from 'lucide-react';
 import { CapstoneStartCTA } from '../../components/CapstoneStartCTA';
 
-/* ── helpers ─────────────────────────────────────────────── */
+/* ── design tokens (personifai / codex) ──────────────────────
+   The system is deliberately two-tone for outcomes: pass = green
+   (--accent-success), needs-work = red (--error-red); blue
+   (--accent-primary) marks the active/current element. */
+
+const PASS = 70;
 
 function scoreColor(s: number) {
-    if (s >= 90) return '#10b981';
-    if (s >= 80) return '#3b82f6';
-    if (s >= 70) return '#6366f1';
-    if (s >= 60) return '#f59e0b';
-    return '#ef4444';
+    return s >= PASS ? 'var(--accent-success)' : 'var(--error-red)';
 }
-function scoreBg(s: number) {
-    if (s >= 90) return 'rgba(16,185,129,0.1)';
-    if (s >= 80) return 'rgba(59,130,246,0.1)';
-    if (s >= 70) return 'rgba(99,102,241,0.1)';
-    if (s >= 60) return 'rgba(245,158,11,0.1)';
-    return 'rgba(239,68,68,0.1)';
+function scoreTint(s: number) {
+    return s >= PASS ? 'rgba(22,163,74,0.08)' : 'rgba(220,38,38,0.07)';
+}
+/* earned vs max → full green, zero red, partial neutral. */
+function rubricColor(earned: number, max: number) {
+    if (max > 0 && earned >= max) return 'var(--accent-success)';
+    if (earned <= 0) return 'var(--error-red)';
+    return 'var(--text-secondary)';
 }
 
 function getStudentId(): string {
@@ -80,6 +86,11 @@ export default function ProblemSet() {
     const [expandedSummary, setExpandedSummary] = useState<string | null>(null);
     const [regenerating, setRegenerating] = useState(false);
 
+    // Plan version pins the regenerate cap + best-score scope (server-tracked).
+    const [planVersion, setPlanVersion] = useState<number | null>(null);
+    const [regenInfo, setRegenInfo] = useState<{ remaining: number; max: number } | null>(null);
+    const [bestScore, setBestScore] = useState<number | null>(null);
+
     // New hint system state
     const [staticHintExpanded, setStaticHintExpanded] = useState<Record<string, boolean>>({});
     const [dynamicHints, setDynamicHints] = useState<Record<string, { hint_number: number; content: string; penalty: number }[]>>({});
@@ -91,6 +102,40 @@ export default function ProblemSet() {
     const current = questions[currentIdx] as ProblemSetQuestion | undefined;
     const allDone = questions.length > 0 && questions.every(q => !!results[q.id] || !!problemSet?.submissions?.[q.id]);
     const showSummary = allDone && currentIdx >= questions.length;
+
+    /* ── server-tracked best score + remaining regenerations ──
+       Both endpoints already exist; the page reads them so the
+       regenerate button shows the live cap and the summary shows
+       the best-ever score (a weaker retry never lowers it). */
+    async function refreshMeta(pv: number | null) {
+        if (!courseId || !lessonId) return;
+        try {
+            const best = await getProblemSetBestScore(courseId, lessonId, pv ?? undefined);
+            setBestScore(best);
+        } catch { /* best score is optional UI sugar */ }
+        if (pv != null) {
+            try {
+                const r = await getRegenerationCount(courseId, lessonId, pv);
+                setRegenInfo({ remaining: r.remaining, max: r.max });
+            } catch { /* regen cap falls back to static copy */ }
+        }
+    }
+
+    // Resolve the authoritative plan version, then pull regen cap + best score.
+    useEffect(() => {
+        if (!courseId || !lessonId) return;
+        (async () => {
+            try {
+                const plan = await getCurrentPathway(studentId, courseId);
+                setPlanVersion(plan.plan_version);
+                await refreshMeta(plan.plan_version);
+            } catch {
+                // No pathway yet (rare on this route) — best score still works unscoped.
+                await refreshMeta(null);
+            }
+        })();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [courseId, lessonId, studentId]);
 
     // Fire once when summary screen mounts. This is the genuine end of the
     // lesson: the server completes the lesson (XP/streak/progress) and runs the
@@ -110,6 +155,8 @@ export default function ProblemSet() {
                 .catch(err =>
                     console.warn('Summary viewed notification failed:', err)
                 );
+            // Best score may have just advanced with this attempt.
+            refreshMeta(planVersion);
         }
     }, [showSummary]);  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -169,6 +216,10 @@ export default function ProblemSet() {
 
     async function handleRegenerate() {
         if (!courseId || !lessonId || regenerating) return;
+        if (regenInfo && regenInfo.remaining <= 0) {
+            toast.error('No regenerations left for this session.');
+            return;
+        }
         setRegenerating(true);
         try {
             // The cap (MAX 3 / plan_version) is enforced server-side; a 409
@@ -191,6 +242,8 @@ export default function ProblemSet() {
             setCodeMap(codes);
             setCurrentIdx(0);
             toast.success('Fresh problem set generated.');
+            // Reflect the consumed regeneration in the live counter.
+            refreshMeta(planVersion);
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Could not regenerate.');
         } finally {
@@ -286,20 +339,22 @@ export default function ProblemSet() {
 
     if (loading) {
         return (
-            <div className="flex flex-col items-center justify-center h-screen bg-background gap-4">
-                <Loader2 size={40} className="animate-spin text-secondary" />
-                <p className="text-lg font-medium text-muted-foreground">Dr. Nova is crafting your problem set…</p>
-                <p className="text-sm text-muted-foreground/60">Analyzing your session and tailoring questions</p>
+            <div className="codex" style={{ flex: 1, minHeight: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18, background: 'var(--bg-primary)', textAlign: 'center', padding: 24 }}>
+                <Loader2 size={34} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
+                <div className="t-heading" style={{ fontSize: 24, color: 'var(--text-primary)' }}>Crafting your problem set…</div>
+                <div className="t-mono steel">Analyzing your session and tailoring questions</div>
             </div>
         );
     }
 
     if (error || !problemSet || questions.length === 0) {
         return (
-            <div className="flex flex-col items-center justify-center h-screen bg-background gap-4">
-                <AlertTriangle size={40} className="text-red-400" />
-                <p className="text-lg font-semibold">{error || 'No questions generated'}</p>
-                <button onClick={() => navigate(-1)} className="px-4 py-2 rounded-lg bg-muted hover:bg-muted/80 text-sm font-medium">Go Back</button>
+            <div className="codex" style={{ flex: 1, minHeight: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: 'var(--bg-primary)', textAlign: 'center', padding: 24 }}>
+                <div className="t-label" style={{ color: 'var(--error-red)', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <AlertTriangle size={15} /> PROBLEM SET UNAVAILABLE
+                </div>
+                <div className="t-heading" style={{ fontSize: 22, color: 'var(--text-primary)', maxWidth: 460 }}>{error || 'No questions generated'}</div>
+                <button onClick={() => navigate(-1)} className="btn btn-ghost-dark">← GO BACK</button>
             </div>
         );
     }
@@ -312,28 +367,38 @@ export default function ProblemSet() {
             return r?.final_score ?? 0;
         });
         const avg = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+        const best = bestScore != null ? Math.max(bestScore, avg) : avg;
+        const regenOut = regenInfo ? regenInfo.remaining <= 0 : false;
 
         return (
-            <div className="flex flex-col h-screen bg-background">
-                <div className="flex items-center gap-3 px-6 py-4 border-b border-border bg-card">
-                    <button onClick={() => navigate(-1)} className="p-2 rounded-lg hover:bg-muted"><ArrowLeft size={18} /></button>
-                    <h1 className="text-lg font-bold">Problem Set Complete</h1>
+            <div className="codex" style={{ flex: 1, minHeight: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)' }}>
+                {/* Header */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '0 24px', height: 56, borderBottom: '1px solid var(--hairline)', background: 'var(--bg-primary)' }}>
+                    <button onClick={() => navigate(-1)} className="t-label" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                        <ArrowLeft size={15} /> BACK
+                    </button>
+                    <span style={{ flex: 1 }} />
+                    <span className="t-label" style={{ color: 'var(--accent-primary)' }}>PROBLEM SET · COMPLETE</span>
                 </div>
-                <div className="flex-1 overflow-y-auto px-6 py-8 max-w-3xl mx-auto w-full">
+
+                <div style={{ flex: 1, overflowY: 'auto', padding: 'clamp(24px,4vw,48px)', maxWidth: 820, marginInline: 'auto', width: '100%' }}>
                     {/* Overall score */}
-                    <div className="text-center mb-8">
-                        <div className="inline-flex items-center justify-center w-28 h-28 rounded-full border-4 mb-4" style={{ borderColor: scoreColor(avg) }}>
-                            <div>
-                                <div className="text-4xl font-black" style={{ color: scoreColor(avg) }}>{avg}</div>
-                                <div className="text-xs font-medium opacity-60" style={{ color: scoreColor(avg) }}>/100</div>
-                            </div>
+                    <div className="t-label" style={{ color: 'var(--steel-light)' }}>YOUR SCORE</div>
+                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 28, flexWrap: 'wrap', marginTop: 10 }}>
+                        <div className="t-display" style={{ fontSize: 'clamp(88px,16vw,150px)', lineHeight: 0.9, color: scoreColor(avg) }}>
+                            {avg}<span className="steel" style={{ fontSize: '0.32em' }}>/100</span>
                         </div>
-                        <h2 className="text-2xl font-bold mb-1">Overall Score</h2>
-                        <p className="text-muted-foreground text-sm">{questions.length} questions completed</p>
+                        <div style={{ paddingBottom: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <div>
+                                <div className="t-label" style={{ color: 'var(--text-secondary)' }}>BEST EVER</div>
+                                <div className="t-heading" style={{ fontSize: 30, color: scoreColor(best), marginTop: 4 }}>{best}<span className="steel" style={{ fontSize: 15 }}>/100</span></div>
+                            </div>
+                            <div className="t-mono steel">{questions.length} QUESTIONS COMPLETED</div>
+                        </div>
                     </div>
 
                     {/* Per-question summary */}
-                    <div className="space-y-3">
+                    <div style={{ marginTop: 36, display: 'flex', flexDirection: 'column', gap: 10 }}>
                         {questions.map((q, idx) => {
                             const r = results[q.id] ?? problemSet.submissions?.[q.id]?.result;
                             const fs = r?.final_score ?? 0;
@@ -343,49 +408,52 @@ export default function ProblemSet() {
                             const exSolution = r?.example_solution || q.example_solution;
 
                             return (
-                                <div key={q.id} className="rounded-xl border border-border overflow-hidden bg-card">
+                                <div key={q.id} style={{ background: 'var(--bg-surface)', border: '1px solid var(--hairline)', borderLeft: `3px solid ${scoreColor(fs)}`, borderRadius: 8, overflow: 'hidden' }}>
                                     <button
                                         onClick={() => setExpandedSummary(isOpen ? null : q.id)}
-                                        className="w-full px-4 py-3 flex items-center gap-3 hover:bg-muted/30 transition-colors"
+                                        style={{ width: '100%', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14, background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}
                                     >
-                                        <span className="text-xs font-mono text-muted-foreground w-6">Q{idx + 1}</span>
-                                        {passed ? <CheckCircle2 size={16} className="text-green-500" /> : <XCircle size={16} className="text-red-400" />}
-                                        <span className="flex-1 text-left text-sm font-medium truncate">{q.title}</span>
-                                        <span className="text-sm font-bold" style={{ color: scoreColor(fs) }}>{fs}/100</span>
-                                        {isOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                        <span style={{ width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: scoreColor(fs), color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>
+                                            {passed ? '✓' : '✕'}
+                                        </span>
+                                        <span className="t-mono steel" style={{ width: 28 }}>Q{idx + 1}</span>
+                                        <span style={{ flex: 1, fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{q.title}</span>
+                                        <span className="t-mono" style={{ fontWeight: 700, color: scoreColor(fs) }}>{fs}/100</span>
+                                        {isOpen ? <ChevronUp size={14} style={{ color: 'var(--steel-light)' }} /> : <ChevronDown size={14} style={{ color: 'var(--steel-light)' }} />}
                                     </button>
                                     {isOpen && (
-                                        <div className="px-4 pb-4 space-y-3 border-t border-border pt-3">
-                                            {r?.feedback && <p className="text-sm text-foreground/80">{r.feedback}</p>}
+                                        <div style={{ padding: '16px 18px', borderTop: '1px solid var(--hairline)', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                                            {r?.feedback && <p className="t-body" style={{ fontSize: 14, color: 'var(--text-primary)' }}>{r.feedback}</p>}
                                             {r?.rubric_scores && r.rubric_scores.length > 0 && (
-                                                <div className="space-y-1.5">
-                                                    <h4 className="text-xs font-semibold text-muted-foreground">Rubric Breakdown</h4>
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                                    <div className="t-label" style={{ color: 'var(--text-secondary)' }}>RUBRIC BREAKDOWN</div>
                                                     {r.rubric_scores.map((rs: RubricScore, i: number) => {
                                                         const pct = rs.max > 0 ? Math.round((rs.earned / rs.max) * 100) : 0;
+                                                        const c = rubricColor(rs.earned, rs.max);
                                                         return (
-                                                            <div key={`${rs.criterion}-${i}`} className="flex items-center gap-2 text-xs">
-                                                                <span className="w-24 truncate font-medium">{rs.criterion}</span>
-                                                                <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                                                                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: scoreColor(pct) }} />
+                                                            <div key={`${rs.criterion}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+                                                                <span style={{ width: 110, color: 'var(--text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rs.criterion}</span>
+                                                                <div style={{ flex: 1, height: 6, background: 'var(--bg-paper-line)', borderRadius: 4, overflow: 'hidden' }}>
+                                                                    <div style={{ height: '100%', width: `${pct}%`, background: c }} />
                                                                 </div>
-                                                                <span className="w-12 text-right font-bold" style={{ color: scoreColor(pct) }}>{rs.earned}/{rs.max}</span>
+                                                                <span className="t-mono" style={{ width: 52, textAlign: 'right', fontWeight: 700, color: c }}>{rs.earned}/{rs.max}</span>
                                                             </div>
                                                         );
                                                     })}
                                                 </div>
                                             )}
-                                            {/* Your Code vs Example Solution */}
-                                            <div className="grid grid-cols-2 gap-3">
+                                            {/* Your Code vs Possible Answer */}
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                                                 {sub?.code && (
                                                     <div>
-                                                        <h4 className="text-xs font-semibold text-muted-foreground mb-1">Your Code</h4>
-                                                        <pre className="text-xs bg-[#1e1e1e] text-[#d4d4d4] p-3 rounded-lg overflow-auto max-h-48"><code>{sub.code}</code></pre>
+                                                        <div className="t-label" style={{ color: 'var(--text-secondary)', marginBottom: 6 }}>YOUR CODE</div>
+                                                        <pre className="codeblock" style={{ maxHeight: 192, overflow: 'auto', margin: 0 }}><code>{sub.code}</code></pre>
                                                     </div>
                                                 )}
                                                 {exSolution && (
                                                     <div>
-                                                        <h4 className="text-xs font-semibold text-amber-500 mb-1">Possible Answer</h4>
-                                                        <pre className="text-xs bg-[#1a2332] text-[#7dd3fc] p-3 rounded-lg overflow-auto max-h-48 border border-amber-500/20"><code>{exSolution}</code></pre>
+                                                        <div className="t-label" style={{ color: 'var(--accent-primary)', marginBottom: 6 }}>POSSIBLE ANSWER</div>
+                                                        <pre className="codeblock" style={{ maxHeight: 192, overflow: 'auto', margin: 0, border: '1px solid rgba(37,99,235,0.3)' }}><code>{exSolution}</code></pre>
                                                     </div>
                                                 )}
                                             </div>
@@ -401,38 +469,44 @@ export default function ProblemSet() {
                         regenerated attempts contribute to mastery with reduced weight. */}
                     <button
                         onClick={handleRegenerate}
-                        disabled={regenerating}
-                        className="mt-8 w-full py-2.5 rounded-xl font-medium border border-border text-muted-foreground hover:bg-muted/40 transition-all disabled:opacity-50"
+                        disabled={regenerating || regenOut}
+                        className="btn btn-ghost-dark"
+                        style={{ marginTop: 32, width: '100%', justifyContent: 'center' }}
                     >
-                        {regenerating ? 'Generating a fresh set…' : 'Regenerate problem set (up to 3)'}
+                        {regenerating
+                            ? 'GENERATING A FRESH SET…'
+                            : regenInfo
+                                ? regenOut
+                                    ? 'NO REGENERATIONS LEFT'
+                                    : `REGENERATE · ${regenInfo.remaining} OF ${regenInfo.max} LEFT`
+                                : 'REGENERATE PROBLEM SET (UP TO 3)'}
                     </button>
 
                     {locState.nextLessonId ? (
                         <button
                             onClick={() => navigate(`/course/${courseId}/lesson/${locState.nextLessonId}`)}
-                            className="mt-8 w-full py-3 bg-gradient-to-r from-primary to-secondary text-white rounded-xl font-semibold flex items-center justify-center gap-2 hover:shadow-lg transition-all"
+                            className="btn btn-paper"
+                            style={{ marginTop: 16, width: '100%', justifyContent: 'center' }}
                         >
-                            <ArrowRight size={18} />
-                            Continue to Next Session
+                            CONTINUE TO NEXT SESSION <ArrowRight size={16} />
                         </button>
                     ) : (
-                        <div className="mt-8 space-y-4">
+                        <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
                             {/* Course finished — terminal gate is the capstone */}
-                            <div className="rounded-2xl border-2 border-primary/30 bg-gradient-to-br from-primary/5 to-secondary/5 p-6 text-center space-y-3">
-                                <Trophy size={28} className="mx-auto text-primary" />
+                            <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--hairline)', borderLeft: '4px solid var(--accent-warm)', borderRadius: 8, padding: '24px 26px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+                                <Trophy size={26} style={{ color: 'var(--accent-warm)' }} />
                                 <div>
-                                    <p className="font-semibold">You've finished the coursework!</p>
-                                    <p className="text-sm text-muted-foreground">One final step: complete your capstone project.</p>
+                                    <div className="t-heading" style={{ fontSize: 19, color: 'var(--text-primary)' }}>You've finished the coursework.</div>
+                                    <div className="t-body" style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>One final step: complete your capstone project.</div>
                                 </div>
-                                <div className="flex justify-center">
-                                    <CapstoneStartCTA courseId={Number(courseId)} variant="inline" />
-                                </div>
+                                <CapstoneStartCTA courseId={Number(courseId)} variant="inline" />
                             </div>
                             <button
                                 onClick={() => navigate(`/courses/${courseId}`)}
-                                className="w-full py-2.5 rounded-xl font-medium border border-border text-muted-foreground hover:bg-muted/40 transition-all"
+                                className="btn btn-ghost-dark"
+                                style={{ width: '100%', justifyContent: 'center' }}
                             >
-                                Back to Course
+                                ← BACK TO COURSE
                             </button>
                         </div>
                     )}
@@ -451,104 +525,101 @@ export default function ProblemSet() {
     const currentCode = codeMap[current!.id] || '';
     const hasTypedCode = currentCode.trim().length > 0 && currentCode.trim() !== (current!.starter_code || '').trim();
     const canRequestSmartHint = hasTypedCode || (isSubmitted && !result?.passed);
+    const progressPct = ((currentIdx + (isSubmitted ? 1 : 0)) / questions.length) * 100;
 
     return (
-        <div className="flex flex-col h-screen bg-background overflow-hidden">
+        <div className="codex" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)', overflow: 'hidden' }}>
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-card shadow-sm">
-                <div className="flex items-center gap-3">
-                    <button onClick={() => navigate(-1)} className="p-2 rounded-lg hover:bg-muted transition-colors">
-                        <ArrowLeft size={18} />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', height: 56, borderBottom: '1px solid var(--hairline)', background: 'var(--bg-primary)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                    <button onClick={() => navigate(-1)} className="t-label" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                        <ArrowLeft size={15} /> BACK
                     </button>
                     <div>
-                        <h1 className="text-lg font-bold leading-none">Problem Set</h1>
-                        <p className="text-sm text-muted-foreground mt-0.5">{locState.lessonTitle ?? 'Session Practice'}</p>
+                        <div className="t-label" style={{ color: 'var(--accent-primary)' }}>PROBLEM SET</div>
+                        <div className="t-mono steel" style={{ marginTop: 2 }}>{locState.lessonTitle ?? 'Session practice'}</div>
                     </div>
                 </div>
-                <div className="flex items-center gap-2">
-                    <Sparkles size={16} className="text-secondary" />
-                    <span className="text-sm font-semibold">Question {currentIdx + 1} of {questions.length}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    {bestScore != null && (
+                        <span className="t-mono steel">BEST {bestScore}/100</span>
+                    )}
+                    <span style={{ width: 1, height: 18, background: 'var(--hairline)' }} />
+                    <Sparkles size={15} style={{ color: 'var(--accent-primary)' }} />
+                    <span className="t-label" style={{ color: 'var(--text-primary)' }}>{currentIdx + 1} / {questions.length}</span>
                 </div>
             </div>
 
             {/* Progress bar */}
-            <div className="h-1 bg-muted">
-                <div
-                    className="h-full bg-gradient-to-r from-secondary to-accent transition-all duration-500"
-                    style={{ width: `${((currentIdx + (isSubmitted ? 1 : 0)) / questions.length) * 100}%` }}
-                />
+            <div className="progress" style={{ borderRadius: 0 }}>
+                <i style={{ width: `${progressPct}%` }} />
             </div>
 
-            <div className="flex flex-1 overflow-hidden min-h-0">
+            <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
                 {/* Left panel — question */}
-                <div className="border-r-2 border-border flex flex-col overflow-y-auto bg-card pb-6" style={{ flex: '0 0 40%', maxWidth: '40%' }}>
+                <div style={{ flex: '0 0 40%', maxWidth: '40%', display: 'flex', flexDirection: 'column', overflowY: 'auto', background: 'var(--bg-surface)', borderRight: '1px solid var(--hairline)', paddingBottom: 24 }}>
                     {/* Scenario framing */}
-                    <div className="px-6 py-5 border-b border-border">
-                        <div className="flex items-center gap-2 mb-3">
-                            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-secondary to-accent flex items-center justify-center">
-                                <BookOpen size={14} className="text-white" />
-                            </div>
-                            <h4 className="mb-0 text-base font-semibold">{current!.title}</h4>
-                            <span className="ml-auto px-2.5 py-1 bg-secondary/10 text-secondary rounded-lg text-xs font-semibold">
-                                {current!.difficulty}
-                            </span>
+                    <div style={{ padding: '22px 24px', borderBottom: '1px solid var(--hairline)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                            <BookOpen size={15} style={{ color: 'var(--accent-primary)' }} />
+                            <h4 className="t-heading" style={{ margin: 0, fontSize: 17, color: 'var(--text-primary)' }}>{current!.title}</h4>
+                            <span className="tag-steel" style={{ marginLeft: 'auto' }}>{current!.difficulty}</span>
                         </div>
 
                         {/* Story card */}
-                        <div className="p-4 bg-gradient-to-br from-indigo-50/60 to-purple-50/40 dark:from-indigo-950/20 dark:to-purple-950/10 rounded-xl border border-indigo-100 dark:border-indigo-800/30 mb-3">
-                            <p className="text-sm italic leading-relaxed text-foreground/80">{current!.scenario_framing}</p>
+                        <div className="paper-card" style={{ padding: 16, borderRadius: 8, borderLeft: '2px solid var(--accent-primary)', marginBottom: 12 }}>
+                            <p className="t-body" style={{ margin: 0, fontSize: 14, fontStyle: 'italic', fontFamily: 'var(--ff-editorial)', color: 'var(--text-primary)', lineHeight: 1.55 }}>{current!.scenario_framing}</p>
                         </div>
 
                         {/* Problem statement */}
-                        <div className="p-4 bg-muted/30 rounded-xl border border-border text-sm leading-relaxed whitespace-pre-wrap text-foreground/90">
+                        <div style={{ padding: 16, background: 'var(--bg-paper)', border: '1px solid var(--bg-paper-line)', borderRadius: 8, fontSize: 14, lineHeight: 1.6, whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>
                             {current!.problem_statement}
                         </div>
 
                         {current!.target_weakness && (
-                            <p className="mt-2 text-xs text-muted-foreground">
-                                <span className="font-semibold">Targets:</span> {current!.target_weakness}
+                            <p className="t-mono steel" style={{ marginTop: 10 }}>
+                                <span style={{ color: 'var(--text-secondary)' }}>TARGETS:</span> {current!.target_weakness}
                             </p>
                         )}
                     </div>
 
                     {/* Hints */}
-                    <div className="px-6 py-3">
+                    <div style={{ padding: '16px 24px' }}>
                         {/* Static hint — always available, free */}
                         <button
                             onClick={() => toggleStaticHint(current!.id)}
-                            className="w-full py-2 px-4 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300 text-sm font-medium flex items-center justify-between gap-2 hover:bg-emerald-100 dark:hover:bg-emerald-950/40 transition-colors mb-2"
+                            style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--accent-primary)', background: 'rgba(37,99,235,0.05)', color: 'var(--accent-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}
                         >
-                            <span className="flex items-center gap-2">
-                                <Lightbulb size={14} />
-                                Hint (free)
+                            <span className="t-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                                <Lightbulb size={14} /> HINT · FREE
                             </span>
                             {staticHintExpanded[current!.id] ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </button>
                         {staticHintExpanded[current!.id] && (
-                            <div className="mb-3 p-3 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-xl text-sm text-emerald-800 dark:text-emerald-200">
+                            <div style={{ marginBottom: 12, padding: 14, background: 'rgba(37,99,235,0.05)', border: '1px solid rgba(37,99,235,0.25)', borderRadius: 8, fontSize: 14, color: 'var(--text-primary)' }}>
                                 {current!.static_hint}
                             </div>
                         )}
 
                         {/* Dynamic hints revealed */}
                         {qDynamicHints.map((dh, i) => (
-                            <div key={i} className="mb-2 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 rounded-xl text-sm text-amber-800 dark:text-amber-200">
-                                <span className="font-semibold">Smart Hint {dh.hint_number === 2 ? 1 : 2}:</span> {dh.content}
-                                <p className="text-xs mt-1 opacity-70">&minus;{dh.penalty.toFixed(1)} pts deducted from the relevant rubric section</p>
+                            <div key={i} style={{ marginBottom: 10, padding: 14, background: 'var(--bg-paper)', border: '1px solid var(--bg-paper-line)', borderLeft: '3px solid var(--accent-warm)', borderRadius: 8, fontSize: 14, color: 'var(--text-primary)' }}>
+                                <span style={{ fontWeight: 700 }}>Smart hint {dh.hint_number === 2 ? 1 : 2}:</span> {dh.content}
+                                <p className="t-mono" style={{ marginTop: 6, color: 'var(--error-red)' }}>&minus;{dh.penalty.toFixed(1)} pts from the relevant rubric section</p>
                             </div>
                         ))}
 
                         {/* Smart hint button or confirm dialog */}
                         {confirmSmartHint ? (
-                            <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-300 dark:border-amber-700 rounded-xl text-sm">
-                                <p className="text-amber-800 dark:text-amber-200 mb-2 flex items-center gap-1.5">
-                                    <AlertTriangle size={14} /> This hint is more direct and costs more points. Reveal?
+                            <div style={{ padding: 14, background: 'var(--bg-paper)', border: '1px solid var(--accent-warm)', borderRadius: 8, fontSize: 13 }}>
+                                <p style={{ margin: 0, marginBottom: 10, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <AlertTriangle size={14} style={{ color: 'var(--error-red)' }} /> This hint is more direct and costs more points. Reveal?
                                 </p>
-                                <div className="flex gap-2">
-                                    <button onClick={() => requestDynamicHint(3)} disabled={hintLoading} className="px-3 py-1.5 rounded-lg bg-amber-500 text-white text-xs font-semibold hover:bg-amber-600 disabled:opacity-50">
-                                        {hintLoading ? 'Loading…' : 'Confirm'}
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    <button onClick={() => requestDynamicHint(3)} disabled={hintLoading} className="btn" style={{ padding: '8px 16px', fontSize: 11, background: 'var(--accent-warm)', color: '#fff' }}>
+                                        {hintLoading ? 'LOADING…' : 'CONFIRM'}
                                     </button>
-                                    <button onClick={() => setConfirmSmartHint(false)} className="px-3 py-1.5 rounded-lg bg-muted text-xs font-medium hover:bg-muted/80">Cancel</button>
+                                    <button onClick={() => setConfirmSmartHint(false)} className="btn btn-ghost-dark" style={{ padding: '8px 16px', fontSize: 11 }}>CANCEL</button>
                                 </div>
                             </div>
                         ) : !hasHint3 && (
@@ -558,96 +629,80 @@ export default function ProblemSet() {
                                     else setConfirmSmartHint(true);
                                 }}
                                 disabled={!canRequestSmartHint || hintLoading || hasHint3}
-                                className="w-full py-2 px-4 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-300 text-sm font-medium flex items-center justify-center gap-2 hover:bg-amber-100 dark:hover:bg-amber-950/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="btn btn-ghost-dark"
+                                style={{ width: '100%', justifyContent: 'center', padding: '10px 14px', fontSize: 11 }}
                             >
                                 <Lightbulb size={14} />
-                                {hintLoading ? 'Generating hint…' : hasHint2 ? 'Get a more direct hint' : 'Get a smarter hint'}
+                                {hintLoading ? 'GENERATING HINT…' : hasHint2 ? 'GET A MORE DIRECT HINT' : 'GET A SMARTER HINT'}
                             </button>
                         )}
                     </div>
 
                     {/* Result */}
                     {result && (
-                        <div className="px-6 py-4">
-                            <div className="rounded-xl border border-border overflow-hidden">
-                                <div className="px-4 py-4 flex items-center gap-3" style={{ background: scoreBg(result.final_score), borderBottom: `1px solid ${scoreColor(result.final_score)}33` }}>
-                                    <div className="flex flex-col items-center font-bold w-16">
-                                        <span className="text-3xl font-extrabold" style={{ color: scoreColor(result.final_score) }}>{result.final_score}</span>
-                                        <span className="text-xs opacity-60" style={{ color: scoreColor(result.final_score) }}>/100</span>
+                        <div style={{ padding: '8px 24px' }}>
+                            <div style={{ border: '1px solid var(--hairline)', borderRadius: 8, overflow: 'hidden' }}>
+                                <div style={{ padding: '16px 18px', display: 'flex', alignItems: 'center', gap: 14, background: scoreTint(result.final_score), borderBottom: `1px solid var(--hairline)` }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 64 }}>
+                                        <span className="t-display" style={{ fontSize: 36, lineHeight: 1, color: scoreColor(result.final_score) }}>{result.final_score}</span>
+                                        <span className="t-mono steel">/100</span>
                                     </div>
                                     <div>
-                                        <div className="flex items-center gap-1.5">
-                                            {result.passed ? <><CheckCircle2 size={14} className="text-green-600" /><span className="text-xs font-semibold text-green-700">Passed</span></> : <><XCircle size={14} className="text-red-500" /><span className="text-xs font-semibold text-red-600">Needs Work</span></>}
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                            {result.passed
+                                                ? <><CheckCircle2 size={14} style={{ color: 'var(--accent-success)' }} /><span className="t-label" style={{ color: 'var(--accent-success)' }}>PASSED</span></>
+                                                : <><XCircle size={14} style={{ color: 'var(--error-red)' }} /><span className="t-label" style={{ color: 'var(--error-red)' }}>NEEDS WORK</span></>}
                                         </div>
                                         {result.hint_penalty > 0 && (
-                                            <p className="text-xs text-muted-foreground mt-0.5">Raw: {result.raw_score} &minus; {result.hint_penalty} hint penalty</p>
+                                            <p className="t-mono steel" style={{ marginTop: 4 }}>Raw {result.raw_score} &minus; {result.hint_penalty} hint penalty</p>
                                         )}
                                     </div>
                                 </div>
-                                <div className="p-4 bg-card text-sm leading-relaxed text-foreground/85">{result.feedback}</div>
+                                <div className="t-body" style={{ padding: '14px 18px', background: 'var(--bg-paper)', fontSize: 14, color: 'var(--text-primary)' }}>{result.feedback}</div>
                             </div>
 
                             {/* Analogy explanation */}
-                            <div className="mt-3 p-4 bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800/30 rounded-xl">
-                                <h4 className="text-xs font-semibold text-blue-700 dark:text-blue-300 mb-1 flex items-center gap-1"><Eye size={12} /> Concept Explained</h4>
-                                <p className="text-sm text-blue-800 dark:text-blue-200">{current!.analogy_explanation}</p>
+                            <div style={{ marginTop: 12, padding: 16, background: 'var(--bg-paper)', border: '1px solid var(--bg-paper-line)', borderLeft: '2px solid var(--accent-primary)', borderRadius: 8 }}>
+                                <div className="t-label" style={{ color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}><Eye size={12} /> CONCEPT EXPLAINED</div>
+                                <p className="t-body" style={{ margin: 0, fontSize: 14, color: 'var(--text-primary)' }}>{current!.analogy_explanation}</p>
                             </div>
 
                             {/* Rubric score breakdown — expandable criterion rows */}
                             {result.rubric_scores && result.rubric_scores.length > 0 && (
-                                <div className="mt-3 bg-card border border-border rounded-xl overflow-hidden">
-                                    <h4 className="text-xs font-semibold text-muted-foreground px-4 pt-3 pb-2 flex items-center gap-1"><BarChart3 size={12} /> Rubric Breakdown</h4>
-                                    <div className="divide-y divide-border">
+                                <div style={{ marginTop: 12, background: 'var(--bg-paper)', border: '1px solid var(--bg-paper-line)', borderRadius: 8, overflow: 'hidden' }}>
+                                    <div className="t-label" style={{ color: 'var(--text-secondary)', padding: '12px 16px 8px', display: 'flex', alignItems: 'center', gap: 6 }}><BarChart3 size={12} /> RUBRIC BREAKDOWN</div>
+                                    <div>
                                         {result.rubric_scores.map((rs, rsIdx) => {
-                                            const pct = rs.max > 0 ? Math.round((rs.earned / rs.max) * 100) : 0;
                                             const passed = rs.earned >= rs.max;
                                             const isExpanded = expandedCriterion === `${rs.criterion}-${rsIdx}`;
-                                            const matchingCrit = (result.evaluated_rubric ?? current!.rubric).find(c => c.name === rs.criterion);
-                                            const categoryColors: Record<string, string> = {
-                                                correctness: '#10b981',
-                                                logic: '#6366f1',
-                                                edge_cases: '#f59e0b',
-                                                syntax_style: '#8b5cf6',
-                                                requirements: '#3b82f6',
-                                            };
-                                            const catColor = categoryColors[rs.category] || '#6b7280';
+                                            const matchingCrit: RubricCriterion | undefined = (result.evaluated_rubric ?? current!.rubric).find(c => c.name === rs.criterion);
+                                            const c = rubricColor(rs.earned, rs.max);
 
                                             return (
-                                                <div key={`${rs.criterion}-${rsIdx}`}>
+                                                <div key={`${rs.criterion}-${rsIdx}`} style={{ borderTop: '1px solid var(--bg-paper-line)' }}>
                                                     <button
                                                         onClick={() => setExpandedCriterion(isExpanded ? null : `${rs.criterion}-${rsIdx}`)}
-                                                        className="w-full px-4 py-2.5 flex items-center gap-2 hover:bg-muted/30 transition-colors text-left"
+                                                        style={{ width: '100%', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10, background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}
                                                     >
                                                         {passed
-                                                            ? <CheckCircle2 size={14} className="text-green-500 flex-shrink-0" />
-                                                            : <XCircle size={14} className="text-red-400 flex-shrink-0" />}
-                                                        <span
-                                                            className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide flex-shrink-0"
-                                                            style={{ background: `${catColor}20`, color: catColor }}
-                                                        >
-                                                            {rs.category.replace('_', ' ')}
-                                                        </span>
-                                                        <span className="text-xs font-medium flex-1 truncate">{rs.criterion}</span>
-                                                        <span className="text-xs font-bold flex-shrink-0" style={{ color: rs.earned >= rs.max ? '#4ade80' : rs.earned === 0 ? '#f87171' : '#facc15' }}>
-                                                            {rs.earned}/{rs.max}
-                                                        </span>
-                                                        {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                                            ? <CheckCircle2 size={14} style={{ color: 'var(--accent-success)', flexShrink: 0 }} />
+                                                            : <XCircle size={14} style={{ color: 'var(--error-red)', flexShrink: 0 }} />}
+                                                        <span className="t-label" style={{ color: 'var(--steel-light)', flexShrink: 0 }}>{rs.category.replace('_', ' ')}</span>
+                                                        <span style={{ fontSize: 12, fontWeight: 500, flex: 1, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rs.criterion}</span>
+                                                        <span className="t-mono" style={{ fontWeight: 700, flexShrink: 0, color: c }}>{rs.earned}/{rs.max}</span>
+                                                        {isExpanded ? <ChevronUp size={12} style={{ color: 'var(--steel-light)' }} /> : <ChevronDown size={12} style={{ color: 'var(--steel-light)' }} />}
                                                     </button>
                                                     {isExpanded && matchingCrit && (
-                                                        <div className="px-4 pb-3 space-y-1.5 bg-muted/10">
-                                                            {matchingCrit.checks.map((check) => {
+                                                        <div style={{ padding: '0 16px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                                            {matchingCrit.checks.map((check: RubricCheck) => {
                                                                 const checkResult = check.result;
                                                                 return (
-                                                                    <div key={check.id} className="flex items-start gap-2 text-xs py-1">
-                                                                        {checkResult
-                                                                            ? <span className="text-green-500 mt-0.5 flex-shrink-0">✓</span>
-                                                                            : <span className="text-red-400 mt-0.5 flex-shrink-0">✗</span>}
-                                                                        <div className="flex-1 min-w-0">
-                                                                            <p className="font-medium" style={{ color: checkResult ? '#4ade80' : '#f87171' }}>{check.question}</p>
+                                                                    <div key={check.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12 }}>
+                                                                        <span style={{ marginTop: 1, flexShrink: 0, color: checkResult ? 'var(--accent-success)' : 'var(--error-red)' }}>{checkResult ? '✓' : '✗'}</span>
+                                                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                                                            <p style={{ margin: 0, fontWeight: 500, color: checkResult ? 'var(--accent-success)' : 'var(--error-red)' }}>{check.question}</p>
                                                                             {check.evidence && (
-                                                                                <p className="mt-0.5" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                                                                                    {check.evidence}
-                                                                                </p>
+                                                                                <p style={{ margin: 0, marginTop: 2, color: 'var(--text-secondary)' }}>{check.evidence}</p>
                                                                             )}
                                                                         </div>
                                                                     </div>
@@ -664,21 +719,22 @@ export default function ProblemSet() {
 
                             {/* Flow: Passed → Next Question | Failed → Show Solution or Resubmit */}
                             {result.passed ? (
-                                <button onClick={goNext} className="mt-4 w-full py-3 bg-gradient-to-r from-primary to-secondary text-white rounded-xl font-semibold flex items-center justify-center gap-2 hover:shadow-lg transition-all">
-                                    {currentIdx < questions.length - 1 ? <><ArrowRight size={18} /> Next Question</> : <><Trophy size={18} /> View Summary</>}
+                                <button onClick={goNext} className="btn btn-paper" style={{ marginTop: 16, width: '100%', justifyContent: 'center' }}>
+                                    {currentIdx < questions.length - 1 ? <>NEXT QUESTION <ArrowRight size={16} /></> : <>VIEW SUMMARY <Trophy size={16} /></>}
                                 </button>
                             ) : (
                                 <>
                                     {!solutionShown[current!.id] ? (
                                         <button
                                             onClick={() => showSolutionForQuestion(current!.id)}
-                                            className="mt-4 w-full py-3 bg-amber-500/20 border border-amber-500/40 text-amber-400 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-amber-500/30 transition-all"
+                                            className="btn btn-ghost-dark"
+                                            style={{ marginTop: 16, width: '100%', justifyContent: 'center' }}
                                         >
-                                            <Eye size={18} /> Show Possible Answer
+                                            <Eye size={16} /> SHOW POSSIBLE ANSWER
                                         </button>
                                     ) : (
-                                        <button onClick={goNext} className="mt-4 w-full py-3 bg-gradient-to-r from-primary to-secondary text-white rounded-xl font-semibold flex items-center justify-center gap-2 hover:shadow-lg transition-all">
-                                            {currentIdx < questions.length - 1 ? <><ArrowRight size={18} /> Next Question</> : <><Trophy size={18} /> View Summary</>}
+                                        <button onClick={goNext} className="btn btn-paper" style={{ marginTop: 16, width: '100%', justifyContent: 'center' }}>
+                                            {currentIdx < questions.length - 1 ? <>NEXT QUESTION <ArrowRight size={16} /></> : <>VIEW SUMMARY <Trophy size={16} /></>}
                                         </button>
                                     )}
                                 </>
@@ -687,18 +743,18 @@ export default function ProblemSet() {
                     )}
                 </div>
 
-                {/* Right panel — Editor */}
-                <div className="flex flex-col min-h-0 bg-[#1e1e1e]" style={{ flex: '1 1 0%', minWidth: 0 }}>
+                {/* Right panel — Editor (stays dark; it's a code surface) */}
+                <div style={{ flex: '1 1 0%', minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--code-bg)' }}>
 
                     {solutionShown[current!.id] && result?.example_solution ? (
                         /* ── Split view: Your Code vs Possible Answer ── */
                         <>
-                            <div className="flex-1 min-h-0 flex flex-col">
-                                <div className="px-4 py-2 bg-[#252526] border-b border-[#3e3e42] flex items-center gap-2">
-                                    <Code2 size={14} className="text-[#cccccc]" />
-                                    <span className="text-xs font-mono text-[#cccccc]">Your Code</span>
+                            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                                <div style={{ padding: '8px 16px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--hairline)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <Code2 size={14} style={{ color: 'var(--text-secondary)' }} />
+                                    <span className="t-mono" style={{ color: 'var(--text-secondary)' }}>YOUR CODE</span>
                                 </div>
-                                <div className="flex-1 min-h-0">
+                                <div style={{ flex: 1, minHeight: 0 }}>
                                     <Editor
                                         height="100%"
                                         language={current!.language || 'python'}
@@ -717,12 +773,12 @@ export default function ProblemSet() {
                                     />
                                 </div>
                             </div>
-                            <div className="flex-1 min-h-0 flex flex-col border-t-2 border-amber-500/40">
-                                <div className="px-4 py-2 bg-[#1a2332] border-b border-amber-500/20 flex items-center gap-2">
-                                    <Eye size={14} className="text-amber-400" />
-                                    <span className="text-xs font-mono text-amber-400">Possible Answer</span>
+                            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', borderTop: '2px solid var(--accent-primary)' }}>
+                                <div style={{ padding: '8px 16px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--hairline)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <Eye size={14} style={{ color: 'var(--accent-primary)' }} />
+                                    <span className="t-mono" style={{ color: 'var(--accent-primary)' }}>POSSIBLE ANSWER</span>
                                 </div>
-                                <div className="flex-1 min-h-0">
+                                <div style={{ flex: 1, minHeight: 0 }}>
                                     <Editor
                                         height="100%"
                                         language={current!.language || 'python'}
@@ -745,17 +801,15 @@ export default function ProblemSet() {
                     ) : (
                         /* ── Normal editor ── */
                         <>
-                            <div className="px-4 py-2.5 bg-[#252526] border-b border-[#3e3e42] flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
-                                    <div className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
-                                    <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
-                                    <span className="ml-2 text-xs font-mono text-[#cccccc]">solution.{current!.language === 'python' ? 'py' : current!.language}</span>
+                            <div style={{ padding: '10px 16px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--hairline)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <Code2 size={14} style={{ color: 'var(--accent-primary)' }} />
+                                    <span className="t-mono" style={{ color: 'var(--text-primary)' }}>solution.{current!.language === 'python' ? 'py' : current!.language}</span>
                                 </div>
-                                <span className="text-xs text-[#858585] font-mono">{current!.language}</span>
+                                <span className="t-mono steel">{current!.language}</span>
                             </div>
 
-                            <div className="flex-1 min-h-0">
+                            <div style={{ flex: 1, minHeight: 0 }}>
                                 <Editor
                                     height="100%"
                                     language={current!.language || 'python'}
@@ -778,32 +832,35 @@ export default function ProblemSet() {
                     )}
 
                     {/* Action bar */}
-                    <div className="px-5 py-4 bg-[#252526] border-t border-[#3e3e42] flex items-center gap-3">
+                    <div style={{ padding: '12px 18px', background: 'var(--bg-surface)', borderTop: '1px solid var(--hairline)', display: 'flex', alignItems: 'center', gap: 10 }}>
                         {currentIdx > 0 && (
                             <button
                                 onClick={() => setCurrentIdx(i => i - 1)}
-                                className="px-4 py-3 rounded-xl border border-[#3e3e42] text-[#cccccc] text-sm font-medium flex items-center gap-2 hover:bg-[#2d2d2d] transition-colors"
+                                className="btn btn-ghost-dark"
+                                style={{ padding: '12px 16px' }}
                             >
-                                <ArrowLeft size={16} /> Previous
+                                <ArrowLeft size={16} /> PREVIOUS
                             </button>
                         )}
                         {!isSubmitted && !solutionShown[current!.id] && (
                             <button
                                 onClick={skipQuestion}
-                                className="px-4 py-3 rounded-xl border border-[#3e3e42] text-[#858585] text-sm font-medium flex items-center gap-2 hover:bg-[#2d2d2d] hover:text-[#cccccc] transition-colors"
+                                className="btn btn-ghost-dark"
+                                style={{ padding: '12px 16px', color: 'var(--steel-light)' }}
                             >
-                                <SkipForward size={16} /> Skip
+                                <SkipForward size={16} /> SKIP
                             </button>
                         )}
                         {!solutionShown[current!.id] && (
                             <button
                                 onClick={handleSubmit}
                                 disabled={submitting}
-                                className="flex-1 py-3 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg transition-all"
+                                className="btn btn-red"
+                                style={{ flex: 1, justifyContent: 'center' }}
                             >
-                                {submitting ? <><Loader2 size={18} className="animate-spin" /> Evaluating…</> :
-                                    isSubmitted ? <><Send size={18} /> Resubmit</> :
-                                        <><Send size={18} /> Submit Answer</>}
+                                {submitting ? <><Loader2 size={16} className="animate-spin" /> EVALUATING…</> :
+                                    isSubmitted ? <><Send size={16} /> RESUBMIT</> :
+                                        <><Send size={16} /> SUBMIT ANSWER</>}
                             </button>
                         )}
                     </div>

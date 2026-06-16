@@ -31,69 +31,59 @@ export function SessionControls({
   // Next is disabled only if it's the last slide AND there's no next lesson
   const nextDisabled = isLastSlide && !hasNextLesson;
 
-  const prevLabel = isFirstSlide && hasPrevLesson ? '← Prev Lesson' : 'Previous';
-  const nextLabel = isLastSlide && hasNextLesson ? 'Next Lesson →' : 'Next';
+  const prevLabel = isFirstSlide && hasPrevLesson ? '← PREV LESSON' : 'PREVIOUS';
+  const nextLabel = isLastSlide && hasNextLesson ? 'NEXT LESSON →' : 'NEXT';
+
+  // Slide-strip indicator (mirrors the personifai SlideStrip): the active slide
+  // is a wide accent bar, visited slides are steel, upcoming are faint.
+  const dotCount = Math.min(totalSlides, 12);
 
   return (
-    <div className="border-t-2 border-border bg-card shadow-lg">
-      <div className="px-6 py-3">
-        <div className="flex items-center justify-between">
-          {/* Navigation */}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onPrev}
-              disabled={prevDisabled}
-              className="px-4 py-2 border-2 border-border rounded-lg hover:border-secondary hover:text-secondary transition-colors flex items-center gap-2 font-medium text-sm disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <ChevronLeft size={16} />
-              <span>{prevLabel}</span>
-            </button>
-            <button
-              onClick={onNext}
-              disabled={nextDisabled}
-              className="px-4 py-2 bg-gradient-to-r from-secondary to-accent text-white rounded-lg font-semibold hover:shadow-lg transition-all flex items-center gap-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <span>{nextLabel}</span>
-              <ChevronRight size={16} />
-            </button>
-          </div>
-
-          {/* Progress dots */}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1">
-              {Array.from({ length: Math.min(totalSlides, 12) }, (_, i) => (
-                <div
-                  key={i}
-                  className={`h-2 rounded-full transition-all ${
-                    i < currentSlide
-                      ? 'bg-accent w-2'
-                      : i === currentSlide
-                      ? 'bg-secondary w-8'
-                      : 'bg-muted w-2'
-                  }`}
-                />
-              ))}
-            </div>
-            <span className="text-sm font-mono text-foreground">
-              {currentSlide + 1}/{totalSlides}
-            </span>
-          </div>
-
-          {/* Complete */}
-          <button
-            onClick={onComplete}
-            disabled={isCompleting}
-            className="px-4 py-2 bg-gradient-to-r from-primary to-secondary text-white rounded-lg font-semibold hover:shadow-lg transition-all flex items-center gap-2 text-sm disabled:opacity-50"
-          >
-            {isCompleting ? (
-              <><Loader2 size={16} className="animate-spin" /> Completing…</>
-            ) : isLastLesson ? (
-              <><CheckCircle2 size={16} /> Finish Course</>
-            ) : (
-              <><CheckCircle2 size={16} /> Complete & Next</>
-            )}
+    <div className="codex" style={{ borderTop: '1px solid var(--hairline)', background: 'var(--bg-primary)' }}>
+      <div style={{ padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+        {/* Navigation */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button onClick={onPrev} disabled={prevDisabled} className="btn btn-ghost-dark" style={{ padding: '12px 18px' }}>
+            <ChevronLeft size={16} /> {prevLabel}
+          </button>
+          <button onClick={onNext} disabled={nextDisabled} className="btn btn-paper" style={{ padding: '12px 18px' }}>
+            {nextLabel} <ChevronRight size={16} />
           </button>
         </div>
+
+        {/* Slide strip + counter */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {Array.from({ length: dotCount }, (_, i) => {
+              const active = i === currentSlide;
+              const visited = i < currentSlide;
+              return (
+                <span
+                  key={i}
+                  style={{
+                    width: active ? 28 : 16,
+                    height: 4,
+                    background: active ? 'var(--accent-primary)' : visited ? 'var(--steel-light)' : 'var(--steel)',
+                    opacity: visited || active ? 1 : 0.4,
+                    transition: 'width 200ms ease',
+                  }}
+                />
+              );
+            })}
+          </div>
+          <span className="t-mono steel">{currentSlide + 1} / {totalSlides}</span>
+        </div>
+
+        {/* Complete */}
+        <button onClick={onComplete} disabled={isCompleting} className="btn btn-red" style={{ padding: '12px 18px' }}>
+          {isCompleting ? (
+            <><Loader2 size={16} className="animate-spin" /> COMPLETING…</>
+          ) : isLastLesson ? (
+            <><CheckCircle2 size={16} /> FINISH COURSE</>
+          ) : (
+            <><CheckCircle2 size={16} /> COMPLETE & NEXT</>
+          )}
+        </button>
       </div>
     </div>
   );

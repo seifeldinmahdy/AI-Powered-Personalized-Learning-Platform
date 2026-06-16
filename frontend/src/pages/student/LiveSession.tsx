@@ -1,4 +1,3 @@
-import { Header } from '../../components/Header';
 import { SlidesViewer } from '../../components/SlidesViewer';
 import { GeneratedSlidesViewer } from '../../components/GeneratedSlidesViewer';
 import { CompactTutor } from '../../components/CompactTutor';
@@ -12,7 +11,7 @@ import {
   getLessonCompletions,
   createLessonCompletion,
 } from '../../services/progress';
-import { Loader2, BookOpen, CheckCircle2, PlayCircle, Lock, ChevronDown, ChevronRight, Camera, CameraOff } from 'lucide-react';
+import { Loader2, BookOpen, CheckCircle2, PlayCircle, Lock, ChevronDown, ChevronRight, Camera, CameraOff, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import {
@@ -693,57 +692,25 @@ export default function LiveSession() {
   if (loading) {
     if (sessionStorage.getItem('pathway_plan')) {
       return (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gradient-to-br from-[#0f0c29] via-[#302b63] to-[#24243e]">
-          <div className="absolute inset-0 overflow-hidden">
-            {Array.from({ length: 20 }).map((_, i) => (
-              <div
-                key={i}
-                className="absolute rounded-full bg-white/5 animate-pulse"
-                style={{
-                  width: `${Math.random() * 6 + 2}px`,
-                  height: `${Math.random() * 6 + 2}px`,
-                  left: `${Math.random() * 100}%`,
-                  top: `${Math.random() * 100}%`,
-                  animationDuration: `${Math.random() * 3 + 2}s`,
-                  animationDelay: `${Math.random() * 2}s`,
-                }}
-              />
-            ))}
-          </div>
-
-          <div className="relative z-10 flex flex-col items-center gap-8 max-w-lg px-6">
-            <div className="relative">
-              <div className="w-24 h-24 rounded-full border-4 border-transparent border-t-purple-400 border-r-blue-400 animate-spin" />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <Loader2 size={32} className="text-purple-300 animate-pulse" />
-              </div>
+        <div className="codex" style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)', padding: 24 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 28, maxWidth: 520, textAlign: 'center' }}>
+            <Loader2 size={36} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
+            <div>
+              <div className="t-label" style={{ color: 'var(--accent-primary)', marginBottom: 12 }}>BUILDING YOUR SESSION</div>
+              <h1 className="t-heading" style={{ fontSize: 'clamp(26px,4vw,38px)', color: 'var(--text-primary)' }}>Generating personalized materials</h1>
             </div>
-
-            <div className="text-center">
-              <h1 className="text-2xl font-bold text-white mb-2">
-                Building Your AI Course
-              </h1>
-              <p className="text-white/50 text-sm">
-                Generating personalized session materials in real-time
-              </p>
-            </div>
-
-            <div className="h-8 flex items-center justify-center">
-              <p className="text-purple-300 text-base font-medium">
-                {SLIDE_LOADING_MESSAGES[loadingMsg]}
-              </p>
-            </div>
-
-            <div className="flex gap-2">
+            <p className="t-body" style={{ fontSize: 15, color: 'var(--text-secondary)', minHeight: 24 }}>{SLIDE_LOADING_MESSAGES[loadingMsg]}</p>
+            <div style={{ display: 'flex', gap: 4 }}>
               {SLIDE_LOADING_MESSAGES.map((_, i) => (
-                <div
+                <span
                   key={i}
-                  className={`h-1.5 rounded-full transition-all duration-300 ${i === loadingMsg
-                    ? 'bg-purple-400 w-8'
-                    : i < loadingMsg
-                      ? 'bg-purple-600 w-1.5'
-                      : 'bg-white/10 w-1.5'
-                    }`}
+                  style={{
+                    height: 4,
+                    width: i === loadingMsg ? 28 : 6,
+                    background: i <= loadingMsg ? 'var(--accent-primary)' : 'var(--steel)',
+                    opacity: i <= loadingMsg ? 1 : 0.4,
+                    transition: 'width 300ms ease',
+                  }}
                 />
               ))}
             </div>
@@ -752,23 +719,19 @@ export default function LiveSession() {
       );
     }
     return (
-      <>
-        <Header title="Loading..." backLink="/dashboard" backLabel="Dashboard" />
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 size={40} className="animate-spin text-secondary" />
-        </div>
-      </>
+      <div className="codex" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)' }}>
+        <Loader2 size={36} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
+      </div>
     );
   }
 
   if (error || (!lesson && slides.length === 0)) {
     return (
-      <>
-        <Header title="Error" backLink="/dashboard" backLabel="Dashboard" />
-        <div className="flex-1 flex items-center justify-center">
-          <p className="text-destructive">{error || 'Lesson not found.'}</p>
-        </div>
-      </>
+      <div className="codex" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, background: 'var(--bg-primary)', textAlign: 'center', padding: 24 }}>
+        <div className="t-label" style={{ color: 'var(--error-red)' }}>SESSION UNAVAILABLE</div>
+        <p className="t-heading" style={{ fontSize: 22, color: 'var(--text-primary)' }}>{error || 'Lesson not found.'}</p>
+        <button onClick={() => navigate('/dashboard')} className="btn btn-ghost-dark">← DASHBOARD</button>
+      </div>
     );
   }
 
@@ -788,41 +751,46 @@ export default function LiveSession() {
 
 
   return (
-    <>
-      <Header
-        title={headerTitle}
-        backLink={`/courses/${courseId}`}
-        backLabel="Course"
-        actionLeft={
-          <button
-            onClick={() => setDrawerOpen((o) => !o)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors"
-          >
-            <BookOpen size={15} />
-            <span>Lessons</span>
-          </button>
-        }
-      />
+    <div className="codex" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--bg-primary)' }}>
+      {/* Immersive session top bar (codex) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '0 24px', height: 52, borderBottom: '1px solid var(--hairline)', background: 'var(--bg-primary)', flexShrink: 0 }}>
+        <button
+          onClick={() => setDrawerOpen((o) => !o)}
+          className="t-label"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'transparent', border: '1px solid var(--hairline)', borderRadius: 8, color: 'var(--text-secondary)', padding: '8px 12px', cursor: 'pointer' }}
+        >
+          <BookOpen size={14} /> LESSONS
+        </button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="t-label" style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerTitle}</div>
+        </div>
+        <button
+          onClick={() => navigate(`/courses/${courseId}`)}
+          className="t-label"
+          style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+        >
+          EXIT →
+        </button>
+      </div>
 
       {/* Slide-out Drawer — rendered into document.body via portal to escape overflow:hidden stacking context */}
       {drawerOpen && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[9999]">
+        <div className="codex" style={{ position: 'fixed', inset: 0, zIndex: 9999 }}>
           {/* Backdrop */}
-          <div className="absolute inset-0 bg-black/30" onClick={() => setDrawerOpen(false)} />
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)' }} onClick={() => setDrawerOpen(false)} />
 
           {/* Drawer panel */}
-          <div className="absolute left-0 top-0 h-full w-72 bg-card border-r border-border flex flex-col shadow-2xl animate-in slide-in-from-left duration-200">
+          <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: 300, background: 'var(--bg-surface)', borderRight: '1px solid var(--hairline)', display: 'flex', flexDirection: 'column', boxShadow: '2px 0 24px rgba(0,0,0,0.12)' }}>
             {/* Drawer Header */}
-            <div className="px-4 py-3 border-b border-border bg-gradient-to-r from-primary/5 to-secondary/5 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2">
-                <BookOpen size={15} className="text-secondary" />
-                <span className="text-sm font-semibold text-foreground">Course Lessons</span>
-              </div>
-              <button onClick={() => setDrawerOpen(false)} className="text-muted-foreground hover:text-foreground transition-colors text-xl leading-none">&times;</button>
+            <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--hairline)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+              <span className="t-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--accent-primary)' }}>
+                <BookOpen size={14} /> COURSE LESSONS
+              </span>
+              <button onClick={() => setDrawerOpen(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex' }}><X size={16} /></button>
             </div>
 
             {/* Modules + Lessons */}
-            <div className="flex-1 overflow-y-auto py-2">
+            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
               {modules
                 .sort((a, b) => a.module_order - b.module_order)
                 .map((mod) => {
@@ -837,17 +805,18 @@ export default function LiveSession() {
                           next.has(mod.id) ? next.delete(mod.id) : next.add(mod.id);
                           return next;
                         })}
-                        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-muted/40 transition-colors text-left"
+                        className="t-label"
+                        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', color: 'var(--text-secondary)' }}
                       >
-                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide truncate pr-2">{mod.title}</span>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 8 }}>{mod.title}</span>
                         {isExpanded
-                          ? <ChevronDown size={13} className="text-muted-foreground shrink-0" />
-                          : <ChevronRight size={13} className="text-muted-foreground shrink-0" />}
+                          ? <ChevronDown size={13} style={{ flexShrink: 0 }} />
+                          : <ChevronRight size={13} style={{ flexShrink: 0 }} />}
                       </button>
 
                       {/* Lessons */}
                       {isExpanded && (
-                        <div className="pb-1">
+                        <div style={{ paddingBottom: 4 }}>
                           {modLessons.map((l) => {
                             const isCurrent = l.id === Number(lessonId);
                             const isCompleted = completedLessonIds.has(l.id);
@@ -858,19 +827,16 @@ export default function LiveSession() {
                                   navigate(`/course/${courseId}/lesson/${l.id}`);
                                   setDrawerOpen(false);
                                 }}
-                                className={`w-full flex items-center gap-2.5 px-5 py-2 text-left transition-colors ${isCurrent
-                                  ? 'bg-secondary/15 border-l-2 border-secondary'
-                                  : 'hover:bg-muted/40 border-l-2 border-transparent'
-                                  }`}
+                                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 20px', textAlign: 'left', background: isCurrent ? 'rgba(37,99,235,0.06)' : 'transparent', borderLeft: `2px solid ${isCurrent ? 'var(--accent-primary)' : 'transparent'}`, border: 'none', borderLeftWidth: 2, borderLeftStyle: 'solid', borderLeftColor: isCurrent ? 'var(--accent-primary)' : 'transparent', cursor: 'pointer' }}
                               >
                                 {isCompleted ? (
-                                  <CheckCircle2 size={14} className="text-green-500 shrink-0" />
+                                  <CheckCircle2 size={14} style={{ color: 'var(--accent-success)', flexShrink: 0 }} />
                                 ) : isCurrent ? (
-                                  <PlayCircle size={14} className="text-secondary shrink-0" />
+                                  <PlayCircle size={14} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
                                 ) : (
-                                  <Lock size={14} className="text-muted-foreground/50 shrink-0" />
+                                  <Lock size={14} style={{ color: 'var(--steel-light)', flexShrink: 0 }} />
                                 )}
-                                <span className={`text-xs leading-snug truncate ${isCurrent ? 'font-semibold text-secondary' : isCompleted ? 'text-foreground' : 'text-muted-foreground'}`}>
+                                <span style={{ fontSize: 12, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: isCurrent ? 600 : 400, color: isCurrent ? 'var(--accent-primary)' : isCompleted ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
                                   {l.title}
                                 </span>
                               </button>
@@ -887,7 +853,7 @@ export default function LiveSession() {
         document.body!
       )}
 
-      <div ref={contentRef} className="flex-1 flex min-h-0 overflow-hidden gap-0 relative bg-background">
+      <div ref={contentRef} style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden', position: 'relative', background: 'var(--bg-primary)' }}>
         {/* Slides Viewer */}
         {slides.length > 0 ? (
           <GeneratedSlidesViewer
@@ -948,39 +914,43 @@ export default function LiveSession() {
       {/* Camera toggle button — small pill in bottom-right */}
       <button
         onClick={handleCameraToggle}
-        className={`fixed bottom-20 right-4 z-50 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border shadow-md transition-all ${cameraEnabled
-          ? 'bg-green-100 border-green-400 text-green-600'
-          : 'bg-card border-border text-muted-foreground hover:border-secondary hover:text-foreground'
-          }`}
+        className="t-label"
+        style={{
+          position: 'fixed', bottom: 80, right: 16, zIndex: 50,
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          padding: '8px 14px', borderRadius: 999, cursor: 'pointer',
+          boxShadow: '0 4px 14px rgba(0,0,0,0.12)',
+          background: cameraEnabled ? 'rgba(22,163,74,0.1)' : 'var(--bg-surface)',
+          border: `1px solid ${cameraEnabled ? 'var(--accent-success)' : 'var(--hairline)'}`,
+          color: cameraEnabled ? 'var(--accent-success)' : 'var(--text-secondary)',
+        }}
         title={cameraEnabled ? 'Disable emotion tracking' : 'Enable emotion tracking (camera)'}
       >
         {cameraEnabled ? <Camera size={14} /> : <CameraOff size={14} />}
-        <span>{cameraEnabled ? 'Tracking On' : 'Tracking Off'}</span>
+        <span>{cameraEnabled ? 'TRACKING ON' : 'TRACKING OFF'}</span>
       </button>
 
       {/* Emotion-capture consent modal (Batch 11b) — informed opt-in before any
           webcam access. Off by default; revocable. (Styling intentionally minimal.) */}
       {showConsentModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
-          <div className="max-w-md w-full bg-card border border-border rounded-2xl p-6 space-y-4">
-            <h2 className="text-lg font-bold">Enable emotion-aware tutoring?</h2>
-            <p className="text-sm text-muted-foreground">
+        <div className="codex" style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)', padding: 16 }}>
+          <div style={{ maxWidth: 460, width: '100%', background: 'var(--bg-surface)', border: '1px solid var(--hairline)', borderRadius: 12, padding: 28 }}>
+            <div className="t-label" style={{ color: 'var(--accent-primary)', marginBottom: 10 }}>EMOTION-AWARE TUTORING</div>
+            <h2 className="t-heading" style={{ fontSize: 22, color: 'var(--text-primary)', marginBottom: 14 }}>Enable emotion-aware tutoring?</h2>
+            <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 14 }}>
               With your permission, the tutor can use your webcam to read
-              facial-expression-derived <strong>emotion labels</strong> (e.g. “engaged”,
+              facial-expression-derived <strong style={{ color: 'var(--text-primary)' }}>emotion labels</strong> (e.g. “engaged”,
               “confused”) about every 25 seconds, to adapt how it explains things.
             </p>
-            <ul className="text-sm text-muted-foreground list-disc pl-5 space-y-1">
-              <li><strong>No video or images are stored</strong> — only short-lived emotion labels.</li>
-              <li>Used <strong>only</strong> to adapt tutor delivery. It <strong>never affects your grades</strong>, scores, mastery, or certificate.</li>
-              <li>Raw signals are deleted after the session; you can withdraw anytime (which deletes your emotion data).</li>
+            <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 22 }}>
+              <li className="t-body" style={{ fontSize: 13, color: 'var(--text-secondary)', display: 'flex', gap: 8 }}><span className="sq-bullet" style={{ marginTop: 7 }} /><span><strong style={{ color: 'var(--text-primary)' }}>No video or images are stored</strong> — only short-lived emotion labels.</span></li>
+              <li className="t-body" style={{ fontSize: 13, color: 'var(--text-secondary)', display: 'flex', gap: 8 }}><span className="sq-bullet" style={{ marginTop: 7 }} /><span>Used <strong style={{ color: 'var(--text-primary)' }}>only</strong> to adapt tutor delivery. It <strong style={{ color: 'var(--text-primary)' }}>never affects your grades</strong>, scores, mastery, or certificate.</span></li>
+              <li className="t-body" style={{ fontSize: 13, color: 'var(--text-secondary)', display: 'flex', gap: 8 }}><span className="sq-bullet" style={{ marginTop: 7 }} /><span>Raw signals are deleted after the session; you can withdraw anytime (which deletes your emotion data).</span></li>
             </ul>
-            <div className="flex gap-2 justify-end pt-2">
-              <button onClick={() => setShowConsentModal(false)}
-                className="px-4 py-2 rounded-lg border border-border text-sm">Not now</button>
-              <button onClick={handleWithdrawConsent}
-                className="px-4 py-2 rounded-lg border border-border text-sm text-muted-foreground">Withdraw &amp; delete</button>
-              <button onClick={handleGrantConsent}
-                className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold">I consent</button>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button onClick={() => setShowConsentModal(false)} className="btn btn-ghost-dark" style={{ padding: '10px 16px' }}>NOT NOW</button>
+              <button onClick={handleWithdrawConsent} className="btn btn-ghost-dark" style={{ padding: '10px 16px', color: 'var(--text-secondary)' }}>WITHDRAW &amp; DELETE</button>
+              <button onClick={handleGrantConsent} className="btn btn-red" style={{ padding: '10px 16px' }}>I CONSENT</button>
             </div>
           </div>
         </div>
@@ -989,6 +959,6 @@ export default function LiveSession() {
       {/* Hidden video and canvas for FER capture */}
       <video ref={videoRef} style={{ display: 'none' }} playsInline muted />
       <canvas ref={canvasRef} style={{ display: 'none' }} />
-    </>
+    </div>
   );
 }
