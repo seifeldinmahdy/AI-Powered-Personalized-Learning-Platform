@@ -6,6 +6,11 @@ import os
 import sys
 import logging
 from dotenv import load_dotenv
+
+# Load environment variables BEFORE any local imports, because service modules
+# read env vars (OLLAMA_HOST, INTERNAL_SERVICE_KEY, etc.) at import time.
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
@@ -31,8 +36,6 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-
-load_dotenv()
 
 app = FastAPI(
     title="AI Learning Platform"

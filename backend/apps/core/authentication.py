@@ -24,6 +24,24 @@ User = get_user_model()
 # Shared secret — must match the value in the AI service's .env
 INTERNAL_SERVICE_KEY = os.getenv("INTERNAL_SERVICE_KEY", "")
 
+# Lazily-created user for service-to-service calls that do not impersonate a
+# specific student (e.g., reading course-level CLOs and concepts).
+_service_user = None
+
+
+def _get_service_user():
+    global _service_user
+    if _service_user is None:
+        _service_user, _ = User.objects.get_or_create(
+            username="internal-service",
+            defaults={
+                "role": "student",
+                "is_active": True,
+                "email": "internal@service.local",
+            },
+        )
+    return _service_user
+
 
 class InternalServiceAuthentication(BaseAuthentication):
     """
@@ -57,7 +75,9 @@ class InternalServiceAuthentication(BaseAuthentication):
             raise AuthenticationFailed("Invalid service key")
 
         if not student_id:
-            raise AuthenticationFailed("X-Student-ID header is required")
+            # Service-only request (no student impersonation); return the shared
+            # service user so course-level reads can satisfy IsAuthenticated.
+            return (_get_service_user(), "internal-service")
 
         try:
             user = User.objects.get(pk=int(student_id))

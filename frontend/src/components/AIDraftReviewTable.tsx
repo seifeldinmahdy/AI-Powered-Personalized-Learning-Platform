@@ -26,9 +26,9 @@ function genId() {
 }
 
 const STATUS_BADGE: Record<RowStatus, string> = {
-    pending: 'bg-amber-100 text-amber-700',
-    approved: 'bg-green-100 text-green-700',
-    edited: 'bg-blue-100 text-blue-700',
+    pending: 'admin-badge admin-badge-amber',
+    approved: 'admin-badge admin-badge-green',
+    edited: 'admin-badge admin-badge-blue',
 };
 
 export function AIDraftReviewTable<T extends object>({
@@ -100,37 +100,33 @@ export function AIDraftReviewTable<T extends object>({
 
     return (
         <div className="space-y-4">
-            <div className="overflow-x-auto rounded-xl border border-border">
-                <table className="w-full text-sm">
-                    <thead className="bg-muted/50">
+            <div className="admin-card overflow-hidden">
+                <table className="admin-table">
+                    <thead>
                         <tr>
                             {columns.map((col) => (
                                 <th
                                     key={col.key}
-                                    className={`px-4 py-3 text-left font-semibold text-muted-foreground ${col.width ?? ''}`}
+                                    className={col.width ?? ''}
                                 >
                                     {col.header}
                                 </th>
                             ))}
-                            <th className="px-4 py-3 text-left font-semibold text-muted-foreground w-28">
-                                Status
-                            </th>
-                            <th className="px-4 py-3 w-28" />
+                            <th style={{ width: '7rem' }}>Status</th>
+                            <th style={{ width: '7rem' }} />
                         </tr>
                     </thead>
                     <tbody>
                         {rows.map((row) => {
                             const isEditing = editingId === row._localId;
                             return (
-                                <tr
-                                    key={row._localId}
-                                    className="border-t border-border hover:bg-muted/30 transition-colors"
-                                >
+                                <tr key={row._localId}>
                                     {columns.map((col) => (
-                                        <td key={col.key} className="px-4 py-3 align-top">
+                                        <td key={col.key}>
                                             {isEditing && col.editable ? (
                                                 <input
-                                                    className="w-full border border-border rounded-lg px-2 py-1 text-sm bg-input-background focus:outline-none focus:ring-1 focus:ring-ring"
+                                                    className="admin-input w-full"
+                                                    style={{ padding: '6px 8px', fontSize: '14px' }}
                                                     value={String(editBuffer[col.key] ?? '')}
                                                     onChange={(e) =>
                                                         setEditBuffer((prev) => ({
@@ -142,33 +138,35 @@ export function AIDraftReviewTable<T extends object>({
                                             ) : col.renderCell ? (
                                                 col.renderCell(row[col.key], row as unknown as T)
                                             ) : (
-                                                <span className="text-foreground">
+                                                <span style={{ color: 'var(--admin-ink)' }}>
                                                     {String(row[col.key] ?? '')}
                                                 </span>
                                             )}
                                         </td>
                                     ))}
-                                    <td className="px-4 py-3 align-top">
+                                    <td>
                                         <span
-                                            className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${STATUS_BADGE[row._status]}`}
+                                            className={STATUS_BADGE[row._status]}
+                                            style={{ padding: '4px 8px', fontSize: '11px' }}
                                         >
                                             {row._status}
                                         </span>
                                     </td>
-                                    <td className="px-4 py-3 align-top">
+                                    <td>
                                         <div className="flex items-center gap-1 justify-end">
                                             {isEditing ? (
                                                 <>
                                                     <button
                                                         onClick={() => commitEdit(row._localId)}
-                                                        className="p-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20"
+                                                        className="admin-btn admin-btn-icon"
+                                                        style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}
                                                         title="Save edit"
                                                     >
                                                         <Check size={13} />
                                                     </button>
                                                     <button
                                                         onClick={cancelEdit}
-                                                        className="p-1.5 rounded-lg bg-muted text-muted-foreground hover:bg-muted/80"
+                                                        className="admin-btn admin-btn-ghost admin-btn-icon"
                                                         title="Cancel"
                                                     >
                                                         <X size={13} />
@@ -179,7 +177,8 @@ export function AIDraftReviewTable<T extends object>({
                                                     {row._status !== 'approved' && (
                                                         <button
                                                             onClick={() => approve(row._localId)}
-                                                            className="p-1.5 rounded-lg bg-green-50 text-green-600 hover:bg-green-100"
+                                                            className="admin-btn admin-btn-icon"
+                                                            style={{ background: 'var(--admin-success-subtle, #dcfce7)', color: 'var(--admin-success)' }}
                                                             title="Approve"
                                                         >
                                                             <Check size={13} />
@@ -187,14 +186,14 @@ export function AIDraftReviewTable<T extends object>({
                                                     )}
                                                     <button
                                                         onClick={() => startEdit(row)}
-                                                        className="p-1.5 rounded-lg hover:bg-muted/60 text-muted-foreground"
+                                                        className="admin-btn admin-btn-ghost admin-btn-icon"
                                                         title="Edit"
                                                     >
                                                         <Edit size={13} />
                                                     </button>
                                                     <button
                                                         onClick={() => remove(row._localId)}
-                                                        className="p-1.5 rounded-lg hover:bg-destructive/10 text-destructive"
+                                                        className="admin-btn admin-btn-ghost-danger admin-btn-icon"
                                                         title="Delete"
                                                     >
                                                         <Trash2 size={13} />
@@ -210,7 +209,8 @@ export function AIDraftReviewTable<T extends object>({
                             <tr>
                                 <td
                                     colSpan={columns.length + 2}
-                                    className="px-4 py-8 text-center text-muted-foreground text-sm"
+                                    className="text-center"
+                                    style={{ color: 'var(--admin-ink-secondary)', padding: '32px' }}
                                 >
                                     No drafts. Add a row manually or generate new ones.
                                 </td>
@@ -223,7 +223,7 @@ export function AIDraftReviewTable<T extends object>({
             <div className="flex items-center justify-between">
                 <button
                     onClick={addRow}
-                    className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+                    className="admin-btn admin-btn-ghost admin-btn-sm"
                 >
                     <Plus size={14} /> Add Row
                 </button>
@@ -231,7 +231,7 @@ export function AIDraftReviewTable<T extends object>({
                     {onCancel && (
                         <button
                             onClick={onCancel}
-                            className="px-4 py-2 rounded-xl text-sm text-muted-foreground hover:bg-muted/60 transition-colors"
+                            className="admin-btn admin-btn-ghost admin-btn-sm"
                         >
                             Cancel
                         </button>
@@ -239,7 +239,7 @@ export function AIDraftReviewTable<T extends object>({
                     <button
                         onClick={handleSave}
                         disabled={saving}
-                        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-60 transition-colors"
+                        className="admin-btn admin-btn-primary admin-btn-sm disabled:opacity-60"
                     >
                         {saving ? (
                             <Loader2 size={14} className="animate-spin" />

@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
@@ -204,7 +205,7 @@ class Enrollment(models.Model):
         max_digits=5,
         decimal_places=2,
         default=0.00,
-        validators=[MinValueValidator(0.0), MaxValueValidator(100.0)],
+        validators=[MinValueValidator(Decimal("0.00")), MaxValueValidator(Decimal("100.00"))],
         help_text="Overall course completion percentage (0.00 – 100.00).",
     )
     current_score = models.IntegerField(default=0)
@@ -220,6 +221,7 @@ class Enrollment(models.Model):
     class Meta:
         db_table = "enrollments"
         unique_together = ["student", "course"]
+        ordering = ["-enrolled_at"]
         verbose_name = "Enrollment"
         verbose_name_plural = "Enrollments"
 

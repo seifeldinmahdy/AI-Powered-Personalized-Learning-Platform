@@ -11,6 +11,8 @@ import json
 import logging
 from pathlib import Path
 
+from fastapi import HTTPException
+
 # Ensure course_pathway/src is on sys.path for OllamaClient import
 _pathway_src = str(Path(__file__).resolve().parent.parent.parent / "course_pathway" / "src")
 if _pathway_src not in sys.path:
@@ -20,6 +22,30 @@ from pathway.llm.naming import OllamaClient  # type: ignore
 
 logger = logging.getLogger(__name__)
 
+
+def _classify_ollama_error(e: Exception) -> HTTPException | None:
+    """Translate common Ollama runtime failures into actionable HTTP errors."""
+    err_str = str(e)
+    if "404" in err_str and "api/chat" in err_str:
+        model = os.getenv("OLLAMA_MODEL", "gpt-oss:120b")
+        return HTTPException(
+            status_code=503,
+            detail=(
+                f"Ollama model '{model}' is not available on this machine. "
+                f"Run: ollama pull {model}"
+            ),
+        )
+    if (
+        "10061" in err_str
+        or "actively refused" in err_str
+        or "Connection refused" in err_str
+    ):
+        return HTTPException(
+            status_code=503,
+            detail="Ollama is not running. Start it with: ollama serve",
+        )
+    return None
+
 _client: OllamaClient | None = None
 
 
@@ -28,7 +54,7 @@ def _get_ollama_client() -> OllamaClient:
     global _client
     if _client is None:
         _client = OllamaClient(
-            host=os.getenv("OLLAMA_HOST", "https://ollama.com"),
+            host=os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST", "http://localhost:11434"),
             model=os.getenv("OLLAMA_MODEL", "gpt-oss:120b"),
             api_key=os.getenv("OLLAMA_API_KEY", ""),
             max_retries=3,
@@ -87,6 +113,9 @@ Requirements:
         raise ValueError(f"LLM returned invalid JSON: {e}")
     except Exception as e:
         logger.error("Assessment generation failed: %s", e)
+        classified = _classify_ollama_error(e)
+        if classified:
+            raise classified
         raise ValueError(f"Assessment generation failed: {e}")
 
 
@@ -204,15 +233,24 @@ async def generate_clo_questions(
 
     client = _get_ollama_client()
 
-    total_concepts = sum(len(g["concepts"]) for g in plan) or 1
-    per_concept = max(1, total_questions // total_concepts)
+    total_concepts = sum(len(g["concepts"]) for g in plan)
+    if total_concepts > 0:
+        per_concept = max(1, total_questions // total_concepts)
+        per_clo = 0
+    else:
+        per_concept = 0
+        per_clo = max(1, total_questions // len(plan)) if plan else 1
 
     async def _generate_for_group(group: dict) -> dict:
         concepts = group["concepts"]
-        concept_lines = "\n".join(f'- id="{c["id"]}" label="{c["label"]}"' for c in concepts)
-        n_each = per_concept
+        has_concepts = bool(concepts)
 
-        prompt = f"""Generate placement-test multiple choice questions for the course "{course_title}".
+        if has_concepts:
+            concept_lines = "\n".join(
+                f'- id="{c["id"]}" label="{c["label"]}"' for c in concepts
+            )
+            n_each = per_concept
+            prompt = f"""Generate placement-test multiple choice questions for the course "{course_title}".
 
 These questions assess the learning outcome "{group['name']}": {group.get('description', '')}
 
@@ -239,9 +277,37 @@ Requirements:
 - Each question has exactly 4 options; correct_answer matches one option exactly.
 - concept_id MUST be one of the ids listed above.
 - Test conceptual understanding, not trivia."""
+            valid_ids = {c["id"] for c in concepts}
+            label_by_id = {c["id"]: c["label"] for c in concepts}
+        else:
+            n_each = per_clo
+            prompt = f"""Generate placement-test multiple choice questions for the course "{course_title}".
 
-        valid_ids = {c["id"] for c in concepts}
-        label_by_id = {c["id"]: c["label"] for c in concepts}
+These questions assess the learning outcome "{group['name']}": {group.get('description', '')}
+
+Generate {n_each} question(s) that test this learning outcome. There are no specific concepts to cover; focus on the outcome statement above.
+
+Return ONLY valid JSON with no markdown fences:
+{{
+  "questions": [
+    {{
+      "question": "Question text?",
+      "options": ["A", "B", "C", "D"],
+      "correct_answer": "A",
+      "concept_id": null,
+      "topic": "{group['name']}"
+    }}
+  ]
+}}
+
+Requirements:
+- Each question has exactly 4 options; correct_answer matches one option exactly.
+- concept_id may be null because this CLO has no linked concepts.
+- topic should be "{group['name']}".
+- Test conceptual understanding, not trivia."""
+            valid_ids = set()
+            label_by_id = {}
+
         try:
             loop = asyncio.get_event_loop()
             data = await loop.run_in_executor(
@@ -255,39 +321,51 @@ Requirements:
             qs = data.get("questions", [])
         except Exception as e:
             logger.error("CLO question generation failed for '%s': %s", group["name"], e)
+            classified = _classify_ollama_error(e)
+            if classified:
+                raise classified
             qs = []
 
-        # Keep only questions tagged with a real concept id from this group.
-        cleaned = []
-        covered: set[str] = set()
-        for q in qs:
-            cid = str(q.get("concept_id", ""))
-            if cid in valid_ids:
-                q["concept_id"] = cid
-                q.setdefault("topic", label_by_id.get(cid, ""))
-                cleaned.append(q)
-                covered.add(cid)
+        if has_concepts:
+            # Keep only questions tagged with a real concept id from this group.
+            cleaned = []
+            covered: set[str] = set()
+            for q in qs:
+                cid = str(q.get("concept_id", ""))
+                if cid in valid_ids:
+                    q["concept_id"] = cid
+                    q.setdefault("topic", label_by_id.get(cid, ""))
+                    cleaned.append(q)
+                    covered.add(cid)
 
-        # Coverage guarantee: synthesize a minimal probe for any uncovered concept
-        # so every CLO concept is measured even if the LLM skipped it.
-        for c in concepts:
-            if c["id"] not in covered:
-                logger.warning(
-                    "CLO gen: concept %s (%s) uncovered by LLM — adding fallback probe",
-                    c["id"], c["label"],
-                )
-                cleaned.append({
-                    "question": f"Which best describes the concept \"{c['label']}\"?",
-                    "options": [
-                        f"A correct understanding of {c['label']}",
-                        "An unrelated definition",
-                        "A partially correct but flawed statement",
-                        "None of the above",
-                    ],
-                    "correct_answer": f"A correct understanding of {c['label']}",
-                    "concept_id": c["id"],
-                    "topic": c["label"],
-                })
+            # Coverage guarantee: synthesize a minimal probe for any uncovered concept
+            # so every CLO concept is measured even if the LLM skipped it.
+            for c in concepts:
+                if c["id"] not in covered:
+                    logger.warning(
+                        "CLO gen: concept %s (%s) uncovered by LLM — adding fallback probe",
+                        c["id"], c["label"],
+                    )
+                    cleaned.append({
+                        "question": f"Which best describes the concept \"{c['label']}\"?",
+                        "options": [
+                            f"A correct understanding of {c['label']}",
+                            "An unrelated definition",
+                            "A partially correct but flawed statement",
+                            "None of the above",
+                        ],
+                        "correct_answer": f"A correct understanding of {c['label']}",
+                        "concept_id": c["id"],
+                        "topic": c["label"],
+                    })
+        else:
+            # CLO-only group: accept all returned questions; tag with CLO name.
+            cleaned = []
+            for q in qs:
+                q.setdefault("topic", group["name"])
+                if q.get("concept_id") not in label_by_id:
+                    q["concept_id"] = None
+                cleaned.append(q)
 
         return {
             "name": group["name"],

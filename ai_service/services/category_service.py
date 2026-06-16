@@ -58,7 +58,7 @@ def _get_ollama_client() -> OllamaClient:
     global _client
     if _client is None:
         _client = OllamaClient(
-            host=os.getenv("OLLAMA_HOST", "https://ollama.com"),
+            host=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
             model=os.getenv("OLLAMA_MODEL", "gpt-oss:120b"),
             api_key=os.getenv("OLLAMA_API_KEY", ""),
             max_retries=3,
@@ -96,12 +96,13 @@ import httpx  # noqa: E402
 _DJANGO_API_URL = os.getenv("DJANGO_API_URL", "http://localhost:8000/api")
 
 
-def _fetch_clo_concepts(course_id: str) -> list[dict]:
+def _fetch_clo_concepts(course_id: str) -> tuple[list[dict], list[dict]]:
     """Fetch the course's CLO concept set from Django.
 
     Returns one row per (CLO, concept): ``[{clo_code, clo_text, concept_id,
-    label}]``. This is the backbone the placement test is backward-designed
-    against — questions are generated to cover THIS set, not arbitrary chunks.
+    label}]`` plus the raw CLO list. This is the backbone the placement test is
+    backward-designed against — questions are generated to cover THIS set, not
+    arbitrary chunks.
     """
     service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
     headers = {"X-Service-Key": service_key} if service_key else {}
@@ -119,17 +120,31 @@ def _fetch_clo_concepts(course_id: str) -> list[dict]:
             "CLO/concept fetch bad status for course %s: clos=%s concepts=%s",
             course_id, clo_resp.status_code, con_resp.status_code,
         )
-        return []
+        return [], []
 
     def _rows(payload):
         return payload.get("results", payload) if isinstance(payload, dict) else payload
 
+    clos = _rows(clo_resp.json())
+    concepts = _rows(con_resp.json())
+
+    logger.info(
+        "CLO/concept fetch succeeded for course %s: %d clos, %d concepts",
+        course_id, len(clos), len(concepts),
+    )
+
+    if clos and not concepts:
+        logger.info(
+            "Course %s has %d CLO(s) but 0 concepts; using CLO-only plan.",
+            course_id, len(clos),
+        )
+
     label_map: dict[str, str] = {}
-    for c in _rows(con_resp.json()):
+    for c in concepts:
         label_map[str(c["id"])] = c["label"]
 
     rows: list[dict] = []
-    for clo in _rows(clo_resp.json()):
+    for clo in clos:
         for cid in clo.get("concepts", []):
             cid = str(cid)
             rows.append({
@@ -138,7 +153,27 @@ def _fetch_clo_concepts(course_id: str) -> list[dict]:
                 "concept_id": cid,
                 "label": label_map.get(cid, cid),
             })
-    return rows
+
+    # Fallback: if CLOs and concepts both exist but no explicit links have been
+    # made, treat all concepts as global context attached to every CLO. This
+    # keeps the placement test backward-designed against real course content
+    # instead of falling back to flat topic generation.
+    if not rows and clos and concepts:
+        logger.info(
+            "No explicit CLO-concept links for course %s; falling back to global concepts.",
+            course_id,
+        )
+        for clo in clos:
+            for c in concepts:
+                cid = str(c["id"])
+                rows.append({
+                    "clo_code": clo.get("code", ""),
+                    "clo_text": clo.get("text", ""),
+                    "concept_id": cid,
+                    "label": c.get("label", cid),
+                })
+
+    return rows, clos
 
 
 def build_clo_assessment_plan(course_id: str, course_title: str) -> list[dict]:
@@ -148,15 +183,19 @@ def build_clo_assessment_plan(course_id: str, course_title: str) -> list[dict]:
     CLOs declare, NOT topics discovered from whatever chunks exist. Each returned
     category corresponds to a CLO and lists the concepts that CLO must teach.
 
+    If the course has CLOs but no linked concepts, a CLO-only plan is returned
+    (empty concept list per CLO) so the assessment can still be generated from
+    the CLO outcome statements.
+
     Returns
     -------
     list[dict]
         ``[{"name", "description", "clo_code", "concepts": [{"id","label"}]}]``.
-        Empty list if the course has no CLO concepts (caller handles fallback).
+        Empty list only if the course has no CLOs at all.
     """
-    rows = _fetch_clo_concepts(course_id)
-    if not rows:
-        logger.warning("No CLO concepts for course %s — backward-designed plan empty.", course_id)
+    rows, clos = _fetch_clo_concepts(course_id)
+    if not clos:
+        logger.warning("No CLOs for course %s — backward-designed plan empty.", course_id)
         return []
 
     by_clo: dict[str, dict] = {}
@@ -174,4 +213,15 @@ def build_clo_assessment_plan(course_id: str, course_title: str) -> list[dict]:
             seen.add(r["concept_id"])
             grp["concepts"].append({"id": r["concept_id"], "label": r["label"]})
 
-    return [g for g in by_clo.values() if g["concepts"]]
+    # Ensure every CLO appears in the plan, even if it has no linked concepts.
+    for clo in clos:
+        code = clo.get("code") or "CLO"
+        if code not in by_clo:
+            by_clo[code] = {
+                "name": code,
+                "description": clo.get("text", f"{course_title} outcome {code}"),
+                "clo_code": code,
+                "concepts": [],
+            }
+
+    return list(by_clo.values())

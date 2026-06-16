@@ -23,6 +23,7 @@ export interface Capstone {
     deadline: string | null;
     status: 'draft' | 'active' | 'completed' | 'archived';
     brief_text: string;
+    pass_policy?: string | null;
     github_template_repo: string;
     run_command: string;
     rubric_items: CapstoneRubricItem[];

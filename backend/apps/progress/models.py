@@ -53,6 +53,7 @@ class LessonCompletion(models.Model):
     class Meta:
         db_table = "lesson_completions"
         unique_together = ["enrollment", "lesson"]
+        ordering = ["-completed_at"]
         verbose_name = "Lesson Completion"
         verbose_name_plural = "Lesson Completions"
 

@@ -5,6 +5,9 @@ from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework_simplejwt.authentication import JWTAuthentication
+
+from apps.core.authentication import InternalServiceAuthentication
 from .models import (
     Course, Module, Lesson, Slide, CodeChallenge, Enrollment, CourseRating,
     Concept, CourseLearningOutcome, CourseCorpus, CorpusSource,
@@ -563,6 +566,7 @@ def get_coding_hint(request):
 # ------------------------------------------------------------------
 class ConceptViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ConceptSerializer
+    authentication_classes = [JWTAuthentication, InternalServiceAuthentication]
     permission_classes = [AllowAny]
 
     def get_queryset(self):
@@ -578,6 +582,7 @@ class ConceptViewSet(viewsets.ReadOnlyModelViewSet):
 # ------------------------------------------------------------------
 class CourseLearningOutcomeViewSet(viewsets.ModelViewSet):
     serializer_class = CourseLearningOutcomeSerializer
+    authentication_classes = [JWTAuthentication, InternalServiceAuthentication]
     permission_classes = [IsAdminOrReadOnly]
 
     def get_queryset(self):
@@ -589,13 +594,30 @@ class CourseLearningOutcomeViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         course_pk = self.kwargs.get("course_pk")
-        serializer.save(course_id=course_pk)
+        code = serializer.validated_data.get("code", "")
+        concepts = serializer.validated_data.pop("concepts", None)
+        obj, created = CourseLearningOutcome.objects.update_or_create(
+            course_id=course_pk, code=code,
+            defaults={
+                "text": serializer.validated_data.get("text", ""),
+                "bloom_level": serializer.validated_data.get("bloom_level", ""),
+                "order": serializer.validated_data.get("order", 0),
+            },
+        )
+        if concepts is not None:
+            obj.concepts.set(concepts)
+        serializer.instance = obj
 
     @action(detail=False, methods=["post"], url_path="suggest",
             permission_classes=[permissions.IsAuthenticated])
     def suggest(self, request, course_pk=None):
         """POST /api/courses/courses/<course_pk>/clos/suggest/ — admin only.
         Proxies to the AI service to generate draft CLOs.
+
+        When the course has no Concept objects yet, seeds one Concept per lesson
+        from the outline so the LLM can reference real concept IDs. This ensures
+        CLO drafts come back with concept_ids populated and the backward-designed
+        assessment plan works.
         """
         if getattr(request.user, "role", None) != "admin":
             return Response({"error": "Admin only"}, status=status.HTTP_403_FORBIDDEN)
@@ -607,15 +629,30 @@ class CourseLearningOutcomeViewSet(viewsets.ModelViewSet):
 
         # Build outline: [{module, lessons: [str]}]
         outline = []
+        lessons_flat = []
         for module in course.modules.prefetch_related("lessons").order_by("module_order"):
-            outline.append({
-                "module": module.title,
-                "lessons": list(module.lessons.values_list("title", flat=True).order_by("lesson_order")),
-            })
+            lesson_titles = list(
+                module.lessons.values_list("title", flat=True).order_by("lesson_order")
+            )
+            outline.append({"module": module.title, "lessons": lesson_titles})
+            for title in lesson_titles:
+                lessons_flat.append(title)
 
+        # Auto-seed Concepts from lesson titles when none exist yet.
         existing_concepts = list(
             Concept.objects.filter(course=course).values("id", "label")
         )
+        if not existing_concepts and lessons_flat:
+            from django.utils.text import slugify
+            for order, title in enumerate(lessons_flat, start=1):
+                slug = slugify(title)[:60]
+                obj, _ = Concept.objects.get_or_create(
+                    course=course, slug=slug,
+                    defaults={"label": title, "order": order},
+                )
+            existing_concepts = list(
+                Concept.objects.filter(course=course).values("id", "label")
+            )
 
         ai_url = getattr(settings, "AI_SERVICE_URL", "http://localhost:8001")
         try:

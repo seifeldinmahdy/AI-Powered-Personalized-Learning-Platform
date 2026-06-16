@@ -1,4 +1,5 @@
 import api from './api';
+import { type AvailableBook } from './corpus';
 
 export interface AdminStats {
     total_students: number;
@@ -30,10 +31,12 @@ export interface AdminCourse {
     difficulty: string;
     status: string;
     tags: string[];
+    is_published: boolean;
     price: string;
     total_lessons_count: number;
-    avg_rating: number;
+    avg_rating: string;
     created_at: string;
+    syllabus?: string | object | null;
 }
 
 export interface ServiceHealth {
@@ -106,6 +109,22 @@ export async function updateCourse(id: number, data: Partial<AdminCourse>): Prom
 
 export async function deleteCourse(id: number): Promise<void> {
     await api.delete(`/courses/courses/${id}/`);
+}
+
+export async function getAvailableBooks(courseId: number): Promise<AvailableBook[]> {
+    const res = await api.get<{
+        books: {
+            book_stem: string;
+            file_present?: boolean;
+            indexed_chunks?: number;
+            in_corpus_chunks?: number | null;
+        }[];
+    }>(`/courses/courses/${courseId}/corpus/available-books/`);
+    return res.data.books.map((b) => ({
+        book_stem: b.book_stem,
+        title: b.book_stem,
+        source_type: 'pdf' as const,
+    }));
 }
 
 // ---------- Modules ----------

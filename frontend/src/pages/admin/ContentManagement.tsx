@@ -8,11 +8,13 @@ import {
   Trash2,
   BarChart3,
   Users,
+  Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router";
 import {
   getAdminCourses,
+  createCourse,
   deleteCourse,
   type AdminCourse,
 } from "../../services/admin";
@@ -25,6 +27,7 @@ export default function ContentManagement() {
   const [difficultyFilter, setDifficultyFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [deleting, setDeleting] = useState<number | null>(null);
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     getAdminCourses()
@@ -66,6 +69,28 @@ export default function ContentManagement() {
   const difficulties = [...new Set(courses.map((c) => c.difficulty?.toLowerCase()).filter(Boolean))];
   const statuses = [...new Set(courses.map((c) => c.status?.toLowerCase()).filter(Boolean))];
 
+  const handleCreate = async () => {
+    setCreating(true);
+    try {
+      const created = await createCourse({
+        title: "Untitled Course",
+        description: "",
+        difficulty: "Beginner",
+        status: "Draft",
+        price: "0.00",
+      });
+      navigate(`/admin/courses/${created.id}/editor`);
+    } catch (err: unknown) {
+      const message =
+        (err as { response?: { data?: { detail?: string; error?: string } } })?.response?.data?.detail ||
+        (err as { response?: { data?: { detail?: string; error?: string } } })?.response?.data?.error ||
+        (err as { message?: string })?.message ||
+        "Failed to create course";
+      toast.error(message);
+      setCreating(false);
+    }
+  };
+
   // Compute avg rating safely - default to 0 when no valid ratings
   const avgRating = useMemo(() => {
     const ratings = courses
@@ -87,12 +112,20 @@ export default function ContentManagement() {
     <div>
       {/* Header */}
       <div className="mb-8">
-        <h1 className="admin-heading" id="content-management-title">
-          Content Management
-        </h1>
-        <p className="admin-subheading mt-1">
-          {courses.length} courses • {filtered.length} shown
-        </p>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="admin-heading" id="content-management-title">
+              Content Management
+            </h1>
+            <p className="admin-subheading mt-1">
+              {courses.length} courses • {filtered.length} shown
+            </p>
+          </div>
+          <button onClick={handleCreate} disabled={creating} className="admin-btn admin-btn-primary disabled:opacity-60">
+            {creating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+            <span>{creating ? "Creating…" : "New Course"}</span>
+          </button>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -257,6 +290,8 @@ export default function ContentManagement() {
           </div>
         )}
       </div>
+
+      {/* Create course modal */}
     </div>
   );
 }

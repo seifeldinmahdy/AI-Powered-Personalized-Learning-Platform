@@ -134,13 +134,13 @@ def _run_index(pdf_path: str, book_stem: str, corpus_id: str, course_id: str) ->
     _ensure_rag_path()
     try:
         from src.config.settings import Settings  # type: ignore
-        from src.llm.client import OllamaCloudClient  # type: ignore
+        from src.llm.client import build_client_from_settings  # type: ignore
         from src.indexing.pipeline import IndexingPipeline  # type: ignore
 
         settings = Settings()
         settings.chroma_db_path = str(_CHROMA_DIR)
         settings.raw_books_dir = str(_RAW_BOOKS_DIR)
-        pipeline = IndexingPipeline(settings=settings, llm_client=OllamaCloudClient())
+        pipeline = IndexingPipeline(settings=settings, llm_client=build_client_from_settings(settings))
 
         result = pipeline._index_single_pdf(Path(pdf_path))
 
