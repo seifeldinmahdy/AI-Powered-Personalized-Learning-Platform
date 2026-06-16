@@ -18,6 +18,8 @@ export function NotificationBell() {
     const unreadCount = notifications.filter((n) => !n.is_read).length;
 
     const fetchNotifications = async () => {
+        // Skip if not authenticated
+        if (!localStorage.getItem('access_token')) return;
         try {
             const data = await getNotifications();
             setNotifications(data.slice(0, 10));
