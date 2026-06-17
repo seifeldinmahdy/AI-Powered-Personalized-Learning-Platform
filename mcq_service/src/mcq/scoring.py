@@ -34,6 +34,7 @@ def score_checkpoint(submission: CheckpointSubmission) -> CheckpointResult:
         return CheckpointResult(
             score=0.0,
             per_topic_scores={},
+            per_concept_scores={},
             correct_count=0,
             total_count=0,
             question_results=[],
@@ -42,9 +43,12 @@ def score_checkpoint(submission: CheckpointSubmission) -> CheckpointResult:
     question_results: list[dict] = []
     correct_count = 0
 
-    # Per-topic accumulators
+    # Per-topic accumulators (legacy/display) and per-concept accumulators
+    # (authoritative — what feeds concept mastery on the write path).
     topic_correct: dict[str, int] = {}
     topic_total: dict[str, int] = {}
+    concept_correct: dict[str, int] = {}
+    concept_total: dict[str, int] = {}
 
     for idx, q in enumerate(questions):
         chosen = answers.get(idx, "")
@@ -61,6 +65,7 @@ def score_checkpoint(submission: CheckpointSubmission) -> CheckpointResult:
             "explanation": q.explanation,
             "question_type": q.question_type,
             "topic": q.topic,
+            "concept_id": getattr(q, "concept_id", "") or "",
         })
 
         topic = q.topic or "General"
@@ -68,11 +73,24 @@ def score_checkpoint(submission: CheckpointSubmission) -> CheckpointResult:
         if is_correct:
             topic_correct[topic] = topic_correct.get(topic, 0) + 1
 
+        cid = (getattr(q, "concept_id", "") or "").strip()
+        if cid:
+            concept_total[cid] = concept_total.get(cid, 0) + 1
+            if is_correct:
+                concept_correct[cid] = concept_correct.get(cid, 0) + 1
+
     # Compute per-topic scores
     per_topic_scores: dict[str, float] = {}
     for topic, total_count in topic_total.items():
         per_topic_scores[topic] = round(
             topic_correct.get(topic, 0) / total_count, 4,
+        )
+
+    # Compute per-concept scores (only for questions that carried a concept_id)
+    per_concept_scores: dict[str, float] = {}
+    for cid, total_count in concept_total.items():
+        per_concept_scores[cid] = round(
+            concept_correct.get(cid, 0) / total_count, 4,
         )
 
     overall_score = round(correct_count / total, 4) if total > 0 else 0.0
@@ -87,11 +105,13 @@ def score_checkpoint(submission: CheckpointSubmission) -> CheckpointResult:
         correct=correct_count,
         total=total,
         per_topic=per_topic_scores,
+        per_concept=per_concept_scores,
     )
 
     return CheckpointResult(
         score=overall_score,
         per_topic_scores=per_topic_scores,
+        per_concept_scores=per_concept_scores,
         correct_count=correct_count,
         total_count=total,
         question_results=question_results,
