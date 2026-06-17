@@ -221,7 +221,7 @@ export default function Assessment() {
           <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 14 }}>BEFORE WE BEGIN</div>
           <div className="t-display" style={{ fontSize: "clamp(34px,5vw,60px)", color: "var(--text-primary)" }}>Set your preferences.</div>
           <p className="t-body" style={{ color: "var(--text-secondary)", fontSize: 16, marginTop: 16, maxWidth: 540 }}>
-            These shape how {courseTitle || "this course"} is written for you. The placement survey that follows maps where you are.
+            These shape how {courseTitle || "this course"} is written for you. The placement test that follows maps where you are.
           </p>
 
           <div style={{ marginTop: 40 }}>

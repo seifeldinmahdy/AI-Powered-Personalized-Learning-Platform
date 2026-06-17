@@ -440,7 +440,7 @@ function CtaPanel({
         </div>
       ) : (
         <p className="t-mono steel" style={{ textAlign: "center", lineHeight: 1.5, margin: 0 }}>
-          A short placement survey personalizes your pathway before the first slide.
+          A short placement test personalizes your pathway before the first slide.
         </p>
       )}
     </div>

@@ -930,7 +930,7 @@ function Promise({ onLogin, reduce }: { onLogin: () => void; reduce: boolean }) 
             Most courses assume you know nothing. Or everything. PersonifAI reads where you actually are and teaches from there.
           </p>
           <button onClick={onLogin} className="pai-cta-mag" style={{ marginTop: 56, width: "100%", maxWidth: 720, background: "#1A1814", color: "var(--bg-primary)", border: "none", borderRadius: 10, padding: "30px 40px", fontFamily: "var(--ff-body)", fontWeight: 500, fontSize: 15, letterSpacing: "0.14em", textTransform: "uppercase", cursor: "pointer", textAlign: "center" }}>
-            START YOUR PLACEMENT SURVEY →
+            START YOUR PLACEMENT TEST →
           </button>
         </Reveal>
       </div>
