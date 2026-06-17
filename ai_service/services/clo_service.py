@@ -43,7 +43,7 @@ def _get_client() -> OllamaClient:
 
 
 CLO_SYSTEM = """\
-You are a curriculum design expert. Given a course outline, generate 4 to 8 Course Learning Outcomes (CLOs).
+You are a curriculum design expert. Given a course description, generate 4 to 8 Course Learning Outcomes (CLOs).
 
 BLOOM'S TAXONOMY ACTION VERBS:
 - Remember: define, list, recall, recognize, state
@@ -57,7 +57,7 @@ OUTPUT RULES:
 - Each CLO must start with a strong action verb from the appropriate Bloom level.
 - CLOs should be measurable, specific, and achievable by course end.
 - Generate 4–8 CLOs, covering a range of Bloom levels (at least Remember, Understand, Apply).
-- Generate 4-8 core concepts from the course outline.
+- Generate 4-8 core concepts from the course description.
 - Map each CLO to the most relevant concepts (use the generated concept strings directly).
 - Return ONLY a valid JSON object. No markdown, no preamble.
 
@@ -79,14 +79,14 @@ JSON Schema:
 
 async def suggest_clos(request: CLOSuggestRequest) -> CLOSuggestResponse:
     """Generate draft CLOs for a course using the strong LLM model."""
-    outline_text = json.dumps(request.outline, indent=2)
+    description_text = request.course_description or "No description provided."
     concepts_text = json.dumps(request.existing_concepts, indent=2)
 
     if request.existing_concepts:
         user_prompt = f"""COURSE TITLE: {request.course_title}
 
-COURSE OUTLINE:
-{outline_text}
+COURSE DESCRIPTION:
+{description_text}
 
 AVAILABLE CONCEPTS (use these exact IDs in concept_ids):
 {concepts_text}
@@ -96,10 +96,10 @@ Return JSON with keys "suggested_concepts" (empty array) and "drafts" containing
     else:
         user_prompt = f"""COURSE TITLE: {request.course_title}
 
-COURSE OUTLINE:
-{outline_text}
+COURSE DESCRIPTION:
+{description_text}
 
-There are no existing concepts. Please generate 4-8 core concepts from the course outline.
+There are no existing concepts. Please generate 4-8 core concepts from the course description.
 Return JSON with keys "suggested_concepts" containing the generated concepts, and "drafts" containing the CLO drafts mapped to those new concepts."""
 
     client = _get_client()

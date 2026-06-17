@@ -14,7 +14,7 @@ class CLODraft(BaseModel):
 
 class CLOSuggestRequest(BaseModel):
     course_title: str
-    outline: list[dict]          # [{module: str, lessons: [str]}]
+    course_description: str
     existing_concepts: list[dict]  # [{id: str, label: str}]
 
 

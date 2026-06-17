@@ -1501,7 +1501,7 @@ export default function AdminCourseEditor() {
                   {clos.map((clo) => {
                     const isEditing = editingCLOId === clo.id;
                     return (
-                      <tr key={clo.id}>
+                      <tr key={clo.id} className="relative" style={{ zIndex: isEditing && cloEditDropdownOpen ? 50 : 1 }}>
                         {isEditing ? (
                           <>
                             <td>
@@ -1594,7 +1594,7 @@ export default function AdminCourseEditor() {
                     );
                   })}
                   {addingClo && (
-                    <tr ref={newCloRowRef}>
+                    <tr ref={newCloRowRef} className="relative" style={{ zIndex: newCloDropdownOpen ? 50 : 1 }}>
                       <td>
                         <input
                           autoFocus
@@ -1699,7 +1699,7 @@ export default function AdminCourseEditor() {
                         ? 'admin-badge admin-badge-blue'
                         : 'admin-badge admin-badge-amber';
                     return (
-                      <tr key={idx}>
+                      <tr key={idx} className="relative" style={{ zIndex: cloDraftConceptDropdown === idx ? 50 : 1 }}>
                         {/* Code */}
                         <td>
                           {isEditing ? (

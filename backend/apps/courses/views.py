@@ -288,13 +288,13 @@ def admin_stats(request):
         return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
 
     from apps.users.models import User
-    from apps.progress.models import LessonCompletion
+    from apps.progress.models import SessionCompletion
 
     total_students = User.objects.filter(role="student").count()
     total_courses = Course.objects.count()
     active_courses = Course.objects.filter(status="Published").count()
     total_enrollments = Enrollment.objects.count()
-    completed_lessons = LessonCompletion.objects.filter(status="Completed").count()
+    completed_lessons = SessionCompletion.objects.filter(status="Completed").count()
 
     # Avg completion % across all enrollments
     enrollments = Enrollment.objects.all()
