@@ -586,7 +586,7 @@ async def persist_lab(student_id: str, course_id: str, lesson_id: str,
         lesson_key = int(lesson_id) if str(lesson_id).isdigit() else lesson_id
         await artifact_client.upsert_artifact(
             str(student_id), str(course_id), "lab",
-            plan_version=pv, lesson_id=lesson_key,
+            plan_version=pv, session_number=lesson_key,
             content_json=content_json, status=status,
         )
     except Exception:
@@ -769,7 +769,7 @@ async def _get_lab_artifact(student_id: str, course_id: str, lesson_id: str) -> 
         return None
     lesson_key = int(lesson_id) if str(lesson_id).isdigit() else lesson_id
     index = await artifact_client.get_artifact_index(
-        str(student_id), type="lab", lesson=lesson_key, plan_version=pv
+        str(student_id), type="lab", session=lesson_key, plan_version=pv
     )
     if not index:
         return None

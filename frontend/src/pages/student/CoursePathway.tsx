@@ -7,6 +7,8 @@ import {
 } from "../../services/resume";
 import { getCourseById } from "../../services/courses";
 import { getEnrollments } from "../../services/api";
+import { CapstoneStartCTA } from "../../components/CapstoneStartCTA";
+import { useMemo } from "react";
 
 /* Course Pathway — read-only progress/resume view (codex / pai design system).
    The pathway is generated ONCE, server-side, after placement; this page never
@@ -56,7 +58,7 @@ export default function CoursePathway() {
   const [error] = useState("");
 
   // real enrollment progress signals
-  const [currentLessonId, setCurrentLessonId] = useState<number | null>(null);
+  const [currentSessionNumber, setCurrentSessionNumber] = useState<number | null>(null);
   const [progressPct, setProgressPct] = useState(0);
   const [placementScore, setPlacementScore] = useState<number | null>(null);
   const [enrolledAt, setEnrolledAt] = useState("");
@@ -89,7 +91,7 @@ export default function CoursePathway() {
         const list: EnrollmentRow[] = Array.isArray(res.data) ? res.data : res.data?.results || [];
         const e = list.find((r) => r.course === Number(courseId));
         if (e && !cancelled) {
-          setCurrentLessonId(e.current_lesson);
+          setCurrentSessionNumber(e.current_session_number);
           setProgressPct(Math.max(0, Math.min(100, parseFloat(e.progress_percentage) || 0)));
           setPlacementScore(typeof e.placement_score === "number" ? e.placement_score : null);
           setEnrolledAt(e.enrolled_at || "");
@@ -120,6 +122,20 @@ export default function CoursePathway() {
     if (!courseId) return;
     getCourseResume(courseId).then(setResume).catch(() => setResume(null));
   }, [courseId]);
+
+  const timelineBySession = useMemo(() => {
+    const map = new Map<number, ResumeTimelineEntry[]>();
+    if (resume?.timeline) {
+      for (const e of resume.timeline) {
+        if (e.session_number != null) {
+          const list = map.get(e.session_number) || [];
+          list.push(e);
+          map.set(e.session_number, list);
+        }
+      }
+    }
+    return map;
+  }, [resume]);
 
   // a stable key per timeline entry (drives the open/expand state)
   const keyFor = (e: ResumeTimelineEntry, i: number) =>
@@ -202,13 +218,13 @@ export default function CoursePathway() {
   const statusForP = (i: number): SessionStatus =>
     i < doneCount ? "done" : i === doneCount && !isComplete ? "current" : "locked";
 
-  const resumeLessonId = currentLessonId ?? resume?.current_lesson ?? null;
+  const resumeSessionNumber = currentSessionNumber ?? resume?.current_session_number ?? null;
   // "Started" = real progress, or any produced session artifact (slides/lab/
   // problem-set/remediation). Until then the CTA reads START COURSE and drops
   // the student into the first session; afterwards it becomes RESUME SESSION.
   const hasStarted = progressPct > 0 || (resume?.timeline?.length ?? 0) > 0;
   const goToCurrent = () => {
-    if (resumeLessonId) navigate(`/course/${courseId}/lesson/${resumeLessonId}`);
+    if (resumeSessionNumber) navigate(`/course/${courseId}/session/${resumeSessionNumber}`);
   };
 
   const stats: Array<[string, string, string]> = [
@@ -252,7 +268,7 @@ export default function CoursePathway() {
               </div>
             )}
 
-            <button onClick={goToCurrent} disabled={!resumeLessonId} className="btn btn-red pai-pw-noprint" style={{ marginTop: 24, width: "100%", justifyContent: "space-between", padding: "18px 22px", opacity: resumeLessonId ? 1 : 0.6 }}>
+            <button onClick={goToCurrent} disabled={!resumeSessionNumber} className="btn btn-red pai-pw-noprint" style={{ marginTop: 24, width: "100%", justifyContent: "space-between", padding: "18px 22px", opacity: resumeSessionNumber ? 1 : 0.6 }}>
               {isComplete ? "REVIEW COURSE" : hasStarted ? "RESUME SESSION" : "START COURSE"} <span>→</span>
             </button>
           </aside>
@@ -287,32 +303,32 @@ export default function CoursePathway() {
               ))}
             </div>
 
-            {/* resume timeline — past slides / lab / problem-sets / remediation */}
-            {resume && resume.timeline.length > 0 && (
-              <div style={{ marginTop: 36 }}>
-                <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 16 }}>YOUR HISTORY</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {resume.timeline.map((e, i) => {
-                    const k = keyFor(e, i);
-                    return (
-                      <TimelineRow
-                        key={k} e={e} courseId={courseId!} navigate={navigate}
-                        open={openKey === k} loading={entryLoading}
-                        reviewChunks={reviewChunks} psHistory={psHistory} artifact={artifact}
-                        onToggle={() => toggleEntry(e, k)}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
             {/* sessions */}
             <div style={{ marginTop: 36 }}>
               <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 18 }}>THE PLAN · {total} SESSIONS</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {plan.sessions.map((s, i) => <SessionRow key={s.session_number} session={s} status={statusForP(i)} />)}
+                {plan.sessions.map((s, i) => (
+                  <SessionRow 
+                    key={s.session_number} 
+                    session={s} 
+                    status={statusForP(i)} 
+                    timeline={timelineBySession.get(s.session_number) || []}
+                    courseId={courseId!}
+                    navigate={navigate}
+                    openKey={openKey}
+                    entryLoading={entryLoading}
+                    reviewChunks={reviewChunks}
+                    psHistory={psHistory}
+                    artifact={artifact}
+                    onToggleEntry={toggleEntry}
+                    keyFor={keyFor}
+                  />
+                ))}
               </div>
+            </div>
+
+            <div style={{ marginTop: 24 }} className="pai-pw-noprint">
+              <CapstoneStartCTA courseId={Number(courseId)} variant="banner" locked={!isComplete} />
             </div>
           </main>
         </div>
@@ -372,8 +388,8 @@ function TimelineRow({ e, courseId, navigate, open, loading, reviewChunks, psHis
                           <span className="t-mono steel">{new Date(a.created_at).toLocaleDateString()}</span>
                         </div>
                       ))}
-                    {e.lesson != null && (
-                      <button onClick={() => navigate(`/course/${courseId}/lesson/${e.lesson}/problem-set`)} className="btn btn-ghost-dark" style={{ alignSelf: "flex-start", marginTop: 4 }}>OPEN PROBLEM SET →</button>
+                    {e.session_number != null && (
+                      <button onClick={() => navigate(`/course/${courseId}/session/${e.session_number}/problem-set`)} className="btn btn-ghost-dark" style={{ alignSelf: "flex-start", marginTop: 4 }}>OPEN PROBLEM SET →</button>
                     )}
                   </div>
                 ))}
@@ -381,8 +397,8 @@ function TimelineRow({ e, courseId, navigate, open, loading, reviewChunks, psHis
               {(e.type === "slides" || e.type === "lab") && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   <ArtifactSummary type={e.type} content={artifact} />
-                  {e.lesson != null && (
-                    <button onClick={() => navigate(`/course/${courseId}/lesson/${e.lesson}${e.type === "lab" ? "/lab" : ""}`)} className="btn btn-ghost-dark" style={{ alignSelf: "flex-start", marginTop: 4 }}>OPEN IN LESSON →</button>
+                  {e.session_number != null && (
+                    <button onClick={() => navigate(`/course/${courseId}/session/${e.session_number}${e.type === "lab" ? "/lab" : ""}`)} className="btn btn-ghost-dark" style={{ alignSelf: "flex-start", marginTop: 4 }}>OPEN IN SESSION →</button>
                   )}
                 </div>
               )}
@@ -412,13 +428,49 @@ function ArtifactSummary({ type, content }: { type: string; content: Record<stri
       </div>
     );
   }
-  const problem = String(cj.problem_text ?? cj.problem ?? cj.title ?? "");
+  let problem = "";
+  if (cj.lab && typeof cj.lab === "object") {
+    const labObj = cj.lab as Record<string, unknown>;
+    problem = String(labObj.title ?? labObj.intro ?? "");
+  } else {
+    problem = String(cj.problem_text ?? cj.problem ?? cj.title ?? "");
+  }
+
   return problem
     ? <p className="t-body" style={{ fontSize: 13, color: "var(--text-secondary)", margin: 0, whiteSpace: "pre-wrap" }}>{problem.slice(0, 320)}</p>
     : <span className="t-mono steel">NO LAB CONTENT.</span>;
 }
 
-function SessionRow({ session, status }: { session: PathwaySession; status: SessionStatus }) {
+function SessionRow({ 
+  session, 
+  status,
+  timeline,
+  courseId,
+  navigate,
+  openKey,
+  entryLoading,
+  reviewChunks,
+  psHistory,
+  artifact,
+  onToggleEntry,
+  keyFor
+}: { 
+  session: PathwaySession; 
+  status: SessionStatus;
+  timeline: ResumeTimelineEntry[];
+  courseId: string;
+  navigate: ReturnType<typeof useNavigate>;
+  openKey: string | null;
+  entryLoading: boolean;
+  reviewChunks: RemediationReview["chunks"];
+  psHistory: ProblemSetHistory | null;
+  artifact: Record<string, unknown> | null;
+  onToggleEntry: (e: ResumeTimelineEntry, k: string) => void;
+  keyFor: (e: ResumeTimelineEntry, i: number) => string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const isClickable = (status === "done" || status === "current") && timeline.length > 0;
+
   const extra = session.topics_covered.length - 5;
   const leftBorder = status === "done" ? "3px solid var(--accent-success)" : status === "current" ? "3px solid var(--accent-primary)" : "1px solid var(--hairline)";
   const numColor = status === "done" ? "var(--accent-success)" : status === "locked" ? "var(--steel-light)" : "var(--accent-primary)";
@@ -429,27 +481,51 @@ function SessionRow({ session, status }: { session: PathwaySession; status: Sess
         : { label: "🔒 LOCKED", color: "var(--steel-light)" };
 
   return (
-    <div style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderLeft: leftBorder, borderRadius: 8, padding: 24, display: "flex", gap: 22, opacity: status === "locked" ? 0.7 : 1 }}>
-      <div className="t-display" style={{ fontSize: "clamp(34px,5vw,52px)", color: numColor, lineHeight: 0.9, flexShrink: 0, minWidth: 52 }}>{String(session.session_number).padStart(2, "0")}</div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
-          <div className="t-heading" style={{ fontSize: "clamp(18px,2.4vw,24px)", color: "var(--text-primary)" }}>{session.session_title}</div>
-          <span className="t-label" style={{ color: tag.color, border: `1px solid ${tag.color}`, padding: "4px 8px", borderRadius: 6, flexShrink: 0 }}>{tag.label}</span>
-        </div>
+    <div style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderLeft: leftBorder, borderRadius: 8, display: "flex", flexDirection: "column", opacity: status === "locked" ? 0.7 : 1 }}>
+      <div 
+        onClick={() => isClickable && setExpanded(!expanded)}
+        style={{ padding: 24, display: "flex", gap: 22, cursor: isClickable ? "pointer" : "default" }}
+      >
+        <div className="t-display" style={{ fontSize: "clamp(34px,5vw,52px)", color: numColor, lineHeight: 0.9, flexShrink: 0, minWidth: 52 }}>{String(session.session_number).padStart(2, "0")}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
+            <div className="t-heading" style={{ fontSize: "clamp(18px,2.4vw,24px)", color: "var(--text-primary)" }}>{session.session_title}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span className="t-label" style={{ color: tag.color, border: `1px solid ${tag.color}`, padding: "4px 8px", borderRadius: 6, flexShrink: 0 }}>{tag.label}</span>
+              {isClickable && (
+                <span className="t-mono steel" style={{ fontSize: 16 }}>{expanded ? "▲" : "▼"}</span>
+              )}
+            </div>
+          </div>
 
         {session.topics_covered.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 14 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12 }}>
             {session.topics_covered.slice(0, 5).map((t, i) => (
-              <span key={i} className="t-mono" style={{ color: "var(--steel-light)", border: "1px solid var(--hairline)", padding: "3px 7px", borderRadius: 4 }}>{t}</span>
+              <span key={i} className="t-mono steel" style={{ fontSize: 12, border: "1px solid var(--hairline)", padding: "2px 6px", borderRadius: 4 }}>{t}</span>
             ))}
-            {extra > 0 && <span className="t-mono steel" style={{ padding: "3px 7px" }}>+{extra} MORE</span>}
+            {extra > 0 && <span className="t-mono steel" style={{ fontSize: 12, border: "1px solid var(--hairline)", padding: "2px 6px", borderRadius: 4 }}>+{extra} MORE</span>}
           </div>
         )}
-
-        <div className="t-mono steel" style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--hairline)", display: "flex", gap: 18, flexWrap: "wrap" }}>
-          <span>{session.chunk_count} CHUNKS</span>
-        </div>
       </div>
+      </div>
+      {expanded && timeline.length > 0 && (
+        <div style={{ borderTop: "1px solid var(--hairline)", padding: "16px 24px", background: "var(--bg-primary)", borderBottomRightRadius: 8 }}>
+          <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 12 }}>SESSION HISTORY</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {timeline.map((e, i) => {
+              const k = keyFor(e, i);
+              return (
+                <TimelineRow
+                  key={k} e={e} courseId={courseId} navigate={navigate}
+                  open={openKey === k} loading={entryLoading}
+                  reviewChunks={reviewChunks} psHistory={psHistory} artifact={artifact}
+                  onToggle={() => onToggleEntry(e, k)}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

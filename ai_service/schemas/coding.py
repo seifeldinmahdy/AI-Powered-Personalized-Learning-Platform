@@ -68,8 +68,8 @@ class LabSlideContext(BaseModel):
 class CodingLabGenerateRequest(BaseModel):
     student_id: str = ""
     course_id: str
-    lesson_id: str
-    lesson_title: str
+    lesson_id: str = ""
+    lesson_title: str = ""
     session_id: Optional[str] = None
     student_profile_summary: str = ""
     slides: list[LabSlideContext] = Field(default_factory=list)

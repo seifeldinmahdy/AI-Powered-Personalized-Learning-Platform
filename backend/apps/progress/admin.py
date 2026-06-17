@@ -1,16 +1,16 @@
 from django.contrib import admin
 from .models import (
-    LessonCompletion, SystemActivityLog, AIChatLog,
+    SessionCompletion, SystemActivityLog, AIChatLog,
     StudentLearningProfile, Bookmark,
     IntentFeedbackBuffer, IntentRetrainingCounter,
 )
 
 
-@admin.register(LessonCompletion)
-class LessonCompletionAdmin(admin.ModelAdmin):
-    list_display = ("enrollment", "lesson", "status", "score", "completed_at")
+@admin.register(SessionCompletion)
+class SessionCompletionAdmin(admin.ModelAdmin):
+    list_display = ("enrollment", "session_number", "status", "score", "completed_at")
     list_filter = ("status",)
-    search_fields = ("enrollment__student__username", "lesson__title")
+    search_fields = ("enrollment__student__username",)
 
 
 @admin.register(SystemActivityLog)
@@ -23,11 +23,11 @@ class SystemActivityLogAdmin(admin.ModelAdmin):
 @admin.register(AIChatLog)
 class AIChatLogAdmin(admin.ModelAdmin):
     list_display = (
-        "user", "lesson", "predicted_intent", "confidence",
+        "user", "course", "session_number", "predicted_intent", "confidence",
         "feedback", "created_at", "used_for_retraining",
     )
     list_filter = ("predicted_intent", "feedback", "used_for_retraining", "created_at")
-    search_fields = ("user__username", "lesson__title", "transcript_text", "session_id")
+    search_fields = ("user__username", "course__title", "transcript_text", "session_id")
     readonly_fields = ("created_at", "feedback_at")
 
 

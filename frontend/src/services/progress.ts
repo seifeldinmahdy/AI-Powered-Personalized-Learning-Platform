@@ -11,8 +11,8 @@ export interface NewlyEarnedAchievement {
 export interface LessonCompletion {
     id: number;
     enrollment: number;
-    lesson: number;
-    lesson_title: string;
+    session_number: number;
+    session_title: string;
     status: 'Started' | 'In Progress' | 'Completed';
     score: number;
     completed_at: string | null;
@@ -28,28 +28,31 @@ export interface ActivityLog {
     created_at: string;
 }
 
-// ---------- Lesson Completions ----------
+// ---------- Session Completions ----------
 
-export async function getLessonCompletions(enrollmentId?: number): Promise<LessonCompletion[]> {
+export async function getSessionCompletions(enrollmentId?: number): Promise<LessonCompletion[]> {
     const response = await api.get<LessonCompletion[] | { results: LessonCompletion[] }>(
-        '/progress/lesson-completions/',
+        '/progress/session-completions/',
         { params: enrollmentId ? { enrollment_id: enrollmentId } : undefined },
     );
     const data = response.data;
     return Array.isArray(data) ? data : data.results ?? [];
 }
 
-export async function createLessonCompletion(data: {
-    enrollment: number;
-    lesson: number;
+export async function createSessionCompletion(courseId: number, data: {
+    session_number: number;
     status?: string;
+    score?: number;
     time_spent_minutes?: number;
 }): Promise<LessonCompletion> {
-    const response = await api.post<LessonCompletion>('/progress/lesson-completions/', data);
+    const response = await api.post<LessonCompletion>(`/progress/complete-session/`, {
+        course_id: courseId,
+        ...data,
+    });
     return response.data;
 }
 
-export async function markLessonComplete(
+export async function markSessionComplete(
     completionId: number,
     score?: number,
     timeSpentMinutes?: number,
@@ -58,18 +61,18 @@ export async function markLessonComplete(
     if (score !== undefined) payload.score = score;
     if (timeSpentMinutes !== undefined) payload.time_spent_minutes = timeSpentMinutes;
     const response = await api.post<LessonCompletion>(
-        `/progress/lesson-completions/${completionId}/complete/`,
+        `/progress/session-completions/${completionId}/complete/`,
         payload,
     );
     return response.data;
 }
 
-export async function updateLessonProgress(
+export async function updateSessionProgress(
     completionId: number,
     data: Partial<Pick<LessonCompletion, 'status' | 'score'>>,
 ): Promise<LessonCompletion> {
     const response = await api.patch<LessonCompletion>(
-        `/progress/lesson-completions/${completionId}/`,
+        `/progress/session-completions/${completionId}/`,
         data,
     );
     return response.data;

@@ -20,3 +20,4 @@ class CLOSuggestRequest(BaseModel):
 
 class CLOSuggestResponse(BaseModel):
     drafts: list[CLODraft]
+    suggested_concepts: list[str] = []

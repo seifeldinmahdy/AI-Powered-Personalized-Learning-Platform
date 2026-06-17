@@ -310,6 +310,8 @@ async def get_student_problem_sets(student_id: str, lesson_id: str):
     for raw_ps in raw_problem_sets:
         if "content_json" in raw_ps:
             raw_ps.update(raw_ps.pop("content_json"))
+        if "ps_uid" in raw_ps:
+            raw_ps["problem_set_id"] = raw_ps["ps_uid"]
         results.append(raw_ps)
         
     return results

@@ -68,9 +68,9 @@ export const router = createBrowserRouter([
                 path: "course/:courseId/pathway",
                 lazy: () => import("./pages/student/CoursePathway").then(m => ({ Component: m.default })),
             },
-            { path: "course/:courseId/lesson/:lessonId/lab", Component: CodingLab },
+            { path: "course/:courseId/session/:sessionNumber/lab", Component: CodingLab },
             {
-                path: "course/:courseId/lesson/:lessonId/problem-set",
+                path: "course/:courseId/session/:sessionNumber/problem-set",
                 lazy: () => import("./pages/student/ProblemSet").then(m => ({ Component: m.default })),
             },
             { path: "profile", Component: Profile },
@@ -78,7 +78,7 @@ export const router = createBrowserRouter([
             { path: "course/:courseId/capstone", Component: CapstonePage },
             { path: "course/:courseId/capstone/workspace", Component: CapstoneWorkspace },
             {
-                path: "course/:courseId/lesson/:lessonId",
+                path: "course/:courseId/session/:sessionNumber",
                 element: (
                     <RequirePathway>
                         <LiveSession />

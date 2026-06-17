@@ -150,7 +150,7 @@ async def create_problem_set(student_id: str, course_id: str, lesson_id: str, *,
                              regenerate: bool = False) -> Optional[dict]:
     ok, data = await _request(
         "POST", "/problem-sets/", student_id=student_id,
-        json={"course_id": course_id, "lesson_id": lesson_id, "plan_version": plan_version,
+        json={"course_id": course_id, "session_number": lesson_id, "plan_version": plan_version,
               "ps_uid": ps_uid, "content_json": content_json, "regenerate": regenerate},
         expected=(201,),
     )
@@ -168,7 +168,7 @@ async def get_problem_sets(student_id: str, lesson_id: str) -> list[dict]:
     """Get all problem sets for a student and lesson."""
     ok, data = await _request(
         "GET", "/problem-sets/list/", student_id=student_id,
-        params={"lesson_id": lesson_id},
+        params={"session_number": lesson_id},
     )
     return data if ok and isinstance(data, list) else []
 
@@ -198,14 +198,14 @@ async def get_regen_count(student_id: str, course_id: str, lesson_id: str,
                           plan_version: int) -> Optional[dict]:
     ok, data = await _request(
         "GET", "/problem-sets/regen-count/", student_id=student_id,
-        params={"course": course_id, "lesson": lesson_id, "plan_version": plan_version},
+        params={"course": course_id, "session_number": lesson_id, "plan_version": plan_version},
     )
     return data if ok else None
 
 
 async def get_best_score(student_id: str, course_id: str, lesson_id: str,
                          plan_version: Optional[int] = None) -> Optional[float]:
-    params = {"course": course_id, "lesson": lesson_id}
+    params = {"course": course_id, "session_number": lesson_id}
     if plan_version is not None:
         params["plan_version"] = plan_version
     ok, data = await _request(

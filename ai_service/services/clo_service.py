@@ -56,17 +56,23 @@ BLOOM'S TAXONOMY ACTION VERBS:
 OUTPUT RULES:
 - Each CLO must start with a strong action verb from the appropriate Bloom level.
 - CLOs should be measurable, specific, and achievable by course end.
-- Map each CLO to the most relevant concept IDs from AVAILABLE CONCEPTS (use the "id" strings exactly).
 - Generate 4–8 CLOs, covering a range of Bloom levels (at least Remember, Understand, Apply).
-- Return ONLY a valid JSON object with key "drafts" containing an array. No markdown, no preamble.
+- Generate 4-8 core concepts from the course outline.
+- Map each CLO to the most relevant concepts (use the generated concept strings directly).
+- Return ONLY a valid JSON object. No markdown, no preamble.
 
-JSON Schema for each draft:
+JSON Schema:
 {
-  "code": "CLO1",          // sequential, e.g. CLO1, CLO2, ...
-  "text": "...",           // full outcome statement starting with action verb
-  "bloom_level": "...",    // one of: remember, understand, apply, analyze, evaluate, create
-  "concept_ids": ["..."],  // list of concept ID strings from AVAILABLE CONCEPTS
-  "order": 1               // sequential ordering integer
+  "suggested_concepts": ["concept 1", "concept 2", ...], // list of newly generated core concepts
+  "drafts": [
+    {
+      "code": "CLO1",          // sequential, e.g. CLO1, CLO2, ...
+      "text": "...",           // full outcome statement starting with action verb
+      "bloom_level": "...",    // one of: remember, understand, apply, analyze, evaluate, create
+      "concept_ids": ["..."],  // list of concept ID strings or concept labels
+      "order": 1               // sequential ordering integer
+    }
+  ]
 }
 """
 
@@ -76,15 +82,25 @@ async def suggest_clos(request: CLOSuggestRequest) -> CLOSuggestResponse:
     outline_text = json.dumps(request.outline, indent=2)
     concepts_text = json.dumps(request.existing_concepts, indent=2)
 
-    user_prompt = f"""COURSE TITLE: {request.course_title}
+    if request.existing_concepts:
+        user_prompt = f"""COURSE TITLE: {request.course_title}
 
 COURSE OUTLINE:
 {outline_text}
 
-AVAILABLE CONCEPTS (use these IDs in concept_ids):
+AVAILABLE CONCEPTS (use these exact IDs in concept_ids):
 {concepts_text}
 
-Generate 4–8 CLOs for this course. Return JSON with key "drafts" containing the array."""
+Generate 4–8 CLOs for this course. Map the CLOs ONLY to the provided AVAILABLE CONCEPTS.
+Return JSON with keys "suggested_concepts" (empty array) and "drafts" containing the array."""
+    else:
+        user_prompt = f"""COURSE TITLE: {request.course_title}
+
+COURSE OUTLINE:
+{outline_text}
+
+There are no existing concepts. Please generate 4-8 core concepts from the course outline.
+Return JSON with keys "suggested_concepts" containing the generated concepts, and "drafts" containing the CLO drafts mapped to those new concepts."""
 
     client = _get_client()
     try:
@@ -103,10 +119,15 @@ Generate 4–8 CLOs for this course. Return JSON with key "drafts" containing th
     # Parse response
     if isinstance(raw, dict) and "drafts" in raw:
         drafts_raw = raw["drafts"]
+        suggested_concepts = raw.get("suggested_concepts", [])
     elif isinstance(raw, list):
         drafts_raw = raw
+        suggested_concepts = []
     else:
         raise RuntimeError(f"Unexpected CLO response format: {type(raw)}")
+
+    # Build valid concept ID set for validation
+    valid_concept_ids = {str(c["id"]) for c in request.existing_concepts}
 
     drafts = []
     for i, d in enumerate(drafts_raw):
@@ -120,7 +141,13 @@ Generate 4–8 CLOs for this course. Return JSON with key "drafts" containing th
             if "order" not in d:
                 d["order"] = i + 1
             # Coerce concept_ids to list of strings
-            d["concept_ids"] = [str(c) for c in (d.get("concept_ids") or [])]
+            raw_ids = [str(c) for c in (d.get("concept_ids") or [])]
+            if request.existing_concepts:
+                # If using existing concepts, filter to valid IDs only
+                d["concept_ids"] = [cid for cid in raw_ids if cid in valid_concept_ids]
+            else:
+                # If generating new concepts, keep the raw labels as "concept_ids"
+                d["concept_ids"] = raw_ids
             drafts.append(CLODraft(**d))
         except Exception as parse_err:
             logger.warning("Skipping malformed CLO draft: %s — %s", d, parse_err)
@@ -128,5 +155,52 @@ Generate 4–8 CLOs for this course. Return JSON with key "drafts" containing th
     if not drafts:
         raise RuntimeError("CLO generation produced 0 valid drafts")
 
+    # Auto-assign concepts to drafts that have no concept_ids.
+    # Uses fuzzy text matching between CLO text and concept labels.
+    if request.existing_concepts:
+        _auto_assign_concepts(drafts, request.existing_concepts)
+
     logger.info("Generated %d CLO drafts for course: %s", len(drafts), request.course_title)
-    return CLOSuggestResponse(drafts=drafts)
+    return CLOSuggestResponse(drafts=drafts, suggested_concepts=suggested_concepts)
+
+
+def _auto_assign_concepts(
+    drafts: list[CLODraft],
+    existing_concepts: list[dict],
+) -> None:
+    """Assign concepts to any draft with empty concept_ids using text similarity.
+
+    Each CLO should map to 1-3 of the most relevant concepts. Concepts already
+    assigned by the LLM are kept; this only fills in empty ones.
+    """
+    from difflib import SequenceMatcher
+    import re
+
+    def _norm(s: str) -> str:
+        return re.sub(r"[^a-z0-9 ]", " ", s.lower()).strip()
+
+    concept_labels = [(str(c["id"]), _norm(c["label"])) for c in existing_concepts]
+
+    for draft in drafts:
+        if draft.concept_ids:
+            continue  # LLM already assigned concepts
+
+        clo_text = _norm(draft.text)
+        scores: list[tuple[str, float]] = []
+        for cid, label in concept_labels:
+            ratio = SequenceMatcher(None, clo_text, label).ratio()
+            # Bonus for keyword overlap
+            clo_words = set(clo_text.split())
+            label_words = set(label.split())
+            overlap = len(clo_words & label_words) / max(len(label_words), 1)
+            score = 0.5 * ratio + 0.5 * overlap
+            scores.append((cid, score))
+
+        # Assign top 1-3 concepts with score > 0.15
+        scores.sort(key=lambda x: -x[1])
+        assigned = [cid for cid, s in scores[:3] if s > 0.15]
+        if not assigned and scores:
+            # At minimum assign the single best match
+            assigned = [scores[0][0]]
+        draft.concept_ids = assigned
+

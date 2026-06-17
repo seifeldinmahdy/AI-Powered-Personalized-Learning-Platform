@@ -255,8 +255,8 @@ export default function AdminCourseEditor() {
   const [refreshingSummary, setRefreshingSummary] = useState(false);
 
   useEffect(() => {
-    Promise.all([getAdminCourses(), getModulesByCourse(id), getCourse(id)])
-      .then(([courses, mods, detail]) => {
+    Promise.all([getAdminCourses(), getCourse(id)])
+      .then(([courses, detail]) => {
         setCourse(courses.find((c) => c.id === id) ?? null);
         setCourseDetail(detail);
         setCourseForm({
@@ -269,20 +269,6 @@ export default function AdminCourseEditor() {
           syllabus: detail.syllabus,
           is_published: detail.is_published,
         });
-        setModules(
-          mods.map((m) => ({
-            data: m,
-            expanded: false,
-            editing: false,
-            editTitle: m.title,
-            editOrder: String(m.module_order),
-            lessons: [],
-            lessonsLoaded: false,
-            addingLesson: false,
-            newLessonTitle: '',
-            newLessonOrder: '',
-          })),
-        );
       })
       .catch(() => toast.error('Failed to load course content'))
       .finally(() => setLoading(false));
@@ -1451,155 +1437,7 @@ export default function AdminCourseEditor() {
         </div>
       </section>
 
-      {/* ── Modules ── */}
-      <section className="space-y-3">
-        {modules.map((mod, modIdx) => (
-          <div key={mod.data.id} className="admin-card overflow-hidden">
-            {/* Module header */}
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--admin-hairline-light)]">
-              <button onClick={() => toggleModule(modIdx)} className="text-[var(--admin-ink-secondary)] hover:text-[var(--admin-ink)] transition-colors">
-                {mod.expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-              </button>
-              {mod.editing ? (
-                <div className="flex-1 flex items-center gap-2">
-                  <input
-                    className="admin-input flex-1"
-                    style={{ paddingTop: 8, paddingBottom: 8 }}
-                    value={mod.editTitle}
-                    onChange={(e) => updateModuleField(modIdx, 'editTitle', e.target.value)}
-                    placeholder="Module title"
-                  />
-                  <input
-                    className="admin-input"
-                    style={{ width: 64, paddingTop: 8, paddingBottom: 8 }}
-                    value={mod.editOrder}
-                    onChange={(e) => updateModuleField(modIdx, 'editOrder', e.target.value)}
-                    placeholder="#"
-                    type="number"
-                  />
-                  <button onClick={() => handleSaveModule(modIdx)} className="admin-btn admin-btn-icon" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}><Check size={14} /></button>
-                  <button onClick={() => updateModuleField(modIdx, 'editing', false)} className="admin-btn admin-btn-ghost admin-btn-icon"><X size={14} /></button>
-                </div>
-              ) : (
-                <div className="flex-1 flex items-center gap-2">
-                  <span className="font-semibold text-sm" style={{ color: 'var(--admin-ink)' }}>{mod.data.title}</span>
-                  <span className="text-xs" style={{ color: 'var(--admin-ink-secondary)' }}>#{mod.data.module_order}</span>
-                  <span className="text-xs" style={{ color: 'var(--admin-ink-secondary)' }}>· {mod.lessons.length} lessons</span>
-                </div>
-              )}
-              {!mod.editing && (
-                <div className="flex items-center gap-1">
-                  <button onClick={() => updateModuleField(modIdx, 'editing', true)} className="admin-btn admin-btn-ghost admin-btn-icon"><Edit size={13} /></button>
-                  <button onClick={() => handleDeleteModule(modIdx)} className="admin-btn admin-btn-ghost-danger admin-btn-icon"><Trash2 size={13} /></button>
-                </div>
-              )}
-            </div>
 
-            {/* Lessons */}
-            {mod.expanded && (
-              <div>
-                {mod.lessons.map((lesson, lessonIdx) => (
-                  <div key={lesson.data.id} className="flex items-center gap-3 px-6 py-2.5 border-b border-[var(--admin-hairline-light)] last:border-b-0">
-                    {lesson.editing ? (
-                      <div className="flex-1 flex items-center gap-2">
-                        <input
-                          className="admin-input flex-1"
-                          style={{ paddingTop: 6, paddingBottom: 6 }}
-                          value={lesson.editTitle}
-                          onChange={(e) => updateLessonField(modIdx, lessonIdx, 'editTitle', e.target.value)}
-                          placeholder="Lesson title"
-                        />
-                        <input
-                          className="admin-input"
-                          style={{ width: 56, paddingTop: 6, paddingBottom: 6 }}
-                          value={lesson.editOrder}
-                          onChange={(e) => updateLessonField(modIdx, lessonIdx, 'editOrder', e.target.value)}
-                          placeholder="#"
-                          type="number"
-                        />
-                        <button onClick={() => handleSaveLesson(modIdx, lessonIdx)} className="admin-btn admin-btn-icon" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}><Check size={13} /></button>
-                        <button onClick={() => updateLessonField(modIdx, lessonIdx, 'editing', false)} className="admin-btn admin-btn-ghost admin-btn-icon"><X size={13} /></button>
-                      </div>
-                    ) : (
-                      <>
-                        <span className="text-xs" style={{ color: 'var(--admin-ink-secondary)', width: 20 }}>{lesson.data.lesson_order}.</span>
-                        <span className="flex-1 text-sm" style={{ color: 'var(--admin-ink)' }}>{lesson.data.title}</span>
-                        <button onClick={() => updateLessonField(modIdx, lessonIdx, 'editing', true)} className="admin-btn admin-btn-ghost admin-btn-icon"><Edit size={12} /></button>
-                        <button onClick={() => handleDeleteLesson(modIdx, lessonIdx)} className="admin-btn admin-btn-ghost-danger admin-btn-icon"><Trash2 size={12} /></button>
-                      </>
-                    )}
-                  </div>
-                ))}
-
-                {/* Add lesson form */}
-                {mod.addingLesson ? (
-                  <div className="flex items-center gap-2 px-6 py-2.5">
-                    <input
-                      autoFocus
-                      className="admin-input flex-1"
-                      style={{ paddingTop: 6, paddingBottom: 6 }}
-                      value={mod.newLessonTitle}
-                      onChange={(e) => updateModuleField(modIdx, 'newLessonTitle', e.target.value)}
-                      placeholder="New lesson title"
-                      onKeyDown={(e) => e.key === 'Enter' && handleAddLesson(modIdx)}
-                    />
-                    <input
-                      className="admin-input"
-                      style={{ width: 56, paddingTop: 6, paddingBottom: 6 }}
-                      value={mod.newLessonOrder}
-                      onChange={(e) => updateModuleField(modIdx, 'newLessonOrder', e.target.value)}
-                      placeholder="#"
-                      type="number"
-                    />
-                    <button onClick={() => handleAddLesson(modIdx)} className="admin-btn admin-btn-icon" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}><Check size={14} /></button>
-                    <button onClick={() => updateModuleField(modIdx, 'addingLesson', false)} className="admin-btn admin-btn-ghost admin-btn-icon"><X size={14} /></button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => updateModuleField(modIdx, 'addingLesson', true)}
-                    className="w-full flex items-center gap-2 px-6 py-2.5 text-sm transition-colors hover:bg-[var(--admin-paper-muted)]"
-                    style={{ color: 'var(--admin-ink-secondary)' }}
-                  >
-                    <Plus size={13} /> Add Lesson
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-
-        {/* Add module */}
-        {addingModule ? (
-          <div className="admin-card p-4 flex items-center gap-2">
-            <input
-              autoFocus
-              className="admin-input flex-1"
-              value={newModuleTitle}
-              onChange={(e) => setNewModuleTitle(e.target.value)}
-              placeholder="New module title"
-              onKeyDown={(e) => e.key === 'Enter' && handleAddModule()}
-            />
-            <input
-              className="admin-input"
-              style={{ width: 64 }}
-              value={newModuleOrder}
-              onChange={(e) => setNewModuleOrder(e.target.value)}
-              placeholder="#"
-              type="number"
-            />
-            <button onClick={handleAddModule} className="admin-btn admin-btn-icon" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}><Check size={15} /></button>
-            <button onClick={() => setAddingModule(false)} className="admin-btn admin-btn-ghost admin-btn-icon"><X size={15} /></button>
-          </div>
-        ) : (
-          <button
-            onClick={() => setAddingModule(true)}
-            className="w-full flex items-center justify-center gap-2 py-3 admin-card border-dashed border-2 transition-colors hover:bg-[var(--admin-paper-muted)]"
-            style={{ color: 'var(--admin-ink-secondary)', borderColor: 'var(--admin-hairline)' }}
-          >
-            <Plus size={15} /> Add Module
-          </button>
-        )}
-      </section>
 
       {/* ── Course Learning Outcomes ── */}
       <section>

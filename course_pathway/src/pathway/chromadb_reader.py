@@ -166,6 +166,13 @@ class ChromaDBReader:
         )
         return best_match
 
+    def get_chunks_for_concept(self, scope, concept_id: str) -> list[CourseChunk]:
+        """Chunks in *scope* tagged with *concept_id*, as CourseChunk."""
+        return [
+            self._to_course_chunk(c)
+            for c in self._service.get_chunks_for_concept(scope, concept_id)
+        ]
+
     def get_topics_by_difficulty(self, scope, difficulty: str) -> list[str]:
         return self._service.get_topics_by_difficulty(scope, difficulty)
 

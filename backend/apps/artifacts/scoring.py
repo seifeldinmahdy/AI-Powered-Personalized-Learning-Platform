@@ -5,7 +5,7 @@ written back as a mutable field. Exact aggregation (per the agreed spec):
 
     per question  -> best attempt score        (max over that question's attempts)
     per generation-> mean of its questions' bests
-    per lesson    -> best generation score      (max over generations)
+    per session    -> best generation score      (max over generations)
 
 i.e. per-question-best, aggregated (mean) ACROSS that generation's questions,
 then the best such generation — NOT the single highest-scoring question attempt.
@@ -38,15 +38,15 @@ def generation_score(problem_set: ProblemSet) -> float | None:
     return round(sum(best_by_q.values()) / n, 2)
 
 
-def best_lesson_score(enrollment_id: int, lesson_id: int, plan_version: int | None = None) -> float | None:
-    """Best generation score for a lesson across its retained generations.
+def best_session_score(enrollment_id: int, session_number: int, plan_version: int | None = None) -> float | None:
+    """Best generation score for a session across its retained generations.
 
     ``plan_version`` filters to one course version when supplied (a new plan
     version is a genuinely different course); omitted = across all versions.
     Superseded (regenerated-over) generations still count — they are retained.
     Loads no content (defers content_json / hint_tracking).
     """
-    qs = ProblemSet.objects.filter(enrollment_id=enrollment_id, lesson_id=lesson_id)
+    qs = ProblemSet.objects.filter(enrollment_id=enrollment_id, session_number=session_number)
     if plan_version is not None:
         qs = qs.filter(plan_version=plan_version)
     qs = qs.defer("content_json", "hint_tracking").prefetch_related("attempts")

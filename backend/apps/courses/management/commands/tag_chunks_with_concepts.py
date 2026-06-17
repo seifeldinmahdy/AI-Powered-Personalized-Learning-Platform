@@ -36,17 +36,13 @@ from apps.courses.concept_match import build_matcher
 
 def _load_vector_store():
     repo_root = Path(__file__).resolve().parents[5]
-    for p in (str(repo_root / "rag_pipeline"), str(repo_root / "course_pathway" / "src")):
-        if p not in sys.path:
-            sys.path.insert(0, p)
-    from pathway.config import get_settings  # type: ignore
+    rag_dir = str(repo_root / "rag_pipeline")
+    if rag_dir not in sys.path:
+        sys.path.insert(0, rag_dir)
     from src.indexing.store import VectorStore  # type: ignore
 
-    settings = get_settings()
-    return VectorStore(
-        persist_dir=settings.chroma_db_path,
-        collection_name=settings.chroma_collection_name,
-    )
+    chroma_path = str(repo_root / "rag_pipeline" / "data" / "chroma")
+    return VectorStore(persist_dir=chroma_path, collection_name="course_chunks")
 
 
 class Command(BaseCommand):
@@ -126,10 +122,10 @@ class Command(BaseCommand):
             avg = (confidence_sum[key] / n) if n else 0.0
             flag = ""
             if n == 0:
-                flag = "  ⚠ ZERO CHUNKS"
+                flag = "  [!] ZERO CHUNKS"
                 zero.append(c.label)
             elif avg < 0.7:
-                flag = "  ⚠ low avg confidence"
+                flag = "  [!] low avg confidence"
                 weak.append(c.label)
             self.stdout.write(f"  {c.label[:40]:<40} chunks={n:<4} avg_conf={avg:.2f}{flag}")
         self.stdout.write("-" * 72)

@@ -9,12 +9,11 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.core.authentication import InternalServiceAuthentication
 from .models import (
-    Course, Module, Lesson, Slide, CodeChallenge, Enrollment, CourseRating,
+    Course, Enrollment, CourseRating,
     Concept, CourseLearningOutcome, CourseCorpus, CorpusSource,
 )
 from .serializers import (
-    CourseSerializer, ModuleSerializer, LessonSerializer, LessonDetailSerializer,
-    SlideSerializer, CodeChallengeStudentSerializer, EnrollmentSerializer, CourseRatingSerializer,
+    CourseSerializer, EnrollmentSerializer, CourseRatingSerializer,
     ConceptSerializer, CourseLearningOutcomeSerializer,
     CourseCorpusSerializer, CorpusSourceSerializer,
 )
@@ -147,61 +146,6 @@ class CourseViewSet(viewsets.ModelViewSet):
         return Response({"avg_rating": round(avg, 2), "your_rating": obj.rating})
 
 
-class ModuleViewSet(viewsets.ModelViewSet):
-    """CRUD for modules (write requires admin). Filter by ?course_id=<id>."""
-    serializer_class = ModuleSerializer
-    permission_classes = [IsAdminOrReadOnly]
-
-    def get_queryset(self):
-        qs = Module.objects.all().order_by('module_order')
-        course_id = self.request.query_params.get("course_id")
-        if course_id:
-            qs = qs.filter(course_id=course_id)
-        return qs
-
-
-class LessonViewSet(viewsets.ModelViewSet):
-    """CRUD for lessons (write requires admin). Filter by ?module_id=<id>. Detail includes slides + challenges."""
-    permission_classes = [IsAdminOrReadOnly]
-
-    def get_serializer_class(self):
-        if self.action == "retrieve":
-            return LessonDetailSerializer
-        return LessonSerializer
-
-    def get_queryset(self):
-        qs = Lesson.objects.all().order_by('lesson_order')
-        module_id = self.request.query_params.get("module_id")
-        if module_id:
-            qs = qs.filter(module_id=module_id)
-        return qs
-
-
-class SlideViewSet(viewsets.ReadOnlyModelViewSet):
-    """List/retrieve slides. Filter by ?lesson_id=<id>."""
-    serializer_class = SlideSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-
-    def get_queryset(self):
-        qs = Slide.objects.all()
-        lesson_id = self.request.query_params.get("lesson_id")
-        if lesson_id:
-            qs = qs.filter(lesson_id=lesson_id)
-        return qs
-
-
-class CodeChallengeViewSet(viewsets.ReadOnlyModelViewSet):
-    """List/retrieve code challenges (student-safe). Filter by ?lesson_id=<id>."""
-    serializer_class = CodeChallengeStudentSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-
-    def get_queryset(self):
-        qs = CodeChallenge.objects.all()
-        lesson_id = self.request.query_params.get("lesson_id")
-        if lesson_id:
-            qs = qs.filter(lesson_id=lesson_id)
-        return qs
-
 
 class EnrollmentViewSet(viewsets.ModelViewSet):
     """CRUD operations for enrollments. Admins see all; students see their own."""
@@ -215,11 +159,7 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         return Enrollment.objects.filter(student=self.request.user)
 
     def perform_create(self, serializer):
-        course = serializer.validated_data.get("course")
-        first_lesson = Lesson.objects.filter(
-            module__course=course
-        ).order_by("module__module_order", "lesson_order").first()
-        serializer.save(student=self.request.user, current_lesson=first_lesson)
+        serializer.save(student=self.request.user, current_session_number=1)
 
     # save_pathway was RETIRED: the authoritative plan lives in the AI-service
     # versioned store, not Django. The plan is generated once server-side after
@@ -258,13 +198,12 @@ def course_resume(request, course_id):
     timeline of this enrollment's artifacts (slides, labs, problem sets) at the
     CURRENT plan_version — so orphaned old-version artifacts never show as current.
     """
-    from apps.progress.models import LessonCompletion
+    from apps.progress.models import SessionCompletion
     from apps.artifacts.models import StudentArtifact, ProblemSet
-    from apps.artifacts.scoring import best_lesson_score
 
     enrollment = Enrollment.objects.filter(
         student=request.user, course_id=course_id
-    ).select_related("current_lesson").first()
+    ).first()
     if not enrollment:
         return Response({"error": "Not enrolled in this course."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -272,61 +211,42 @@ def course_resume(request, course_id):
     plan_version = plan.get("plan_version") if plan else None
     total_sessions = int(plan.get("total_sessions", 0)) if plan else 0
 
-    # Auto-provision Django Lesson objects for adaptive pathways if missing.
-    # This ensures routing, completion tracking, and progression work flawlessly
-    # without requiring the instructor to manually create modules for adaptive courses.
-    if total_sessions > 0:
-        lesson_count = Lesson.objects.filter(module__course_id=course_id).count()
-        if lesson_count < total_sessions:
-            mod, _ = Module.objects.get_or_create(course_id=course_id, title="Adaptive Pathway", defaults={"module_order": 1})
-            for i in range(lesson_count + 1, total_sessions + 1):
-                Lesson.objects.get_or_create(module=mod, title=f"Adaptive Session {i}", defaults={"lesson_order": i})
 
-    if not enrollment.current_lesson_id:
-        first_lesson = Lesson.objects.filter(module__course_id=course_id).order_by("module__module_order", "lesson_order").first()
-        if first_lesson:
-            enrollment.current_lesson = first_lesson
-            enrollment.save(update_fields=["current_lesson"])
+    if not enrollment.current_session_number:
+        enrollment.current_session_number = 1
+        enrollment.save(update_fields=["current_session_number"])
 
-    completed = LessonCompletion.objects.filter(
+    completed = SessionCompletion.objects.filter(
         enrollment=enrollment, status="Completed"
     ).count()
     sessions_left = max(0, total_sessions - completed)
 
-    # Position map (lesson -> 1-based order) to order a unified timeline and to
-    # derive the current session number from the pointer.
-    lesson_order = {
-        lid: i + 1
-        for i, lid in enumerate(
-            Lesson.objects.filter(module__course_id=course_id)
-            .order_by("module__module_order", "lesson_order")
-            .values_list("id", flat=True)
-        )
-    }
+
 
     timeline = []
     if plan_version is not None:
         # Slides + labs — content_json deferred (no content scan).
         for a in (StudentArtifact.objects
                   .filter(enrollment=enrollment, plan_version=plan_version)
-                  .defer("content_json").order_by("session_number", "lesson_id")):
+                  .defer("content_json").order_by("session_number")):
             timeline.append({
                 "kind": "artifact", "id": a.id, "type": a.artifact_type,
-                "session_number": a.session_number, "lesson": a.lesson_id,
+                "session_number": a.session_number, "lesson": a.session_number,
                 "status": a.status,
-                "sort_key": a.session_number or lesson_order.get(a.lesson_id, 9999),
+                "sort_key": a.session_number or 9999,
             })
         # Problem sets — content/hint deferred; best score is content-free.
+        from apps.artifacts.scoring import best_session_score
         for ps in (ProblemSet.objects
                    .filter(enrollment=enrollment, plan_version=plan_version)
                    .defer("content_json", "hint_tracking").prefetch_related("attempts")):
             timeline.append({
                 "kind": "problem_set", "ps_uid": ps.ps_uid, "type": "problem_set",
-                "lesson": ps.lesson_id, "generation_index": ps.generation_index,
+                "lesson": ps.session_number, "session_number": ps.session_number, "generation_index": ps.generation_index,
                 "superseded": ps.superseded,
                 "status": "completed" if ps.attempts.all() else "generated",
-                "best_score": best_lesson_score(enrollment.id, ps.lesson_id, plan_version),
-                "sort_key": lesson_order.get(ps.lesson_id, 9999),
+                "best_score": best_session_score(enrollment.id, ps.session_number, plan_version),
+                "sort_key": ps.session_number or 9999,
             })
         # Remediation overlay (Batch 11a) — pending review steps, positioned just
         # after the session that teaches the weak concept. Index-light (.values(),
@@ -354,8 +274,7 @@ def course_resume(request, course_id):
         "total_sessions": total_sessions,
         "completed": completed,
         "sessions_left": sessions_left,
-        "current_lesson": enrollment.current_lesson_id,
-        "current_session_number": lesson_order.get(enrollment.current_lesson_id),
+        "current_session_number": enrollment.current_session_number,
         "timeline": timeline,
     })
 
@@ -594,7 +513,7 @@ class ConceptViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         course_pk = self.kwargs.get("course_pk")
-        qs = Concept.objects.select_related("parent").prefetch_related("children", "lessons")
+        qs = Concept.objects.select_related("parent").prefetch_related("children")
         if course_pk:
             qs = qs.filter(course_id=course_pk)
         return qs
@@ -650,32 +569,10 @@ class CourseLearningOutcomeViewSet(viewsets.ModelViewSet):
         except Course.DoesNotExist:
             return Response({"error": "Course not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # Build outline: [{module, lessons: [str]}]
-        outline = []
-        lessons_flat = []
-        for module in course.modules.prefetch_related("lessons").order_by("module_order"):
-            lesson_titles = list(
-                module.lessons.values_list("title", flat=True).order_by("lesson_order")
-            )
-            outline.append({"module": module.title, "lessons": lesson_titles})
-            for title in lesson_titles:
-                lessons_flat.append(title)
-
-        # Auto-seed Concepts from lesson titles when none exist yet.
+        # Fetch existing Concepts to pass to AI for mapping.
         existing_concepts = list(
             Concept.objects.filter(course=course).values("id", "label")
         )
-        if not existing_concepts and lessons_flat:
-            from django.utils.text import slugify
-            for order, title in enumerate(lessons_flat, start=1):
-                slug = slugify(title)[:60]
-                obj, _ = Concept.objects.get_or_create(
-                    course=course, slug=slug,
-                    defaults={"label": title, "order": order},
-                )
-            existing_concepts = list(
-                Concept.objects.filter(course=course).values("id", "label")
-            )
 
         ai_url = getattr(settings, "AI_SERVICE_URL", "http://localhost:8001")
         try:
@@ -683,7 +580,7 @@ class CourseLearningOutcomeViewSet(viewsets.ModelViewSet):
                 f"{ai_url}/clos/suggest",
                 json={
                     "course_title": course.title,
-                    "outline": outline,
+                    "course_description": course.description or "",
                     "existing_concepts": [
                         {"id": str(c["id"]), "label": c["label"]} for c in existing_concepts
                     ],
@@ -691,7 +588,67 @@ class CourseLearningOutcomeViewSet(viewsets.ModelViewSet):
                 timeout=120,
             )
             ai_resp.raise_for_status()
-            return Response(ai_resp.json())
+            data = ai_resp.json()
+            
+            # If the AI generated new concepts, create them and remap the draft IDs
+            if data.get("suggested_concepts"):
+                from django.utils.text import slugify
+                label_to_id = {}
+                for order, label in enumerate(data["suggested_concepts"], start=1):
+                    slug = slugify(label)[:60]
+                    obj, _ = Concept.objects.get_or_create(
+                        course=course, slug=slug,
+                        defaults={"label": label, "order": order},
+                    )
+                    label_to_id[label] = str(obj.id)
+                
+                # Remap the draft concept_ids (which contain labels) to the newly created IDs
+                for draft in data.get("drafts", []):
+                    new_ids = []
+                    for raw_label in draft.get("concept_ids", []):
+                        if raw_label in label_to_id:
+                            new_ids.append(label_to_id[raw_label])
+                        else:
+                            # Fuzzy matching fallback
+                            from difflib import SequenceMatcher
+                            best_match = None
+                            best_ratio = 0
+                            for label, cid in label_to_id.items():
+                                ratio = SequenceMatcher(None, raw_label.lower(), label.lower()).ratio()
+                                if ratio > best_ratio:
+                                    best_ratio = ratio
+                                    best_match = cid
+                            if best_match and best_ratio > 0.5:
+                                new_ids.append(best_match)
+
+                    # If no concepts were mapped by the LLM, use text similarity between CLO text and concept labels
+                    if not new_ids and draft.get("text"):
+                        from difflib import SequenceMatcher
+                        import re
+
+                        def _norm(s):
+                            return re.sub(r"[^a-z0-9 ]", " ", s.lower()).strip()
+                            
+                        clo_text = _norm(draft["text"])
+                        scores = []
+                        for label, cid in label_to_id.items():
+                            norm_label = _norm(label)
+                            ratio = SequenceMatcher(None, clo_text, norm_label).ratio()
+                            clo_words = set(clo_text.split())
+                            label_words = set(norm_label.split())
+                            overlap = len(clo_words & label_words) / max(len(label_words), 1)
+                            score = 0.5 * ratio + 0.5 * overlap
+                            scores.append((cid, score))
+                            
+                        scores.sort(key=lambda x: -x[1])
+                        new_ids = [cid for cid, s in scores[:3] if s > 0.15]
+                        if not new_ids and scores:
+                            new_ids = [scores[0][0]]
+
+                    # deduplicate new_ids and update draft
+                    draft["concept_ids"] = list(dict.fromkeys(new_ids))
+
+            return Response(data)
         except requests.exceptions.ConnectionError:
             return Response({"error": "AI service offline"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except Exception as exc:

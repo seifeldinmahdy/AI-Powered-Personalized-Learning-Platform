@@ -161,7 +161,7 @@ export async function markQuestionAsked(
 }
 
 export async function completeLab(params: {
-  labId: string; studentId: string; courseId: string; lessonId: string;
+  labId: string; studentId: string; courseId: string; sessionNumber: string;
 }): Promise<void> {
   await fetch(`${AI_URL}/api/coding/labs/complete`, {
     method: 'POST',
@@ -170,7 +170,7 @@ export async function completeLab(params: {
       lab_id: params.labId,
       student_id: params.studentId,
       course_id: params.courseId,
-      lesson_id: params.lessonId,
+      lesson_id: params.sessionNumber,
     }),
   });
 }

@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django import forms
 from .models import (
-    Course, Module, Lesson, Slide, CodeChallenge, Enrollment,
+    Course, Enrollment,
     CourseCorpus, CorpusSource,
 )
 
@@ -45,50 +45,6 @@ class CourseAdmin(admin.ModelAdmin):
     list_filter = ("difficulty", "status", "is_published")
     search_fields = ("title", "description")
 
-
-class LessonInline(admin.TabularInline):
-    model = Lesson
-    extra = 0
-    ordering = ["lesson_order"]
-
-
-@admin.register(Module)
-class ModuleAdmin(admin.ModelAdmin):
-    list_display = ("title", "course", "module_order")
-    list_filter = ("course",)
-    ordering = ["course", "module_order"]
-    inlines = [LessonInline]
-
-
-class SlideInline(admin.TabularInline):
-    model = Slide
-    extra = 0
-    ordering = ["slide_order"]
-
-
-class CodeChallengeInline(admin.StackedInline):
-    model = CodeChallenge
-    extra = 0
-
-
-@admin.register(Lesson)
-class LessonAdmin(admin.ModelAdmin):
-    list_display = ("title", "module", "lesson_order")
-    list_filter = ("module__course",)
-    ordering = ["module", "lesson_order"]
-    inlines = [SlideInline, CodeChallengeInline]
-
-
-@admin.register(Slide)
-class SlideAdmin(admin.ModelAdmin):
-    list_display = ("lesson", "slide_order")
-    list_filter = ("lesson__module__course",)
-
-
-@admin.register(CodeChallenge)
-class CodeChallengeAdmin(admin.ModelAdmin):
-    list_display = ("lesson", "problem_text")
-    search_fields = ("problem_text",)
 
 
 @admin.register(Enrollment)

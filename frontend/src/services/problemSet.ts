@@ -84,8 +84,8 @@ export interface GenerateProblemSetOptions {
     sessionId: string;
     studentId: string;
     courseId: string;
-    lessonId: string;
-    lessonTitle?: string;
+    sessionNumber: string | number;
+    sessionTitle?: string;
     studentProfileSummary?: string;
     slides?: { title: string; content: string; code?: string }[];
     labCells?: { id: string; cell_type: string; title: string; narrative?: string; code?: string; starter_code?: string; task_prompt?: string }[];
@@ -99,8 +99,8 @@ export async function generateProblemSet(opts: GenerateProblemSetOptions): Promi
             session_id: opts.sessionId,
             student_id: opts.studentId,
             course_id: opts.courseId,
-            lesson_id: opts.lessonId,
-            lesson_title: opts.lessonTitle || '',
+            lesson_id: String(opts.sessionNumber),
+            lesson_title: opts.sessionTitle || '',
             student_profile_summary: opts.studentProfileSummary || '',
             slides: opts.slides || [],
             lab_cells: opts.labCells || [],
@@ -133,8 +133,8 @@ export async function regenerateProblemSet(opts: GenerateProblemSetOptions): Pro
             session_id: opts.sessionId,
             student_id: opts.studentId,
             course_id: opts.courseId,
-            lesson_id: opts.lessonId,
-            lesson_title: opts.lessonTitle || '',
+            lesson_id: String(opts.sessionNumber),
+            lesson_title: opts.sessionTitle || '',
             student_profile_summary: opts.studentProfileSummary || '',
             slides: opts.slides || [],
             lab_cells: opts.labCells || [],
@@ -152,19 +152,19 @@ export async function regenerateProblemSet(opts: GenerateProblemSetOptions): Pro
 
 /** Remaining regenerations for a lesson at a plan version (Django). */
 export async function getRegenerationCount(
-    courseId: string | number, lessonId: string | number, planVersion: number,
+    courseId: string | number, sessionNumber: string | number, planVersion: number,
 ): Promise<{ regenerations_used: number; remaining: number; max: number }> {
     const { data } = await api.get('/artifacts/problem-sets/regen-count/', {
-        params: { course: courseId, lesson: lessonId, plan_version: planVersion },
+        params: { course: courseId, lesson: sessionNumber, plan_version: planVersion },
     });
     return data;
 }
 
 /** Student-facing best score for a lesson (derived from attempts; Django). */
 export async function getProblemSetBestScore(
-    courseId: string | number, lessonId: string | number, planVersion?: number,
+    courseId: string | number, sessionNumber: string | number, planVersion?: number,
 ): Promise<number | null> {
-    const params: Record<string, string | number> = { course: courseId, lesson: lessonId };
+    const params: Record<string, string | number> = { course: courseId, lesson: sessionNumber };
     if (planVersion != null) params.plan_version = planVersion;
     const { data } = await api.get('/artifacts/problem-sets/score/', { params });
     return data.best_score;
@@ -172,9 +172,9 @@ export async function getProblemSetBestScore(
 
 export async function getStudentProblemSets(
     studentId: string,
-    lessonId: string,
+    sessionNumber: string,
 ): Promise<ProblemSetData[]> {
-    const res = await fetch(`${AI_URL}/problem-set/student/${studentId}/lesson/${lessonId}`);
+    const res = await fetch(`${AI_URL}/problem-set/student/${studentId}/lesson/${sessionNumber}`);
     if (!res.ok) {
         const detail = await res.text();
         throw new Error(`Failed to load problem sets: ${detail}`);
@@ -213,7 +213,7 @@ export async function getDynamicHint(params: {
     problemSetId: string;
     questionId: string;
     studentId: string;
-    lessonId: string;
+    sessionNumber: string | number;
     currentCode: string;
     hintNumber: number;
     evaluatedRubric?: any[] | null;
@@ -231,7 +231,7 @@ export async function getDynamicHint(params: {
             problem_set_id: params.problemSetId,
             question_id: params.questionId,
             student_id: params.studentId,
-            lesson_id: params.lessonId,
+            lesson_id: String(params.sessionNumber),
             current_code: params.currentCode,
             hint_number: params.hintNumber,
             evaluated_rubric: params.evaluatedRubric ?? null,
@@ -253,7 +253,7 @@ export interface NewlyEarnedAchievement {
 export async function notifySummaryViewed(params: {
     problemSetId: string;
     studentId: string;
-    lessonId: string;
+    sessionNumber: string | number;
 }): Promise<{
     status: string;
     newly_earned_achievements?: NewlyEarnedAchievement[];
@@ -265,7 +265,7 @@ export async function notifySummaryViewed(params: {
         body: JSON.stringify({
             problem_set_id: params.problemSetId,
             student_id: params.studentId,
-            lesson_id: params.lessonId,
+            lesson_id: String(params.sessionNumber),
         }),
     });
     if (!res.ok) {

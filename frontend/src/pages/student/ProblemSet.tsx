@@ -8,6 +8,7 @@ import {
     getStudentProblemSets,
     getRegenerationCount,
     getProblemSetBestScore,
+    getProblemSet,
     submitAnswer,
     getDynamicHint,
     notifySummaryViewed,
@@ -58,6 +59,7 @@ interface LocationState {
     sessionId?: string;
     courseId?: string;
     lessonTitle?: string;
+    sessionTitle?: string;
     studentProfileSummary?: string;
     nextLessonId?: number | string | null;
     slides?: { title: string; content: string; code?: string }[];
@@ -67,7 +69,7 @@ interface LocationState {
 /* ── component ───────────────────────────────────────────── */
 
 export default function ProblemSet() {
-    const { courseId, lessonId } = useParams<{ courseId: string; lessonId: string }>();
+    const { courseId, sessionNumber } = useParams<{ courseId: string; sessionNumber: string }>();
     const location = useLocation();
     const navigate = useNavigate();
     const locState = (location.state as LocationState) ?? {};
@@ -108,14 +110,14 @@ export default function ProblemSet() {
        regenerate button shows the live cap and the summary shows
        the best-ever score (a weaker retry never lowers it). */
     async function refreshMeta(pv: number | null) {
-        if (!courseId || !lessonId) return;
+        if (!courseId || !sessionNumber) return;
         try {
-            const best = await getProblemSetBestScore(courseId, lessonId, pv ?? undefined);
+            const best = await getProblemSetBestScore(courseId, sessionNumber, pv ?? undefined);
             setBestScore(best);
         } catch { /* best score is optional UI sugar */ }
         if (pv != null) {
             try {
-                const r = await getRegenerationCount(courseId, lessonId, pv);
+                const r = await getRegenerationCount(courseId, sessionNumber, pv);
                 setRegenInfo({ remaining: r.remaining, max: r.max });
             } catch { /* regen cap falls back to static copy */ }
         }
@@ -123,7 +125,7 @@ export default function ProblemSet() {
 
     // Resolve the authoritative plan version, then pull regen cap + best score.
     useEffect(() => {
-        if (!courseId || !lessonId) return;
+        if (!courseId || !sessionNumber) return;
         (async () => {
             try {
                 const plan = await getCurrentPathway(studentId, courseId);
@@ -135,17 +137,17 @@ export default function ProblemSet() {
             }
         })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [courseId, lessonId, studentId]);
+    }, [courseId, sessionNumber, studentId]);
 
     // Fire once when summary screen mounts. This is the genuine end of the
-    // lesson: the server completes the lesson (XP/streak/progress) and runs the
+    // session: the server completes the session (XP/streak/progress) and runs the
     // concept-mastery profiler. Achievement toasts surface from the response.
     useEffect(() => {
-        if (showSummary && problemSet?.problem_set_id && studentId && lessonId) {
+        if (showSummary && problemSet?.problem_set_id && studentId && sessionNumber) {
             notifySummaryViewed({
                 problemSetId: problemSet.problem_set_id,
                 studentId,
-                lessonId,
+                sessionNumber,
             })
                 .then(res => {
                     for (const ach of res.newly_earned_achievements ?? []) {
@@ -164,13 +166,14 @@ export default function ProblemSet() {
 
     useEffect(() => {
         (async () => {
-            if (!courseId || !lessonId) { setError('Missing route params'); setLoading(false); return; }
+            if (!courseId || !sessionNumber) { setError('Missing route params'); setLoading(false); return; }
             try {
-                const existing = await getStudentProblemSets(studentId, lessonId);
+                const existing = await getStudentProblemSets(studentId, sessionNumber);
                 // Only use problem sets that have questions (skip empty/failed ones)
                 const validSets = existing.filter(ps => ps.questions && ps.questions.length > 0);
                 if (validSets.length > 0) {
-                    const ps = validSets[validSets.length - 1];
+                    const ps_meta = validSets[validSets.length - 1];
+                    const ps = await getProblemSet(ps_meta.problem_set_id || (ps_meta as any).ps_uid, studentId);
                     setProblemSet(ps);
                     // Restore results from submissions
                     const restoredResults: Record<string, EvaluationResult> = {};
@@ -192,8 +195,8 @@ export default function ProblemSet() {
                         sessionId: locState.sessionId || '',
                         studentId,
                         courseId,
-                        lessonId,
-                        lessonTitle: locState.lessonTitle || '',
+                        sessionNumber,
+                        sessionTitle: locState.sessionTitle || '',
                         studentProfileSummary: locState.studentProfileSummary || '',
                         slides: locState.slides || [],
                         labCells: locState.labCells || [],
@@ -210,12 +213,12 @@ export default function ProblemSet() {
             }
         })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [courseId, lessonId]);
+    }, [courseId, sessionNumber]);
 
     /* ── handlers ──────────────────────────────────────────── */
 
     async function handleRegenerate() {
-        if (!courseId || !lessonId || regenerating) return;
+        if (!courseId || !sessionNumber || regenerating) return;
         if (regenInfo && regenInfo.remaining <= 0) {
             toast.error('No regenerations left for this session.');
             return;
@@ -226,8 +229,8 @@ export default function ProblemSet() {
             // surfaces as the thrown message below.
             const fresh = await regenerateProblemSet({
                 sessionId: locState.sessionId || '',
-                studentId, courseId, lessonId,
-                lessonTitle: locState.lessonTitle || '',
+                studentId, courseId, sessionNumber,
+                sessionTitle: locState.sessionTitle || '',
                 studentProfileSummary: locState.studentProfileSummary || '',
                 slides: locState.slides || [],
                 labCells: locState.labCells || [],
@@ -265,7 +268,7 @@ export default function ProblemSet() {
                 problemSetId: problemSet.problem_set_id,
                 questionId: current.id,
                 studentId: studentId,
-                lessonId: problemSet.lesson_id,
+                sessionNumber: sessionNumber as string,
                 currentCode: codeMap[current.id] || '',
                 hintNumber: hintNum,
                 evaluatedRubric: existingResult && !existingResult.passed
@@ -482,9 +485,9 @@ export default function ProblemSet() {
                                 : 'REGENERATE PROBLEM SET (UP TO 3)'}
                     </button>
 
-                    {locState.nextLessonId ? (
+                    {locState.nextSessionId ? (
                         <button
-                            onClick={() => navigate(`/course/${courseId}/lesson/${locState.nextLessonId}`)}
+                            onClick={() => navigate(`/course/${courseId}/session/${locState.nextSessionId}`)}
                             className="btn btn-paper"
                             style={{ marginTop: 16, width: '100%', justifyContent: 'center' }}
                         >
@@ -537,7 +540,7 @@ export default function ProblemSet() {
                     </button>
                     <div>
                         <div className="t-label" style={{ color: 'var(--accent-primary)' }}>PROBLEM SET</div>
-                        <div className="t-mono steel" style={{ marginTop: 2 }}>{locState.lessonTitle ?? 'Session practice'}</div>
+                        <div className="t-mono steel" style={{ marginTop: 2 }}>{locState.sessionTitle || locState.lessonTitle || 'Session practice'}</div>
                     </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

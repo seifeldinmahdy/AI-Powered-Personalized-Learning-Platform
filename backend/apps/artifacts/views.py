@@ -19,17 +19,17 @@ from rest_framework import permissions, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
-from apps.courses.models import Course, Enrollment, Lesson
+from apps.courses.models import Course, Enrollment
 from .models import PlacementAttempt, StudentArtifact, ProblemSet, ProblemSetAttempt
 from .serializers import (
     PlacementAttemptSerializer, StudentArtifactSerializer,
     StudentArtifactIndexSerializer, ProblemSetSerializer, ProblemSetAttemptSerializer,
 )
-from .scoring import best_lesson_score
+from .scoring import best_session_score
 
 logger = logging.getLogger(__name__)
 
-# Student-initiated problem-set regenerations allowed per (enrollment, lesson,
+# Student-initiated problem-set regenerations allowed per (enrollment, session_number,
 # plan_version). Resets when plan_version changes: a new plan version is a
 # genuinely different course and shouldn't carry the old penalty.
 MAX_PROBLEM_SET_REGENERATIONS = 3
@@ -86,7 +86,7 @@ def placement_attempt_latest(request):
 def artifact_upsert(request):
     """Create or update a slides/lab artifact by its unique index key.
 
-    Upsert (not append) — re-generating the same (type, session/lesson,
+    Upsert (not append) — re-generating the same (type, session,
     plan_version, generation_index) overwrites the stored content. Slides persist
     here at generation time (net-new; previously slides were never saved).
     """
@@ -110,7 +110,6 @@ def artifact_upsert(request):
         enrollment=enrollment,
         artifact_type=artifact_type,
         session_number=request.data.get("session_number"),
-        lesson_id=request.data.get("lesson_id"),
         plan_version=request.data.get("plan_version"),
         generation_index=request.data.get("generation_index", 0),
         defaults=defaults,
@@ -125,10 +124,10 @@ def artifact_upsert(request):
 @permission_classes([permissions.IsAuthenticated])
 def artifact_index(request):
     """List the caller's artifacts (metadata only). Filters: type, session,
-    lesson, plan_version. Content is fetched per-row via artifact_content."""
+    plan_version. Content is fetched per-row via artifact_content."""
     qs = StudentArtifact.objects.filter(student=request.user)
     for param, field in (("type", "artifact_type"), ("session", "session_number"),
-                         ("lesson", "lesson_id"), ("plan_version", "plan_version")):
+                         ("plan_version", "plan_version")):
         val = request.query_params.get(param)
         if val not in (None, ""):
             qs = qs.filter(**{field: val})
@@ -147,10 +146,10 @@ def artifact_content(request, pk):
 
 # ── Problem sets (INDEX) + attempts (EVENT) ───────────────────────────────────
 
-def _regen_state(enrollment_id, lesson_id, plan_version):
+def _regen_state(enrollment_id, session_number, plan_version):
     """Return (max_generation_index, set_count) for a regen key (-1 if none)."""
     qs = ProblemSet.objects.filter(
-        enrollment_id=enrollment_id, lesson_id=lesson_id, plan_version=plan_version
+        enrollment_id=enrollment_id, session_number=session_number, plan_version=plan_version
     )
     count = qs.count()
     if count == 0:
@@ -166,31 +165,31 @@ def problem_set_create(request):
 
     First generation: generation_index=0. ``regenerate=true`` bumps the index,
     supersedes (retains) prior generations, and enforces the regen cap per
-    (enrollment, lesson, plan_version) — which resets when plan_version changes.
+    (enrollment, session_number, plan_version) — which resets when plan_version changes.
     """
     course_id = request.data.get("course_id")
     enrollment = _resolve_enrollment(request.user, course_id)
     if not enrollment:
         return Response({"error": "Not enrolled in this course."}, status=status.HTTP_403_FORBIDDEN)
 
-    lesson_id = request.data.get("lesson_id")
+    session_number = request.data.get("session_number")
     plan_version = request.data.get("plan_version")
     regenerate = bool(request.data.get("regenerate", False))
 
     with transaction.atomic():
-        max_idx, _ = _regen_state(enrollment.id, lesson_id, plan_version)
+        max_idx, _ = _regen_state(enrollment.id, session_number, plan_version)
 
         if regenerate:
             next_index = max_idx + 1
             if next_index > MAX_PROBLEM_SET_REGENERATIONS:
                 return Response(
                     {"error": f"Regeneration limit reached ({MAX_PROBLEM_SET_REGENERATIONS}) "
-                              "for this lesson and plan version.",
+                              "for this session and plan version.",
                      "regenerations_used": max_idx, "max": MAX_PROBLEM_SET_REGENERATIONS},
                     status=status.HTTP_409_CONFLICT,
                 )
             ProblemSet.objects.filter(
-                enrollment=enrollment, lesson_id=lesson_id, plan_version=plan_version
+                enrollment=enrollment, session_number=session_number, plan_version=plan_version
             ).update(superseded=True)
         else:
             # A plain create after an existing generation is treated as gen 0 only
@@ -198,7 +197,7 @@ def problem_set_create(request):
             next_index = max_idx + 1 if max_idx >= 0 else 0
             if max_idx >= 0:
                 ProblemSet.objects.filter(
-                    enrollment=enrollment, lesson_id=lesson_id, plan_version=plan_version
+                    enrollment=enrollment, session_number=session_number, plan_version=plan_version
                 ).update(superseded=True)
 
         content_json = request.data.get("content_json", {})
@@ -206,7 +205,7 @@ def problem_set_create(request):
             enrollment=enrollment,
             student=request.user,
             course_id=course_id,
-            lesson_id=lesson_id,
+            session_number=session_number,
             plan_version=plan_version,
             generation_index=next_index,
             ps_uid=request.data["ps_uid"],
@@ -220,13 +219,13 @@ def problem_set_create(request):
 @api_view(["GET"])
 @permission_classes([permissions.IsAuthenticated])
 def problem_set_list(request):
-    """List problem sets for a student, optionally filtered by lesson_id."""
-    lesson_id = request.query_params.get("lesson_id")
+    """List problem sets for a student, optionally filtered by session_number."""
+    session_number = request.query_params.get("session_number")
     course_id = request.query_params.get("course_id")
     
     qs = ProblemSet.objects.filter(student=request.user)
-    if lesson_id:
-        qs = qs.filter(lesson_id=lesson_id)
+    if session_number:
+        qs = qs.filter(session_number=session_number)
     if course_id:
         qs = qs.filter(course_id=course_id)
         
@@ -278,7 +277,7 @@ def problem_set_attempt_history(request, ps_uid):
     """Read-only attempt history + best score for a problem set (ownership checked).
 
     Drives the past-problem-set view: every submission in order, plus the
-    derived best score for the lesson.
+    derived best score for the session.
     """
     ps = get_object_or_404(ProblemSet, ps_uid=ps_uid)
     if ps.student_id != request.user.id:
@@ -286,10 +285,10 @@ def problem_set_attempt_history(request, ps_uid):
     attempts = ps.attempts.all()  # ordered by created_at, id (submission order)
     return Response({
         "ps_uid": ps.ps_uid,
-        "lesson": ps.lesson_id,
+        "session_number": ps.session_number,
         "generation_index": ps.generation_index,
         "superseded": ps.superseded,
-        "best_score": best_lesson_score(ps.enrollment_id, ps.lesson_id, ps.plan_version),
+        "best_score": best_session_score(ps.enrollment_id, ps.session_number, ps.plan_version),
         "attempts": ProblemSetAttemptSerializer(attempts, many=True).data,
     })
 
@@ -311,14 +310,14 @@ def problem_set_hint_tracking(request, ps_uid):
 @api_view(["GET"])
 @permission_classes([permissions.IsAuthenticated])
 def problem_set_regen_count(request):
-    """Regeneration counter for (enrollment, lesson, plan_version)."""
+    """Regeneration counter for (enrollment, session_number, plan_version)."""
     course_id = request.query_params.get("course")
     enrollment = _resolve_enrollment(request.user, course_id)
     if not enrollment:
         return Response({"error": "Not enrolled."}, status=status.HTTP_403_FORBIDDEN)
-    lesson_id = request.query_params.get("lesson")
+    session_number = request.query_params.get("session_number")
     plan_version = request.query_params.get("plan_version")
-    max_idx, _ = _regen_state(enrollment.id, lesson_id, plan_version)
+    max_idx, _ = _regen_state(enrollment.id, session_number, plan_version)
     used = max(max_idx, 0)
     return Response({
         "regenerations_used": used,
@@ -330,13 +329,13 @@ def problem_set_regen_count(request):
 @api_view(["GET"])
 @permission_classes([permissions.IsAuthenticated])
 def problem_set_score(request):
-    """Student-facing best lesson score (derived from attempts, never stored)."""
+    """Student-facing best session score (derived from attempts, never stored)."""
     course_id = request.query_params.get("course")
     enrollment = _resolve_enrollment(request.user, course_id)
     if not enrollment:
         return Response({"error": "Not enrolled."}, status=status.HTTP_403_FORBIDDEN)
-    lesson_id = request.query_params.get("lesson")
+    session_number = request.query_params.get("session_number")
     plan_version = request.query_params.get("plan_version")
     pv = int(plan_version) if plan_version not in (None, "") else None
-    best = best_lesson_score(enrollment.id, lesson_id, pv)
+    best = best_session_score(enrollment.id, session_number, pv)
     return Response({"best_score": best})
