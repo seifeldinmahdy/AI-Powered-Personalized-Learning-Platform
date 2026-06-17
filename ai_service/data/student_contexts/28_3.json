@@ -12,189 +12,255 @@
     "topic_performance": {},
     "incorrectly_answered": [
       {
-        "question": "What is the correct sequence of steps to install Python on a Windows machine and confirm the installation is successful?",
-        "chosen_option": "B) Open PowerShell, type pip install python, then restart the computer",
-        "correct_option": "A) Download the installer, run it, check 'Add Python to PATH', then open PowerShell and run python --version",
+        "question": "What is the first step to install Python on a Windows machine?",
+        "chosen_option": "Add Python to the system PATH manually",
+        "correct_option": "Download the Python installer from python.org",
         "concept_id": null
       },
       {
-        "question": "Which of the following actions is NOT required when setting up VS Code for Python development?",
-        "chosen_option": "C) Rename all files to have a .pyx extension",
-        "correct_option": "A) Install the official Python extension from the VS Code Marketplace",
+        "question": "During the Python installation process, which option should be selected to ensure Python can be called from the command prompt?",
+        "chosen_option": "Install for all users",
+        "correct_option": "Add Python to PATH",
         "concept_id": null
       },
       {
-        "question": "Identify the minimal set of elements that must be present in a valid Python script file to be executed without syntax errors.",
-        "chosen_option": "B) A shebang line, optional imports, and a print statement",
-        "correct_option": "A) One or more function definitions followed by a call to main()",
+        "question": "Which package manager is typically used to install additional Python libraries after Python is installed?",
+        "chosen_option": "gem",
+        "correct_option": "pip",
         "concept_id": null
       },
       {
-        "question": "What file extension should you use for a Python source file that you want to execute?",
-        "chosen_option": "B) .python",
-        "correct_option": "A) .py",
+        "question": "After installing VS Code, what is the next step to set up a Python development environment?",
+        "chosen_option": "Open the terminal and type 'python'",
+        "correct_option": "Install the Python extension from the VS Code Marketplace",
         "concept_id": null
       },
       {
-        "question": "Which statement below correctly describes the role of indentation in Python syntax?",
-        "chosen_option": "D) Indentation is only required for comments",
-        "correct_option": "A) Indentation is optional and only improves readability",
+        "question": "Which file extension is required for a Python script to be recognized by the interpreter?",
+        "chosen_option": ".exe",
+        "correct_option": ".py",
         "concept_id": null
       },
       {
-        "question": "Which of the following is a mutable data type in Python?",
-        "chosen_option": "B) string",
-        "correct_option": "C) list",
+        "question": "What is the correct syntax to print the text \"Hello, World!\" in a Python program?",
+        "chosen_option": "Console.WriteLine(\"Hello, World!\")",
+        "correct_option": "print(\"Hello, World!\")",
         "concept_id": null
       },
       {
-        "question": "Which data type would you use to store unique values without duplicates?",
-        "chosen_option": "C) tuple",
-        "correct_option": "B) set",
+        "question": "Which of the following is a valid way to define a function in Python?",
+        "chosen_option": "create my_func()",
+        "correct_option": "def my_func():",
         "concept_id": null
       },
       {
-        "question": "Which of the following statements correctly describes a dictionary?",
-        "chosen_option": "C) Collection of unique numeric elements",
-        "correct_option": "A) Ordered collection of key-value pairs",
+        "question": "In a VS Code terminal, which command starts the Python interactive interpreter?",
+        "chosen_option": "py",
+        "correct_option": "python",
         "concept_id": null
       },
       {
-        "question": "Which of the following examples is a string literal?",
-        "chosen_option": "D) (4, 5)",
-        "correct_option": "C) \"Hello, World!\"",
+        "question": "Which of the following is a Python tuple?",
+        "chosen_option": "\"1, 2, 3\"",
+        "correct_option": "(1, 2, 3)",
         "concept_id": null
       },
       {
-        "question": "Which data type is used to group elements that should not change after creation?",
-        "chosen_option": "C) set",
-        "correct_option": "B) tuple",
+        "question": "What data type is the value 3.14 in Python?",
+        "chosen_option": "str",
+        "correct_option": "float",
         "concept_id": null
       },
       {
-        "question": "Which of the following is NOT a valid number type in Python?",
-        "chosen_option": "C) complex",
-        "correct_option": "D) string",
-        "concept_id": null
-      },
-      {
-        "question": "Which condition should be used in a for loop to print only the odd numbers from 1 to 10?",
-        "chosen_option": "if num % 2 != 0: print(num)",
-        "correct_option": "Both b and c",
-        "concept_id": null
-      },
-      {
-        "question": "Which of the following scripts correctly calculates the sum of digits of a positive integer n?",
-        "chosen_option": "sum=0; for digit in str(n): sum+=int(digit);",
-        "correct_option": "All of the above",
-        "concept_id": null
-      },
-      {
-        "question": "Which snippet prints the numbers 1, 3, 5, 7, 9?",
-        "chosen_option": "i=1; while i<10: print(i); i+=2",
-        "correct_option": "All of the above",
-        "concept_id": null
-      },
-      {
-        "question": "Which of the following uses a conditional and a loop to find the greatest common divisor (GCD) of two positive integers a and b?",
-        "chosen_option": "while a>b: a-=b; while b>a: b-=a; print(a)",
-        "correct_option": "while a!=b: if a>b: a-=b else: b-=a; print(a), b;",
-        "concept_id": null
-      },
-      {
-        "question": "Which loop construct would be most efficient to iterate over elements of a list lst with indices?",
-        "chosen_option": "i=0; while i < len(lst): process(lst[i]); i+=1",
-        "correct_option": "for index, value in enumerate(lst): process(value)",
-        "concept_id": null
-      },
-      {
-        "question": "Which code snippet correctly implements a do-while loop in Python to prompt the user until they enter a positive number?",
-        "chosen_option": "do: num=int(input()); while num<=0;",
-        "correct_option": "while True: num=int(input()); if num>0: break;",
-        "concept_id": null
-      },
-      {
-        "question": "Given the following objects, which of these is immutable?\\n\\n d = {'x':1};\\nl = [1,2];",
-        "chosen_option": "l",
-        "correct_option": "d",
-        "concept_id": null
-      },
-      {
-        "question": "Which data type is immutable in the following scenario?\\n\\n f = 10; f = f + 5;\\nx = 10; x += 5;",
+        "question": "Identify the data type of the variable defined as: data = {'name': 'Alice', 'age': 30}.",
         "chosen_option": "set",
-        "correct_option": "int",
+        "correct_option": "dictionary",
         "concept_id": null
       },
       {
-        "question": "What is true after the following code executes?\\n\\n s1 = \"abc\"; s2 = s1; s1 += \"d\";",
-        "chosen_option": "s1 cannot be changed",
-        "correct_option": "Both s1 and s2 refer to the same object after +=",
+        "question": "Which data type can be used as a key in a dictionary?",
+        "chosen_option": "dictionary",
+        "correct_option": "tuple",
         "concept_id": null
       },
       {
-        "question": "After executing the following code, which statement is true?\\n\\n tuple1 = (1,2,3); tuple2 = tuple1; tuple1 = tuple1 + (4,);",
-        "chosen_option": "None of the above",
-        "correct_option": "tuple1 and tuple2 refer to the same object after concatenation",
+        "question": "What type will the expression {1, 2, 3} create?",
+        "chosen_option": "dictionary",
+        "correct_option": "set",
         "concept_id": null
       },
       {
-        "question": "Given the code:\n\nx = 10\n\ndef change():\n    x = 5\n    print(x)\nchange()\nprint(x)\n\nWhat will be printed?",
-        "chosen_option": "B) It will print 10 then 5.",
-        "correct_option": "A) It will print 5 then 10.",
+        "question": "Which of the following is a string representation of a number?",
+        "chosen_option": "True",
+        "correct_option": "\"42\"",
         "concept_id": null
       },
       {
-        "question": "This function returns a list of squares:\n\ndef squares(n):\n    result = []\n    for i in range(n):\n        result.append(i*i)\n    return result\n\nWhich change would improve both readability and efficiency?",
-        "chosen_option": "B) Replace the loop with a list comprehension",
-        "correct_option": "A) Use a generator expression instead of a list",
+        "question": "Given the expression: x = [1, 2, 3] + [4, 5], what is the resulting data type?",
+        "chosen_option": "string",
+        "correct_option": "list",
         "concept_id": null
       },
       {
-        "question": "What happens when the following recursive function is called with factorial(5)?\n\ndef factorial(n):\n    return n * factorial(n-1)\n",
-        "chosen_option": "B) RecursionError due to missing base case",
-        "correct_option": "A) Correctly returns 120",
+        "question": "Which of the following code snippets correctly computes the sum of integers from 1 to N?",
+        "chosen_option": "sum = 0; for i in range(1, N): sum += i; print(sum)",
+        "correct_option": "sum = 0; for i in range(1, N+1): sum += i; print(sum)",
         "concept_id": null
       },
       {
-        "question": "Which module would you import to parse command-line arguments for a small project requiring options like --input and --verbose?",
-        "chosen_option": "D: json",
-        "correct_option": "A: sys",
+        "question": "Which snippet correctly determines if the integer n is prime?",
+        "chosen_option": "for i in range(2, n): pass",
+        "correct_option": "for i in range(2, n): if n % i == 0: print(\"Not prime\"); break else: print(\"Prime\")",
         "concept_id": null
       },
       {
-        "question": "You want to split a project into modules: one for data handling, one for utilities, and one for main execution. How should you structure the imports in the main module to avoid circular dependencies?",
-        "chosen_option": "C: Import main first, then data, then utils",
-        "correct_option": "A: Import data module first, then utils, then main",
+        "question": "Which snippet correctly calculates the factorial of a given positive integer n?",
+        "chosen_option": "fact = 1; for i in range(n): fact *= i; print(fact)",
+        "correct_option": "fact = 1; for i in range(1, n+1): fact *= i; print(fact)",
         "concept_id": null
       },
       {
-        "question": "Which function definition would correctly allow a default argument of an empty list that should not be shared across calls?",
-        "chosen_option": "D: def add_item(item, lst=()): ...",
-        "correct_option": "A: def add_item(item, lst=[]): ...",
+        "question": "Which loop correctly counts how many even numbers are between 1 and N inclusive?",
+        "chosen_option": "count = 0; for i in range(1, N): if i % 2 == 0: count += 1; print(count)",
+        "correct_option": "count = 0; for i in range(1, N+1): if i % 2 == 0: count += 1; print(count)",
         "concept_id": null
       },
       {
-        "question": "For a small project that logs messages to a file and to the console, which module would you use to configure logging?",
-        "chosen_option": "D: print",
-        "correct_option": "A: logging",
+        "question": "Which code correctly prints the multiplication table of a number x from 1 to 10?",
+        "chosen_option": "while i <= 10: print(f\"{x} x {i} = {x*i}\"); i += 1",
+        "correct_option": "for i in range(1, 11): print(f\"{x} x {i} = {x*i}\")",
         "concept_id": null
       },
       {
-        "question": "Which data structure is best for maintaining a queue of tasks that need to be processed in FIFO order?",
-        "chosen_option": "D: stack",
-        "correct_option": "A: list",
+        "question": "Which snippet correctly finds the largest of three numbers a, b, and c using conditionals?",
+        "chosen_option": "largest = max(a, b, c)",
+        "correct_option": "if a > b: largest = a else: largest = b; if c > largest: largest = c",
         "concept_id": null
       },
       {
-        "question": "In a Python project, you need to group multiple functions that operate on a specific data type. Which approach best organizes these functions?",
-        "chosen_option": "C: Use global functions in the same module",
-        "correct_option": "A: Put them in a class as static methods",
+        "question": "Which snippet correctly computes the sum of the digits of an integer n?",
+        "chosen_option": "sum = 0; for i in range(n): sum += i; print(sum)",
+        "correct_option": "sum = 0; while n > 0: sum += n % 10; n //= 10; print(sum)",
         "concept_id": null
       },
       {
-        "question": "How can you ensure that a module's code runs only when executed as a script, not when imported?",
-        "chosen_option": "D: if __name__ == \"__file__\": ...",
-        "correct_option": "A: if __name__ == \"__main__\": ...",
+        "question": "Which of the following is an immutable data structure in Python?",
+        "chosen_option": "dict",
+        "correct_option": "tuple",
+        "concept_id": null
+      },
+      {
+        "question": "Consider the following code:\n\n```python\nperson = {'name': 'Alice'}\nfriend = person\nfriend['age'] = 30\n```\nWhat is the effect on the original dictionary `person`?",
+        "chosen_option": "The original dictionary is deleted.",
+        "correct_option": "The original dictionary remains unchanged.",
+        "concept_id": null
+      },
+      {
+        "question": "When would you choose a tuple over a list in Python?",
+        "chosen_option": "When you need to allow duplicate elements.",
+        "correct_option": "When you need a fixed sequence that should not change.",
+        "concept_id": null
+      },
+      {
+        "question": "Which of the following data structures can be used as a dictionary key?",
+        "chosen_option": "dict",
+        "correct_option": "tuple",
+        "concept_id": null
+      },
+      {
+        "question": "Given the code:\n\n```python\nx = (1, 2, 3)\ny = list(x)\ny[0] = 10\n```\nWhat is the type of `x` after executing the code?",
+        "chosen_option": "error",
+        "correct_option": "tuple",
+        "concept_id": null
+      },
+      {
+        "question": "Identify the mutable data structure among the following options:",
+        "chosen_option": "float",
+        "correct_option": "list",
+        "concept_id": null
+      },
+      {
+        "question": "Which of the following function definitions correctly calculates the sum of two numbers and uses a default value for the second argument?",
+        "chosen_option": "def add(a, b=1): return a + b",
+        "correct_option": "def add(a, b=0): return a + b",
+        "concept_id": null
+      },
+      {
+        "question": "Which of the following code snippets will produce a NameError when called?",
+        "chosen_option": "def foo(x): return x * 2; print(foo(3))",
+        "correct_option": "def foo(): x = 5; return x; def bar(): print(x)",
+        "concept_id": null
+      },
+      {
+        "question": "Which function correctly returns a tuple of the maximum and minimum values from a list?",
+        "chosen_option": "def minmax(lst): return [min(lst), max(lst)]",
+        "correct_option": "def minmax(lst): return max(lst), min(lst)",
+        "concept_id": null
+      },
+      {
+        "question": "Which of the following implementations is both readable and efficient for computing the factorial of a number?",
+        "chosen_option": "def factorial(n): return 1 if n == 0 else n * factorial(n-1)",
+        "correct_option": "def factorial(n): result = 1; for i in range(1, n+1): result *= i; return result",
+        "concept_id": null
+      },
+      {
+        "question": "Consider the following code snippet. What will be printed when foo() is called?\n\ndef foo():\n    x = 10\n    def bar():\n        nonlocal x\n        x = x + 5\n    bar()\n    print(x)",
+        "chosen_option": "5",
+        "correct_option": "15",
+        "concept_id": null
+      },
+      {
+        "question": "Which function call will raise a TypeError due to missing required positional argument?",
+        "chosen_option": "greet(greeting='Hey', name='Eve')",
+        "correct_option": "greet()",
+        "concept_id": null
+      },
+      {
+        "question": "Which function incorrectly returns the wrong value for the average of a list?",
+        "chosen_option": "avg([100])",
+        "correct_option": "avg([])",
+        "concept_id": null
+      },
+      {
+        "question": "Which of the following code snippets is the most efficient for checking if a number is present in a list?",
+        "chosen_option": "def contains(lst, value): while lst: if lst.pop(0) == value: return True; return False",
+        "correct_option": "def contains(lst, value): return value in lst",
+        "concept_id": null
+      },
+      {
+        "question": "Which data structure should be used to store contacts keyed by name for efficient lookup in a CLI project?",
+        "chosen_option": "set of names",
+        "correct_option": "dictionary keyed by name",
+        "concept_id": null
+      },
+      {
+        "question": "Which built-in Python module is best suited for reading and writing CSV files in a project that imports data from a CSV?",
+        "chosen_option": "re",
+        "correct_option": "csv",
+        "concept_id": null
+      },
+      {
+        "question": "Which module would you use to schedule tasks to run at specific times within a small project?",
+        "chosen_option": "random",
+        "correct_option": "sched",
+        "concept_id": null
+      },
+      {
+        "question": "To store configuration settings that may change between runs, which combination of data structure and module is most appropriate?",
+        "chosen_option": "tuple with math",
+        "correct_option": "dictionary with json",
+        "concept_id": null
+      },
+      {
+        "question": "Which approach allows the project to be extended with new modules without changing the main script?",
+        "chosen_option": "hardcode functions",
+        "correct_option": "use dynamic import via importlib",
+        "concept_id": null
+      },
+      {
+        "question": "Which practice ensures easier maintenance when designing a small Python project with multiple modules?",
+        "chosen_option": "using magic numbers",
+        "correct_option": "using consistent naming conventions across modules",
         "concept_id": null
       }
     ],
@@ -219,6 +285,6 @@
     "fused_emotion": "",
     "fused_emotion_confidence": 0.0,
     "pace_modifier": 0,
-    "last_updated_at": 1781702984.4229598
+    "last_updated_at": 1781713336.9108152
   }
 }
