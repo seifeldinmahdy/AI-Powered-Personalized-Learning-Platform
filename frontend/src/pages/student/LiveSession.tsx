@@ -12,7 +12,7 @@ import {
   getLessonCompletions,
   createLessonCompletion,
 } from '../../services/progress';
-import { Loader2, BookOpen, CheckCircle2, PlayCircle, Lock, ChevronDown, ChevronRight, Camera, CameraOff, X } from 'lucide-react';
+import { Loader2, Route, CheckCircle2, PlayCircle, Lock, Circle, Camera, CameraOff, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import {
@@ -722,6 +722,24 @@ export default function LiveSession() {
     : (lesson?.slides.map((s) => (s.content_json?.title as string) || '') || []))
     .filter(Boolean);
 
+  // ─── Course pathway for the left nav ──────────────────────────
+  // Session N maps to the Nth lesson in course order; titles/topics come from
+  // the authoritative plan when available, falling back to the lesson title.
+  const pathwaySessions = allLessons.map((l, i) => {
+    const ps = plan?.sessions.find((s) => s.session_number === i + 1);
+    return {
+      lessonId: l.id,
+      number: i + 1,
+      title: ps?.session_title || l.title,
+      topics: ps?.topics_covered ?? [],
+      completed: completedLessonIds.has(l.id),
+    };
+  });
+  const totalSessions = pathwaySessions.length;
+  const completedSessions = pathwaySessions.filter((s) => s.completed).length;
+  const currentSessionNo = currentLessonIndex >= 0 ? currentLessonIndex + 1 : 1;
+  const sessionProgressPct = totalSlides > 0 ? Math.round(((currentSlide + 1) / totalSlides) * 100) : 0;
+  const pad2 = (n: number) => String(n).padStart(2, '0');
 
   return (
     <div className="codex" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--bg-primary)' }}>
@@ -732,7 +750,7 @@ export default function LiveSession() {
           className="t-label"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'transparent', border: '1px solid var(--hairline)', borderRadius: 8, color: 'var(--text-secondary)', padding: '8px 12px', cursor: 'pointer' }}
         >
-          <BookOpen size={14} /> LESSONS
+          <Route size={14} /> PATHWAY
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="t-label" style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerTitle}</div>
@@ -752,74 +770,88 @@ export default function LiveSession() {
           {/* Backdrop */}
           <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)' }} onClick={() => setDrawerOpen(false)} />
 
-          {/* Drawer panel */}
-          <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: 300, background: 'var(--bg-surface)', borderRight: '1px solid var(--hairline)', display: 'flex', flexDirection: 'column', boxShadow: '2px 0 24px rgba(0,0,0,0.12)' }}>
+          {/* Drawer panel — course pathway */}
+          <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: 324, background: 'var(--bg-surface)', borderRight: '1px solid var(--hairline)', display: 'flex', flexDirection: 'column', boxShadow: '2px 0 24px rgba(0,0,0,0.12)' }}>
             {/* Drawer Header */}
             <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--hairline)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <span className="t-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--accent-primary)' }}>
-                <BookOpen size={14} /> COURSE LESSONS
+                <Route size={14} /> COURSE PATHWAY
               </span>
               <button onClick={() => setDrawerOpen(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex' }}><X size={16} /></button>
             </div>
 
-            {/* Modules + Lessons */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
-              {modules
-                .sort((a, b) => a.module_order - b.module_order)
-                .map((mod) => {
-                  const modLessons = allLessons.filter((l) => l.module === mod.id);
-                  const isExpanded = expandedModules.has(mod.id);
-                  return (
-                    <div key={mod.id}>
-                      {/* Module Header */}
-                      <button
-                        onClick={() => setExpandedModules((prev) => {
-                          const next = new Set(prev);
-                          next.has(mod.id) ? next.delete(mod.id) : next.add(mod.id);
-                          return next;
-                        })}
-                        className="t-label"
-                        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', color: 'var(--text-secondary)' }}
-                      >
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 8 }}>{mod.title}</span>
-                        {isExpanded
-                          ? <ChevronDown size={13} style={{ flexShrink: 0 }} />
-                          : <ChevronRight size={13} style={{ flexShrink: 0 }} />}
-                      </button>
+            {/* Overall progress */}
+            <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--hairline)', flexShrink: 0 }}>
+              {courseTitle && <div className="t-mono steel" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{courseTitle.toUpperCase()}</div>}
+              <div className="t-label" style={{ color: 'var(--text-primary)', marginTop: 6 }}>SESSION {pad2(currentSessionNo)} OF {pad2(Math.max(totalSessions, 1))}</div>
+              <div className="progress" style={{ marginTop: 12 }}><i style={{ width: `${totalSessions > 0 ? Math.max(2, (completedSessions / totalSessions) * 100) : 2}%` }} /></div>
+              <div className="t-mono" style={{ color: 'var(--accent-primary)', marginTop: 8 }}>{completedSessions} OF {totalSessions} COMPLETE</div>
+            </div>
 
-                      {/* Lessons */}
-                      {isExpanded && (
-                        <div style={{ paddingBottom: 4 }}>
-                          {modLessons.map((l) => {
-                            const isCurrent = l.id === Number(lessonId);
-                            const isCompleted = completedLessonIds.has(l.id);
-                            return (
-                              <button
-                                key={l.id}
-                                onClick={() => {
-                                  navigate(`/course/${courseId}/lesson/${l.id}`);
-                                  setDrawerOpen(false);
-                                }}
-                                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 20px', textAlign: 'left', background: isCurrent ? 'rgba(37,99,235,0.06)' : 'transparent', borderLeft: `2px solid ${isCurrent ? 'var(--accent-primary)' : 'transparent'}`, border: 'none', borderLeftWidth: 2, borderLeftStyle: 'solid', borderLeftColor: isCurrent ? 'var(--accent-primary)' : 'transparent', cursor: 'pointer' }}
-                              >
-                                {isCompleted ? (
-                                  <CheckCircle2 size={14} style={{ color: 'var(--accent-success)', flexShrink: 0 }} />
-                                ) : isCurrent ? (
-                                  <PlayCircle size={14} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
-                                ) : (
-                                  <Lock size={14} style={{ color: 'var(--steel-light)', flexShrink: 0 }} />
-                                )}
-                                <span style={{ fontSize: 12, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: isCurrent ? 600 : 400, color: isCurrent ? 'var(--accent-primary)' : isCompleted ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-                                  {l.title}
-                                </span>
-                              </button>
-                            );
-                          })}
+            {/* Pathway sessions */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+              {pathwaySessions.length === 0 ? (
+                <div className="t-mono steel" style={{ padding: '24px 18px', textAlign: 'center' }}>NO SESSIONS YET</div>
+              ) : (
+                pathwaySessions.map((s, i) => {
+                  const isCurrent = i === currentLessonIndex;
+                  const isPrevious = i < currentLessonIndex;
+                  // status colour: done → green, current → blue, prior-not-done → steel, upcoming → faded steel
+                  const accent = s.completed ? 'var(--accent-success)'
+                    : isCurrent ? 'var(--accent-primary)'
+                      : isPrevious ? 'var(--steel-light)' : 'var(--steel)';
+                  const statusTag = s.completed ? 'DONE' : isCurrent ? 'IN PROGRESS' : isPrevious ? 'REVISIT' : 'UPCOMING';
+                  const titleColor = isCurrent ? 'var(--accent-primary)' : s.completed || isPrevious ? 'var(--text-primary)' : 'var(--text-secondary)';
+                  return (
+                    <button
+                      key={s.lessonId}
+                      onClick={() => { navigate(`/course/${courseId}/lesson/${s.lessonId}`); setDrawerOpen(false); }}
+                      style={{
+                        width: '100%', display: 'block', textAlign: 'left', cursor: 'pointer',
+                        padding: '12px 16px 12px 14px',
+                        background: isCurrent ? 'rgba(37,99,235,0.06)' : 'transparent',
+                        borderTop: 'none', borderRight: 'none', borderBottom: '1px solid var(--hairline)',
+                        borderLeft: `3px solid ${isCurrent ? 'var(--accent-primary)' : s.completed ? 'var(--accent-success)' : 'transparent'}`,
+                        opacity: !isCurrent && !s.completed && !isPrevious ? 0.6 : 1,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                        {s.completed ? <CheckCircle2 size={15} style={{ color: accent, flexShrink: 0, marginTop: 1 }} />
+                          : isCurrent ? <PlayCircle size={15} style={{ color: accent, flexShrink: 0, marginTop: 1 }} />
+                            : isPrevious ? <Circle size={15} style={{ color: accent, flexShrink: 0, marginTop: 1 }} />
+                              : <Lock size={15} style={{ color: accent, flexShrink: 0, marginTop: 1 }} />}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                            <span className="t-mono steel">SESSION {pad2(s.number)}</span>
+                            <span className="t-mono" style={{ color: accent, fontSize: 9 }}>{statusTag}</span>
+                          </div>
+                          <div style={{ fontFamily: 'var(--ff-body)', fontSize: 13, lineHeight: 1.35, marginTop: 3, fontWeight: isCurrent ? 600 : 400, color: titleColor, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                            {s.title}
+                          </div>
+
+                          {/* Current session: live slide progress + topic being explained */}
+                          {isCurrent && (
+                            <div style={{ marginTop: 10 }}>
+                              <div className="progress"><i style={{ width: `${Math.max(2, sessionProgressPct)}%` }} /></div>
+                              <div className="t-mono" style={{ color: 'var(--accent-primary)', marginTop: 6 }}>
+                                SLIDE {pad2(currentSlide + 1)} / {pad2(totalSlides)} · {sessionProgressPct}%
+                              </div>
+                              {Boolean(currentSlideTitle) && (
+                                <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                                  <span className="sq-bullet" style={{ marginTop: 6, background: 'var(--accent-primary)' }} />
+                                  <span className="t-body" style={{ fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                                    <span className="t-mono steel">NOW · </span>{String(currentSlideTitle)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
+                      </div>
+                    </button>
                   );
-                })}
+                })
+              )}
             </div>
           </div>
         </div>,
