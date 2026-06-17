@@ -74,16 +74,16 @@ export function NotificationBell() {
         <div ref={ref} style={{ position: 'relative' }}>
             <button
                 onClick={handleOpen}
-                style={{ position: 'relative', padding: '6px', borderRadius: '8px', background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit' }}
+                style={{ position: 'relative', padding: 6, borderRadius: 6, background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit', display: 'flex' }}
                 title="Notifications"
             >
                 <Bell size={20} />
                 {unreadCount > 0 && (
-                    <span style={{
-                        position: 'absolute', top: 2, right: 2,
-                        background: '#ef4444', color: '#fff',
-                        borderRadius: '999px', fontSize: '10px', fontWeight: 700,
-                        minWidth: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    <span className="t-mono" style={{
+                        position: 'absolute', top: 0, right: 0,
+                        background: 'var(--error-red)', color: '#fff',
+                        borderRadius: 999, fontSize: 10, fontWeight: 700,
+                        minWidth: 15, height: 15, display: 'flex', alignItems: 'center', justifyContent: 'center',
                         padding: '0 3px', lineHeight: 1,
                     }}>
                         {unreadCount > 9 ? '9+' : unreadCount}
@@ -92,20 +92,21 @@ export function NotificationBell() {
             </button>
 
             {open && (
-                <div style={{
-                    position: 'absolute', right: 0, top: 'calc(100% + 8px)',
-                    width: 320, background: 'var(--card)', border: '1px solid var(--border)',
-                    borderRadius: 16, boxShadow: '0 8px 32px rgba(0,0,0,0.12)', zIndex: 100, overflow: 'hidden',
+                <div className="codex" style={{
+                    position: 'absolute', right: 0, top: 'calc(100% + 12px)',
+                    width: 340, background: 'var(--bg-primary)', border: '1px solid var(--hairline)',
+                    borderRadius: 8, boxShadow: '0 16px 40px -16px rgba(26,22,17,0.3)', zIndex: 100, overflow: 'hidden',
                 }}>
                     {/* Header */}
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-                        <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Notifications</span>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--hairline)' }}>
+                        <span className="t-label" style={{ color: 'var(--text-primary)' }}>NOTIFICATIONS</span>
                         {unreadCount > 0 && (
                             <button
                                 onClick={handleMarkAllRead}
-                                style={{ fontSize: '0.75rem', color: 'var(--secondary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}
+                                className="t-label"
+                                style={{ color: 'var(--accent-primary)', background: 'none', border: 'none', cursor: 'pointer' }}
                             >
-                                Mark all read
+                                MARK ALL READ
                             </button>
                         )}
                     </div>
@@ -113,34 +114,34 @@ export function NotificationBell() {
                     {/* List */}
                     <div style={{ maxHeight: 360, overflowY: 'auto' }}>
                         {notifications.length === 0 ? (
-                            <p style={{ padding: '24px 16px', textAlign: 'center', fontSize: '0.8125rem', color: 'var(--muted-foreground)' }}>
-                                No notifications yet.
+                            <p className="t-mono steel" style={{ padding: '28px 16px', textAlign: 'center' }}>
+                                NO NOTIFICATIONS YET
                             </p>
                         ) : (
-                            notifications.map((n) => (
+                            notifications.map((n, i) => (
                                 <div
                                     key={n.id}
                                     onClick={() => handleClickNotification(n)}
                                     style={{
-                                        padding: '12px 16px',
-                                        borderBottom: '1px solid var(--border)',
-                                        background: n.is_read ? 'transparent' : 'rgba(99,102,241,0.07)',
-                                        opacity: n.is_read ? 0.7 : 1,
+                                        padding: '14px 16px',
+                                        borderBottom: i < notifications.length - 1 ? '1px solid var(--hairline)' : 'none',
+                                        borderLeft: n.is_read ? '2px solid transparent' : '2px solid var(--accent-primary)',
+                                        background: n.is_read ? 'transparent' : 'rgba(37,99,235,0.05)',
                                         cursor: n.is_read ? 'default' : 'pointer',
                                         transition: 'background 0.2s',
                                     }}
                                 >
-                                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-                                        <div style={{ flex: 1 }}>
-                                            <p style={{ margin: 0, fontSize: '0.8125rem', fontWeight: n.is_read ? 400 : 600, color: 'var(--foreground)' }}>{n.title}</p>
-                                            <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--muted-foreground)', lineHeight: 1.4 }}>{n.body}</p>
+                                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <p className="t-body" style={{ margin: 0, fontSize: 13.5, fontWeight: n.is_read ? 400 : 600, color: 'var(--text-primary)', lineHeight: 1.4 }}>{n.title}</p>
+                                            <p className="t-body" style={{ margin: '3px 0 0', fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.45 }}>{n.body}</p>
                                         </div>
-                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-                                            <span style={{ fontSize: '0.7rem', color: 'var(--muted-foreground)', whiteSpace: 'nowrap', marginTop: 2 }}>
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+                                            <span className="t-mono steel" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>
                                                 {timeAgo(n.created_at)}
                                             </span>
                                             {!n.is_read && (
-                                                <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--secondary, #6366f1)', display: 'inline-block' }} />
+                                                <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent-primary)', display: 'inline-block' }} />
                                             )}
                                         </div>
                                     </div>
