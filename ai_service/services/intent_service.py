@@ -189,7 +189,7 @@ def get_intent_service() -> IntentService:
     return _intent_service
 
 
-def reload_intent_service(model_path: str = "prod_tinybert.pt") -> IntentService:
+def reload_intent_service(model_path: str = "best_model.pt") -> IntentService:
     """
     Reload the global intent service from a new checkpoint.
 

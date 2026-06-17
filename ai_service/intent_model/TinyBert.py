@@ -7,7 +7,7 @@ import re
 
 class IntentDataset(Dataset):
     """
-    Dataset for handling student input and session context for 5-class intent categorization.
+    Dataset for handling student input and session context for 6-class intent categorization.
     """
     def __init__(self, data, tokenizer, max_length=128):
         # data: list of dicts with 'student_input', 'session_context', 'label'
@@ -19,7 +19,8 @@ class IntentDataset(Dataset):
             'Off-Topic Question': 1,
             'Emotional-State': 2,
             'Pace-Related': 3,
-            'Repeat/clarification': 4
+            'Repeat/clarification': 4,
+            'Debugging/Code-Sharing': 5,
         }
     
     def __len__(self):
@@ -173,10 +174,9 @@ class CompoundSentenceSplitter:
                     part1 = text[:split_pos].strip()
                     part2 = text[split_pos:].strip()
                     
-                    # Remove leading conjunction from part2
+                    # Remove leading conjunction from part2 (English only)
                     for c in self.conjunctions:
-                        is_arabic_c = any(ch in 'أبتثجحخدذرزسشصضطظعغفقكلمنهويىةؤإآ' for ch in c)
-                        part2 = re.sub(r'^\s*' + re.escape(c) + r'\s+', '', part2, flags=re.IGNORECASE if not is_arabic_c else 0)
+                        part2 = re.sub(r'^\s*' + re.escape(c) + r'\s+', '', part2, flags=re.IGNORECASE)
                     
                     # Ensure both parts are questions
                     if part1 and part2 and self._is_question(part1):
@@ -253,28 +253,30 @@ class CompoundSentenceSplitter:
 class TinyBertCNN(nn.Module):
     """
     TinyBERT-CNN model for intent classification.
-    Combines TinyBERT embeddings with CNN layers + BatchNorm + hidden FC layer.
+    Combines TinyBERT embeddings with CNN layers + GroupNorm + hidden FC layer.
     """
     
     def __init__(
         self,
         num_classes,
         bert_model_name='distilbert-base-uncased',
-        num_filters=128,
-        filter_sizes=[2, 3, 4],
-        dropout=0.3,
+        num_filters=192,
+        filter_sizes=[3, 4, 5, 6],
+        dropout=0.2,
         hidden_dim=128,
-        freeze_bert=False
+        freeze_bert=False,
+        temperature=1.0
     ):
         """
         Args:
             num_classes (int): Number of intent classes
             bert_model_name (str): Pre-trained TinyBERT model name
-            num_filters (int): Number of filters for each filter size
-            filter_sizes (list): List of filter sizes for CNN
+            num_filters (int): Number of filters for each filter size (default 192)
+            filter_sizes (list): List of filter sizes for CNN (default [3,4,5,6])
             dropout (float): Dropout rate
             hidden_dim (int): Hidden FC layer dimension
             freeze_bert (bool): Whether to freeze BERT parameters
+            temperature (float): Temperature scaling parameter for logit calibration
         """
         super(TinyBertCNN, self).__init__()
         
@@ -291,7 +293,7 @@ class TinyBertCNN(nn.Module):
             for param in self.bert.parameters():
                 param.requires_grad = False
         
-        # CNN layers with BatchNorm
+        # CNN layers with GroupNorm (batch-size-invariant)
         self.convs = nn.ModuleList([
             nn.Conv1d(
                 in_channels=self.bert_hidden_size,
@@ -301,7 +303,7 @@ class TinyBertCNN(nn.Module):
             for fs in filter_sizes
         ])
         self.batchnorms = nn.ModuleList([
-            nn.BatchNorm1d(num_filters)
+            nn.GroupNorm(num_groups=32, num_channels=num_filters)
             for _ in filter_sizes
         ])
         
@@ -311,10 +313,13 @@ class TinyBertCNN(nn.Module):
         # Hidden FC layer
         cnn_out_dim = len(filter_sizes) * num_filters + self.bert_hidden_size  # CNN + [CLS]
         self.fc_hidden = nn.Linear(cnn_out_dim, hidden_dim)
-        self.bn_hidden = nn.BatchNorm1d(hidden_dim)
+        self.bn_hidden = nn.GroupNorm(num_groups=16, num_channels=hidden_dim)
         
         # Output layer
         self.fc = nn.Linear(hidden_dim, num_classes)
+        
+        # Temperature scaling
+        self.temperature = temperature
         
     def forward(self, input_ids, attention_mask, token_type_ids=None):
         """
@@ -369,12 +374,14 @@ class TinyBertCNN(nn.Module):
         concatenated = torch.cat(conv_outputs + [cls_output], dim=1)
         concatenated = self.dropout(concatenated)
         
-        # Hidden FC layer
+        # Hidden FC layer (no dropout here — single application above)
         hidden = torch.relu(self.bn_hidden(self.fc_hidden(concatenated)))
-        hidden = self.dropout(hidden)
         
         # Final classification
         logits = self.fc(hidden)
+        
+        # Temperature scaling
+        logits = logits / self.temperature
         
         return logits
 
@@ -388,11 +395,12 @@ class IntentClassifier:
         self,
         num_classes,
         bert_model_name='distilbert-base-uncased',
-        num_filters=128,
-        filter_sizes=[2, 3, 4],
-        dropout=0.3,
+        num_filters=192,
+        filter_sizes=[3, 4, 5, 6],
+        dropout=0.2,
         freeze_bert=False,
-        device=None
+        device=None,
+        temperature=1.0
     ):
         self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
@@ -403,7 +411,8 @@ class IntentClassifier:
             num_filters=num_filters,
             filter_sizes=filter_sizes,
             dropout=dropout,
-            freeze_bert=freeze_bert
+            freeze_bert=freeze_bert,
+            temperature=temperature
         ).to(self.device)
         
         # Initialize tokenizer
@@ -537,20 +546,22 @@ class IntentClassifier:
         
         return all_predictions, all_probabilities, split_info
     
-    def train_step(self, batch, optimizer, criterion):
+    def train_step_amp(self, batch, optimizer, criterion, scaler=None):
         """
-        Single training step
+        Single training step with AMP mixed-precision support.
         
         Args:
             batch: Dictionary with 'input_ids', 'attention_mask', 'labels'
             optimizer: Optimizer
             criterion: Loss function
+            scaler: GradScaler instance for AMP, or None for standard training
             
         Returns:
-            loss: Training loss
+            loss: Training loss (float)
         """
-        self.model.train()
+        from torch.cuda.amp import autocast
         
+        self.model.train()
         input_ids = batch['input_ids'].to(self.device)
         attention_mask = batch['attention_mask'].to(self.device)
         labels = batch['labels'].to(self.device)
@@ -558,71 +569,61 @@ class IntentClassifier:
         if token_type_ids is not None:
             token_type_ids = token_type_ids.to(self.device)
         
-        # Forward pass
-        logits = self.model(input_ids, attention_mask, token_type_ids=token_type_ids)
-        loss = criterion(logits, labels)
-        
-        # Backward pass
         optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-        optimizer.step()
         
-        return loss.item()
-    
-    def evaluate(self, dataloader, criterion):
-        """
-        Evaluate model on validation/test set
+        with autocast():
+            logits = self.model(input_ids, attention_mask, token_type_ids=token_type_ids)
+            loss = criterion(logits, labels)
         
-        Args:
-            dataloader: DataLoader for evaluation
-            criterion: Loss function
+        if scaler:
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            optimizer.step()
             
-        Returns:
-            avg_loss: Average loss
-            accuracy: Classification accuracy
-        """
-        self.model.eval()
+        preds = torch.argmax(logits, dim=1)
+        correct = (preds == labels).sum().item()
+        total = labels.size(0)
         
-        total_loss = 0
-        total_correct = 0
-        total_samples = 0
-        
-        with torch.no_grad():
-            for batch in dataloader:
-                input_ids = batch['input_ids'].to(self.device)
-                attention_mask = batch['attention_mask'].to(self.device)
-                labels = batch['labels'].to(self.device)
-                token_type_ids = batch.get('token_type_ids')
-                if token_type_ids is not None:
-                    token_type_ids = token_type_ids.to(self.device)
-                
-                # Forward pass
-                logits = self.model(input_ids, attention_mask, token_type_ids=token_type_ids)
-                loss = criterion(logits, labels)
-                
-                # Calculate metrics
-                predictions = torch.argmax(logits, dim=1)
-                total_loss += loss.item() * labels.size(0)
-                total_correct += (predictions == labels).sum().item()
-                total_samples += labels.size(0)
-        
-        avg_loss = total_loss / total_samples
-        accuracy = total_correct / total_samples
-        
-        return avg_loss, accuracy
+        return loss.item(), correct, total
     
-    def save_model(self, path):
-        """Save model checkpoint"""
-        torch.save({
+    def save_model(self, path, temperature=None):
+        """Save model checkpoint with full architecture config."""
+        checkpoint = {
             'model_state_dict': self.model.state_dict(),
-            'num_classes': self.num_classes
-        }, path)
+            'num_classes': self.num_classes,
+            'bert_model_name': self.model.bert.config._name_or_path,
+            'filter_sizes': [conv.kernel_size[0] for conv in self.model.convs],
+            'num_filters': self.model.convs[0].out_channels if self.model.convs else 0,
+            'hidden_dim': self.model.fc_hidden.out_features,
+            'dropout': self.model.dropout.p,
+            'temperature': temperature or self.model.temperature,
+            'label_map': {
+                'On-Topic Question':      0,
+                'Off-Topic Question':     1,
+                'Emotional-State':        2,
+                'Pace-Related':           3,
+                'Repeat/clarification':   4,
+                'Debugging/Code-Sharing': 5,
+            },
+        }
+        torch.save(checkpoint, path)
         print(f"Model saved to {path}")
     
     def load_model(self, path):
-        """Load model checkpoint"""
+        """Load model checkpoint and restore config."""
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.num_classes = checkpoint.get('num_classes', self.num_classes)
+        if 'temperature' in checkpoint:
+            self.model.temperature = checkpoint['temperature']
         print(f"Model loaded from {path}")
+        print(f"  Classes: {self.num_classes}, Backbone: {checkpoint.get('bert_model_name', 'unknown')}, "
+              f"Filters: {checkpoint.get('num_filters', '?')}×{checkpoint.get('filter_sizes', '?')}, "
+              f"Temperature: {checkpoint.get('temperature', 1.0)}")
 

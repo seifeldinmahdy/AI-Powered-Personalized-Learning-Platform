@@ -10,7 +10,7 @@ collected. It:
 3. Mixes feedback rows into train/val/test splits.
 4. Runs ``train.py`` with the mixed splits and a feedback-specific test set.
 5. Applies a quality gate that includes both synthetic-test and feedback-test F1.
-6. Promotes the new model to ``prod_tinybert.pt`` if the gate passes.
+6. Promotes the new model to ``best_model.pt`` if the gate passes.
 
 Usage:
     python feedback_trainer.py [--regenerate] [--feedback-csv PATH]
@@ -43,7 +43,7 @@ MIXED_SPLITS = {
 FEEDBACK_TEST_CSV = DATA_DIR / "feedback_test.csv"
 MODEL_OUTPUT = BASE_DIR / "best_model_feedback.pt"
 RESULTS_OUTPUT = BASE_DIR / "training_results_feedback.json"
-PROD_MODEL = BASE_DIR / "prod_tinybert.pt"
+PROD_MODEL = BASE_DIR / "best_model.pt"
 
 INTENT_LABEL_MAP = {
     "On-Topic Question": 0,

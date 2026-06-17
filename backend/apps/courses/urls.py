@@ -35,7 +35,7 @@ urlpatterns = [
     # Concepts (nested under course)
     path(
         "courses/<int:course_pk>/concepts/",
-        views.ConceptViewSet.as_view({"get": "list"}),
+        views.ConceptViewSet.as_view({"get": "list", "post": "create"}),
         name="concept-list",
     ),
     path(

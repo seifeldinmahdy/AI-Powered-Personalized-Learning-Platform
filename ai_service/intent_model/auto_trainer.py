@@ -6,7 +6,7 @@ import time
 
 STATE_FILE = "pipeline_state.json"
 RETRAIN_THRESHOLD = 50
-MODEL_PROD_PATH = "prod_tinybert.pt"
+MODEL_PROD_PATH = "best_model.pt"
 MODEL_NEW_STAGE_PATH = "best_tinybert.pt"
 
 def load_state():

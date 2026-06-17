@@ -11,7 +11,7 @@ import subprocess
 
 STATE_FILE            = "pipeline_state.json"
 RETRAIN_THRESHOLD     = 50
-MODEL_PROD_PATH       = "prod_tinybert.pt"
+MODEL_PROD_PATH       = "best_model.pt"
 MODEL_NEW_STAGE_PATH  = "best_model.pt"
 REAL_UTTERANCES_PATH  = os.path.join("data", "real_utterances.csv")
 REAL_UTTERANCES_MAX_AGE_DAYS = 7
