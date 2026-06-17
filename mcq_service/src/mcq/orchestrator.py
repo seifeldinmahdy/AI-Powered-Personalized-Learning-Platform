@@ -158,6 +158,7 @@ def generate_session_assessment(
             mcq = _generate_single_mcq(
                 chunk_text=chunk.get("text", ""),
                 chunk_topic=chunk.get("topic", request.session_topic),
+                chunk_concept_id=chunk.get("concept_id"),
                 context=context,
                 embedder=embedder,
                 settings=settings,
@@ -192,6 +193,7 @@ def _generate_single_mcq(
     context: AssessmentContext,
     embedder,
     settings,
+    chunk_concept_id: str | None = None,
 ) -> MCQQuestion | None:
     """Full pipeline for a single chunk → MCQQuestion.
 
@@ -210,6 +212,8 @@ def _generate_single_mcq(
         incorrectly_answered=context.incorrectly_answered,
         embedder=embedder,
         settings=settings,
+        chunk_concept_id=chunk_concept_id,
+        concept_mastery=context.concept_mastery,
     )
 
     # ── 2. Question generation ──────────────────────────────────────
@@ -244,5 +248,10 @@ def _generate_single_mcq(
             question=generated_q.question[:60],
         )
         return None
+
+    # Carry the source chunk's concept so the checkpoint can write per-concept
+    # mastery on submission (closing the difficulty loop without topic fuzzing).
+    if chunk_concept_id:
+        mcq.concept_id = str(chunk_concept_id)
 
     return mcq

@@ -32,6 +32,8 @@ def select_question_type(
     incorrectly_answered: list[dict],
     embedder,
     settings,
+    chunk_concept_id: str | None = None,
+    concept_mastery: dict[str, float] | None = None,
 ) -> tuple[str, str, float]:
     """Select the best question type for a given chunk.
 
@@ -51,15 +53,21 @@ def select_question_type(
         Sentence-transformer model for semantic topic matching.
     settings :
         MCQSettings instance.
+    chunk_concept_id :
+        The chunk's Concept id, when known. Enables resolving difficulty from
+        concept mastery directly instead of fuzzy topic matching.
+    concept_mastery :
+        Authoritative ``concept_id → score`` (0–1) map for the student.
 
     Returns
     -------
     (question_type, score_category, topic_score)
         The selected type ID, the score category label, and the raw topic score.
     """
-    # ── 1. Resolve topic score → category ───────────────────────────
+    # ── 1. Resolve score → category (concept mastery preferred) ─────
     topic_score, source = get_effective_score(
         chunk_topic, topic_performance, mastery_level, embedder, settings,
+        concept_id=chunk_concept_id, concept_mastery=concept_mastery,
     )
     score_category = get_score_category(topic_score, settings)
 

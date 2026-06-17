@@ -20,6 +20,12 @@ class AssessmentContext(BaseModel):
 
     mastery_level: Literal["Novice", "Intermediate", "Expert"]
     topic_performance: dict[str, float] = Field(default_factory=dict)
+    # Authoritative per-concept knowledge signal: ``concept_id → score`` (0–1).
+    # When a chunk carries a ``concept_id`` present here, difficulty is resolved
+    # directly from concept mastery (no fuzzy topic matching). Same 0–1 scale as
+    # topic_performance, so it buckets into the same score categories the
+    # generator was trained on — no retraining required.
+    concept_mastery: dict[str, float] = Field(default_factory=dict)
     incorrectly_answered: list[dict] = Field(default_factory=list)
     student_id: str
     course_id: str
@@ -64,6 +70,9 @@ class MCQQuestion(BaseModel):
     explanation: str
     question_type: str
     topic: str
+    # Django Concept.id this question probes, carried from the source chunk.
+    # Lets the checkpoint write per-CONCEPT mastery (no topic→concept fuzzing).
+    concept_id: str = ""
     mastery_used: str
     score_category_used: str
     distractor_scores: list[float] | None = None
@@ -146,6 +155,9 @@ class CheckpointResult(BaseModel):
         description="Overall score 0.0 to 1.0",
     )
     per_topic_scores: dict[str, float]
+    # Per-concept scores (concept_id → 0–1), the authoritative signal written to
+    # concept mastery. Empty when the questions carried no concept_id.
+    per_concept_scores: dict[str, float] = Field(default_factory=dict)
     correct_count: int
     total_count: int
     question_results: list[dict] = Field(

@@ -32,7 +32,7 @@ class PathwaySettings(BaseSettings):
     )
 
     # ── Ollama Cloud (shared with rag_pipeline) ──────────────────
-    ollama_host: str = "https://ollama.com"
+    ollama_host: str
     ollama_model: str = "gpt-oss:120b"
     ollama_api_key: str = ""
     max_retries: int = 3

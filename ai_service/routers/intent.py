@@ -179,7 +179,7 @@ async def chat_intent(request: ChatRequest):
         )
 
 class ReloadModelRequest(BaseModel):
-    model_path: str = Field(default="prod_tinybert.pt", description="Checkpoint filename inside intent_model/")
+    model_path: str = Field(default="best_model.pt", description="Checkpoint filename inside intent_model/")
 
 
 def _verify_service_key(x_service_key: str = Header(...)):

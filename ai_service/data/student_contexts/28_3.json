@@ -1,0 +1,224 @@
+{
+  "profile": {
+    "student_id": "28",
+    "course_id": "3",
+    "mastery_level": "Novice",
+    "composition_mode": "balanced",
+    "language_proficiency": "Intermediate",
+    "strengths": [],
+    "weaknesses": [],
+    "strength_concept_ids": [],
+    "weak_concept_ids": [],
+    "topic_performance": {},
+    "incorrectly_answered": [
+      {
+        "question": "What is the correct sequence of steps to install Python on a Windows machine and confirm the installation is successful?",
+        "chosen_option": "B) Open PowerShell, type pip install python, then restart the computer",
+        "correct_option": "A) Download the installer, run it, check 'Add Python to PATH', then open PowerShell and run python --version",
+        "concept_id": null
+      },
+      {
+        "question": "Which of the following actions is NOT required when setting up VS Code for Python development?",
+        "chosen_option": "C) Rename all files to have a .pyx extension",
+        "correct_option": "A) Install the official Python extension from the VS Code Marketplace",
+        "concept_id": null
+      },
+      {
+        "question": "Identify the minimal set of elements that must be present in a valid Python script file to be executed without syntax errors.",
+        "chosen_option": "B) A shebang line, optional imports, and a print statement",
+        "correct_option": "A) One or more function definitions followed by a call to main()",
+        "concept_id": null
+      },
+      {
+        "question": "What file extension should you use for a Python source file that you want to execute?",
+        "chosen_option": "B) .python",
+        "correct_option": "A) .py",
+        "concept_id": null
+      },
+      {
+        "question": "Which statement below correctly describes the role of indentation in Python syntax?",
+        "chosen_option": "D) Indentation is only required for comments",
+        "correct_option": "A) Indentation is optional and only improves readability",
+        "concept_id": null
+      },
+      {
+        "question": "Which of the following is a mutable data type in Python?",
+        "chosen_option": "B) string",
+        "correct_option": "C) list",
+        "concept_id": null
+      },
+      {
+        "question": "Which data type would you use to store unique values without duplicates?",
+        "chosen_option": "C) tuple",
+        "correct_option": "B) set",
+        "concept_id": null
+      },
+      {
+        "question": "Which of the following statements correctly describes a dictionary?",
+        "chosen_option": "C) Collection of unique numeric elements",
+        "correct_option": "A) Ordered collection of key-value pairs",
+        "concept_id": null
+      },
+      {
+        "question": "Which of the following examples is a string literal?",
+        "chosen_option": "D) (4, 5)",
+        "correct_option": "C) \"Hello, World!\"",
+        "concept_id": null
+      },
+      {
+        "question": "Which data type is used to group elements that should not change after creation?",
+        "chosen_option": "C) set",
+        "correct_option": "B) tuple",
+        "concept_id": null
+      },
+      {
+        "question": "Which of the following is NOT a valid number type in Python?",
+        "chosen_option": "C) complex",
+        "correct_option": "D) string",
+        "concept_id": null
+      },
+      {
+        "question": "Which condition should be used in a for loop to print only the odd numbers from 1 to 10?",
+        "chosen_option": "if num % 2 != 0: print(num)",
+        "correct_option": "Both b and c",
+        "concept_id": null
+      },
+      {
+        "question": "Which of the following scripts correctly calculates the sum of digits of a positive integer n?",
+        "chosen_option": "sum=0; for digit in str(n): sum+=int(digit);",
+        "correct_option": "All of the above",
+        "concept_id": null
+      },
+      {
+        "question": "Which snippet prints the numbers 1, 3, 5, 7, 9?",
+        "chosen_option": "i=1; while i<10: print(i); i+=2",
+        "correct_option": "All of the above",
+        "concept_id": null
+      },
+      {
+        "question": "Which of the following uses a conditional and a loop to find the greatest common divisor (GCD) of two positive integers a and b?",
+        "chosen_option": "while a>b: a-=b; while b>a: b-=a; print(a)",
+        "correct_option": "while a!=b: if a>b: a-=b else: b-=a; print(a), b;",
+        "concept_id": null
+      },
+      {
+        "question": "Which loop construct would be most efficient to iterate over elements of a list lst with indices?",
+        "chosen_option": "i=0; while i < len(lst): process(lst[i]); i+=1",
+        "correct_option": "for index, value in enumerate(lst): process(value)",
+        "concept_id": null
+      },
+      {
+        "question": "Which code snippet correctly implements a do-while loop in Python to prompt the user until they enter a positive number?",
+        "chosen_option": "do: num=int(input()); while num<=0;",
+        "correct_option": "while True: num=int(input()); if num>0: break;",
+        "concept_id": null
+      },
+      {
+        "question": "Given the following objects, which of these is immutable?\\n\\n d = {'x':1};\\nl = [1,2];",
+        "chosen_option": "l",
+        "correct_option": "d",
+        "concept_id": null
+      },
+      {
+        "question": "Which data type is immutable in the following scenario?\\n\\n f = 10; f = f + 5;\\nx = 10; x += 5;",
+        "chosen_option": "set",
+        "correct_option": "int",
+        "concept_id": null
+      },
+      {
+        "question": "What is true after the following code executes?\\n\\n s1 = \"abc\"; s2 = s1; s1 += \"d\";",
+        "chosen_option": "s1 cannot be changed",
+        "correct_option": "Both s1 and s2 refer to the same object after +=",
+        "concept_id": null
+      },
+      {
+        "question": "After executing the following code, which statement is true?\\n\\n tuple1 = (1,2,3); tuple2 = tuple1; tuple1 = tuple1 + (4,);",
+        "chosen_option": "None of the above",
+        "correct_option": "tuple1 and tuple2 refer to the same object after concatenation",
+        "concept_id": null
+      },
+      {
+        "question": "Given the code:\n\nx = 10\n\ndef change():\n    x = 5\n    print(x)\nchange()\nprint(x)\n\nWhat will be printed?",
+        "chosen_option": "B) It will print 10 then 5.",
+        "correct_option": "A) It will print 5 then 10.",
+        "concept_id": null
+      },
+      {
+        "question": "This function returns a list of squares:\n\ndef squares(n):\n    result = []\n    for i in range(n):\n        result.append(i*i)\n    return result\n\nWhich change would improve both readability and efficiency?",
+        "chosen_option": "B) Replace the loop with a list comprehension",
+        "correct_option": "A) Use a generator expression instead of a list",
+        "concept_id": null
+      },
+      {
+        "question": "What happens when the following recursive function is called with factorial(5)?\n\ndef factorial(n):\n    return n * factorial(n-1)\n",
+        "chosen_option": "B) RecursionError due to missing base case",
+        "correct_option": "A) Correctly returns 120",
+        "concept_id": null
+      },
+      {
+        "question": "Which module would you import to parse command-line arguments for a small project requiring options like --input and --verbose?",
+        "chosen_option": "D: json",
+        "correct_option": "A: sys",
+        "concept_id": null
+      },
+      {
+        "question": "You want to split a project into modules: one for data handling, one for utilities, and one for main execution. How should you structure the imports in the main module to avoid circular dependencies?",
+        "chosen_option": "C: Import main first, then data, then utils",
+        "correct_option": "A: Import data module first, then utils, then main",
+        "concept_id": null
+      },
+      {
+        "question": "Which function definition would correctly allow a default argument of an empty list that should not be shared across calls?",
+        "chosen_option": "D: def add_item(item, lst=()): ...",
+        "correct_option": "A: def add_item(item, lst=[]): ...",
+        "concept_id": null
+      },
+      {
+        "question": "For a small project that logs messages to a file and to the console, which module would you use to configure logging?",
+        "chosen_option": "D: print",
+        "correct_option": "A: logging",
+        "concept_id": null
+      },
+      {
+        "question": "Which data structure is best for maintaining a queue of tasks that need to be processed in FIFO order?",
+        "chosen_option": "D: stack",
+        "correct_option": "A: list",
+        "concept_id": null
+      },
+      {
+        "question": "In a Python project, you need to group multiple functions that operate on a specific data type. Which approach best organizes these functions?",
+        "chosen_option": "C: Use global functions in the same module",
+        "correct_option": "A: Put them in a class as static methods",
+        "concept_id": null
+      },
+      {
+        "question": "How can you ensure that a module's code runs only when executed as a script, not when imported?",
+        "chosen_option": "D: if __name__ == \"__file__\": ...",
+        "correct_option": "A: if __name__ == \"__main__\": ...",
+        "concept_id": null
+      }
+    ],
+    "use_synthetic_context": false,
+    "course_intent": "Python for Beginners",
+    "student_profile_summary": "Novice learner in Python for Beginners. Strong in: no concepts yet. Needs work on: no concepts yet."
+  },
+  "live": {
+    "session_id": "",
+    "current_slide_index": 0,
+    "current_slide_title": "",
+    "current_slide_content": "",
+    "current_topic": "",
+    "current_subtopic": "",
+    "current_concept_id": "",
+    "running_summary": "",
+    "tutor_transcript": [],
+    "visited_slides": [],
+    "time_spent_per_slide": {},
+    "tutor_events": [],
+    "emotion_signals": [],
+    "fused_emotion": "",
+    "fused_emotion_confidence": 0.0,
+    "pace_modifier": 0,
+    "last_updated_at": 1781702984.4229598
+  }
+}

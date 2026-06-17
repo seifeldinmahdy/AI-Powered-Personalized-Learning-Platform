@@ -55,7 +55,7 @@ def _get_ollama_client() -> OllamaClient:
     global _ollama_client
     if _ollama_client is None:
         _ollama_client = OllamaClient(
-            host=os.getenv("OLLAMA_HOST", "https://ollama.com"),
+            host=os.getenv("OLLAMA_HOST"),
             model=os.getenv("OLLAMA_MODEL", "qwen3-coder-next:cloud"),
             api_key=os.getenv("OLLAMA_API_KEY", ""),
             max_retries=3,
@@ -69,7 +69,7 @@ def _get_eval_client() -> OllamaClient:
     global _eval_client
     if _eval_client is None:
         _eval_client = OllamaClient(
-            host=os.getenv("OLLAMA_HOST", "https://ollama.com"),
+            host=os.getenv("OLLAMA_HOST"),
             model=os.getenv("OLLAMA_EVAL_MODEL", "gpt-oss:120b"),
             api_key=os.getenv("OLLAMA_API_KEY", ""),
             max_retries=3,

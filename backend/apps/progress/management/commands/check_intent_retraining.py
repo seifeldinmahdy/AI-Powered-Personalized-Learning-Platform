@@ -255,7 +255,7 @@ class Command(BaseCommand):
         try:
             reload_resp = requests.post(
                 f"{ai_service_url}/intent/reload",
-                json={"model_path": "prod_tinybert.pt"},
+                json={"model_path": "best_model.pt"},
                 headers=headers,
                 timeout=120,
             )

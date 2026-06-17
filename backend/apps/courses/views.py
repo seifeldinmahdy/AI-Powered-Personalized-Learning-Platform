@@ -580,10 +580,17 @@ def get_coding_hint(request):
 # ------------------------------------------------------------------
 # Concept ViewSet — read-only; nested under /api/courses/courses/<course_pk>/concepts/
 # ------------------------------------------------------------------
-class ConceptViewSet(viewsets.ReadOnlyModelViewSet):
+class ConceptViewSet(viewsets.ModelViewSet):
     serializer_class = ConceptSerializer
     authentication_classes = [JWTAuthentication, InternalServiceAuthentication]
-    permission_classes = [AllowAny]
+    permission_classes = [IsAdminOrReadOnly]
+
+    def perform_create(self, serializer):
+        course_pk = self.kwargs.get("course_pk")
+        from django.utils.text import slugify
+        label = serializer.validated_data.get("label", "")
+        slug = serializer.validated_data.get("slug") or slugify(label)[:60]
+        serializer.save(course_id=course_pk, slug=slug)
 
     def get_queryset(self):
         course_pk = self.kwargs.get("course_pk")

@@ -15,3 +15,11 @@ export async function getConcepts(courseId: number): Promise<Concept[]> {
     const data = response.data;
     return Array.isArray(data) ? data : data.results ?? [];
 }
+
+export async function createConcept(courseId: number, label: string): Promise<Concept> {
+    const response = await api.post<Concept>(`/courses/courses/${courseId}/concepts/`, {
+        label,
+        order: 99, // default to end
+    });
+    return response.data;
+}

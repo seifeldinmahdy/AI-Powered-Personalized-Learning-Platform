@@ -992,7 +992,7 @@ export function CompactTutor({
                     <span className="text-[10px] text-muted-foreground">Was this helpful?</span>
                     <button
                       onClick={() => handleFeedback(i, 'thumbs_up')}
-                      disabled={entry.feedback === 'thumbs_down'}
+                      disabled={!!entry.feedback}
                       className={`p-1 rounded transition-colors ${entry.feedback === 'thumbs_up' ? 'bg-green-100 text-green-600' : 'hover:bg-muted text-muted-foreground'}`}
                       title="Helpful"
                     >
@@ -1000,7 +1000,7 @@ export function CompactTutor({
                     </button>
                     <button
                       onClick={() => handleFeedback(i, 'thumbs_down')}
-                      disabled={entry.feedback === 'thumbs_up'}
+                      disabled={!!entry.feedback}
                       className={`p-1 rounded transition-colors ${entry.feedback === 'thumbs_down' ? 'bg-red-100 text-red-600' : 'hover:bg-muted text-muted-foreground'}`}
                       title="Not helpful"
                     >

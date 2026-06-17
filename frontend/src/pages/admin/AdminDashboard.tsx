@@ -207,7 +207,7 @@ export default function AdminDashboard() {
                           <button onClick={() => setPreviewCourse(course)} className="admin-btn admin-btn-ghost admin-btn-icon" title="Preview Course">
                             <Eye size={16} />
                           </button>
-                          <button onClick={() => openEdit(course)} className="admin-btn admin-btn-ghost admin-btn-icon" title="Edit Details">
+                          <button onClick={() => navigate(`/admin/courses/${course.id}/editor`)} className="admin-btn admin-btn-ghost admin-btn-icon" title="Edit Details">
                             <Edit size={16} />
                           </button>
                           <button

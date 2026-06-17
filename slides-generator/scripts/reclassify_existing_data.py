@@ -490,7 +490,7 @@ def main():
     load_dotenv(project_root / ".env")
 
     # Resolve Ollama config
-    ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    ollama_host = os.getenv("OLLAMA_HOST")
     ollama_model = os.getenv("OLLAMA_MODEL", "llama3")
     max_retries = int(os.getenv("MAX_RETRIES", "3"))
     api_key = os.getenv("OLLAMA_API_KEY")

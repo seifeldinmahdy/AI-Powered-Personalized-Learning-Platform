@@ -49,9 +49,9 @@ const SERVICE_META: Record<string, ServiceMeta> = {
 };
 
 const INTERVAL_OPTIONS = [
-  { label: "5s",  value: 5000 },
   { label: "15s", value: 15000 },
   { label: "30s", value: 30000 },
+  { label: "1m", value: 60000 },
   { label: "Off", value: 0 },
 ];
 
@@ -263,7 +263,7 @@ export default function HealthMonitor() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastCheck, setLastCheck] = useState<Date | null>(null);
-  const [interval, setInterval_] = useState(15000);
+  const [interval, setInterval_] = useState(60000);
   const [history, setHistory] = useState<HealthSnapshot[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 

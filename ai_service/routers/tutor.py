@@ -399,20 +399,20 @@ async def repeat(request: RepeatRequest):
 @router.get("/health")
 async def tutor_health():
     """Check if the tutor service is ready (Ollama Cloud reachable)."""
-    from services.tutor_service import OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_API_KEY
+    from services.tutor_service import OLLAMA_HOST, OLLAMA_MODEL, OLLAMA_API_KEY
     import httpx
     try:
         headers = {}
         if OLLAMA_API_KEY:
             headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
         async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get(f"{OLLAMA_BASE_URL.rstrip('/')}/api/tags", headers=headers)
+            r = await client.get(f"{OLLAMA_HOST.rstrip('/')}/api/tags", headers=headers)
             r.raise_for_status()
             models = [m["name"] for m in r.json().get("models", [])]
             has_model = any(OLLAMA_MODEL in m for m in models)
         return {
             "status": "healthy",
-            "ollama_url": OLLAMA_BASE_URL,
+            "ollama_url": OLLAMA_HOST,
             "model": OLLAMA_MODEL,
             "api_key_set": bool(OLLAMA_API_KEY),
             "model_available": has_model,
@@ -421,7 +421,7 @@ async def tutor_health():
     except Exception as e:
         return {
             "status": "unhealthy",
-            "ollama_url": OLLAMA_BASE_URL,
+            "ollama_url": OLLAMA_HOST,
             "model": OLLAMA_MODEL,
             "api_key_set": bool(OLLAMA_API_KEY),
             "error": str(e),
