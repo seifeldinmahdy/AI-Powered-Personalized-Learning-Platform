@@ -15,6 +15,7 @@ urlpatterns = [
     # Problem sets (index) + attempts (events).
     # NOTE: specific paths precede the <ps_uid> catch-alls.
     path("problem-sets/", views.problem_set_create, name="problem-set-create"),
+    path("problem-sets/list/", views.problem_set_list, name="problem-set-list"),
     path("problem-sets/regen-count/", views.problem_set_regen_count, name="problem-set-regen-count"),
     path("problem-sets/score/", views.problem_set_score, name="problem-set-score"),
     path("problem-sets/<str:ps_uid>/", views.problem_set_detail, name="problem-set-detail"),

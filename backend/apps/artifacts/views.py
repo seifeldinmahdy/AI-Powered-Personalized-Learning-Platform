@@ -219,6 +219,22 @@ def problem_set_create(request):
 
 @api_view(["GET"])
 @permission_classes([permissions.IsAuthenticated])
+def problem_set_list(request):
+    """List problem sets for a student, optionally filtered by lesson_id."""
+    lesson_id = request.query_params.get("lesson_id")
+    course_id = request.query_params.get("course_id")
+    
+    qs = ProblemSet.objects.filter(student=request.user)
+    if lesson_id:
+        qs = qs.filter(lesson_id=lesson_id)
+    if course_id:
+        qs = qs.filter(course_id=course_id)
+        
+    return Response(ProblemSetSerializer(qs, many=True).data)
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
 def problem_set_detail(request, ps_uid):
     """Resolve a problem set by uid — the SINGLE GET of the submit hot path.
 

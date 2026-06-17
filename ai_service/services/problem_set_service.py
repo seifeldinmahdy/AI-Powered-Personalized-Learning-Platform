@@ -40,7 +40,6 @@ from schemas.problem_set import (
     RubricScore,
     SubmissionData,
 )
-from services.problem_set_store import get_problem_set_store
 from services.session_store import get_session_store
 
 logger = logging.getLogger(__name__)
@@ -317,7 +316,6 @@ async def generate(request, regenerate: bool = False) -> ProblemSetData:
             student_id="", course_id="", lesson_id="",
         )
 
-    store = get_problem_set_store()
     session_store = get_session_store()
 
     session_id = request.session_id
@@ -588,7 +586,6 @@ Based on the breadth and depth of the material above, decide how many questions 
     # Durably record in Django first (stamps plan_version + generation_index),
     # then keep the file working-copy for the live in-session flow.
     await _persist_problem_set(problem_set, regenerate=regenerate)
-    store.save(problem_set)
     logger.info("Problem set saved: id=%s questions=%d gen=%d v%d",
                 problem_set.problem_set_id, len(questions),
                 problem_set.generation_index, problem_set.plan_version)
@@ -644,15 +641,17 @@ async def evaluate_submission(
     hints_used: int,
 ) -> EvaluationResult:
     """Evaluate a student's code submission against the question's rubric."""
-    store = get_problem_set_store()
-    problem_set = store.load(student_id, lesson_id, problem_set_id)
-    if not problem_set:
+    from services import artifact_client
+    raw_ps = await artifact_client.get_problem_set(student_id, problem_set_id)
+    if not raw_ps or not raw_ps.get("content_json"):
         raise ValueError(f"Problem set {problem_set_id} not found")
 
-    # Find the question
-    question = next((q for q in problem_set.questions if q.id == question_id), None)
-    if not question:
+    questions_data = raw_ps["content_json"].get("questions", [])
+    question_data = next((q for q in questions_data if q.get("id") == question_id), None)
+    if not question_data:
         raise ValueError(f"Question {question_id} not found in problem set")
+    
+    question = ProblemSetQuestion.model_validate(question_data)
 
     # Build binary-check evaluation prompts
     eval_system = """You are a code reviewer. You will be given a coding problem, the student's submitted code, and a rubric containing criteria with binary checks.
@@ -711,13 +710,9 @@ RUBRIC — fill in result and evidence for every check:
 
         evaluated_criteria.append(crit_dict)
 
-    # Load hint deductions from store for this question
-    submission_record = store.load_submission_record(
-        student_id, lesson_id, problem_set_id, question_id
-    )
-    hint_deductions = {}
-    if submission_record:
-        hint_deductions = submission_record.get("hint_deductions", {})
+    # Load hint deductions from Django
+    hint_tracking = raw_ps.get("hint_tracking") or {}
+    hint_deductions = hint_tracking.get(question_id, {}).get("hint_deductions", {})
 
     # Score deterministically
     raw_score, failed_evidence = _calculate_score(evaluated_criteria, hint_deductions)
@@ -793,14 +788,7 @@ RUBRIC — fill in result and evidence for every check:
         example_solution=question.example_solution,
     )
 
-    # Save submission
-    submission = SubmissionData(
-        code=code,
-        hints_used=hints_used,
-        submitted_at=datetime.utcnow().isoformat(),
-        result=eval_result,
-    )
-    store.save_submission(student_id, lesson_id, problem_set_id, question_id, submission)
+    # Submission is saved durable via routers/problem_set.py calling artifact_client.append_attempt
 
     # Run recurrent mistake detection (async, best-effort)
     try:
@@ -832,15 +820,18 @@ async def _detect_recurrent_mistakes(
     if not new_mistake_tags:
         return
 
-    store = get_problem_set_store()
-    problem_set = store.load(student_id, lesson_id, problem_set_id)
-    if not problem_set:
+    from services import artifact_client
+    raw_ps = await artifact_client.get_problem_set(student_id, problem_set_id)
+    if not raw_ps:
         return
 
-    # Count mistake occurrences across all submissions in this problem set
+    # Count mistake occurrences across all attempts in this problem set
     all_mistakes: list[str] = []
-    for sub in problem_set.submissions.values():
-        all_mistakes.extend(sub.result.mistake_tags)
+    for attempt in raw_ps.get("attempts", []):
+        for crit in attempt.get("evaluated_rubric", []):
+            for check in crit.get("checks", []):
+                if check.get("result") is False:
+                    all_mistakes.append(crit.get("category", "unknown"))
 
     # Find tags that appear 2+ times
     from collections import Counter
@@ -905,22 +896,22 @@ async def generate_dynamic_hint(
     evaluated_rubric: list | None,
 ) -> dict:
     """Generate a context-aware dynamic hint for hint_number 2 or 3."""
-    store = get_problem_set_store()
-    problem_set = store.load(student_id, lesson_id, problem_set_id)
-    if not problem_set:
+    from services import artifact_client
+    raw_ps = await artifact_client.get_problem_set(student_id, problem_set_id)
+    if not raw_ps or not raw_ps.get("content_json"):
         raise ValueError(f"Problem set {problem_set_id} not found")
 
-    question = next((q for q in problem_set.questions if q.id == question_id), None)
-    if not question:
+    questions_data = raw_ps["content_json"].get("questions", [])
+    question_data = next((q for q in questions_data if q.get("id") == question_id), None)
+    if not question_data:
         raise ValueError(f"Question {question_id} not found in problem set")
+    
+    question = ProblemSetQuestion.model_validate(question_data)
 
-    # Load existing hint deductions from store
-    submission_record = store.load_submission_record(
-        student_id, lesson_id, problem_set_id, question_id
-    )
-    existing_deductions: dict[str, float] = {}
-    if submission_record:
-        existing_deductions = submission_record.get("hint_deductions", {})
+    # Load existing hint deductions from Django
+    hint_tracking = raw_ps.get("hint_tracking") or {}
+    q_tracking = hint_tracking.get(question_id, {})
+    existing_deductions = q_tracking.get("hint_deductions", {})
     already_targeted = set(existing_deductions.keys())
 
     # Determine evaluated rubric for finding failing checks
@@ -1070,17 +1061,18 @@ Return only the hint text."""
     check_id = target_check["id"]
     existing_deductions[check_id] = existing_deductions.get(check_id, 0.0) + penalty
 
-    # Persist hint deduction immediately
-    store.save_hint_deduction(
-        student_id=student_id,
-        lesson_id=lesson_id,
-        problem_set_id=problem_set_id,
-        question_id=question_id,
-        check_id=check_id,
-        deduction=penalty,
-        hint_number=hint_number,
-        hint_content=hint_content,
-    )
+    # Persist hint deduction immediately via patch
+    if question_id not in hint_tracking:
+        hint_tracking[question_id] = {"hint_deductions": {}, "dynamic_hints_revealed": []}
+    hint_tracking[question_id]["hint_deductions"] = existing_deductions
+    hint_tracking[question_id]["dynamic_hints_revealed"].append({
+        "hint_number": hint_number,
+        "content": hint_content,
+        "targets_check_id": check_id,
+        "penalty_applied": penalty,
+    })
+    
+    await artifact_client.patch_hint_tracking(student_id, problem_set_id, hint_tracking)
 
     return {
         "hint_content": hint_content,

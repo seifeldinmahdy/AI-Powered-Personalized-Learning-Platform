@@ -26,7 +26,7 @@ from services.problem_set_service import (
     generate, evaluate_submission, generate_dynamic_hint,
     mastery_weight_for_generation,
 )
-from services.problem_set_store import get_problem_set_store
+
 
 logger = logging.getLogger(__name__)
 
@@ -83,27 +83,28 @@ async def regenerate_problem_set(request: ProblemSetGenerateRequest):
 @router.post("/submit")
 async def submit_answer(request: ProblemSetSubmitRequest):
     """Submit a code answer for evaluation."""
-    store = get_problem_set_store()
-
-    # Find the problem set to get the lesson_id
-    # We need to search since we only have problem_set_id
-    problem_set = _find_problem_set(request.problem_set_id, request.student_id)
-    if not problem_set:
+    from services import artifact_client
+    raw_ps = await artifact_client.get_problem_set(str(request.student_id), request.problem_set_id)
+    if not raw_ps:
         raise HTTPException(status_code=404, detail="Problem set not found")
+
+    lesson_id = raw_ps.get("lesson_id")
+    course_id = raw_ps.get("course_id", "")
+    plan_version = raw_ps.get("plan_version", 0)
+    gen_idx = raw_ps.get("generation_index", 0)
 
     try:
         result = await evaluate_submission(
             problem_set_id=request.problem_set_id,
             question_id=request.question_id,
             student_id=request.student_id,
-            lesson_id=problem_set.lesson_id,
+            lesson_id=lesson_id,
             code=request.code,
             language=request.language,
             hints_used=request.hints_used,
         )
 
         evaluated = [c.model_dump() for c in result.evaluated_rubric]
-        gen_idx = getattr(problem_set, "generation_index", 0) or 0
         alpha, source = mastery_weight_for_generation(gen_idx)
 
         # Mastery moves ONLY on this genuine new attempt (anti-farming). A
@@ -118,8 +119,8 @@ async def submit_answer(request: ProblemSetSubmitRequest):
                     evaluated_rubric=evaluated,
                     alpha=alpha, source=source,
                     # Lets Django evaluate the remediation trigger (Batch 11a).
-                    plan_version=getattr(problem_set, "plan_version", 0) or 0,
-                    course_id=str(getattr(problem_set, "course_id", "") or ""),
+                    plan_version=plan_version,
+                    course_id=course_id,
                 )
             )
         except Exception as _me:
@@ -174,12 +175,10 @@ async def get_hint(request: HintRequest):
 
     # hint_number=3 requires hint 2 to have been revealed already
     if request.hint_number == 3:
-        store = get_problem_set_store()
-        record = store.load_submission_record(
-            request.student_id, request.lesson_id,
-            request.problem_set_id, request.question_id,
-        )
-        hints_revealed = record.get("dynamic_hints_revealed", []) if record else []
+        from services import artifact_client
+        raw_ps = await artifact_client.get_problem_set(request.student_id, request.problem_set_id)
+        hint_tracking = raw_ps.get("hint_tracking", {}) if raw_ps else {}
+        hints_revealed = hint_tracking.get(request.question_id, {}).get("dynamic_hints_revealed", [])
         has_hint_2 = any(h.get("hint_number") == 2 for h in hints_revealed)
         if not has_hint_2:
             raise HTTPException(
@@ -227,11 +226,9 @@ async def summary_viewed(request: SummaryViewedRequest):
     """
     import asyncio
 
-    store = get_problem_set_store()
-    problem_set = store.load(
-        request.student_id, request.lesson_id, request.problem_set_id
-    )
-    if not problem_set:
+    from services import artifact_client
+    raw_ps = await artifact_client.get_problem_set(request.student_id, request.problem_set_id)
+    if not raw_ps:
         raise HTTPException(status_code=404, detail="Problem set not found")
 
     # (1) Server-side lesson completion — the transition lives HERE, not in the
@@ -268,43 +265,51 @@ async def summary_viewed(request: SummaryViewedRequest):
 @router.get("/{problem_set_id}")
 async def get_problem_set(problem_set_id: str, student_id: str = ""):
     """Get a problem set with submissions merged."""
-    problem_set = _find_problem_set(problem_set_id, student_id)
-    if not problem_set:
+    from services import artifact_client
+    raw_ps = await artifact_client.get_problem_set(student_id, problem_set_id)
+    if not raw_ps:
         raise HTTPException(status_code=404, detail="Problem set not found")
 
-    return problem_set.model_dump()
+    # In Django, the raw dict from ProblemSetSerializer matches what frontend expects for 'ProblemSetData',
+    # except 'content_json' might need to be hoisted. The frontend expects 'questions' at the root.
+    if "content_json" in raw_ps:
+        raw_ps.update(raw_ps.pop("content_json"))
+
+    # Also, the backend stores attempts in `attempts` array. We need to convert it to `submissions` dict
+    # where the key is question_id. For a single question, there are multiple attempts, but
+    # ProblemSetData expects `submissions: Record<string, SubmissionData>`.
+    # Wait, in the local store, we just kept the latest submission per question in `submissions`.
+    submissions = {}
+    for attempt in raw_ps.get("attempts", []):
+        question_id = attempt.get("question_id")
+        # Overwrite to keep the latest attempt, since they're ordered chronologically
+        submissions[question_id] = {
+            "code": attempt.get("code"),
+            "hints_used": attempt.get("hints_used", 0),
+            "submitted_at": attempt.get("created_at"),
+            "result": {
+                "raw_score": attempt.get("score"),
+                "final_score": attempt.get("score"),
+                "passed": attempt.get("score", 0) >= 65,
+                "evaluated_rubric": attempt.get("evaluated_rubric", []),
+                "mistake_tags": [], # we don't store mistake tags explicitly in the attempt model
+            }
+        }
+    raw_ps["submissions"] = submissions
+
+    return raw_ps
 
 
 @router.get("/student/{student_id}/lesson/{lesson_id}")
 async def get_student_problem_sets(student_id: str, lesson_id: str):
     """Get all problem sets for a student + lesson."""
-    store = get_problem_set_store()
-    problem_sets = store.find_by_student_lesson(student_id, lesson_id)
-
+    from services import artifact_client
+    raw_problem_sets = await artifact_client.get_problem_sets(student_id, lesson_id)
+    
     results = []
-    for ps in problem_sets:
-        results.append(ps.model_dump())
-
+    for raw_ps in raw_problem_sets:
+        if "content_json" in raw_ps:
+            raw_ps.update(raw_ps.pop("content_json"))
+        results.append(raw_ps)
+        
     return results
-
-
-def _find_problem_set(problem_set_id: str, student_id: str = "") -> ProblemSetData | None:
-    """Search for a problem set by ID across all student/lesson directories."""
-    store = get_problem_set_store()
-    import os
-    base_dir = store._dir
-    if not base_dir.exists():
-        return None
-
-    for student_dir in base_dir.iterdir():
-        if not student_dir.is_dir():
-            continue
-        if student_id and student_dir.name != student_id.replace("/", "_").replace("\\", "_").replace(":", "_"):
-            continue
-        for lesson_dir in student_dir.iterdir():
-            if not lesson_dir.is_dir():
-                continue
-            result = store.load(student_dir.name, lesson_dir.name, problem_set_id)
-            if result:
-                return result
-    return None

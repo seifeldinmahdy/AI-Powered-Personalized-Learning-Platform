@@ -127,14 +127,16 @@ class LabCompleteRequest(BaseModel):
 @router.post("/labs/{lab_id}/note/cell")
 async def save_cell_note_endpoint(lab_id: str, req: CellNoteRequest):
     """Save a student note on a specific cell."""
-    from datetime import datetime
-    from services.lab_store import get_coding_lab_store
-    store = get_coding_lab_store()
-    store.save_cell_note(
-        lab_id=lab_id,
+    from services.lab_service import save_lab_cell_note
+    parts = lab_id.split("_")
+    course_id = parts[1] if len(parts) > 1 else ""
+    lesson_id = parts[2] if len(parts) > 2 else ""
+    await save_lab_cell_note(
+        student_id=req.student_id,
+        course_id=course_id,
+        lesson_id=lesson_id,
         cell_id=req.cell_id,
         content=req.content,
-        timestamp=datetime.utcnow().isoformat() + "Z",
     )
     return {"status": "ok"}
 
@@ -142,13 +144,15 @@ async def save_cell_note_endpoint(lab_id: str, req: CellNoteRequest):
 @router.post("/labs/{lab_id}/note/general")
 async def save_general_note_endpoint(lab_id: str, req: GeneralNoteRequest):
     """Save a general lab note."""
-    from datetime import datetime
-    from services.lab_store import get_coding_lab_store
-    store = get_coding_lab_store()
-    store.save_general_note(
-        lab_id=lab_id,
+    from services.lab_service import save_lab_general_note
+    parts = lab_id.split("_")
+    course_id = parts[1] if len(parts) > 1 else ""
+    lesson_id = parts[2] if len(parts) > 2 else ""
+    await save_lab_general_note(
+        student_id=req.student_id,
+        course_id=course_id,
+        lesson_id=lesson_id,
         content=req.content,
-        timestamp=datetime.utcnow().isoformat() + "Z",
     )
     return {"status": "ok"}
 
@@ -156,10 +160,14 @@ async def save_general_note_endpoint(lab_id: str, req: GeneralNoteRequest):
 @router.post("/labs/{lab_id}/question/asked")
 async def mark_question_asked_endpoint(lab_id: str, req: QuestionAskedRequest):
     """Mark a suggested question as asked."""
-    from services.lab_store import get_coding_lab_store
-    store = get_coding_lab_store()
-    store.mark_question_asked(
-        lab_id=lab_id,
+    from services.lab_service import mark_lab_question_asked
+    parts = lab_id.split("_")
+    course_id = parts[1] if len(parts) > 1 else ""
+    lesson_id = parts[2] if len(parts) > 2 else ""
+    await mark_lab_question_asked(
+        student_id=req.student_id,
+        course_id=course_id,
+        lesson_id=lesson_id,
         cell_id=req.cell_id,
         question_text=req.question_text,
     )
@@ -170,22 +178,17 @@ async def mark_question_asked_endpoint(lab_id: str, req: QuestionAskedRequest):
 async def complete_lab_endpoint(req: LabCompleteRequest):
     """Mark the lab as completed and trigger the lab profiler asynchronously."""
     import asyncio
-    from services.lab_store import get_coding_lab_store
+    from services.lab_service import mark_lab_completed
     from services.profiler_service import run_lab_profiler
 
-    store = get_coding_lab_store()
-    store.mark_completed(req.lab_id)
-
-    # Durably flush the completed lab (final state, incl. all notes) so it is
-    # queryable / resumable. Best-effort — never block completion.
     try:
-        import logging
-        from services.lab_service import persist_lab
-        completed = store.load(req.lab_id)
-        if completed is not None:
-            await persist_lab(req.student_id, req.course_id, req.lesson_id,
-                              completed.model_dump(), status="completed")
+        await mark_lab_completed(
+            student_id=req.student_id,
+            course_id=req.course_id,
+            lesson_id=req.lesson_id,
+        )
     except Exception:
+        import logging
         logging.getLogger(__name__).warning(
             "lab complete: durable persist failed (lab_id=%s)", req.lab_id, exc_info=True)
 

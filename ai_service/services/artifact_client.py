@@ -164,6 +164,15 @@ async def get_problem_set(student_id: str, ps_uid: str) -> Optional[dict]:
     return data if ok else None
 
 
+async def get_problem_sets(student_id: str, lesson_id: str) -> list[dict]:
+    """Get all problem sets for a student and lesson."""
+    ok, data = await _request(
+        "GET", "/problem-sets/list/", student_id=student_id,
+        params={"lesson_id": lesson_id},
+    )
+    return data if ok and isinstance(data, list) else []
+
+
 async def append_attempt(student_id: str, ps_uid: str, *, question_id: str, code: str,
                          evaluated_rubric: list, hints_used: int,
                          score: int) -> Optional[dict]:
