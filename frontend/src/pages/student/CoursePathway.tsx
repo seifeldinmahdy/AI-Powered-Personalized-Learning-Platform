@@ -203,6 +203,10 @@ export default function CoursePathway() {
     i < doneCount ? "done" : i === doneCount && !isComplete ? "current" : "locked";
 
   const resumeLessonId = currentLessonId ?? resume?.current_lesson ?? null;
+  // "Started" = real progress, or any produced session artifact (slides/lab/
+  // problem-set/remediation). Until then the CTA reads START COURSE and drops
+  // the student into the first session; afterwards it becomes RESUME SESSION.
+  const hasStarted = progressPct > 0 || (resume?.timeline?.length ?? 0) > 0;
   const goToCurrent = () => {
     if (resumeLessonId) navigate(`/course/${courseId}/lesson/${resumeLessonId}`);
   };
@@ -249,7 +253,7 @@ export default function CoursePathway() {
             )}
 
             <button onClick={goToCurrent} disabled={!resumeLessonId} className="btn btn-red pai-pw-noprint" style={{ marginTop: 24, width: "100%", justifyContent: "space-between", padding: "18px 22px", opacity: resumeLessonId ? 1 : 0.6 }}>
-              {isComplete ? "REVIEW COURSE" : "RESUME SESSION"} <span>→</span>
+              {isComplete ? "REVIEW COURSE" : hasStarted ? "RESUME SESSION" : "START COURSE"} <span>→</span>
             </button>
           </aside>
 
@@ -444,8 +448,6 @@ function SessionRow({ session, status }: { session: PathwaySession; status: Sess
 
         <div className="t-mono steel" style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--hairline)", display: "flex", gap: 18, flexWrap: "wrap" }}>
           <span>{session.chunk_count} CHUNKS</span>
-          {session.book && session.page_range_end > 0 && <span>PP. {session.page_range_start}–{session.page_range_end}</span>}
-          {session.book && <span style={{ textTransform: "none" }}>{session.book}</span>}
         </div>
       </div>
     </div>
