@@ -63,13 +63,23 @@ def get_effective_score(
     global_mastery: str,
     embedder,
     settings,
+    *,
+    concept_id: str | None = None,
+    concept_mastery: dict[str, float] | None = None,
 ) -> tuple[float, str]:
-    """Resolve a topic name to a performance score.
+    """Resolve a chunk to a 0–1 performance score that drives difficulty.
 
     Resolution order:
+    0. **Concept match** — if the chunk carries a ``concept_id`` present in
+       ``concept_mastery``, use that authoritative score directly. This is the
+       preferred path: a stable concept-ID lookup with no fuzzy matching.
     1. Exact case-insensitive string match against ``topic_performance`` keys.
     2. Semantic match via ``match_topic_to_performance`` from ai_service.
     3. Mastery-based default (Novice=0.3, Intermediate=0.6, Expert=0.85).
+
+    The score is bucketed downstream by :func:`get_score_category`; the source of
+    the 0–1 number (concept mastery vs topic performance) is transparent to the
+    generator, so swapping in concept mastery needs no retraining.
 
     Parameters
     ----------
@@ -83,14 +93,37 @@ def get_effective_score(
         A sentence-transformers model (or mock) for semantic matching.
     settings :
         MCQSettings instance (unused currently, reserved for threshold tuning).
+    concept_id :
+        The chunk's Concept id, when known. Enables the concept-match path.
+    concept_mastery :
+        Authoritative ``concept_id → score`` (0–1) map for the student.
 
     Returns
     -------
     (score, source)
-        ``score`` is 0.0–1.0, ``source`` is one of
+        ``score`` is 0.0–1.0, ``source`` is one of ``"concept_match"``,
         ``"direct_match"``, ``"semantic_match"``, ``"mastery_fallback"``.
     """
     fallback_score = _MASTERY_DEFAULT_SCORES.get(global_mastery, 0.3)
+
+    # ── 0. Concept match (authoritative, no fuzzy lookup) ───────────────
+    if concept_id and concept_mastery:
+        cid = str(concept_id)
+        if cid in concept_mastery:
+            try:
+                score = float(concept_mastery[cid])
+                logger.debug(
+                    "concept_score_resolved",
+                    concept_id=cid,
+                    topic=topic,
+                    score=score,
+                    source="concept_match",
+                )
+                return score, "concept_match"
+            except (TypeError, ValueError):
+                _stdlib_logger.debug(
+                    "concept_mastery[%s] not a number; falling back to topic path", cid,
+                )
 
     try:
         if not topic or not topic.strip():

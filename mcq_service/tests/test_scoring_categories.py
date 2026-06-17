@@ -83,6 +83,54 @@ class TestGetScoreCategory:
 # ═══════════════════════════════════════════════════════════════════════
 
 
+class TestConceptMastery:
+    """The concept-match path takes priority and skips all topic matching."""
+
+    def test_concept_match_preferred_over_topic(self):
+        # Even with a direct topic match available, a tagged concept wins.
+        perf = {"Recursion": 0.2}
+        mock_embedder = MagicMock()
+        settings = _make_settings()
+
+        score, source = get_effective_score(
+            "Recursion", perf, "Novice", mock_embedder, settings,
+            concept_id="c42", concept_mastery={"c42": 0.9},
+        )
+
+        assert score == 0.9
+        assert source == "concept_match"
+        mock_embedder.encode.assert_not_called()
+
+    def test_concept_id_not_in_mastery_falls_back_to_topic(self):
+        perf = {"Recursion": 0.55}
+        settings = _make_settings()
+
+        score, source = get_effective_score(
+            "Recursion", perf, "Novice", MagicMock(), settings,
+            concept_id="c99", concept_mastery={"c42": 0.9},
+        )
+
+        assert score == 0.55
+        assert source == "direct_match"
+
+    def test_no_concept_args_behaves_as_before(self):
+        settings = _make_settings()
+        score, source = get_effective_score(
+            "Sorting", {}, "Novice", MagicMock(), settings,
+        )
+        assert (score, source) == (0.3, "mastery_fallback")
+
+    def test_non_numeric_concept_score_falls_back(self):
+        settings = _make_settings()
+        score, source = get_effective_score(
+            "Sorting", {}, "Intermediate", MagicMock(), settings,
+            concept_id="c1", concept_mastery={"c1": "oops"},
+        )
+        # Unusable concept value → topic path → mastery fallback (Intermediate).
+        assert score == 0.6
+        assert source == "mastery_fallback"
+
+
 class TestGetEffectiveScore:
     """Tests for get_effective_score resolution logic."""
 

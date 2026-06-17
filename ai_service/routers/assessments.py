@@ -405,6 +405,40 @@ async def mcq_session_endpoint(req: dict):
                 detail="context.student_id/course_id must match request student_id/course_id.",
             )
 
+        # ── Enrich with the authoritative per-concept knowledge signal ──
+        # Difficulty is resolved from concept mastery when a chunk is concept-
+        # tagged (same 0–1 scale → same score categories the generator was
+        # trained on). We fill both server-side so callers don't have to:
+        #   (1) concept_mastery from the single mastery projection, and
+        #   (2) concept_id per chunk via exact concept-label match.
+        # Best-effort: on any failure we silently keep the topic-based path.
+        try:
+            from services.mastery import fetch_concept_mastery, fetch_course_concepts
+
+            if not session_req.context.concept_mastery:
+                cm = await fetch_concept_mastery(session_req.student_id)
+                session_req.context.concept_mastery = {
+                    str(cid): float(v["score"])
+                    for cid, v in cm.items()
+                    if isinstance(v, dict) and v.get("score") is not None
+                }
+
+            if any(not c.get("concept_id") for c in session_req.chunks):
+                concepts = await fetch_course_concepts(session_req.course_id)
+                label_to_id = {
+                    str(c["label"]).strip().lower(): str(c["id"]) for c in concepts
+                }
+                for c in session_req.chunks:
+                    if not c.get("concept_id"):
+                        cid = label_to_id.get(str(c.get("topic", "")).strip().lower())
+                        if cid:
+                            c["concept_id"] = cid
+        except Exception:
+            logger.warning(
+                "MCQ concept-mastery enrichment failed; using topic path",
+                exc_info=True,
+            )
+
         settings = _get_mcq_settings()
         response = await asyncio.to_thread(
             generate_session_assessment, session_req, settings,
@@ -427,13 +461,11 @@ async def mcq_session_endpoint(req: dict):
 async def mcq_submit_endpoint(req: dict):
     """Score an in-session MCQ checkpoint and record concept-mastery events.
 
-    The checkpoint's per-topic scores are sent to the SINGLE mastery writer as
-    ``source="checkpoint"`` events. Because checkpoint MCQs are still topic-keyed,
-    each topic is mapped to a Concept inside /progress/mastery/record — logged,
-    and DROPPED below the confidence floor (no parallel signal is revived).
-
-    TODO(loud): concept-tag the in-session checkpoint GENERATOR end-to-end so we
-    stop fuzzy-mapping topics on the live mastery write path.
+    When the checkpoint questions are concept-tagged, the per-CONCEPT scores are
+    written to the SINGLE mastery writer as ``source="checkpoint"`` events keyed
+    by ``concept_id`` — the authoritative, no-fuzzing path (same as placement,
+    just a lighter alpha). Questions that carried no concept fall back to the
+    legacy topic-keyed write (mapped server-side, floored).
     """
     try:
         _ensure_mcq_imports()
@@ -444,19 +476,31 @@ async def mcq_submit_endpoint(req: dict):
         submission = CheckpointSubmission(**req)
         result = score_checkpoint(submission)
 
-        # Record checkpoint outcomes through the one writer (topic→concept mapped
-        # server-side with a confidence floor + logging).
+        # Prefer concept-keyed events (direct, no topic→concept fuzzing). Fall
+        # back to topic-keyed only for questions that carried no concept_id.
+        per_concept = getattr(result, "per_concept_scores", None) or {}
         per_topic = getattr(result, "per_topic_scores", None) or {}
         events = [
             {
-                "topic": topic,
+                "concept_id": cid,
                 "course_id": str(submission.course_id),
                 "outcome": float(score),
                 "source": "checkpoint",
                 "alpha": 0.3,
             }
-            for topic, score in per_topic.items()
+            for cid, score in per_concept.items()
         ]
+        if not events and per_topic:
+            events = [
+                {
+                    "topic": topic,
+                    "course_id": str(submission.course_id),
+                    "outcome": float(score),
+                    "source": "checkpoint",
+                    "alpha": 0.3,
+                }
+                for topic, score in per_topic.items()
+            ]
         if events:
             await post_mastery_events(submission.student_id, events)
 
@@ -473,6 +517,7 @@ async def mcq_submit_endpoint(req: dict):
                             "correct_option": qr.get("correct_answer", ""),
                             "question_type": qr.get("question_type", ""),
                             "topic": qr.get("topic", ""),
+                            "concept_id": qr.get("concept_id") or None,
                         })
                 store.save(submission.student_id, submission.course_id, context)
 
