@@ -1134,8 +1134,8 @@ button:disabled {
 
 .notepad-panel {
   z-index: 50;
-  width: 340px;
-  max-height: 420px;
+  width: 280px;
+  max-height: 340px;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--lab-border);
@@ -1683,6 +1683,22 @@ export default function CodingLab() {
     const text = (cellNoteText[cellId] || '').trim();
     if (!text || !labResponse) return;
     saveCellNote(labResponse.lab_id, cellId, text, getStudentId()).catch(() => { });
+
+    setLabResponse((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        lab: {
+          ...prev.lab,
+          cells: prev.lab.cells.map((c) =>
+            c.id === cellId
+              ? { ...c, student_notes: [...(c.student_notes || []), { content: text }] }
+              : c
+          ),
+        },
+      };
+    });
+
     setCellNoteSaved((prev) => ({ ...prev, [cellId]: true }));
     setTimeout(() => setCellNoteSaved((prev) => ({ ...prev, [cellId]: false })), 2000);
     setCellNoteText((prev) => ({ ...prev, [cellId]: '' }));
@@ -1692,6 +1708,18 @@ export default function CodingLab() {
     const text = generalNoteText.trim();
     if (!text || !labResponse) return;
     saveGeneralNote(labResponse.lab_id, text, getStudentId()).catch(() => { });
+
+    setLabResponse((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        lab: {
+          ...prev.lab,
+          general_notes: [...(prev.lab.general_notes || []), { content: text }],
+        },
+      };
+    });
+
     setGeneralNoteSaved(true);
     setTimeout(() => setGeneralNoteSaved(false), 2000);
     setGeneralNoteText('');

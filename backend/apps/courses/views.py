@@ -272,6 +272,22 @@ def course_resume(request, course_id):
     plan_version = plan.get("plan_version") if plan else None
     total_sessions = int(plan.get("total_sessions", 0)) if plan else 0
 
+    # Auto-provision Django Lesson objects for adaptive pathways if missing.
+    # This ensures routing, completion tracking, and progression work flawlessly
+    # without requiring the instructor to manually create modules for adaptive courses.
+    if total_sessions > 0:
+        lesson_count = Lesson.objects.filter(module__course_id=course_id).count()
+        if lesson_count < total_sessions:
+            mod, _ = Module.objects.get_or_create(course_id=course_id, title="Adaptive Pathway", defaults={"module_order": 1})
+            for i in range(lesson_count + 1, total_sessions + 1):
+                Lesson.objects.get_or_create(module=mod, title=f"Adaptive Session {i}", defaults={"lesson_order": i})
+
+    if not enrollment.current_lesson_id:
+        first_lesson = Lesson.objects.filter(module__course_id=course_id).order_by("module__module_order", "lesson_order").first()
+        if first_lesson:
+            enrollment.current_lesson = first_lesson
+            enrollment.save(update_fields=["current_lesson"])
+
     completed = LessonCompletion.objects.filter(
         enrollment=enrollment, status="Completed"
     ).count()
