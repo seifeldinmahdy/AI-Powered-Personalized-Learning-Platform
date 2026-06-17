@@ -147,7 +147,7 @@ CONFIG = {
     # Aggregate key lists (registered into the SharedKeyManager)
     "api_keys_primary": GENERATION_KEYS,
     "api_keys_backup":  FALLBACK_KEYS,
-    "ollama_host": os.getenv("OLLAMA_HOST", "https://ollama.com"),
+    "ollama_host": os.getenv("OLLAMA_HOST"),
     "model": GENERATION_MODEL,
     "output": "data/mcq_training/mcq_raw.jsonl",
     "raw_books_dir": "data/raw_books",

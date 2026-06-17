@@ -54,7 +54,7 @@ def _get_ollama_client() -> OllamaClient:
     global _client
     if _client is None:
         _client = OllamaClient(
-            host=os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST", "http://localhost:11434"),
+            host=os.getenv("OLLAMA_HOST") or os.getenv("OLLAMA_HOST"),
             model=os.getenv("OLLAMA_MODEL", "gpt-oss:120b"),
             api_key=os.getenv("OLLAMA_API_KEY", ""),
             max_retries=3,

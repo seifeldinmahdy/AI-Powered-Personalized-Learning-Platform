@@ -166,7 +166,7 @@ def _call_ollama(
     Returns list of raw equation dicts, or None on failure.
     """
     import os
-    host = (ollama_host or os.getenv("OLLAMA_HOST", "http://localhost:11434")).rstrip("/")
+    host = (ollama_host or os.getenv("OLLAMA_HOST")).rstrip("/")
     model = ollama_model or os.getenv("OLLAMA_MODEL", "llama3")
     key = api_key or os.getenv("OLLAMA_API_KEY")
 

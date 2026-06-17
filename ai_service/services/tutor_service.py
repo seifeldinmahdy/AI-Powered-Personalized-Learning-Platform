@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # ── Configure Ollama Cloud ──
  
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "https://ollama.com")
+OLLAMA_HOST = os.getenv("OLLAMA_HOST")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
 
@@ -516,7 +516,7 @@ async def _call_ollama(
         format. When provided, these are injected between the system prompt
         and the current user prompt so the model has multi-turn context.
     """
-    url = f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat"
+    url = f"{OLLAMA_HOST.rstrip('/')}/api/chat"
 
     messages = [{"role": "system", "content": system_prompt}]
     if conversation_history:

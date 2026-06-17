@@ -1,0 +1,220 @@
+{
+  "profile": {
+    "student_id": "28",
+    "course_id": "16",
+    "mastery_level": "Novice",
+    "composition_mode": "balanced",
+    "language_proficiency": "Intermediate",
+    "strengths": [],
+    "weaknesses": [
+      "fundementals",
+      "test suite",
+      "testing"
+    ],
+    "strength_concept_ids": [],
+    "weak_concept_ids": [
+      "14",
+      "15",
+      "13"
+    ],
+    "topic_performance": {},
+    "incorrectly_answered": [
+      {
+        "question": "Which of the following best describes the primary goal of quality assurance in software development?",
+        "chosen_option": "To ensure that the product meets specified requirements and standards",
+        "correct_option": "To detect defects after deployment",
+        "concept_id": "14"
+      },
+      {
+        "question": "What is the definition of a 'bug' in the context of software testing?",
+        "chosen_option": "A deviation from expected behavior or requirements",
+        "correct_option": "A feature that was added to the code",
+        "concept_id": "14"
+      },
+      {
+        "question": "Which of the following is NOT a common type of software testing?",
+        "chosen_option": "Marketing testing",
+        "correct_option": "Unit testing",
+        "concept_id": "14"
+      },
+      {
+        "question": "In the context of testing, what does the term 'coverage' refer to?",
+        "chosen_option": "The proportion of source code exercised by tests",
+        "correct_option": "The number of tests run per day",
+        "concept_id": "14"
+      },
+      {
+        "question": "Which of the following best describes 'regression testing'?",
+        "chosen_option": "Testing after code changes to ensure existing functionality is not broken",
+        "correct_option": "Testing new features only",
+        "concept_id": "14"
+      },
+      {
+        "question": "In a pytest test function, what does the 'assert' statement do?",
+        "chosen_option": "It checks a condition and raises an AssertionError if the condition is False",
+        "correct_option": "It logs a message to the console",
+        "concept_id": "15"
+      },
+      {
+        "question": "What is the purpose of the 'pytest.fixture' decorator?",
+        "chosen_option": "To provide a reusable setup routine for tests",
+        "correct_option": "To mark a test as slow",
+        "concept_id": "15"
+      },
+      {
+        "question": "Which testing term refers to the process of ensuring that software meets its requirements and works as intended in a real-world environment?",
+        "chosen_option": "Acceptance testing",
+        "correct_option": "Unit testing",
+        "concept_id": "15"
+      },
+      {
+        "question": "In continuous integration pipelines, where are automated tests typically executed?",
+        "chosen_option": "Only when a developer requests",
+        "correct_option": "Only after a release is deployed",
+        "concept_id": "15"
+      },
+      {
+        "question": "What is the primary role of a test suite in Python testing frameworks?",
+        "chosen_option": "Aggregate multiple test cases into a single test program",
+        "correct_option": "Execute individual test cases only",
+        "concept_id": "13"
+      },
+      {
+        "question": "In pytest, how can you group tests into a test suite?",
+        "chosen_option": "By creating a test class or module and running with pytest",
+        "correct_option": "By placing them in a single test file only",
+        "concept_id": "13"
+      },
+      {
+        "question": "Nose automatically creates a test suite from which structure?",
+        "chosen_option": "All classes inheriting from nose.plugins.TestPlugin",
+        "correct_option": "All modules named tests.py",
+        "concept_id": "13"
+      },
+      {
+        "question": "Which command-line option in pytest allows you to run a specific test suite defined in a file?",
+        "chosen_option": "Path to module",
+        "correct_option": "-s",
+        "concept_id": "13"
+      },
+      {
+        "question": "Which framework provides automatic test discovery by default?",
+        "chosen_option": "all of the above",
+        "correct_option": "unittest",
+        "concept_id": "13"
+      },
+      {
+        "question": "What is the benefit of using a test suite when testing large applications?",
+        "chosen_option": "Allows running subsets of tests independently",
+        "correct_option": "Increases test execution time",
+        "concept_id": "13"
+      },
+      {
+        "question": "Which of the following statements about test suites in pytest is true?",
+        "chosen_option": "Test suites are created automatically by grouping tests in a test_*.py file",
+        "correct_option": "pytest does not support test suites",
+        "concept_id": "13"
+      },
+      {
+        "question": "How does nose handle test suites when you run `nosetests` without arguments?",
+        "chosen_option": "It discovers and runs all tests in the current directory and subdirectories",
+        "correct_option": "It runs only tests from the current directory",
+        "concept_id": "13"
+      },
+      {
+        "question": "Which command would you use to run all tests in a test suite named `MySuite` using unittest?",
+        "chosen_option": "python -m unittest MySuite.TestCase",
+        "correct_option": "python -m unittest MySuite",
+        "concept_id": "13"
+      },
+      {
+        "question": "Which of the following best describes the primary purpose of a test suite in Python automation?",
+        "chosen_option": "To group and execute multiple test cases",
+        "correct_option": "To run the application code",
+        "concept_id": "13"
+      },
+      {
+        "question": "In a pytest test suite, what is the purpose of a fixture?",
+        "chosen_option": "To provide a fixed baseline for tests",
+        "correct_option": "To generate random data",
+        "concept_id": "13"
+      },
+      {
+        "question": "When designing a comprehensive test suite, which of the following should be considered first?",
+        "chosen_option": "Test environment setup",
+        "correct_option": "Test data generation",
+        "concept_id": "13"
+      },
+      {
+        "question": "How does pytest automatically discover tests within a test suite?",
+        "chosen_option": "By scanning for classes named Test*",
+        "correct_option": "By scanning for functions prefixed with test_",
+        "concept_id": "13"
+      },
+      {
+        "question": "Which of the following is a benefit of using fixtures in a pytest test suite?",
+        "chosen_option": "They allow tests to run faster",
+        "correct_option": "They reduce the need for test data",
+        "concept_id": "13"
+      },
+      {
+        "question": "In a CI pipeline, at which stage should the test suite be executed to maximize feedback?",
+        "chosen_option": "After the release",
+        "correct_option": "After deployment",
+        "concept_id": "13"
+      },
+      {
+        "question": "What is the main advantage of parameterizing tests in a test suite?",
+        "chosen_option": "It speeds up the test runner",
+        "correct_option": "It reduces the number of test cases",
+        "concept_id": "13"
+      },
+      {
+        "question": "Which of the following best describes test suite isolation?",
+        "chosen_option": "Tests should run in the same process",
+        "correct_option": "Tests should share global state",
+        "concept_id": "13"
+      },
+      {
+        "question": "In a pytest test suite, how can you skip a test that is not applicable in a certain environment?",
+        "chosen_option": "Use a different test runner",
+        "correct_option": "Use the skip marker",
+        "concept_id": "13"
+      },
+      {
+        "question": "Which of the following is a common strategy for managing test data in a test suite?",
+        "chosen_option": "Relying on external files only",
+        "correct_option": "Hardcoding values in each test",
+        "concept_id": "13"
+      },
+      {
+        "question": "In continuous integration, why is it important to run the test suite on a clean environment each time?",
+        "chosen_option": "To avoid test failures due to network issues",
+        "correct_option": "To save disk space",
+        "concept_id": "13"
+      }
+    ],
+    "use_synthetic_context": false,
+    "course_intent": "Python Testing QA",
+    "student_profile_summary": "Novice learner in Python Testing QA. Strong in: no concepts yet. Needs work on: fundementals, test suite, testing."
+  },
+  "live": {
+    "session_id": "",
+    "current_slide_index": 0,
+    "current_slide_title": "",
+    "current_slide_content": "",
+    "current_topic": "",
+    "current_subtopic": "",
+    "current_concept_id": "",
+    "running_summary": "",
+    "tutor_transcript": [],
+    "visited_slides": [],
+    "time_spent_per_slide": {},
+    "tutor_events": [],
+    "emotion_signals": [],
+    "fused_emotion": "",
+    "fused_emotion_confidence": 0.0,
+    "pace_modifier": 0,
+    "last_updated_at": 1781708621.4334617
+  }
+}

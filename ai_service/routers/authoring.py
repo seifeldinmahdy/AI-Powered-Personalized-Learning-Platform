@@ -23,7 +23,7 @@ def _get_client():
             sys.path.insert(0, p)
     from pathway.llm.naming import OllamaClient  # type: ignore
     return OllamaClient(
-        host=os.getenv("OLLAMA_HOST", "https://ollama.com"),
+        host=os.getenv("OLLAMA_HOST"),
         model=os.getenv("OLLAMA_STRONG_MODEL", "gpt-oss:120b"),
         api_key=os.getenv("OLLAMA_API_KEY", ""),
     )

@@ -290,7 +290,7 @@ class ContentDataGenerator:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.ollama_host = (ollama_host or os.getenv("OLLAMA_HOST", "http://localhost:11434")).rstrip("/")
+        self.ollama_host = (ollama_host or os.getenv("OLLAMA_HOST")).rstrip("/")
         self.model = model or os.getenv("OLLAMA_MODEL", "llama3")
         self.max_retries = max_retries if max_retries is not None else int(os.getenv("MAX_RETRIES", "3"))
         self.api_key = api_key or os.getenv("OLLAMA_API_KEY")
