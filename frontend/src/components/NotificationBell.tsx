@@ -1,5 +1,6 @@
 import { Bell } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import { getNotifications, markNotificationRead, markAllNotificationsRead, type Notification } from '../services/notifications';
 
 function timeAgo(dateStr: string): string {
@@ -41,23 +42,18 @@ export function NotificationBell() {
         return () => document.removeEventListener('mousedown', handler);
     }, []);
 
-    // Mark all read when dropdown opens
-    const handleOpen = async () => {
-        const wasOpen = open;
-        setOpen((o) => !o);
-        if (!wasOpen && unreadCount > 0) {
-            try {
-                await markAllNotificationsRead();
-                setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-            } catch { /* ignore */ }
-        }
-    };
+    // Just toggle the dropdown — clearing is an explicit action (the "MARK ALL
+    // READ" button or clicking a single notification), so the unread badge and
+    // that button stay visible until the student acts.
+    const handleOpen = () => setOpen((o) => !o);
 
     const handleMarkAllRead = async () => {
         try {
             await markAllNotificationsRead();
             setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-        } catch { /* ignore */ }
+        } catch {
+            toast.error('Failed to mark all as read');
+        }
     };
 
     const handleClickNotification = async (n: Notification) => {
