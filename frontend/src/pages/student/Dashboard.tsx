@@ -7,7 +7,7 @@ import { getEnrollments } from "../../services/api";
 import { getLessonCompletions, getBookmarks, getConceptMastery, type LessonCompletion, type Bookmark as BookmarkType, type ConceptMasteryEntry } from '../../services/progress';
 import { getCourses, type Course } from "../../services/courses";
 import { getStudentProfile, type StudentProfile } from "../../services/profile";
-import { EnrolledCourseCard, ExploreCourseCard, type EnrolledView } from "../../components/personifai/CourseCards";
+import { EnrolledCourseCard, ExploreCourseCard, ContinueLearningCard, type EnrolledView } from "../../components/personifai/CourseCards";
 import { getSurveyStatus } from '../../services/surveys';
 import { CapstoneStartCTA } from '../../components/CapstoneStartCTA';
 
@@ -84,6 +84,16 @@ export default function Dashboard() {
     };
   });
 
+  // Hero = the most recently accessed enrolled course ("pick up where you left
+  // off"); the rest fall into the grid below.
+  const recentFirst = [...enrolledViews].sort((a, b) => {
+    const ta = a.lastAccessed ? new Date(a.lastAccessed).getTime() : 0;
+    const tb = b.lastAccessed ? new Date(b.lastAccessed).getTime() : 0;
+    return tb - ta;
+  });
+  const heroCourse = recentFirst[0] ?? null;
+  const otherEnrolled = recentFirst.slice(1);
+
   const exploreCourses = courses.filter((c) => !enrolledIds.has(c.id)).slice(0, 3);
 
   const completedCount = completions.filter((c) => c.status === "Completed").length;
@@ -135,9 +145,16 @@ export default function Dashboard() {
               <div className="t-label" style={{ color: "var(--accent-primary)" }}>YOUR COURSES · {enrollments.length} ENROLLED</div>
               <Link to="/courses" className="t-label" style={{ color: "var(--text-secondary)", textDecoration: "none" }}>BROWSE ALL →</Link>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 22 }}>
-              {enrolledViews.map((e) => <EnrolledCourseCard key={e.courseId} e={e} />)}
-            </div>
+
+            {/* Continue-learning hero (last accessed) */}
+            {heroCourse && <ContinueLearningCard e={heroCourse} />}
+
+            {/* Remaining enrolled courses */}
+            {otherEnrolled.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 22, marginTop: 22 }}>
+                {otherEnrolled.map((e) => <EnrolledCourseCard key={e.courseId} e={e} />)}
+              </div>
+            )}
           </section>
         ) : (
           <Onboarding loading={loading} />

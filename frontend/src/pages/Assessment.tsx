@@ -9,6 +9,7 @@ import {
   type CategoryGroup,
 } from "../services/assessments";
 import { getCourseById } from "../services/courses";
+import { TypewriterLoader } from "../components/personifai/TypewriterLoader";
 
 /* Placement test + results — codex, full-screen focused experience.
    All logic preserved (preferences → generate-categorized → quiz →
@@ -264,17 +265,26 @@ export default function Assessment() {
   // ── PHASE: loading / submitting ──
   if (phase === "loading" || phase === "submitting") {
     const submitting = phase === "submitting";
+    const messages = submitting
+      ? [
+          "Scoring every answer you gave…",
+          "Mapping what you already know…",
+          "Finding the gaps to focus on…",
+          "Building your learning profile…",
+        ]
+      : [
+          "Reading the course outcomes…",
+          "Choosing questions that fit you…",
+          `Tailoring the test to ${courseTitle}…`,
+          "Setting up your placement test…",
+        ];
     return (
-      <div className="codex" style={{ ...SHELL, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18, textAlign: "center", padding: 24 }}>
-        <div className="t-label" style={{ color: "var(--accent-primary)" }}>{submitting ? "ANALYZING" : "PREPARING"}</div>
-        <div className="t-display" style={{ fontSize: "clamp(28px,4vw,48px)", color: "var(--text-primary)", maxWidth: 620 }}>
-          {submitting ? "Building your learning profile…" : "Generating your placement test…"}
-        </div>
-        <div className="t-mono steel">{submitting ? "Scoring every domain" : `Tailored to ${courseTitle}`}</div>
-        <div style={{ width: 180, height: 2, background: "var(--hairline)", overflow: "hidden", marginTop: 8, position: "relative" }}>
-          <div style={{ position: "absolute", height: "100%", width: "40%", background: "var(--accent-primary)", animation: "paiIndeterminate 1.1s ease-in-out infinite" }} />
-        </div>
-        <style>{`@keyframes paiIndeterminate { 0%{left:-40%} 100%{left:100%} }`}</style>
+      <div className="codex" style={{ ...SHELL, display: "flex" }}>
+        <TypewriterLoader
+          label={submitting ? "ANALYZING" : "PREPARING"}
+          messages={messages}
+          caption={submitting ? "This only takes a moment" : `Tailored to ${courseTitle}`}
+        />
       </div>
     );
   }

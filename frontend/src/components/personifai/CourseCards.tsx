@@ -54,6 +54,62 @@ export function EnrolledCourseCard({ e }: { e: EnrolledView }) {
   );
 }
 
+/* The last-accessed enrolled course, rendered as a wide horizontal hero that
+   sits above the regular enrolled grid — deliberately a different shape so the
+   "pick up where you left off" course is unmistakable at a glance. */
+export function ContinueLearningCard({ e }: { e: EnrolledView }) {
+  const diffColor = e.difficulty ? DIFF_COLOR[e.difficulty] : undefined;
+  return (
+    <div
+      style={{
+        background: "var(--bg-surface)",
+        border: "1px solid var(--hairline)",
+        borderLeft: "4px solid var(--accent-primary)",
+        borderRadius: 10,
+        padding: "clamp(22px,3vw,32px)",
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: "clamp(20px,4vw,48px)",
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
+      {/* faint accent wash on the right edge */}
+      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(90deg, transparent 55%, rgba(37,99,235,0.05))", pointerEvents: "none" }} />
+
+      {/* left — identity + progress */}
+      <div style={{ flex: "1 1 360px", minWidth: 0, position: "relative" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+          <span className="t-label" style={{ color: "var(--accent-primary)" }}>PICK UP WHERE YOU LEFT OFF</span>
+          {e.difficulty && <span className="tag-red" style={diffColor ? { color: diffColor, borderColor: diffColor } : undefined}>{e.difficulty}</span>}
+        </div>
+        <div className="t-display" style={{ fontSize: "clamp(28px,4vw,46px)", lineHeight: 1.0, color: "var(--text-primary)" }}>{e.title}</div>
+        <div style={{ marginTop: 20, maxWidth: 520 }}>
+          <div className="progress"><i style={{ width: `${Math.max(2, e.progress)}%` }} /></div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10, gap: 8, flexWrap: "wrap" }}>
+            <span className="t-mono" style={{ color: "var(--accent-primary)" }}>{Math.round(e.progress)}% COMPLETE</span>
+            <span className="t-mono steel">
+              {e.totalLessons ? `${e.totalLessons} LESSONS · ` : ""}last active · {relativeTime(e.lastAccessed)}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* right — primary continue action */}
+      <div style={{ flex: "0 0 auto", position: "relative" }}>
+        <Link
+          to={e.resumeTo}
+          className="btn btn-red"
+          style={{ justifyContent: "space-between", gap: 14, padding: "18px 28px", fontSize: 15, textTransform: "none", letterSpacing: "0.01em", textDecoration: "none", minWidth: 220 }}
+        >
+          {e.progress > 0 ? "Continue learning" : "Start course"} <span>→</span>
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 export function ExploreCourseCard({ course, enrolled }: { course: Course; enrolled?: boolean }) {
   const color = DIFF_COLOR[course.difficulty] || "#6E665A";
   const rating = parseFloat(course.avg_rating);
@@ -62,11 +118,13 @@ export function ExploreCourseCard({ course, enrolled }: { course: Course; enroll
     <Link
       to={`/courses/${course.id}`}
       className="under-red"
-      style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderRadius: 8, padding: 24, display: "flex", flexDirection: "column", gap: 12, textDecoration: "none", color: "inherit", minHeight: 232 }}
+      style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderLeft: enrolled ? "3px solid var(--accent-primary)" : "1px solid var(--hairline)", borderRadius: 8, padding: 24, display: "flex", flexDirection: "column", gap: 12, textDecoration: "none", color: "inherit", minHeight: 232 }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
         <span className="tag-red" style={{ color, borderColor: color }}>{course.difficulty || "COURSE"}</span>
-        <span className="t-mono steel">{enrolled ? "ENROLLED" : price > 0 ? `$${course.price}` : "FREE"}</span>
+        {enrolled
+          ? <span className="t-label" style={{ color: "var(--accent-primary)", border: "1px solid var(--accent-primary)", borderRadius: 4, padding: "3px 8px" }}>ENROLLED</span>
+          : <span className="t-mono steel">{price > 0 ? `$${course.price}` : "FREE"}</span>}
       </div>
       <div className="t-display" style={{ fontSize: "clamp(22px,2.6vw,28px)", lineHeight: 1.02, color: "var(--text-primary)" }}>{course.title}</div>
       <p style={{ margin: 0, fontFamily: "var(--ff-body)", fontSize: 13, lineHeight: 1.5, color: "var(--text-secondary)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>

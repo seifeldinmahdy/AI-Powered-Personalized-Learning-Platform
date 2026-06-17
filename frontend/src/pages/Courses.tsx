@@ -126,13 +126,44 @@ export default function Courses() {
               {search ? `No results for "${search}". Try a different term or filter.` : "No courses available yet — check back soon."}
             </div>
           </div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 22 }}>
-            {courses.map((c) => (
-              <ExploreCourseCard key={c.id} course={c} enrolled={enrolledIds.has(c.id)} />
-            ))}
-          </div>
-        )}
+        ) : (() => {
+          const enrolledCourses = courses.filter((c) => enrolledIds.has(c.id));
+          const availableCourses = courses.filter((c) => !enrolledIds.has(c.id));
+          const gridStyle: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 22 };
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 40 }}>
+              {/* Courses the student is already enrolled in — distinct, surfaced first */}
+              {enrolledCourses.length > 0 && (
+                <section>
+                  <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 18 }}>
+                    YOUR COURSES · {enrolledCourses.length} ENROLLED
+                  </div>
+                  <div style={gridStyle}>
+                    {enrolledCourses.map((c) => (
+                      <ExploreCourseCard key={c.id} course={c} enrolled />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Everything else in the catalog */}
+              {availableCourses.length > 0 && (
+                <section>
+                  {enrolledCourses.length > 0 && (
+                    <div className="t-label" style={{ color: "var(--text-secondary)", marginBottom: 18 }}>
+                      AVAILABLE · {availableCourses.length} COURSE{availableCourses.length === 1 ? "" : "S"}
+                    </div>
+                  )}
+                  <div style={gridStyle}>
+                    {availableCourses.map((c) => (
+                      <ExploreCourseCard key={c.id} course={c} />
+                    ))}
+                  </div>
+                </section>
+              )}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

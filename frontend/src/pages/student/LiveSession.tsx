@@ -2,6 +2,7 @@ import { SlidesViewer } from '../../components/SlidesViewer';
 import { GeneratedSlidesViewer } from '../../components/GeneratedSlidesViewer';
 import { CompactTutor } from '../../components/CompactTutor';
 import { SessionControls } from '../../components/SessionControls';
+import { TypewriterLoader } from '../../components/personifai/TypewriterLoader';
 import { useParams, useNavigate } from 'react-router';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
@@ -54,7 +55,6 @@ export default function LiveSession() {
   const [currentSlide, setCurrentSlide] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [loadingMsg, setLoadingMsg] = useState(0);
   const [moduleTitle, setModuleTitle] = useState('');
   const [courseTitle, setCourseTitle] = useState('');
   const [isCompleting, setIsCompleting] = useState(false);
@@ -109,15 +109,6 @@ export default function LiveSession() {
       document.exitFullscreen().catch(() => { });
     }
   }, []);
-
-  // Loading message cycling
-  useEffect(() => {
-    if (!loading) return;
-    const iv = setInterval(() => {
-      setLoadingMsg((p) => (p + 1) % SLIDE_LOADING_MESSAGES.length);
-    }, 8000);
-    return () => clearInterval(iv);
-  }, [loading]);
 
   useEffect(() => {
     if (!lessonId) return;
@@ -692,30 +683,12 @@ export default function LiveSession() {
   if (loading) {
     if (sessionStorage.getItem('pathway_plan')) {
       return (
-        <div className="codex" style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)', padding: 24 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 28, maxWidth: 520, textAlign: 'center' }}>
-            <Loader2 size={36} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
-            <div>
-              <div className="t-label" style={{ color: 'var(--accent-primary)', marginBottom: 12 }}>BUILDING YOUR SESSION</div>
-              <h1 className="t-heading" style={{ fontSize: 'clamp(26px,4vw,38px)', color: 'var(--text-primary)' }}>Generating personalized materials</h1>
-            </div>
-            <p className="t-body" style={{ fontSize: 15, color: 'var(--text-secondary)', minHeight: 24 }}>{SLIDE_LOADING_MESSAGES[loadingMsg]}</p>
-            <div style={{ display: 'flex', gap: 4 }}>
-              {SLIDE_LOADING_MESSAGES.map((_, i) => (
-                <span
-                  key={i}
-                  style={{
-                    height: 4,
-                    width: i === loadingMsg ? 28 : 6,
-                    background: i <= loadingMsg ? 'var(--accent-primary)' : 'var(--steel)',
-                    opacity: i <= loadingMsg ? 1 : 0.4,
-                    transition: 'width 300ms ease',
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
+        <TypewriterLoader
+          variant="fixed"
+          label="BUILDING YOUR SESSION"
+          caption="Generating personalized materials"
+          messages={SLIDE_LOADING_MESSAGES}
+        />
       );
     }
     return (

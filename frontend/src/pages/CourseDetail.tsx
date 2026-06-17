@@ -5,6 +5,7 @@ import { getCourseById, submitCourseRating, type Course } from "../services/cour
 import { getModules, getLessons, type Module, type Lesson } from "../services/lessons";
 import { getEnrollments, enroll } from "../services/api";
 import { getLessonCompletions } from "../services/progress";
+import { getCLOs, type CLO } from "../services/clos";
 import { DIFF_COLOR } from "../components/personifai/CourseCards";
 import { CapstoneStartCTA } from '../components/CapstoneStartCTA';
 
@@ -59,6 +60,7 @@ export default function CourseDetail() {
   const [lessonMap, setLessonMap] = useState<Record<number, Lesson[]>>({});
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [enrollment, setEnrollment] = useState<EnrollmentInfo | null>(null);
+  const [clos, setClos] = useState<CLO[]>([]);
   const [completedIds, setCompletedIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
   const [enrolling, setEnrolling] = useState(false);
@@ -83,6 +85,17 @@ export default function CourseDetail() {
         const list: EnrollmentInfo[] = Array.isArray(raw) ? raw : (raw as { results?: EnrollmentInfo[] }).results ?? [];
         const found = list.find((e) => e.course === id) ?? null;
         setEnrollment(found);
+
+        // Already enrolled with a built pathway → the student doesn't need the
+        // marketing page (price / outcomes / syllabus) again. Send them straight
+        // to the "where you are" pathway view with its continue-to-session CTA.
+        if (found?.is_pathway_ready) {
+          navigate(`/course/${id}/pathway`, { replace: true });
+          return;
+        }
+
+        // Course Learning Outcomes — shown to students browsing the course.
+        getCLOs(id).then((c) => { if (!cancelled) setClos(c); }).catch(() => { /* non-critical */ });
 
         if (found) {
           try {
@@ -245,6 +258,26 @@ export default function CourseDetail() {
                     </li>
                   ))}
                 </ul>
+              </section>
+            )}
+
+            {/* Course Learning Outcomes — what the student will be able to do */}
+            {clos.length > 0 && (
+              <section>
+                <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 18 }}>
+                  COURSE LEARNING OUTCOMES · {clos.length}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {clos.map((clo) => (
+                    <div key={clo.id} style={{ display: "flex", gap: 16, alignItems: "flex-start", background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderRadius: 8, padding: "16px 18px" }}>
+                      <span className="t-mono" style={{ color: "var(--accent-primary)", flexShrink: 0, paddingTop: 2 }}>{clo.code}</span>
+                      <span className="t-body" style={{ fontSize: 14, color: "var(--text-primary)", flex: 1, lineHeight: 1.55 }}>{clo.text}</span>
+                      {clo.bloom_level && (
+                        <span className="t-mono steel" style={{ flexShrink: 0, border: "1px solid var(--hairline)", borderRadius: 4, padding: "2px 8px", textTransform: "uppercase" }}>{clo.bloom_level}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </section>
             )}
 
