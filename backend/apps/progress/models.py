@@ -22,9 +22,9 @@ FEEDBACK_CHOICES = [
 
 
 # ------------------------------------------------------------------
-# Lesson Completion — tracks per-lesson progress within an enrollment
+# Session Completion — tracks per-session progress within an enrollment
 # ------------------------------------------------------------------
-class LessonCompletion(models.Model):
+class SessionCompletion(models.Model):
     STATUS_CHOICES = [
         ("Started", "Started"),
         ("In Progress", "In Progress"),
@@ -34,13 +34,9 @@ class LessonCompletion(models.Model):
     enrollment = models.ForeignKey(
         "courses.Enrollment",
         on_delete=models.CASCADE,
-        related_name="lesson_completions",
+        related_name="session_completions",
     )
-    lesson = models.ForeignKey(
-        "courses.Lesson",
-        on_delete=models.CASCADE,
-        related_name="completions",
-    )
+    session_number = models.IntegerField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="Started")
     score = models.IntegerField(default=0)
     completed_at = models.DateTimeField(null=True, blank=True)
@@ -51,14 +47,14 @@ class LessonCompletion(models.Model):
     gamification_awarded = models.BooleanField(default=False)
 
     class Meta:
-        db_table = "lesson_completions"
-        unique_together = ["enrollment", "lesson"]
+        db_table = "session_completions"
+        unique_together = ["enrollment", "session_number"]
         ordering = ["-completed_at"]
-        verbose_name = "Lesson Completion"
-        verbose_name_plural = "Lesson Completions"
+        verbose_name = "Session Completion"
+        verbose_name_plural = "Session Completions"
 
     def __str__(self):
-        return f"{self.enrollment.student.username} — {self.lesson.title} ({self.status})"
+        return f"{self.enrollment.student.username} — Session {self.session_number} ({self.status})"
 
 
 # ------------------------------------------------------------------
@@ -99,11 +95,12 @@ class AIChatLog(models.Model):
         on_delete=models.CASCADE,
         related_name="ai_chat_logs",
     )
-    lesson = models.ForeignKey(
-        "courses.Lesson",
+    course = models.ForeignKey(
+        "courses.Course",
         on_delete=models.CASCADE,
         related_name="ai_chat_logs",
     )
+    session_number = models.IntegerField(default=1)
     user_audio_url = models.TextField(blank=True, default="")
     transcript_text = models.TextField()
     ai_response_text = models.TextField()
@@ -140,7 +137,7 @@ class AIChatLog(models.Model):
         verbose_name_plural = "AI Chat Logs"
 
     def __str__(self):
-        return f"Chat — {self.user.username} in {self.lesson.title}"
+        return f"Chat — {self.user.username} in {self.course.title} (Session {self.session_number})"
 
 
 # ------------------------------------------------------------------
@@ -277,23 +274,24 @@ class Bookmark(models.Model):
         on_delete=models.CASCADE,
         related_name="bookmarks",
     )
-    lesson = models.ForeignKey(
-        "courses.Lesson",
+    course = models.ForeignKey(
+        "courses.Course",
         on_delete=models.CASCADE,
         related_name="bookmarks",
     )
+    session_number = models.IntegerField(default=1)
     slide_index = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "bookmarks"
-        unique_together = ("user", "lesson", "slide_index")
+        unique_together = ("user", "course", "session_number", "slide_index")
         ordering = ["-created_at"]
 
     def __str__(self):
         if self.slide_index is not None:
-            return f"{self.user.username} bookmarked slide {self.slide_index} of {self.lesson.title}"
-        return f"{self.user.username} bookmarked {self.lesson.title}"
+            return f"{self.user.username} bookmarked slide {self.slide_index} of Session {self.session_number}"
+        return f"{self.user.username} bookmarked Session {self.session_number}"
 
 
 

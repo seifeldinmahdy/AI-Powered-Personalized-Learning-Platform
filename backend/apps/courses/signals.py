@@ -1,22 +1,11 @@
-from django.db.models.signals import post_save, post_delete
+from django.db.models.signals import post_save
 from django.dispatch import receiver
-from .models import Lesson, Course, CourseCorpus
+from .models import Course, CourseCorpus, Concept
 
+import logging
+import threading
 
-def _update_course_lesson_count(lesson):
-    course = lesson.module.course
-    count = Lesson.objects.filter(module__course=course).count()
-    Course.objects.filter(pk=course.pk).update(total_lessons_count=count)
-
-
-@receiver(post_save, sender=Lesson)
-def lesson_saved(sender, instance, **kwargs):
-    _update_course_lesson_count(instance)
-
-
-@receiver(post_delete, sender=Lesson)
-def lesson_deleted(sender, instance, **kwargs):
-    _update_course_lesson_count(instance)
+logger = logging.getLogger(__name__)
 
 
 @receiver(post_save, sender=Course)
@@ -30,3 +19,40 @@ def ensure_course_corpus(sender, instance, created, **kwargs):
         CourseCorpus.objects.get_or_create(
             course=instance, defaults={"name": instance.title},
         )
+
+
+# ── Auto-tag corpus chunks when Concepts are created / updated ───────
+# Debounced: bulk creation (e.g. CLO-suggest seeds ~18 concepts in a loop)
+# triggers only ONE tagging pass per course after a 2-second quiet period.
+
+_pending_tag_timers: dict[int, threading.Timer] = {}
+_TAG_DEBOUNCE_SECONDS = 2.0
+
+
+def _run_auto_tag(course_pk: int) -> None:
+    """Background thread: tag corpus chunks for a course."""
+    _pending_tag_timers.pop(course_pk, None)
+    try:
+        from apps.courses.auto_tag import tag_course_chunks
+        tag_course_chunks(course_pk)
+    except Exception as exc:
+        logger.error("auto_tag signal failed for course %s: %s", course_pk, exc)
+
+
+@receiver(post_save, sender=Concept)
+def concept_saved_auto_tag(sender, instance, **kwargs):
+    """Schedule a debounced auto-tag of corpus chunks when a Concept is saved."""
+    course_pk = instance.course_id
+    if not course_pk:
+        return
+
+    # Cancel any previously scheduled timer for this course.
+    existing = _pending_tag_timers.pop(course_pk, None)
+    if existing is not None:
+        existing.cancel()
+
+    timer = threading.Timer(_TAG_DEBOUNCE_SECONDS, _run_auto_tag, args=[course_pk])
+    timer.daemon = True
+    _pending_tag_timers[course_pk] = timer
+    timer.start()
+

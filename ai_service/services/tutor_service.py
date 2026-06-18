@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # ── Configure Ollama Cloud ──
  
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "https://ollama.com")
+OLLAMA_HOST = os.getenv("OLLAMA_HOST")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
 
@@ -305,12 +305,25 @@ TUTOR_SKILLS = {
 }
 
 
-def _build_system_prompt(base_prompt: str, active_skills: list[str]) -> str:
-    """Compose the final system prompt by appending active skill fragments."""
+def _build_system_prompt(
+    base_prompt: str,
+    active_skills: list[str],
+    overrides: dict[str, str] | None = None,
+) -> str:
+    """Compose the final system prompt by appending active skill fragments.
+
+    Parameters
+    ----------
+    overrides:
+        Per-call skill text overrides. Keys are skill names; values replace the
+        global TUTOR_SKILLS entry for this call only. No mutation of the global dict.
+    """
     parts = [base_prompt.strip()]
+    resolved = overrides or {}
     for skill_key in active_skills:
-        if skill_key in TUTOR_SKILLS:
-            parts.append(TUTOR_SKILLS[skill_key])
+        text = resolved.get(skill_key) or TUTOR_SKILLS.get(skill_key)
+        if text:
+            parts.append(text)
     return "\n\n".join(parts)
 
 
@@ -516,7 +529,7 @@ async def _call_ollama(
         format. When provided, these are injected between the system prompt
         and the current user prompt so the model has multi-turn context.
     """
-    url = f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat"
+    url = f"{OLLAMA_HOST.rstrip('/')}/api/chat"
 
     messages = [{"role": "system", "content": system_prompt}]
     if conversation_history:
@@ -566,6 +579,24 @@ def _build_conversation_history(session: TutorSession, max_turns: int = 4) -> Li
     return history
 
 
+# Intent → how many prior turns of context to include.
+# Higher = richer context; lower = focused prompt, lower token cost.
+_INTENT_HISTORY_TURNS: dict[str, int] = {
+    "Debugging/Code-Sharing": 6,
+    "On-Topic Question":      4,
+    "Repeat/Clarification":   2,
+    "Pace-Related":           1,
+    "Emotional-State":        1,
+    "Off-Topic Question":     1,
+}
+_DEFAULT_HISTORY_TURNS = 3
+
+
+def _history_turns_for_intent(intent: Optional[str]) -> int:
+    """Return the appropriate history window for the given intent label."""
+    return _INTENT_HISTORY_TURNS.get(intent or "", _DEFAULT_HISTORY_TURNS)
+
+
 def _build_profile_context(session: TutorSession) -> Optional[str]:
     """
     Build the engagement profile context string for injection into prompts.
@@ -596,6 +627,81 @@ def _build_profile_context(session: TutorSession) -> Optional[str]:
                 ctx += f"Recommended approaches: {', '.join(approaches)}\n"
             parts.append(ctx)
     return "\n".join(parts) if parts else None
+
+
+def _assemble_user_prompt(
+    session: TutorSession,
+    intent: Optional[str],
+    question: Optional[str] = None,
+    grounding_block: str = "",
+    student_emotion: Optional[str] = None,
+    include_slide: bool = True,
+) -> str:
+    """
+    Assemble the user-turn prompt with only the context sections relevant to the
+    current intent. Follows the ICM context-scoping principle.
+
+    Sections included per intent class:
+    - Emotional-State / Pace-Related: topic + student message only.
+    - Repeat/Clarification: summary + topic + subtopic only.
+    - Debugging/Code-Sharing: summary + topic + student code/question.
+    - On-Topic Question / lecture chunks: full context (all sections).
+    """
+    _MINIMAL_INTENTS = {"Emotional-State", "Pace-Related"}
+    _REPEAT_INTENTS  = {"Repeat/Clarification"}
+    effective = intent or ""
+    minimal   = effective in _MINIMAL_INTENTS
+    repeat    = effective in _REPEAT_INTENTS
+
+    parts: list[str] = []
+
+    if grounding_block:
+        parts.append(grounding_block)
+
+    if not minimal and session.running_summary:
+        parts.append(f"CONTEXT (what we've covered so far):\n{session.running_summary}")
+
+    if not minimal and not repeat:
+        profile_context = _build_profile_context(session)
+        if profile_context:
+            parts.append(profile_context)
+
+    parts.append(f"CURRENT TOPIC: {session.current_topic or 'N/A'}")
+    if session.current_subtopic:
+        parts.append(f"CURRENT SUBTOPIC: {session.current_subtopic}")
+
+    if not minimal and not repeat and include_slide:
+        try:
+            from services.session_store import get_session_store
+            ctx = get_session_store().get_session(session.session_id)
+            if ctx and ctx.live.current_slide_content:
+                slide_info = "CURRENT SLIDE CONTENT:\n"
+                if ctx.live.current_slide_title:
+                    slide_info += f"Slide title: {ctx.live.current_slide_title}\n"
+                slide_info += ctx.live.current_slide_content
+                parts.append(slide_info)
+        except Exception:
+            pass
+
+    if not minimal and student_emotion and student_emotion.lower() not in ("neutral", "unknown"):
+        emotion_guidance = {
+            "happy":   "The student sounds engaged. Match their energy.",
+            "sad":     "The student seems down. Be warm and patient.",
+            "angry":   "The student sounds frustrated. Stay calm and validate.",
+            "fear":    "The student seems anxious. Be reassuring.",
+            "surprise":"The student seems surprised. Acknowledge and explain clearly.",
+            "disgust": "The student seems displeased. Try a different angle.",
+        }
+        guidance = emotion_guidance.get(
+            student_emotion.lower(),
+            f"The student's emotional state is '{student_emotion}'. Be supportive.",
+        )
+        parts.append(f"EMOTIONAL CONTEXT: {guidance}")
+
+    if question:
+        parts.append(f"STUDENT'S QUESTION: {question}")
+
+    return "\n\n".join(parts)
 
 
 # ── Relevance check ──
@@ -732,6 +838,21 @@ def create_session(
     )
     _sessions[sid] = session
     logger.info(f"Session {sid} created with {len(topics)} topics")
+
+    # ── Restore running_summary from Redis if reconnecting to an existing session ──
+    try:
+        from services.session_store import get_session_store
+        existing = get_session_store().get_session(sid)
+        if existing and getattr(existing, "live", None) is not None:
+            stored_summary = getattr(existing.live, "running_summary", "") or ""
+            if stored_summary:
+                session.running_summary = stored_summary
+                logger.info(
+                    "Restored running_summary (%d chars) for reconnecting session %s",
+                    len(stored_summary), sid,
+                )
+    except Exception as _restore_err:
+        logger.debug("Could not restore running_summary from store: %s", _restore_err)
 
     # If no profile data was passed by caller, try to fetch from Django
     if session.student_profile_data is None and session.student_id:
@@ -872,6 +993,15 @@ async def generate_lecture_chunk(
     except Exception:
         pass
 
+    # Update teach-back interval whenever the concept changes or mastery data refreshes.
+    new_interval = _resolve_teach_back_interval(session, current_concept_id)
+    if new_interval != session.teach_back_interval:
+        session.teach_back_interval = new_interval
+        logger.debug(
+            "Teach-back interval updated to %d for concept_id=%s",
+            new_interval, current_concept_id,
+        )
+
     # Competence (weak/strong, concept-ID matched) + how-to-learn (style/pace) +
     # recurrent-mistake skills. Pure helper; competence is read from the MASTERY
     # MODEL, never the qualitative profile.
@@ -885,13 +1015,20 @@ async def generate_lecture_chunk(
     flat = flatten_profile_for_readers(session.student_profile_data or {})
     combined_lower = f"{(session.current_subtopic or '').lower()} {(session.current_topic or '').lower()}"
     unresolved_match_text = (combined_lower + " " + _concept_label_for(session, current_concept_id)).strip()
+
+    # ── Unresolved-question surfacing ──────────────────────────────────────────
+    skill_overrides: dict[str, str] = {}
     if not hasattr(session, "_surfaced_unresolved"):
         session._surfaced_unresolved = set()
     for q in flat.get("unresolved_questions", []):
         q_words = [w for w in q.lower().split() if len(w) > 4]
-        if q not in session._surfaced_unresolved and any(w in unresolved_match_text for w in q_words):
-            original_skill = TUTOR_SKILLS["SURFACE_UNRESOLVED"]
-            TUTOR_SKILLS["SURFACE_UNRESOLVED"] = original_skill + f' The specific unresolved question is: "{q}"'
+        if q not in session._surfaced_unresolved and any(
+            w in unresolved_match_text for w in q_words
+        ):
+            skill_overrides["SURFACE_UNRESOLVED"] = (
+                TUTOR_SKILLS["SURFACE_UNRESOLVED"]
+                + f' The specific unresolved question is: "{q}"'
+            )
             active_skills.append("SURFACE_UNRESOLVED")
             session._surfaced_unresolved.add(q)
             break
@@ -906,16 +1043,9 @@ async def generate_lecture_chunk(
         active_skills = [s for s in active_skills if s != "ENGAGEMENT_ADAPT"]
 
     # Build the composed system prompt
-    system_prompt = _build_system_prompt(LECTURE_SYSTEM_PROMPT, active_skills)
-
-    # Restore SURFACE_UNRESOLVED to its template form after use
-    if "SURFACE_UNRESOLVED" in active_skills:
-        TUTOR_SKILLS["SURFACE_UNRESOLVED"] = (
-            "SKILL — UNRESOLVED QUESTION: This student had an open question "
-            "from a previous session that relates to the current topic. "
-            "Weave the answer into your explanation naturally without saying "
-            "'you asked this before'. Just address it as part of the content."
-        )
+    system_prompt = _build_system_prompt(
+        LECTURE_SYSTEM_PROMPT, active_skills, overrides=skill_overrides
+    )
 
     context_parts = []
     if session.running_summary:
@@ -973,7 +1103,9 @@ async def generate_lecture_chunk(
     user_prompt = "\n\n".join(context_parts)
 
     # ── Build multi-turn conversation history ──
-    conversation_history = _build_conversation_history(session, max_turns=3)
+    conversation_history = _build_conversation_history(
+        session, max_turns=_history_turns_for_intent(intent)
+    )
 
     start = time.time()
     lecture_text = await _call_ollama(
@@ -1143,18 +1275,16 @@ async def answer_question(
             debug_skills.append("CONFUSION_DIAGNOSIS")
         system_prompt = _build_system_prompt(ANSWER_SYSTEM_PROMPT, debug_skills)
 
-        context_parts = []
-        if session.running_summary:
-            context_parts.append(f"CONTEXT (what we've covered so far):\n{session.running_summary}")
-        profile_context = _build_profile_context(session)
-        if profile_context:
-            context_parts.append(profile_context)
-        context_parts.append(f"CURRENT TOPIC: {session.current_topic or 'N/A'}")
-        if session.current_subtopic:
-            context_parts.append(f"CURRENT SUBTOPIC: {session.current_subtopic}")
-        context_parts.append(f"STUDENT'S CODE/ERROR: {question}")
-        user_prompt = "\n\n".join(context_parts)
-        conversation_history = _build_conversation_history(session, max_turns=3)
+        user_prompt = _assemble_user_prompt(
+            session,
+            intent="Debugging/Code-Sharing",
+            question=question,
+            student_emotion=student_emotion,
+            include_slide=False,
+        )
+        conversation_history = _build_conversation_history(
+            session, max_turns=_history_turns_for_intent("Debugging/Code-Sharing")
+        )
 
         start = time.time()
         answer_text = await _call_ollama(
@@ -1226,63 +1356,17 @@ async def answer_question(
 
     system_prompt = _build_system_prompt(ANSWER_SYSTEM_PROMPT, qa_skills)
 
-    context_parts = []
-    if grounding_block:
-        context_parts.append(grounding_block)
-    if session.running_summary:
-        context_parts.append(f"CONTEXT (what we've covered so far):\n{session.running_summary}")
-
-    # Persistent profile injection
-    profile_context = _build_profile_context(session)
-    if profile_context:
-        context_parts.append(profile_context)
-
-    context_parts.append(f"CURRENT TOPIC: {session.current_topic or 'N/A'}")
-    if session.current_subtopic:
-        context_parts.append(f"CURRENT SUBTOPIC: {session.current_subtopic}")
-
-    # Inject current slide content
-    try:
-        from services.session_store import get_session_store
-        store = get_session_store()
-        ctx = store.get_session(session.session_id)
-        if ctx and ctx.live.current_slide_content:
-            slide_info = "CURRENT SLIDE CONTENT (use this to inform your answer):\n"
-            if ctx.live.current_slide_title:
-                slide_info += f"Slide title: {ctx.live.current_slide_title}\n"
-            slide_info += ctx.live.current_slide_content
-            context_parts.append(slide_info)
-    except Exception:
-        pass
-
-    # Inject attempt count so the model knows how stuck the student is
-    if session.socratic_attempt_count > 1:
-        context_parts.append(
-            f"NOTE: The student has attempted to answer this type of question "
-            f"{session.socratic_attempt_count} time(s) without success. "
-            f"Increase your scaffolding accordingly."
-        )
-
-    # Emotion-aware tone adaptation
-    if student_emotion and student_emotion.lower() not in ("neutral", "unknown"):
-        emotion_guidance = {
-            "happy": "The student sounds engaged and positive. Match their energy.",
-            "sad": "The student seems down. Be warm, supportive, and extra patient.",
-            "angry": "The student sounds frustrated. Stay calm and validate their frustration.",
-            "fear": "The student seems anxious. Be reassuring and break things into small steps.",
-            "surprise": "The student seems surprised or confused. Acknowledge it and explain clearly.",
-            "disgust": "The student seems displeased. Be empathetic and try a different angle.",
-        }
-        guidance = emotion_guidance.get(
-            student_emotion.lower(),
-            f"The student's emotional state is '{student_emotion}'. Adapt your tone to be supportive.",
-        )
-        context_parts.append(f"EMOTIONAL CONTEXT: {guidance}")
-
-    context_parts.append(f"STUDENT'S QUESTION: {question}")
-
-    user_prompt = "\n\n".join(context_parts)
-    conversation_history = _build_conversation_history(session, max_turns=3)
+    user_prompt = _assemble_user_prompt(
+        session,
+        intent=effective_intent,
+        question=question,
+        grounding_block=grounding_block,
+        student_emotion=student_emotion,
+        include_slide=True,
+    )
+    conversation_history = _build_conversation_history(
+        session, max_turns=_history_turns_for_intent(effective_intent)
+    )
 
     start = time.time()
     answer_text = await _call_ollama(
@@ -1562,7 +1646,9 @@ async def repeat_lecture_chunk(session_id: str, mode: str = "rephrase") -> dict:
         )
 
         user_prompt = "\n\n".join(context_parts)
-        conversation_history = _build_conversation_history(session, max_turns=2)
+        conversation_history = _build_conversation_history(
+            session, max_turns=_history_turns_for_intent("Repeat/Clarification")
+        )
         start = time.time()
         response_text = await _call_ollama(
             REPHRASE_SYSTEM_PROMPT, user_prompt,
@@ -1661,6 +1747,41 @@ async def _update_summary(session: TutorSession, new_content: str):
     except Exception as e:
         logger.warning(f"Summary compression failed, appending raw: {e}")
         session.running_summary += f"\n{new_content[:500]}"
+
+
+def _resolve_teach_back_interval(session: TutorSession, concept_id: str = "") -> int:
+    """
+    Compute the teach-back interval from the mastery score of the current concept.
+
+    Returns a value in [1, 6]:
+    - mastery < 0.35  → interval 1 (every chunk: student is struggling)
+    - 0.35 ≤ mastery < 0.55 → interval 2 (just below resolve threshold)
+    - 0.55 ≤ mastery < 0.75 → interval 3 (default; near passing)
+    - 0.75 ≤ mastery < 0.90 → interval 5 (solid understanding)
+    - mastery ≥ 0.90  → interval 6 (mastery; minimal interruption)
+
+    Falls back to interval=3 when concept_id is unknown or mastery data unavailable.
+    """
+    if not concept_id:
+        return 3
+    cid = str(concept_id)
+    all_concepts = list(session.weak_concepts or []) + list(session.strong_concepts or [])
+    score: Optional[float] = None
+    for c in all_concepts:
+        if str(c.get("concept_id")) == cid:
+            score = c.get("score")
+            break
+    if score is None:
+        return 3
+    if score < 0.35:
+        return 1
+    if score < 0.55:
+        return 2
+    if score < 0.75:
+        return 3
+    if score < 0.90:
+        return 5
+    return 6
 
 
 def _advance(session: TutorSession) -> bool:

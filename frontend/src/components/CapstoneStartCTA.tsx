@@ -17,7 +17,7 @@ type Variant = 'card' | 'banner' | 'inline';
  *
  * Gate it on material completion at the call site (pass when progress is 100%).
  */
-export function CapstoneStartCTA({ courseId, variant = 'card' }: { courseId: number; variant?: Variant }) {
+export function CapstoneStartCTA({ courseId, variant = 'card', locked = false }: { courseId: number; variant?: Variant, locked?: boolean }) {
     const navigate = useNavigate();
     const [capstone, setCapstone] = useState<Capstone | null>(null);
     const [checking, setChecking] = useState(true);
@@ -72,11 +72,15 @@ export function CapstoneStartCTA({ courseId, variant = 'card' }: { courseId: num
     const button = (
         <button
             onClick={handleStart}
-            disabled={starting}
-            className="flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2.5 rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-50"
+            disabled={starting || locked}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                locked 
+                    ? 'bg-muted text-muted-foreground cursor-not-allowed opacity-70' 
+                    : 'bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50'
+            }`}
         >
-            {starting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trophy className="w-4 h-4" />}
-            Start your capstone
+            {starting ? <Loader2 className="w-4 h-4 animate-spin" /> : locked ? <Trophy className="w-4 h-4 opacity-50" /> : <Trophy className="w-4 h-4" />}
+            {locked ? 'Finish coursework to start' : 'Start your capstone'}
         </button>
     );
 
@@ -125,8 +129,12 @@ export function CapstoneStartCTA({ courseId, variant = 'card' }: { courseId: num
                         <Trophy className="w-6 h-6 text-primary" />
                     </div>
                     <div className="flex-1">
-                        <p className="font-semibold text-foreground mb-0.5">You finished the coursework — time for your capstone!</p>
-                        <p className="text-sm text-muted-foreground">Start the project to get your repo and the in-platform editor.</p>
+                        <p className="font-semibold text-foreground mb-0.5">
+                            {locked ? "Capstone project locked" : "You finished the coursework — time for your capstone!"}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                            {locked ? "Complete all sessions to unlock your capstone project." : "Start the project to get your repo and the in-platform editor."}
+                        </p>
                     </div>
                     {button}
                 </div>
@@ -140,11 +148,12 @@ export function CapstoneStartCTA({ courseId, variant = 'card' }: { courseId: num
         <>
             <div className="bg-gradient-to-br from-primary/5 to-secondary/5 rounded-2xl border-2 border-primary/30 p-6 space-y-3">
                 <h3 className="flex items-center gap-2 font-semibold">
-                    <Trophy className="w-5 h-5 text-primary" /> Capstone project
+                    <Trophy className={`w-5 h-5 ${locked ? 'text-muted-foreground' : 'text-primary'}`} /> Capstone project
                 </h3>
                 <p className="text-sm text-muted-foreground">
-                    You've completed the coursework. Start your capstone — we'll set up your GitHub repo
-                    and open the in-platform editor.
+                    {locked 
+                        ? "Complete all your coursework sessions first. Then you can start your capstone, and we'll set up your GitHub repo and open the in-platform editor."
+                        : "You've completed the coursework. Start your capstone — we'll set up your GitHub repo and open the in-platform editor."}
                 </p>
                 {button}
             </div>

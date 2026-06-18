@@ -58,7 +58,7 @@ CONFIG = {
         os.getenv("OLLAMA_API_KEY_3", "6b3ace2d68494c8bb1a32cb0176bbd5b.nnj9wxGXUtDKrjQTYUQc8NSU"),
         os.getenv("OLLAMA_API_KEY_4", "ca867af3701043ef91dedf92836857fe.opnk-CEAzK899oW3KK3VYJrz"),
     ],
-    "ollama_host": os.getenv("OLLAMA_HOST", "http://localhost:11434"),
+    "ollama_host": os.getenv("OLLAMA_HOST"),
     "model": os.getenv("OLLAMA_MODEL", "gpt-oss-120b"),
     "output_file": str(project_root / "data" / "agent_training" / "classifier_train_regenerated.jsonl"),
     "raw_books_dir": str(project_root / "data" / "raw_books"),

@@ -5,10 +5,6 @@ from . import certificate
 
 router = DefaultRouter()
 router.register(r"courses", views.CourseViewSet, basename="course")
-router.register(r"modules", views.ModuleViewSet, basename="module")
-router.register(r"lessons", views.LessonViewSet, basename="lesson")
-router.register(r"slides", views.SlideViewSet, basename="slide")
-router.register(r"code-challenges", views.CodeChallengeViewSet, basename="code-challenge")
 router.register(r"enrollments", views.EnrollmentViewSet, basename="enrollment")
 
 urlpatterns = [
@@ -35,7 +31,7 @@ urlpatterns = [
     # Concepts (nested under course)
     path(
         "courses/<int:course_pk>/concepts/",
-        views.ConceptViewSet.as_view({"get": "list"}),
+        views.ConceptViewSet.as_view({"get": "list", "post": "create"}),
         name="concept-list",
     ),
     path(

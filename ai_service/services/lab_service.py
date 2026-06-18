@@ -32,7 +32,6 @@ from schemas.coding import (
     LabCell,
     LabChecklistItem,
 )
-from services.lab_store import get_coding_lab_store
 from services.session_store import get_session_store
 
 logger = logging.getLogger(__name__)
@@ -62,7 +61,7 @@ def _get_ollama_client() -> OllamaClient:
     global _ollama_client
     if _ollama_client is None:
         _ollama_client = OllamaClient(
-            host=os.getenv("OLLAMA_HOST", "https://ollama.com"),
+            host=os.getenv("OLLAMA_HOST"),
             model=os.getenv("OLLAMA_MODEL", "gpt-oss:120b"),
             api_key=os.getenv("OLLAMA_API_KEY", ""),
             max_retries=3,
@@ -481,14 +480,17 @@ def _generate_lab(
 
 
 async def generate_coding_lab(request: CodingLabGenerateRequest) -> CodingLabGenerateResponse:
-    store = get_coding_lab_store()
-    lab_id = store.lab_id(request.student_id, request.course_id, request.lesson_id)
+    lab_id = f"{request.student_id or 'anonymous'}_{request.course_id}_{request.lesson_id}".replace("/", "_").replace("\\", "_").replace(":", "_")
 
     if not request.force_regenerate:
-        cached = store.load(lab_id)
-        if cached is not None:
-            cached.cached = True
-            return cached
+        artifact = await _get_lab_artifact(request.student_id, request.course_id, request.lesson_id)
+        if artifact and artifact.get("content_json"):
+            try:
+                cached = CodingLabGenerateResponse.model_validate(artifact["content_json"])
+                cached.cached = True
+                return cached
+            except Exception as exc:
+                logger.warning("lab_service: cached lab validation failed %s", exc)
 
     session = _session_context(request.session_id)
 
@@ -555,7 +557,6 @@ async def generate_coding_lab(request: CodingLabGenerateRequest) -> CodingLabGen
         checklist=checklist,
         lab=lab,
     )
-    store.save(response)
     await persist_lab(request.student_id, request.course_id, request.lesson_id,
                       response.model_dump(), status="generated")
     return response
@@ -585,7 +586,7 @@ async def persist_lab(student_id: str, course_id: str, lesson_id: str,
         lesson_key = int(lesson_id) if str(lesson_id).isdigit() else lesson_id
         await artifact_client.upsert_artifact(
             str(student_id), str(course_id), "lab",
-            plan_version=pv, lesson_id=lesson_key,
+            plan_version=pv, session_number=lesson_key,
             content_json=content_json, status=status,
         )
     except Exception:
@@ -756,3 +757,75 @@ def run_lab_code(code: str, timeout_seconds: int = 5) -> CodingLabRunResponse:
                 os.remove(tmp_path)
             except OSError:
                 pass
+
+
+async def _get_lab_artifact(student_id: str, course_id: str, lesson_id: str) -> dict | None:
+    from services import artifact_client
+    from services.plan_resolver import current_plan_version
+    import asyncio
+    
+    pv = await asyncio.to_thread(current_plan_version, str(student_id), str(course_id))
+    if pv is None:
+        return None
+    lesson_key = int(lesson_id) if str(lesson_id).isdigit() else lesson_id
+    index = await artifact_client.get_artifact_index(
+        str(student_id), type="lab", session=lesson_key, plan_version=pv
+    )
+    if not index:
+        return None
+    best_artifact = max(index, key=lambda x: x.get("generation_index", 0))
+    content = await artifact_client.get_artifact_content(str(student_id), best_artifact["id"])
+    return content
+
+async def save_lab_cell_note(student_id: str, course_id: str, lesson_id: str, cell_id: str, content: str) -> None:
+    artifact = await _get_lab_artifact(student_id, course_id, lesson_id)
+    if not artifact or not artifact.get("content_json"):
+        return
+    content_json = artifact["content_json"]
+    timestamp = _dt.datetime.utcnow().isoformat() + "Z"
+    
+    if "lab" in content_json and "cells" in content_json["lab"]:
+        for cell in content_json["lab"]["cells"]:
+            if cell.get("id") == cell_id:
+                if "student_notes" not in cell:
+                    cell["student_notes"] = []
+                cell["student_notes"].append({"content": content, "timestamp": timestamp})
+                break
+    await persist_lab(student_id, course_id, lesson_id, content_json, status=artifact.get("status", "generated"))
+
+async def save_lab_general_note(student_id: str, course_id: str, lesson_id: str, content: str) -> None:
+    artifact = await _get_lab_artifact(student_id, course_id, lesson_id)
+    if not artifact or not artifact.get("content_json"):
+        return
+    content_json = artifact["content_json"]
+    timestamp = _dt.datetime.utcnow().isoformat() + "Z"
+    
+    if "lab" in content_json:
+        if "general_notes" not in content_json["lab"]:
+            content_json["lab"]["general_notes"] = []
+        content_json["lab"]["general_notes"].append({"content": content, "timestamp": timestamp})
+    await persist_lab(student_id, course_id, lesson_id, content_json, status=artifact.get("status", "generated"))
+
+async def mark_lab_question_asked(student_id: str, course_id: str, lesson_id: str, cell_id: str, question_text: str) -> None:
+    artifact = await _get_lab_artifact(student_id, course_id, lesson_id)
+    if not artifact or not artifact.get("content_json"):
+        return
+    content_json = artifact["content_json"]
+    
+    if "lab" in content_json and "cells" in content_json["lab"]:
+        for cell in content_json["lab"]["cells"]:
+            if cell.get("id") == cell_id:
+                if "suggested_questions" in cell:
+                    for q in cell["suggested_questions"]:
+                        if q.get("question") == question_text:
+                            q["was_asked"] = True
+                break
+    await persist_lab(student_id, course_id, lesson_id, content_json, status=artifact.get("status", "generated"))
+
+async def mark_lab_completed(student_id: str, course_id: str, lesson_id: str) -> None:
+    artifact = await _get_lab_artifact(student_id, course_id, lesson_id)
+    if not artifact or not artifact.get("content_json"):
+        return
+    content_json = artifact["content_json"]
+    content_json["completed_at"] = _dt.datetime.utcnow().isoformat() + "Z"
+    await persist_lab(student_id, course_id, lesson_id, content_json, status="completed")

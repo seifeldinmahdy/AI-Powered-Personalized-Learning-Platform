@@ -4,7 +4,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { ConceptMasteryChart } from '../../components/ConceptMasteryChart';
 import { Play, Clock, Award, TrendingUp, BookOpen, Target, Loader2, Bookmark, MessageSquare } from 'lucide-react';
 import { getEnrollments } from "../../services/api";
-import { getLessonCompletions, getBookmarks, getConceptMastery, type LessonCompletion, type Bookmark as BookmarkType, type ConceptMasteryEntry } from '../../services/progress';
+import { getSessionCompletions, getBookmarks, getConceptMastery, type LessonCompletion, type Bookmark as BookmarkType, type ConceptMasteryEntry } from '../../services/progress';
 import { getCourses, type Course } from "../../services/courses";
 import { getStudentProfile, type StudentProfile } from "../../services/profile";
 import { EnrolledCourseCard, ExploreCourseCard, ContinueLearningCard, type EnrolledView } from "../../components/personifai/CourseCards";
@@ -47,7 +47,7 @@ export default function Dashboard() {
       const [enrollRes, profileRes, completionsRes, coursesRes] = await Promise.allSettled([
         getEnrollments(),
         getStudentProfile(),
-        getLessonCompletions(),
+        getSessionCompletions(),
         getCourses({ ordering: "-created_at" }),
       ]);
       if (cancelled) return;

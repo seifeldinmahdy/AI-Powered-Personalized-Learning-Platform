@@ -1,17 +1,10 @@
-"""Server-side lesson completion — the single place a lesson becomes "Completed".
+"""Server-side session completion — the single place a session becomes "Completed".
 
-A lesson is genuinely finished only after its problem set runs (that step writes
-the concept_mastery capstone grading and CLO attainment depend on). The
-completion transition is therefore triggered server-side from the problem-set
-completion event (AI service → /progress/complete-lesson/), NOT from a frontend
-"mark complete" call at the end of the live session. This keeps it resilient to a
-closed tab and removes the contradiction where a student could reach the capstone
-CTA (progress == 100) without having done the final, mastery-writing step.
+A session is genuinely finished only after its problem set runs. The
+completion transition is triggered server-side from the problem-set
+completion event (AI service → /progress/complete-session/).
 
-`complete_lesson` is idempotent: it transitions the row to "Completed" once, under
-a row lock, and lets the gamification post_save signal award XP/streak/progress
-exactly once (the signal carries its own latch as well). Calling it again is a
-no-op that re-reports the already-awarded achievements as none.
+`complete_session` is idempotent.
 """
 
 import logging
@@ -20,57 +13,60 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.courses.models import Enrollment
-from .models import LessonCompletion
+from .models import SessionCompletion
 
 logger = logging.getLogger(__name__)
 
 
-def _lesson_course_id(lesson):
-    """Resolve the owning course id for a lesson (lesson → module → course)."""
-    return lesson.module.course_id
+def _advance_current_session(enrollment, completed_session_number):
+    """Advance enrollment.current_session_number if the student completed the current one."""
+    update_fields = []
+    if enrollment.current_session_number <= completed_session_number:
+        enrollment.current_session_number = completed_session_number + 1
+        update_fields.append("current_session_number")
+
+    # Recalculate progress_percentage
+    completed_count = SessionCompletion.objects.filter(
+        enrollment=enrollment, status="Completed"
+    ).count()
+    
+    total_sessions = 0
+    if enrollment.current_pathway and isinstance(enrollment.current_pathway, dict) and enrollment.current_pathway.get("total_sessions"):
+        total_sessions = enrollment.current_pathway.get("total_sessions")
+    else:
+        try:
+            from apps.courses.views import _fetch_current_plan
+            plan = _fetch_current_plan(enrollment.student_id, enrollment.course_id)
+            if plan and plan.get("total_sessions"):
+                total_sessions = int(plan.get("total_sessions"))
+        except Exception:
+            pass
+        
+    if total_sessions > 0:
+        new_pct = min(100.0, (completed_count / float(total_sessions)) * 100.0)
+        if enrollment.progress_percentage != new_pct:
+            enrollment.progress_percentage = new_pct
+            update_fields.append("progress_percentage")
+            
+    if update_fields:
+        enrollment.save(update_fields=update_fields)
 
 
-def _advance_current_lesson(enrollment):
-    """Point enrollment.current_lesson at the first incomplete lesson (or the
-    last lesson when all are done). Drives the resume "Continue" jump."""
-    from apps.courses.models import Lesson
+def complete_session(user, course, session_number, *, time_spent_minutes=None, score=None):
+    """Idempotently mark `session_number` Completed for `user`. Returns a dict:
 
-    completed_ids = set(
-        LessonCompletion.objects.filter(enrollment=enrollment, status="Completed")
-        .values_list("lesson_id", flat=True)
-    )
-    lessons = list(
-        Lesson.objects.filter(module__course_id=enrollment.course_id)
-        .order_by("module__module_order", "lesson_order")
-    )
-    if not lessons:
-        return
-    target = next((l for l in lessons if l.id not in completed_ids), lessons[-1])
-    if enrollment.current_lesson_id != target.id:
-        enrollment.current_lesson_id = target.id
-        enrollment.save(update_fields=["current_lesson"])
-
-
-def complete_lesson(user, lesson, *, time_spent_minutes=None, score=None):
-    """Idempotently mark `lesson` Completed for `user`. Returns a dict:
-
-        {"completion": LessonCompletion, "already_completed": bool,
+        {"completion": SessionCompletion, "already_completed": bool,
          "newly_earned_achievements": [{name, icon_url, xp_reward}, ...]}
 
-    Returns ``None`` if the student has no enrollment in the lesson's course.
-
-    The transition (and the gamification signal it triggers) fires at most once
-    per completion. Time/score are recorded conservatively: an existing positive
-    time_spent is never overwritten (the live session already measured it).
+    Returns ``None`` if the student has no enrollment in the course.
     """
     from apps.gamification.models import UserAchievement
 
-    course_id = _lesson_course_id(lesson)
-    enrollment = Enrollment.objects.filter(student=user, course_id=course_id).first()
+    enrollment = Enrollment.objects.filter(student=user, course=course).first()
     if not enrollment:
         logger.warning(
-            "complete_lesson: no enrollment for student=%s course=%s lesson=%s",
-            user.id, course_id, lesson.id,
+            "complete_session: no enrollment for student=%s course=%s session=%s",
+            user.id, course.id, session_number,
         )
         return None
 
@@ -80,15 +76,16 @@ def complete_lesson(user, lesson, *, time_spent_minutes=None, score=None):
 
     with transaction.atomic():
         completion, _created = (
-            LessonCompletion.objects.select_for_update().get_or_create(
+            SessionCompletion.objects.select_for_update().get_or_create(
                 enrollment=enrollment,
-                lesson=lesson,
+                session_number=session_number,
                 defaults={"status": "In Progress"},
             )
         )
 
         already = completion.status == "Completed" and completion.completed_at is not None
         if already:
+            _advance_current_session(enrollment, session_number)
             return {
                 "completion": completion,
                 "already_completed": True,
@@ -104,16 +101,13 @@ def complete_lesson(user, lesson, *, time_spent_minutes=None, score=None):
                 tsm = max(0, int(time_spent_minutes))
             except (TypeError, ValueError):
                 tsm = 0
-            # Never clobber a positive measured time with a default/zero.
             if tsm > 0 or completion.time_spent_minutes == 0:
                 completion.time_spent_minutes = tsm
         if completion.time_spent_minutes == 0:
-            completion.time_spent_minutes = 30  # backward-compat default
-        completion.save()  # fires the gamification signal exactly once
+            completion.time_spent_minutes = 30
+        completion.save()
 
-    # Advance the resume pointer to the first still-incomplete lesson (self-
-    # correcting regardless of completion order) so "Continue" lands correctly.
-    _advance_current_lesson(enrollment)
+    _advance_current_session(enrollment, session_number)
 
     after = UserAchievement.objects.filter(user=user).select_related("achievement")
     newly_earned = [

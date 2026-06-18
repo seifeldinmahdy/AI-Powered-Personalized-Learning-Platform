@@ -1,0 +1,160 @@
+{
+  "profile": {
+    "student_id": "35",
+    "course_id": "16",
+    "mastery_level": "Intermediate",
+    "composition_mode": "balanced",
+    "language_proficiency": "Intermediate",
+    "strengths": [
+      "Integration Testing"
+    ],
+    "weaknesses": [
+      "Understand Unit Testing"
+    ],
+    "strength_concept_ids": [
+      "30"
+    ],
+    "weak_concept_ids": [
+      "29"
+    ],
+    "topic_performance": {},
+    "incorrectly_answered": [
+      {
+        "question": "Which statement correctly imports the unittest module?",
+        "chosen_option": "import unittest",
+        "correct_option": "All of the above",
+        "concept_id": "28"
+      },
+      {
+        "question": "Which of the following is NOT a typical characteristic of a good unit test?",
+        "chosen_option": "Runs quickly",
+        "correct_option": "Depends on external services",
+        "concept_id": "29"
+      },
+      {
+        "question": "In unittest, how can you skip a test method conditionally?",
+        "chosen_option": "Use @unittest.skipIf(condition, reason)",
+        "correct_option": "Both A and B",
+        "concept_id": "29"
+      },
+      {
+        "question": "Which of the following is a common strategy for integration testing?",
+        "chosen_option": "Big bang integration",
+        "correct_option": "All of the above",
+        "concept_id": "30"
+      },
+      {
+        "question": "Which tool is often used for writing integration tests that involve HTTP APIs in Python?",
+        "chosen_option": "unittest",
+        "correct_option": "pytest with requests-mock",
+        "concept_id": "30"
+      },
+      {
+        "question": "Which Python feature allows a function to be automatically discovered and executed by pytest without being explicitly called?",
+        "chosen_option": "A. Class inheritance",
+        "correct_option": "C. Naming convention test_",
+        "concept_id": "28"
+      },
+      {
+        "question": "In Python, what is the purpose of the *args and **kwargs parameters in a test fixture function?",
+        "chosen_option": "A. To pass positional and keyword arguments to the test runner",
+        "correct_option": "C. To capture arbitrary arguments for flexible fixture usage",
+        "concept_id": "28"
+      },
+      {
+        "question": "Which built-in Python module provides the base class for creating test cases in the unittest framework?",
+        "chosen_option": "A. doctest",
+        "correct_option": "B. unittest",
+        "concept_id": "28"
+      },
+      {
+        "question": "What does the 'assert' statement do in Python when used inside a pytest test function?",
+        "chosen_option": "A. It raises a SyntaxError if the condition is false",
+        "correct_option": "C. It raises an AssertionError causing the test to fail",
+        "concept_id": "28"
+      },
+      {
+        "question": "In the unittest framework, which method is called once before any test methods in a TestCase class are run?",
+        "chosen_option": "A. setUp()",
+        "correct_option": "B. setUpClass()",
+        "concept_id": "29"
+      },
+      {
+        "question": "Which pytest feature provides a way to define reusable test setup code that can be automatically injected into test functions?",
+        "chosen_option": "A. assert statements",
+        "correct_option": "B. fixtures",
+        "concept_id": "29"
+      },
+      {
+        "question": "In unittest, how do you indicate that a test method expects a specific exception to be raised?",
+        "chosen_option": "A. Using the @raises decorator",
+        "correct_option": "B. Using self.assertRaises()",
+        "concept_id": "29"
+      },
+      {
+        "question": "How do you assert that a piece of code raises a ValueError in pytest?",
+        "chosen_option": "@pytest.raises(ValueError)",
+        "correct_option": "with pytest.raises(ValueError):",
+        "concept_id": "29"
+      },
+      {
+        "question": "What is the purpose of the setUp method in a unittest.TestCase subclass?",
+        "chosen_option": "To clean up resources after all tests run",
+        "correct_option": "To execute code before each test method",
+        "concept_id": "29"
+      },
+      {
+        "question": "Which assertion method would you use to verify that two lists have the same elements in the same order?",
+        "chosen_option": "assertCountEqual",
+        "correct_option": "assertListEqual",
+        "concept_id": "29"
+      },
+      {
+        "question": "When running pytest with the -k option, what does the command `pytest -k \"add and not subtract\"` do?",
+        "chosen_option": "Runs tests whose names contain both \"add\" and \"subtract\"",
+        "correct_option": "Runs tests whose names contain \"add\" but not \"subtract\"",
+        "concept_id": "29"
+      },
+      {
+        "question": "In unittest, which of the following will cause a test to be skipped?",
+        "chosen_option": "raise SkipTest",
+        "correct_option": "All of the above",
+        "concept_id": "29"
+      },
+      {
+        "question": "Which pytest fixture scope lasts for the entire test session?",
+        "chosen_option": "function",
+        "correct_option": "session",
+        "concept_id": "29"
+      },
+      {
+        "question": "Given the function `def divide(a, b): return a / b`, which pytest test correctly checks that dividing by zero raises a ZeroDivisionError?",
+        "chosen_option": "def test_divide(): divide(1, 0)",
+        "correct_option": "def test_divide(): with pytest.raises(ZeroDivisionError): divide(1, 0)",
+        "concept_id": "29"
+      }
+    ],
+    "use_synthetic_context": false,
+    "course_intent": "Python Testing QA",
+    "student_profile_summary": "Intermediate learner in Python Testing QA. Strong in: Integration Testing. Needs work on: Understand Unit Testing."
+  },
+  "live": {
+    "session_id": "",
+    "current_slide_index": 0,
+    "current_slide_title": "",
+    "current_slide_content": "",
+    "current_topic": "",
+    "current_subtopic": "",
+    "current_concept_id": "",
+    "running_summary": "",
+    "tutor_transcript": [],
+    "visited_slides": [],
+    "time_spent_per_slide": {},
+    "tutor_events": [],
+    "emotion_signals": [],
+    "fused_emotion": "",
+    "fused_emotion_confidence": 0.0,
+    "pace_modifier": 0,
+    "last_updated_at": 1781716684.3513753
+  }
+}

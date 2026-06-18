@@ -15,7 +15,7 @@ class StudentArtifactSerializer(serializers.ModelSerializer):
     class Meta:
         model = StudentArtifact
         fields = ["id", "enrollment", "student", "course", "artifact_type",
-                  "session_number", "lesson", "plan_version", "generation_index",
+                  "session_number", "plan_version", "generation_index",
                   "status", "content_json", "storage_key", "score",
                   "created_at", "updated_at", "completed_at"]
         read_only_fields = ["id", "enrollment", "student", "course", "created_at", "updated_at"]
@@ -26,7 +26,7 @@ class StudentArtifactIndexSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StudentArtifact
-        fields = ["id", "artifact_type", "session_number", "lesson", "plan_version",
+        fields = ["id", "artifact_type", "session_number", "plan_version",
                   "generation_index", "status", "score",
                   "created_at", "updated_at", "completed_at"]
         read_only_fields = fields
@@ -43,7 +43,7 @@ class ProblemSetAttemptSerializer(serializers.ModelSerializer):
 class ProblemSetSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProblemSet
-        fields = ["id", "enrollment", "student", "course", "lesson", "plan_version",
+        fields = ["id", "enrollment", "student", "course", "session_number", "plan_version",
                   "generation_index", "ps_uid", "content_json", "hint_tracking",
                   "superseded", "created_at"]
         read_only_fields = ["id", "enrollment", "student", "course", "generation_index",

@@ -1,19 +1,17 @@
 from rest_framework import serializers
 
 from .models import (
-    LessonCompletion, SystemActivityLog, AIChatLog,
+    SessionCompletion, SystemActivityLog, AIChatLog,
     StudentLearningProfile, Bookmark,
     IntentFeedbackBuffer, IntentRetrainingCounter,
 )
 
 
-class LessonCompletionSerializer(serializers.ModelSerializer):
-    lesson_title = serializers.ReadOnlyField(source="lesson.title")
-
+class SessionCompletionSerializer(serializers.ModelSerializer):
     class Meta:
-        model = LessonCompletion
+        model = SessionCompletion
         fields = [
-            "id", "enrollment", "lesson", "lesson_title",
+            "id", "enrollment", "session_number",
             "status", "score", "completed_at", "time_spent_minutes",
         ]
         read_only_fields = ["id", "completed_at"]
@@ -29,12 +27,12 @@ class SystemActivityLogSerializer(serializers.ModelSerializer):
 
 
 class AIChatLogSerializer(serializers.ModelSerializer):
-    lesson_title = serializers.ReadOnlyField(source="lesson.title")
+    course_title = serializers.ReadOnlyField(source="course.title")
 
     class Meta:
         model = AIChatLog
         fields = [
-            "id", "user", "lesson", "lesson_title",
+            "id", "user", "course", "course_title", "session_number",
             "user_audio_url", "transcript_text", "ai_response_text", "created_at",
             "session_id", "session_context", "predicted_intent", "confidence",
             "intent_probabilities", "feedback", "feedback_at", "used_for_retraining",
@@ -54,13 +52,13 @@ class AIChatLogFeedbackSerializer(serializers.ModelSerializer):
 
 
 class IntentFeedbackBufferSerializer(serializers.ModelSerializer):
-    lesson_title = serializers.ReadOnlyField(source="chat_log.lesson.title")
+    course_title = serializers.ReadOnlyField(source="chat_log.course.title")
     username = serializers.ReadOnlyField(source="chat_log.user.username")
 
     class Meta:
         model = IntentFeedbackBuffer
         fields = [
-            "id", "chat_log", "username", "lesson_title",
+            "id", "chat_log", "username", "course_title",
             "student_input", "session_context", "predicted_intent",
             "confidence", "feedback", "corrected_intent", "status",
             "created_at", "used_at",
@@ -81,12 +79,11 @@ class IntentRetrainingCounterSerializer(serializers.ModelSerializer):
 
 
 class BookmarkSerializer(serializers.ModelSerializer):
-    lesson_title = serializers.ReadOnlyField(source="lesson.title")
-    course_id = serializers.ReadOnlyField(source="lesson.module.course.id")
+    course_title = serializers.ReadOnlyField(source="course.title")
 
     class Meta:
         model = Bookmark
-        fields = ["id", "user", "lesson", "lesson_title", "course_id", "slide_index", "created_at"]
+        fields = ["id", "user", "course", "course_title", "session_number", "slide_index", "created_at"]
         read_only_fields = ["id", "user", "created_at"]
 
 

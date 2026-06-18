@@ -30,7 +30,7 @@ import {
   getCourse, draftCourseDescription, getPathwayVersions, regeneratePathway,
   type Course, type PathwayVersion,
 } from '../../services/courses';
-import { getConcepts, type Concept } from '../../services/concepts';
+import { getConcepts, createConcept, type Concept } from '../../services/concepts';
 import {
   getCourseCorpus, uploadBook, addCorpusSource,
   removeCorpusSource, getIndexStatus, type CourseCorpus, type CorpusSource,
@@ -59,16 +59,121 @@ interface ModuleState {
 
 const CLO_EMPTY_ROW: CLODraft = { code: '', text: '', bloom_level: 'understand', concept_ids: [], order: 0 };
 
-const CLO_COLUMNS: Column<CLODraft>[] = [
-  { key: 'code', header: 'Code', editable: true, width: 'w-20' },
-  { key: 'text', header: 'Outcome Statement', editable: true },
-  { key: 'bloom_level', header: "Bloom's Level", editable: true, width: 'w-32' },
-];
+const BLOOM_LEVELS = ['remember', 'understand', 'apply', 'analyze', 'evaluate', 'create'];
 
 const SENTIMENT_BADGE: Record<string, string> = {
   positive: 'admin-badge-green',
   mixed: 'admin-badge-amber',
   negative: 'admin-badge',
+};
+
+const ConceptMultiSelect = ({
+  selectedIds,
+  onChange,
+  courseId,
+  concepts,
+  setConcepts,
+  open,
+  setOpen,
+}: {
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+  courseId: number;
+  concepts: Concept[];
+  setConcepts: React.Dispatch<React.SetStateAction<Concept[]>>;
+  open: boolean;
+  setOpen: (val: boolean) => void;
+}) => {
+  const [creating, setCreating] = useState(false);
+
+  const toggle = (idStr: string) => {
+    if (selectedIds.includes(idStr)) {
+      onChange(selectedIds.filter(x => x !== idStr));
+    } else {
+      onChange([...selectedIds, idStr]);
+    }
+  };
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="admin-input w-full text-left flex items-center justify-between gap-1"
+        style={{ padding: '6px 8px', fontSize: '13px', minHeight: '34px', cursor: 'pointer' }}
+        type="button"
+      >
+        <span className="flex flex-wrap gap-1 flex-1">
+          {selectedIds.length > 0 ? selectedIds.map(cid => {
+            const concept = concepts.find(c => String(c.id) === String(cid));
+            return (
+              <span key={cid} className="admin-badge text-xs px-1.5 py-0.5" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}>
+                {concept?.label ?? `#${cid}`}
+              </span>
+            );
+          }) : (
+            <span style={{ color: 'var(--admin-ink-tertiary)' }}>Select concepts…</span>
+          )}
+        </span>
+        <ChevronDown size={14} style={{ color: 'var(--admin-ink-tertiary)', flexShrink: 0 }} />
+      </button>
+      {open && (
+        <div
+          className="absolute z-50 mt-1 w-full rounded-lg border bg-white shadow-lg flex flex-col"
+          style={{ borderColor: 'var(--admin-hairline)' }}
+        >
+          <div className="flex-1 overflow-y-auto max-h-48">
+            {concepts.length === 0 ? (
+              <div className="px-3 py-2 text-xs" style={{ color: 'var(--admin-ink-tertiary)' }}>No concepts available</div>
+            ) : concepts.map(c => {
+              const idStr = String(c.id);
+              const checked = selectedIds.includes(idStr);
+              return (
+                <label
+                  key={c.id}
+                  className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm"
+                  style={{ color: 'var(--admin-ink)' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggle(idStr)}
+                    className="rounded"
+                  />
+                  {c.label}
+                </label>
+              );
+            })}
+          </div>
+          <div className="p-2 border-t" style={{ borderColor: 'var(--admin-hairline)' }}>
+            <input
+              type="text"
+              placeholder="Type & press Enter to create..."
+              className="admin-input w-full text-xs"
+              style={{ padding: '4px 8px' }}
+              disabled={creating}
+              onKeyDown={async (e) => {
+                if (e.key === 'Enter' && e.currentTarget.value.trim()) {
+                  e.preventDefault();
+                  const val = e.currentTarget.value.trim();
+                  setCreating(true);
+                  try {
+                    const newConcept = await createConcept(courseId, val);
+                    setConcepts(prev => [...prev, newConcept]);
+                    onChange([...selectedIds, String(newConcept.id)]);
+                    e.currentTarget.value = '';
+                  } catch (err) {
+                    toast.error("Failed to create concept");
+                  } finally {
+                    setCreating(false);
+                  }
+                }
+              }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
 export default function AdminCourseEditor() {
@@ -106,6 +211,7 @@ export default function AdminCourseEditor() {
   const [cloDrafts, setCloDrafts] = useState<CLODraft[]>([]);
   const [editingCLOId, setEditingCLOId] = useState<number | null>(null);
   const [cloEditForm, setCloEditForm] = useState<Partial<CLO>>({});
+  const [cloEditDropdownOpen, setCloEditDropdownOpen] = useState(false);
   const [addingClo, setAddingClo] = useState(false);
   const [newCloForm, setNewCloForm] = useState<Omit<CLO, 'id'>>({
     code: '',
@@ -114,6 +220,7 @@ export default function AdminCourseEditor() {
     concepts: [],
     order: 1,
   });
+  const [newCloDropdownOpen, setNewCloDropdownOpen] = useState(false);
   const [savingNewClo, setSavingNewClo] = useState(false);
   const newCloRowRef = useRef<HTMLTableRowElement>(null);
   const indexedStemsRef = useRef<Set<string>>(new Set());
@@ -148,8 +255,8 @@ export default function AdminCourseEditor() {
   const [refreshingSummary, setRefreshingSummary] = useState(false);
 
   useEffect(() => {
-    Promise.all([getAdminCourses(), getModulesByCourse(id), getCourse(id)])
-      .then(([courses, mods, detail]) => {
+    Promise.all([getAdminCourses(), getCourse(id)])
+      .then(([courses, detail]) => {
         setCourse(courses.find((c) => c.id === id) ?? null);
         setCourseDetail(detail);
         setCourseForm({
@@ -162,20 +269,6 @@ export default function AdminCourseEditor() {
           syllabus: detail.syllabus,
           is_published: detail.is_published,
         });
-        setModules(
-          mods.map((m) => ({
-            data: m,
-            expanded: false,
-            editing: false,
-            editTitle: m.title,
-            editOrder: String(m.module_order),
-            lessons: [],
-            lessonsLoaded: false,
-            addingLesson: false,
-            newLessonTitle: '',
-            newLessonOrder: '',
-          })),
-        );
       })
       .catch(() => toast.error('Failed to load course content'))
       .finally(() => setLoading(false));
@@ -512,6 +605,12 @@ export default function AdminCourseEditor() {
     try {
       const result = await suggestCLOs(id);
       setCloDrafts(result.drafts);
+      try {
+        const updatedConcepts = await getConcepts(id);
+        setConcepts(updatedConcepts);
+      } catch (err) {
+        console.error("Failed to refetch concepts after suggestion", err);
+      }
       setCloTab('draft');
     } catch {
       toast.error('CLO suggestion failed. Check AI service connection.');
@@ -520,9 +619,14 @@ export default function AdminCourseEditor() {
     }
   };
 
-  const handleSaveCLOs = async (drafts: CLODraft[]) => {
+  const handleSaveCLODrafts = async () => {
+    const toSave = cloDrafts.filter((_, i) => cloDraftStatuses[i] === 'approved' || cloDraftStatuses[i] === 'edited');
+    if (toSave.length === 0) {
+      toast.error('Approve or edit at least one CLO before saving.');
+      return;
+    }
     let saved = 0;
-    for (const draft of drafts) {
+    for (const draft of toSave) {
       try {
         const created = await createCLO(id, {
           code: draft.code,
@@ -540,7 +644,62 @@ export default function AdminCourseEditor() {
     if (saved > 0) {
       toast.success(`${saved} CLO${saved > 1 ? 's' : ''} saved`);
       setCloTab('list');
+      setCloDraftStatuses([]);
     }
+  };
+
+  const [cloDraftStatuses, setCloDraftStatuses] = useState<('pending' | 'approved' | 'edited')[]>([]);
+  const [cloDraftEditingIdx, setCloDraftEditingIdx] = useState<number | null>(null);
+  const [cloDraftConceptDropdown, setCloDraftConceptDropdown] = useState<number | null>(null);
+
+  // Initialize statuses whenever drafts change
+  useEffect(() => {
+    setCloDraftStatuses(cloDrafts.map(() => 'pending'));
+    setCloDraftEditingIdx(null);
+    setCloDraftConceptDropdown(null);
+  }, [cloDrafts.length]);
+
+  const updateDraftField = (idx: number, field: keyof CLODraft, value: unknown) => {
+    setCloDrafts(prev => prev.map((d, i) => i === idx ? { ...d, [field]: value } : d));
+  };
+
+  const toggleDraftConcept = (idx: number, conceptId: string) => {
+    setCloDrafts(prev => prev.map((d, i) => {
+      if (i !== idx) return d;
+      const ids = d.concept_ids.includes(conceptId)
+        ? d.concept_ids.filter(c => c !== conceptId)
+        : [...d.concept_ids, conceptId];
+      return { ...d, concept_ids: ids };
+    }));
+    setCloDraftStatuses(prev => prev.map((s, i) => i === idx ? 'edited' : s));
+  };
+
+  const approveDraft = (idx: number) => {
+    setCloDraftStatuses(prev => prev.map((s, i) => i === idx ? 'approved' : s));
+  };
+
+  const removeDraft = (idx: number) => {
+    setCloDrafts(prev => prev.filter((_, i) => i !== idx));
+    setCloDraftStatuses(prev => prev.filter((_, i) => i !== idx));
+    if (cloDraftEditingIdx === idx) setCloDraftEditingIdx(null);
+    if (cloDraftConceptDropdown === idx) setCloDraftConceptDropdown(null);
+  };
+
+  const startDraftEdit = (idx: number) => {
+    setCloDraftEditingIdx(idx);
+  };
+
+  const commitDraftEdit = (idx: number) => {
+    setCloDraftStatuses(prev => prev.map((s, i) => i === idx ? 'edited' : s));
+    setCloDraftEditingIdx(null);
+  };
+
+  const addEmptyDraft = () => {
+    const nextOrder = cloDrafts.length > 0 ? Math.max(...cloDrafts.map(d => d.order)) + 1 : 1;
+    const newDraft: CLODraft = { code: `CLO${cloDrafts.length + 1}`, text: '', bloom_level: 'understand', concept_ids: [], order: nextOrder };
+    setCloDrafts(prev => [...prev, newDraft]);
+    setCloDraftStatuses(prev => [...prev, 'edited']);
+    setCloDraftEditingIdx(cloDrafts.length);
   };
 
   const handleDeleteCLO = async (cloId: number) => {
@@ -1278,155 +1437,7 @@ export default function AdminCourseEditor() {
         </div>
       </section>
 
-      {/* ── Modules ── */}
-      <section className="space-y-3">
-        {modules.map((mod, modIdx) => (
-          <div key={mod.data.id} className="admin-card overflow-hidden">
-            {/* Module header */}
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--admin-hairline-light)]">
-              <button onClick={() => toggleModule(modIdx)} className="text-[var(--admin-ink-secondary)] hover:text-[var(--admin-ink)] transition-colors">
-                {mod.expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-              </button>
-              {mod.editing ? (
-                <div className="flex-1 flex items-center gap-2">
-                  <input
-                    className="admin-input flex-1"
-                    style={{ paddingTop: 8, paddingBottom: 8 }}
-                    value={mod.editTitle}
-                    onChange={(e) => updateModuleField(modIdx, 'editTitle', e.target.value)}
-                    placeholder="Module title"
-                  />
-                  <input
-                    className="admin-input"
-                    style={{ width: 64, paddingTop: 8, paddingBottom: 8 }}
-                    value={mod.editOrder}
-                    onChange={(e) => updateModuleField(modIdx, 'editOrder', e.target.value)}
-                    placeholder="#"
-                    type="number"
-                  />
-                  <button onClick={() => handleSaveModule(modIdx)} className="admin-btn admin-btn-icon" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}><Check size={14} /></button>
-                  <button onClick={() => updateModuleField(modIdx, 'editing', false)} className="admin-btn admin-btn-ghost admin-btn-icon"><X size={14} /></button>
-                </div>
-              ) : (
-                <div className="flex-1 flex items-center gap-2">
-                  <span className="font-semibold text-sm" style={{ color: 'var(--admin-ink)' }}>{mod.data.title}</span>
-                  <span className="text-xs" style={{ color: 'var(--admin-ink-secondary)' }}>#{mod.data.module_order}</span>
-                  <span className="text-xs" style={{ color: 'var(--admin-ink-secondary)' }}>· {mod.lessons.length} lessons</span>
-                </div>
-              )}
-              {!mod.editing && (
-                <div className="flex items-center gap-1">
-                  <button onClick={() => updateModuleField(modIdx, 'editing', true)} className="admin-btn admin-btn-ghost admin-btn-icon"><Edit size={13} /></button>
-                  <button onClick={() => handleDeleteModule(modIdx)} className="admin-btn admin-btn-ghost-danger admin-btn-icon"><Trash2 size={13} /></button>
-                </div>
-              )}
-            </div>
 
-            {/* Lessons */}
-            {mod.expanded && (
-              <div>
-                {mod.lessons.map((lesson, lessonIdx) => (
-                  <div key={lesson.data.id} className="flex items-center gap-3 px-6 py-2.5 border-b border-[var(--admin-hairline-light)] last:border-b-0">
-                    {lesson.editing ? (
-                      <div className="flex-1 flex items-center gap-2">
-                        <input
-                          className="admin-input flex-1"
-                          style={{ paddingTop: 6, paddingBottom: 6 }}
-                          value={lesson.editTitle}
-                          onChange={(e) => updateLessonField(modIdx, lessonIdx, 'editTitle', e.target.value)}
-                          placeholder="Lesson title"
-                        />
-                        <input
-                          className="admin-input"
-                          style={{ width: 56, paddingTop: 6, paddingBottom: 6 }}
-                          value={lesson.editOrder}
-                          onChange={(e) => updateLessonField(modIdx, lessonIdx, 'editOrder', e.target.value)}
-                          placeholder="#"
-                          type="number"
-                        />
-                        <button onClick={() => handleSaveLesson(modIdx, lessonIdx)} className="admin-btn admin-btn-icon" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}><Check size={13} /></button>
-                        <button onClick={() => updateLessonField(modIdx, lessonIdx, 'editing', false)} className="admin-btn admin-btn-ghost admin-btn-icon"><X size={13} /></button>
-                      </div>
-                    ) : (
-                      <>
-                        <span className="text-xs" style={{ color: 'var(--admin-ink-secondary)', width: 20 }}>{lesson.data.lesson_order}.</span>
-                        <span className="flex-1 text-sm" style={{ color: 'var(--admin-ink)' }}>{lesson.data.title}</span>
-                        <button onClick={() => updateLessonField(modIdx, lessonIdx, 'editing', true)} className="admin-btn admin-btn-ghost admin-btn-icon"><Edit size={12} /></button>
-                        <button onClick={() => handleDeleteLesson(modIdx, lessonIdx)} className="admin-btn admin-btn-ghost-danger admin-btn-icon"><Trash2 size={12} /></button>
-                      </>
-                    )}
-                  </div>
-                ))}
-
-                {/* Add lesson form */}
-                {mod.addingLesson ? (
-                  <div className="flex items-center gap-2 px-6 py-2.5">
-                    <input
-                      autoFocus
-                      className="admin-input flex-1"
-                      style={{ paddingTop: 6, paddingBottom: 6 }}
-                      value={mod.newLessonTitle}
-                      onChange={(e) => updateModuleField(modIdx, 'newLessonTitle', e.target.value)}
-                      placeholder="New lesson title"
-                      onKeyDown={(e) => e.key === 'Enter' && handleAddLesson(modIdx)}
-                    />
-                    <input
-                      className="admin-input"
-                      style={{ width: 56, paddingTop: 6, paddingBottom: 6 }}
-                      value={mod.newLessonOrder}
-                      onChange={(e) => updateModuleField(modIdx, 'newLessonOrder', e.target.value)}
-                      placeholder="#"
-                      type="number"
-                    />
-                    <button onClick={() => handleAddLesson(modIdx)} className="admin-btn admin-btn-icon" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}><Check size={14} /></button>
-                    <button onClick={() => updateModuleField(modIdx, 'addingLesson', false)} className="admin-btn admin-btn-ghost admin-btn-icon"><X size={14} /></button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => updateModuleField(modIdx, 'addingLesson', true)}
-                    className="w-full flex items-center gap-2 px-6 py-2.5 text-sm transition-colors hover:bg-[var(--admin-paper-muted)]"
-                    style={{ color: 'var(--admin-ink-secondary)' }}
-                  >
-                    <Plus size={13} /> Add Lesson
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-
-        {/* Add module */}
-        {addingModule ? (
-          <div className="admin-card p-4 flex items-center gap-2">
-            <input
-              autoFocus
-              className="admin-input flex-1"
-              value={newModuleTitle}
-              onChange={(e) => setNewModuleTitle(e.target.value)}
-              placeholder="New module title"
-              onKeyDown={(e) => e.key === 'Enter' && handleAddModule()}
-            />
-            <input
-              className="admin-input"
-              style={{ width: 64 }}
-              value={newModuleOrder}
-              onChange={(e) => setNewModuleOrder(e.target.value)}
-              placeholder="#"
-              type="number"
-            />
-            <button onClick={handleAddModule} className="admin-btn admin-btn-icon" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}><Check size={15} /></button>
-            <button onClick={() => setAddingModule(false)} className="admin-btn admin-btn-ghost admin-btn-icon"><X size={15} /></button>
-          </div>
-        ) : (
-          <button
-            onClick={() => setAddingModule(true)}
-            className="w-full flex items-center justify-center gap-2 py-3 admin-card border-dashed border-2 transition-colors hover:bg-[var(--admin-paper-muted)]"
-            style={{ color: 'var(--admin-ink-secondary)', borderColor: 'var(--admin-hairline)' }}
-          >
-            <Plus size={15} /> Add Module
-          </button>
-        )}
-      </section>
 
       {/* ── Course Learning Outcomes ── */}
       <section>
@@ -1490,7 +1501,7 @@ export default function AdminCourseEditor() {
                   {clos.map((clo) => {
                     const isEditing = editingCLOId === clo.id;
                     return (
-                      <tr key={clo.id}>
+                      <tr key={clo.id} className="relative" style={{ zIndex: isEditing && cloEditDropdownOpen ? 50 : 1 }}>
                         {isEditing ? (
                           <>
                             <td>
@@ -1522,20 +1533,15 @@ export default function AdminCourseEditor() {
                               </select>
                             </td>
                             <td>
-                              <select
-                                multiple
-                                className="admin-input w-full"
-                                style={{ padding: '6px 8px', minHeight: 80 }}
-                                value={cloEditForm.concepts?.map(String) ?? []}
-                                onChange={(e) => {
-                                  const selected = Array.from(e.target.selectedOptions).map((o) => Number(o.value));
-                                  setCloEditForm((prev) => ({ ...prev, concepts: selected }));
-                                }}
-                              >
-                                {concepts.map((c) => (
-                                  <option key={c.id} value={c.id}>{c.label}</option>
-                                ))}
-                              </select>
+                              <ConceptMultiSelect
+                                selectedIds={(cloEditForm.concepts ?? []).map(String)}
+                                onChange={(ids) => setCloEditForm(prev => ({ ...prev, concepts: ids.map(Number) }))}
+                                courseId={id}
+                                concepts={concepts}
+                                setConcepts={setConcepts}
+                                open={cloEditDropdownOpen}
+                                setOpen={setCloEditDropdownOpen}
+                              />
                             </td>
                             <td>
                               <input
@@ -1588,7 +1594,7 @@ export default function AdminCourseEditor() {
                     );
                   })}
                   {addingClo && (
-                    <tr ref={newCloRowRef}>
+                    <tr ref={newCloRowRef} className="relative" style={{ zIndex: newCloDropdownOpen ? 50 : 1 }}>
                       <td>
                         <input
                           autoFocus
@@ -1621,12 +1627,14 @@ export default function AdminCourseEditor() {
                         </select>
                       </td>
                       <td>
-                        <input
-                          className="admin-input w-full"
-                          style={{ padding: '6px 8px' }}
-                          value={newCloForm.concepts.join(', ')}
-                          onChange={(e) => setNewCloForm((prev) => ({ ...prev, concepts: parseConceptInput(e.target.value) }))}
-                          placeholder="—"
+                        <ConceptMultiSelect
+                          selectedIds={newCloForm.concepts.map(String)}
+                          onChange={(ids) => setNewCloForm(prev => ({ ...prev, concepts: ids.map(Number) }))}
+                          courseId={id}
+                          concepts={concepts}
+                          setConcepts={setConcepts}
+                          open={newCloDropdownOpen}
+                          setOpen={setNewCloDropdownOpen}
                         />
                       </td>
                       <td>
@@ -1666,15 +1674,175 @@ export default function AdminCourseEditor() {
         ) : (
           <div className="admin-card p-4">
             <p className="text-sm mb-4" style={{ color: 'var(--admin-ink-secondary)' }}>
-              Review AI-generated CLO drafts. Approve or edit each row, then click "Save Approved".
+              Review AI-generated CLO drafts. Approve or edit each row, then click &ldquo;Save Approved&rdquo;.
+              Click concepts to assign/remove them for each CLO.
             </p>
-            <AIDraftReviewTable<CLODraft>
-              columns={CLO_COLUMNS}
-              initialRows={cloDrafts}
-              onSave={handleSaveCLOs}
-              onCancel={() => setCloTab('list')}
-              emptyRow={CLO_EMPTY_ROW}
-            />
+            <div className="overflow-x-auto">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th className="w-20">Code</th>
+                    <th>Outcome Statement</th>
+                    <th className="w-32">Bloom&rsquo;s Level</th>
+                    <th className="w-48">Concepts</th>
+                    <th style={{ width: '5rem' }}>Status</th>
+                    <th style={{ width: '7rem' }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {cloDrafts.map((draft, idx) => {
+                    const isEditing = cloDraftEditingIdx === idx;
+                    const status = cloDraftStatuses[idx] ?? 'pending';
+                    const statusBadge = status === 'approved'
+                      ? 'admin-badge admin-badge-green'
+                      : status === 'edited'
+                        ? 'admin-badge admin-badge-blue'
+                        : 'admin-badge admin-badge-amber';
+                    return (
+                      <tr key={idx} className="relative" style={{ zIndex: cloDraftConceptDropdown === idx ? 50 : 1 }}>
+                        {/* Code */}
+                        <td>
+                          {isEditing ? (
+                            <input
+                              className="admin-input w-full"
+                              style={{ padding: '6px 8px', fontSize: '14px' }}
+                              value={draft.code}
+                              onChange={(e) => updateDraftField(idx, 'code', e.target.value)}
+                            />
+                          ) : (
+                            <span className="font-mono text-xs" style={{ color: 'var(--admin-accent)' }}>{draft.code}</span>
+                          )}
+                        </td>
+                        {/* Outcome Statement */}
+                        <td>
+                          {isEditing ? (
+                            <input
+                              className="admin-input w-full"
+                              style={{ padding: '6px 8px', fontSize: '14px' }}
+                              value={draft.text}
+                              onChange={(e) => updateDraftField(idx, 'text', e.target.value)}
+                            />
+                          ) : (
+                            <span style={{ color: 'var(--admin-ink)' }}>{draft.text}</span>
+                          )}
+                        </td>
+                        {/* Bloom's Level */}
+                        <td>
+                          {isEditing ? (
+                            <select
+                              className="admin-input admin-select w-full"
+                              style={{ padding: '6px 8px' }}
+                              value={draft.bloom_level}
+                              onChange={(e) => updateDraftField(idx, 'bloom_level', e.target.value)}
+                            >
+                              {BLOOM_LEVELS.map((b) => (
+                                <option key={b} value={b}>{b}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className="admin-badge" style={{ background: 'var(--admin-paper-muted)', color: 'var(--admin-ink-secondary)' }}>
+                              {draft.bloom_level}
+                            </span>
+                          )}
+                        </td>
+                        {/* Concepts — multi-select dropdown */}
+                        <td>
+                          <ConceptMultiSelect
+                            selectedIds={draft.concept_ids}
+                            onChange={(ids) => updateDraftField(idx, 'concept_ids', ids)}
+                            courseId={id}
+                            concepts={concepts}
+                            setConcepts={setConcepts}
+                            open={cloDraftConceptDropdown === idx}
+                            setOpen={(isOpen) => setCloDraftConceptDropdown(isOpen ? idx : null)}
+                          />
+                        </td>
+                        {/* Status */}
+                        <td>
+                          <span className={statusBadge} style={{ padding: '4px 8px', fontSize: '11px' }}>
+                            {status}
+                          </span>
+                        </td>
+                        {/* Actions */}
+                        <td>
+                          <div className="flex items-center gap-1 justify-end">
+                            {isEditing ? (
+                              <>
+                                <button
+                                  onClick={() => commitDraftEdit(idx)}
+                                  className="admin-btn admin-btn-icon"
+                                  style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}
+                                  title="Save edit"
+                                >
+                                  <Check size={13} />
+                                </button>
+                                <button
+                                  onClick={() => setCloDraftEditingIdx(null)}
+                                  className="admin-btn admin-btn-ghost admin-btn-icon"
+                                  title="Cancel"
+                                >
+                                  <X size={13} />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                {status !== 'approved' && (
+                                  <button
+                                    onClick={() => approveDraft(idx)}
+                                    className="admin-btn admin-btn-icon"
+                                    style={{ background: 'var(--admin-success-subtle, #dcfce7)', color: 'var(--admin-success)' }}
+                                    title="Approve"
+                                  >
+                                    <Check size={13} />
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => startDraftEdit(idx)}
+                                  className="admin-btn admin-btn-ghost admin-btn-icon"
+                                  title="Edit"
+                                >
+                                  <Edit size={13} />
+                                </button>
+                                <button
+                                  onClick={() => removeDraft(idx)}
+                                  className="admin-btn admin-btn-ghost-danger admin-btn-icon"
+                                  title="Delete"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {cloDrafts.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="text-center" style={{ color: 'var(--admin-ink-secondary)', padding: '32px' }}>
+                        No drafts. Add a row manually or generate new ones.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between mt-4">
+              <button onClick={addEmptyDraft} className="admin-btn admin-btn-ghost admin-btn-sm">
+                <Plus size={14} /> Add Row
+              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setCloTab('list')} className="admin-btn admin-btn-ghost admin-btn-sm">
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveCLODrafts}
+                  className="admin-btn admin-btn-primary admin-btn-sm disabled:opacity-60"
+                >
+                  <Check size={14} /> Save Approved
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </section>

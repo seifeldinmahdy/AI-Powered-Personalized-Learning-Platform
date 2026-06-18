@@ -51,7 +51,6 @@ class Course(models.Model):
     tags = models.JSONField(default=list, blank=True)
     is_published = models.BooleanField(default=False)
     price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    total_lessons_count = models.IntegerField(default=0)
     avg_rating = models.DecimalField(max_digits=3, decimal_places=2, default=0.00)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -64,102 +63,6 @@ class Course(models.Model):
 
     def __str__(self):
         return self.title
-
-
-# ------------------------------------------------------------------
-# Module — ordered grouping of lessons within a course
-# ------------------------------------------------------------------
-class Module(models.Model):
-    course = models.ForeignKey(
-        Course,
-        on_delete=models.CASCADE,
-        related_name="modules",
-    )
-    title = models.CharField(max_length=200)
-    module_order = models.IntegerField()
-
-    class Meta:
-        db_table = "modules"
-        ordering = ["module_order"]
-        verbose_name = "Module"
-        verbose_name_plural = "Modules"
-
-    def __str__(self):
-        return f"{self.course.title} → {self.title}"
-
-
-# ------------------------------------------------------------------
-# Lesson — individual learning unit within a module
-# ------------------------------------------------------------------
-class Lesson(models.Model):
-    module = models.ForeignKey(
-        Module,
-        on_delete=models.CASCADE,
-        related_name="lessons",
-    )
-    title = models.CharField(max_length=200)
-    lesson_order = models.IntegerField()
-
-    class Meta:
-        db_table = "lessons"
-        ordering = ["lesson_order"]
-        verbose_name = "Lesson"
-        verbose_name_plural = "Lessons"
-
-    def __str__(self):
-        return f"{self.module.title} → {self.title}"
-
-
-# ------------------------------------------------------------------
-# Slide — slide-based content within a lesson (JSONB)
-# ------------------------------------------------------------------
-class Slide(models.Model):
-    lesson = models.ForeignKey(
-        Lesson,
-        on_delete=models.CASCADE,
-        related_name="slides",
-    )
-    content_json = models.JSONField(
-        help_text="Slide content stored as structured JSON."
-    )
-    slide_order = models.IntegerField()
-
-    class Meta:
-        db_table = "slides"
-        ordering = ["slide_order"]
-        verbose_name = "Slide"
-        verbose_name_plural = "Slides"
-
-    def __str__(self):
-        return f"Slide {self.slide_order} of {self.lesson.title}"
-
-
-# ------------------------------------------------------------------
-# Code Challenge — coding exercise attached to a lesson
-# ------------------------------------------------------------------
-class CodeChallenge(models.Model):
-    lesson = models.ForeignKey(
-        Lesson,
-        on_delete=models.CASCADE,
-        related_name="code_challenges",
-    )
-    problem_text = models.TextField()
-    starter_code = models.TextField(blank=True, default="")
-    solution_code = models.TextField()
-    test_cases_json = models.JSONField(
-        blank=True,
-        null=True,
-        help_text="Structured test cases as JSON."
-    )
-    hint_text = models.TextField(blank=True, default="")
-
-    class Meta:
-        db_table = "code_challenges"
-        verbose_name = "Code Challenge"
-        verbose_name_plural = "Code Challenges"
-
-    def __str__(self):
-        return f"Challenge for {self.lesson.title}"
 
 
 # ------------------------------------------------------------------
@@ -183,12 +86,9 @@ class Enrollment(models.Model):
         on_delete=models.CASCADE,
         related_name="enrollments",
     )
-    current_lesson = models.ForeignKey(
-        Lesson,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="current_enrollments",
+    current_session_number = models.IntegerField(
+        default=1,
+        help_text="The current active session in the student's pathway.",
     )
     enrolled_at = models.DateTimeField(auto_now_add=True)
     placement_score = models.FloatField(
@@ -255,7 +155,6 @@ class Concept(models.Model):
     parent = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="children"
     )
-    lessons = models.ManyToManyField(Lesson, blank=True, related_name="concepts")
     order = models.PositiveIntegerField(default=0)
 
     class Meta:

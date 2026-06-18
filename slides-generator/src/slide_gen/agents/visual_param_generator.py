@@ -361,7 +361,7 @@ def _llm_validate_template(
     Returns:
         Corrected template ID string, or None if the LLM call fails
     """
-    host = (ollama_host or os.getenv("OLLAMA_HOST", "http://localhost:11434")).rstrip("/")
+    host = (ollama_host or os.getenv("OLLAMA_HOST")).rstrip("/")
     model = ollama_model or os.getenv("OLLAMA_MODEL", "llama3")
     key = api_key or os.getenv("OLLAMA_API_KEY")
 
@@ -581,7 +581,7 @@ def _llm_enrich_template(
     if template_id not in ("concept_box", "comparison"):
         return template_id, None
 
-    host = (ollama_host or os.getenv("OLLAMA_HOST", "http://localhost:11434")).rstrip("/")
+    host = (ollama_host or os.getenv("OLLAMA_HOST")).rstrip("/")
     model = ollama_model or os.getenv("OLLAMA_MODEL", "llama3")
     key = api_key or os.getenv("OLLAMA_API_KEY")
 
@@ -663,7 +663,7 @@ def generate_visual_params(
         - dict for all other templates
         - None if generation fails irrecoverably
     """
-    host = ollama_host or os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    host = ollama_host or os.getenv("OLLAMA_HOST")
     model = ollama_model or os.getenv("OLLAMA_MODEL", "llama3")
     key = api_key or os.getenv("OLLAMA_API_KEY")
 

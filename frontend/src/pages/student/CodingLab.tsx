@@ -1248,6 +1248,7 @@ interface LocationState {
   nextLessonId?: number | string | null;
   courseId?: string;
   lessonTitle?: string;
+  sessionTitle?: string;
   sessionId?: string;
   studentProfileSummary?: string;
   slides?: LabSlideContext[];
@@ -1304,13 +1305,13 @@ function isTask(cell: LabCell): boolean {
 }
 
 export default function CodingLab() {
-  const { courseId, lessonId } = useParams<{ courseId: string; lessonId: string }>();
+  const { courseId, sessionNumber } = useParams<{ courseId: string; sessionNumber: string }>();
   const location = useLocation();
   const navigate = useNavigate();
   const state = (location.state as LocationState) ?? {};
 
   const resolvedCourseId = courseId ?? state.courseId ?? '';
-  const resolvedLessonId = lessonId ?? '';
+  const resolvedSessionId = sessionNumber ?? '';
   const [labResponse, setLabResponse] = useState<CodingLabGenerateResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingStep, setLoadingStep] = useState(0);
@@ -1429,23 +1430,12 @@ export default function CodingLab() {
   }, []);
 
   async function buildFallbackSlides(): Promise<{ lessonTitle: string; slides: LabSlideContext[] }> {
-    if (!resolvedLessonId) {
-      return { lessonTitle: state.lessonTitle || 'Session', slides: state.slides || [] };
-    }
-    const lesson = await getLesson(Number(resolvedLessonId));
-    return {
-      lessonTitle: state.lessonTitle || lesson.title,
-      slides: lesson.slides.map((slide, index) => ({
-        title: contentToText(slide.content_json?.title) || `Slide ${index + 1}`,
-        content: contentToText(slide.content_json),
-        code: contentToText(slide.content_json?.code),
-      })),
-    };
+    return { lessonTitle: state.lessonTitle || state.sessionTitle || 'Session', slides: state.slides || [] };
   }
 
   async function loadLab(force = false) {
-    if (!resolvedCourseId || !resolvedLessonId) {
-      setError('Missing course or lesson information.');
+    if (!resolvedCourseId || !resolvedSessionId) {
+      setError('Missing course or session information.');
       setLoading(false);
       return;
     }
@@ -1454,14 +1444,14 @@ export default function CodingLab() {
     setError('');
     try {
       const fallback = await buildFallbackSlides();
-      const lessonTitle = state.lessonTitle || fallback.lessonTitle;
+      const lessonTitle = state.sessionTitle || state.lessonTitle || fallback.lessonTitle;
       const slides = state.slides && state.slides.length > 0 ? state.slides : fallback.slides;
       const response = await generateCodingLab({
         student_id: getStudentId(),
-        course_id: resolvedCourseId,
-        lesson_id: resolvedLessonId,
+        course_id: String(resolvedCourseId),
+        lesson_id: String(resolvedSessionId),
+        session_id: state.sessionId || resolvedSessionId,
         lesson_title: lessonTitle,
-        session_id: state.sessionId,
         student_profile_summary: state.studentProfileSummary || '',
         slides,
         force_regenerate: force,
@@ -1489,7 +1479,7 @@ export default function CodingLab() {
   useEffect(() => {
     loadLab(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedCourseId, resolvedLessonId]);
+  }, [resolvedCourseId, resolvedSessionId]);
 
   const lab = labResponse?.lab;
   const taskCells = useMemo(() => lab?.cells.filter(isTask) ?? [], [lab]);
@@ -1745,7 +1735,7 @@ export default function CodingLab() {
         labId: labResponse.lab_id,
         studentId: getStudentId(),
         courseId: resolvedCourseId,
-        lessonId: resolvedLessonId,
+        sessionNumber: resolvedSessionId,
       }).catch(() => { });
     }
 
@@ -1760,11 +1750,11 @@ export default function CodingLab() {
       task_prompt: c.task_prompt || '',
     })) || [];
 
-    navigate(`/course/${resolvedCourseId}/lesson/${resolvedLessonId}/problem-set`, {
+    navigate(`/course/${resolvedCourseId}/session/${resolvedSessionId}/problem-set`, {
       state: {
-        nextLessonId: state.nextLessonId ?? null,
+        nextSessionId: state.nextLessonId ?? null,
         courseId: resolvedCourseId,
-        lessonTitle: state.lessonTitle || lab?.title || 'this lesson',
+        sessionTitle: state.lessonTitle || lab?.title || 'this session',
         sessionId: state.sessionId,
         studentProfileSummary: state.studentProfileSummary || '',
         slides: state.slides || [],
@@ -1839,7 +1829,7 @@ export default function CodingLab() {
       />
 
       <header className="lab-header">
-        <button className="lab-icon-button" onClick={() => navigate(`/course/${resolvedCourseId}/lesson/${resolvedLessonId}`)}>
+        <button className="lab-icon-button" onClick={() => navigate(`/course/${resolvedCourseId}/session/${resolvedSessionId}`)}>
           <ArrowLeft size={18} />
         </button>
         <div>

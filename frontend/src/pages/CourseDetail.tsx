@@ -2,9 +2,7 @@ import { useParams, useNavigate, Link } from "react-router";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { getCourseById, submitCourseRating, type Course } from "../services/courses";
-import { getModules, getLessons, type Module, type Lesson } from "../services/lessons";
 import { getEnrollments, enroll } from "../services/api";
-import { getLessonCompletions } from "../services/progress";
 import { getCLOs, type CLO } from "../services/clos";
 import { DIFF_COLOR } from "../components/personifai/CourseCards";
 import { CapstoneStartCTA } from '../components/CapstoneStartCTA';
@@ -56,12 +54,8 @@ export default function CourseDetail() {
   const id = Number(courseId);
 
   const [course, setCourse] = useState<Course | null>(null);
-  const [modules, setModules] = useState<Module[]>([]);
-  const [lessonMap, setLessonMap] = useState<Record<number, Lesson[]>>({});
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [enrollment, setEnrollment] = useState<EnrollmentInfo | null>(null);
   const [clos, setClos] = useState<CLO[]>([]);
-  const [completedIds, setCompletedIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
   const [enrolling, setEnrolling] = useState(false);
   const [error, setError] = useState("");
@@ -71,15 +65,12 @@ export default function CourseDetail() {
     let cancelled = false;
     (async () => {
       try {
-        const [courseData, mods, enrollRes] = await Promise.all([
+        const [courseData, enrollRes] = await Promise.all([
           getCourseById(id),
-          getModules(id),
           getEnrollments().catch(() => ({ data: [] })),
         ]);
         if (cancelled) return;
         setCourse(courseData);
-        const sortedMods = mods.sort((a, b) => a.module_order - b.module_order);
-        setModules(sortedMods);
 
         const raw = enrollRes.data;
         const list: EnrollmentInfo[] = Array.isArray(raw) ? raw : (raw as { results?: EnrollmentInfo[] }).results ?? [];
@@ -97,20 +88,7 @@ export default function CourseDetail() {
         // Course Learning Outcomes — shown to students browsing the course.
         getCLOs(id).then((c) => { if (!cancelled) setClos(c); }).catch(() => { /* non-critical */ });
 
-        if (found) {
-          try {
-            const comps = await getLessonCompletions(found.id);
-            if (!cancelled) setCompletedIds(new Set(comps.filter((c) => c.status === "Completed").map((c) => c.lesson)));
-          } catch { /* non-critical */ }
-        }
 
-        if (sortedMods.length > 0) {
-          setExpanded(new Set([sortedMods[0].id]));
-          try {
-            const lessons = await getLessons(sortedMods[0].id);
-            if (!cancelled) setLessonMap({ [sortedMods[0].id]: lessons.sort((a, b) => a.lesson_order - b.lesson_order) });
-          } catch { /* non-critical */ }
-        }
       } catch {
         if (!cancelled) setError("Failed to load course details.");
       } finally {
@@ -120,19 +98,7 @@ export default function CourseDetail() {
     return () => { cancelled = true; };
   }, [id]);
 
-  const toggleModule = async (modId: number) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      next.has(modId) ? next.delete(modId) : next.add(modId);
-      return next;
-    });
-    if (!lessonMap[modId]) {
-      try {
-        const lessons = await getLessons(modId);
-        setLessonMap((prev) => ({ ...prev, [modId]: lessons.sort((a, b) => a.lesson_order - b.lesson_order) }));
-      } catch { /* ignore */ }
-    }
-  };
+
 
   const handleStart = async () => {
     if (!course) return;
@@ -215,8 +181,7 @@ export default function CourseDetail() {
 
           {/* Real stat row */}
           <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginTop: 24 }} className="t-mono steel">
-            <span>{course.total_lessons_count} LESSONS</span>
-            <span>{modules.length} MODULES</span>
+            <span>{course.total_lessons_count} SESSIONS</span>
             {rating > 0 ? <span style={{ color: "var(--text-primary)" }}>★ {course.avg_rating}</span> : <span>UNRATED</span>}
           </div>
 
@@ -281,64 +246,7 @@ export default function CourseDetail() {
               </section>
             )}
 
-            {/* Course content */}
-            <section>
-              <div className="t-label" style={{ color: "var(--accent-primary)", marginBottom: 18 }}>
-                COURSE CONTENT · {modules.length} MODULES · {course.total_lessons_count} LESSONS
-              </div>
 
-              {modules.length === 0 ? (
-                <div style={{ padding: "40px 24px", textAlign: "center", border: "1px solid var(--hairline)", borderRadius: 8, background: "var(--bg-surface)" }}>
-                  <span className="t-mono steel">NO MODULES AVAILABLE YET</span>
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {modules.map((mod, mi) => {
-                    const open = expanded.has(mod.id);
-                    const lessons = lessonMap[mod.id] ?? [];
-                    return (
-                      <div key={mod.id} style={{ background: "var(--bg-surface)", border: "1px solid var(--hairline)", borderRadius: 8, overflow: "hidden" }}>
-                        <button onClick={() => toggleModule(mod.id)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "18px 20px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left", color: "var(--text-primary)" }}>
-                          <span style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                            <span className="t-mono" style={{ color: "var(--steel-light)" }}>{String(mi + 1).padStart(2, "0")}</span>
-                            <span style={{ fontFamily: "var(--ff-body)", fontWeight: 600, fontSize: 15 }}>{mod.title}</span>
-                          </span>
-                          <Chevron open={open} />
-                        </button>
-                        {open && (
-                          <div style={{ borderTop: "1px solid var(--hairline)" }}>
-                            {lessons.length === 0 ? (
-                              <div style={{ padding: "14px 20px" }}><span className="t-mono steel">LOADING…</span></div>
-                            ) : (
-                              lessons.map((lesson, li) => {
-                                const done = completedIds.has(lesson.id);
-                                const current = enrollment?.current_lesson === lesson.id;
-                                return (
-                                  <div key={lesson.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 20px", borderBottom: li < lessons.length - 1 ? "1px solid var(--hairline)" : "none", borderLeft: current ? "2px solid var(--accent-primary)" : "2px solid transparent", background: current ? "rgba(37,99,235,0.04)" : "transparent" }}>
-                                    <span style={{ width: 18, flexShrink: 0, display: "inline-flex", justifyContent: "center" }}>
-                                      {done ? (
-                                        <span style={{ width: 16, height: 16, background: "var(--accent-success)", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700 }}>✓</span>
-                                      ) : current ? (
-                                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent-primary)" }} />
-                                      ) : (
-                                        <span className="t-mono steel">{String(li + 1).padStart(2, "0")}</span>
-                                      )}
-                                    </span>
-                                    <span className="t-body" style={{ fontSize: 14, flex: 1, color: done || current ? "var(--text-primary)" : "var(--text-secondary)", fontWeight: current ? 600 : 400 }}>{lesson.title}</span>
-                                    {current && <span className="t-mono" style={{ color: "var(--accent-primary)" }}>CURRENT</span>}
-                                    {done && !current && <span className="t-mono" style={{ color: "var(--accent-success)" }}>DONE</span>}
-                                  </div>
-                                );
-                              })
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
           </div>
 
           {/* Aside CTA */}
@@ -409,7 +317,6 @@ function CtaPanel({
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingTop: 4, borderTop: "1px solid var(--hairline)" }}>
         {[
-          ["LESSONS", `${course.total_lessons_count}`],
           ["LEVEL", course.difficulty || "—"],
           ...(parseFloat(course.avg_rating) > 0 ? [["RATING", `★ ${course.avg_rating}`]] : []),
         ].map(([k, v]) => (

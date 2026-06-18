@@ -11,7 +11,7 @@ from rest_framework.response import Response
 from .throttles import FeedbackThrottle, AnonFeedbackThrottle
 
 from .models import (
-    LessonCompletion, SystemActivityLog, AIChatLog,
+    SessionCompletion, SystemActivityLog, AIChatLog,
     StudentLearningProfile, Bookmark, ConceptMasteryEvent,
     IntentFeedbackBuffer, IntentRetrainingCounter,
 )
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # is on the live mastery write path with no human review, so each one is logged.
 MASTERY_TOPIC_MATCH_FLOOR = 0.55
 from .serializers import (
-    LessonCompletionSerializer,
+    SessionCompletionSerializer,
     SystemActivityLogSerializer,
     AIChatLogSerializer,
     AIChatLogFeedbackSerializer,
@@ -34,45 +34,40 @@ from .serializers import (
 )
 
 
-class LessonCompletionViewSet(viewsets.ModelViewSet):
-    """CRUD for lesson completions. Scoped to the authenticated user's enrollments."""
-    serializer_class = LessonCompletionSerializer
+class SessionCompletionViewSet(viewsets.ModelViewSet):
+    """CRUD for session completions. Scoped to the authenticated user's enrollments."""
+    serializer_class = SessionCompletionSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        qs = LessonCompletion.objects.filter(enrollment__student=self.request.user)
+        qs = SessionCompletion.objects.filter(enrollment__student=self.request.user)
         enrollment_id = self.request.query_params.get("enrollment_id")
         if enrollment_id:
             qs = qs.filter(enrollment_id=enrollment_id)
-        lesson_id = self.request.query_params.get("lesson_id")
-        if lesson_id:
-            qs = qs.filter(lesson_id=lesson_id)
+        session_number = self.request.query_params.get("session_number")
+        if session_number:
+            qs = qs.filter(session_number=session_number)
         return qs
 
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):
-        """Mark a lesson completion as Completed (idempotent).
-
-        NOTE: the live session no longer calls this. A lesson is completed
-        server-side once its problem set finishes (see complete_lesson /
-        internal_complete_lesson). This action remains for backward-compat and
-        routes through the same idempotent writer so it can never double-award.
-        """
-        from .completion_service import complete_lesson
+        """Mark a session completion as Completed (idempotent)."""
+        from .completion_service import complete_session
 
         completion = self.get_object()
-        result = complete_lesson(
+        result = complete_session(
             request.user,
-            completion.lesson,
+            completion.enrollment.course,
+            completion.session_number,
             time_spent_minutes=request.data.get("time_spent_minutes"),
             score=request.data.get("score"),
         )
         if result is None:
             return Response(
-                {"detail": "No enrollment for this lesson's course."},
+                {"detail": "No enrollment for this course."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        data = LessonCompletionSerializer(result["completion"]).data
+        data = SessionCompletionSerializer(result["completion"]).data
         data["newly_earned_achievements"] = result["newly_earned_achievements"]
         return Response(data)
 
@@ -94,25 +89,25 @@ class AIChatLogViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = AIChatLog.objects.filter(user=self.request.user).order_by("created_at")
-        lesson_id = self.request.query_params.get("lesson_id")
-        if lesson_id:
-            qs = qs.filter(lesson_id=lesson_id)
+        session_number = self.request.query_params.get("session_number")
+        if session_number:
+            qs = qs.filter(session_number=session_number)
         return qs
 
     def perform_create(self, serializer):
-        """Save chat log, ensuring the user is enrolled in the lesson's course."""
-        lesson = serializer.validated_data.get("lesson")
-        if lesson and not self._user_has_access(lesson):
+        """Save chat log, ensuring the user is enrolled in the course."""
+        course = serializer.validated_data.get("course")
+        if course and not self._user_has_access(course):
             from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("You are not enrolled in this lesson.")
+            raise PermissionDenied("You are not enrolled in this course.")
         serializer.save(user=self.request.user)
 
-    def _user_has_access(self, lesson):
-        """Check whether the authenticated user is enrolled in the lesson's course."""
+    def _user_has_access(self, course):
+        """Check whether the authenticated user is enrolled in the course."""
         Enrollment = apps.get_model("courses", "Enrollment")
         return Enrollment.objects.filter(
             student=self.request.user,
-            course=lesson.module.course,
+            course=course,
         ).exists()
 
     @action(
@@ -516,37 +511,41 @@ def profile_apply(request):
 
 @api_view(["POST"])
 @permission_classes([permissions.IsAuthenticated])
-def internal_complete_lesson(request):
-    """Server-side lesson-completion trigger (THE genuine end-of-lesson event).
+def internal_complete_session(request):
+    """Server-side session-completion trigger (THE genuine end-of-session event).
 
     Called by the AI service from the problem-set completion handler (service-key
     + X-Student-ID auth resolves the student), so completion is recorded even if
     the student's tab closes right after the final step. Idempotent: the gamified
-    transition fires exactly once per lesson.
+    transition fires exactly once per session.
 
-    Body: ``{"lesson_id": int, "time_spent_minutes"?: int, "score"?: int}``.
+    Body: ``{"course_id": int, "session_number": int, "time_spent_minutes"?: int, "score"?: int}``.
     """
-    from apps.courses.models import Lesson
-    from .completion_service import complete_lesson
+    from apps.courses.models import Course
+    from .completion_service import complete_session
 
-    lesson_id = request.data.get("lesson_id")
+    course_id = request.data.get("course_id")
+    session_number = request.data.get("session_number")
+
     try:
-        lesson = Lesson.objects.select_related("module").get(pk=int(lesson_id))
-    except (Lesson.DoesNotExist, TypeError, ValueError):
-        return Response({"detail": "lesson_id not found."}, status=status.HTTP_404_NOT_FOUND)
+        course = Course.objects.get(pk=int(course_id))
+        session_number = int(session_number)
+    except (Course.DoesNotExist, TypeError, ValueError):
+        return Response({"detail": "course_id or session_number missing/invalid."}, status=status.HTTP_404_NOT_FOUND)
 
-    result = complete_lesson(
+    result = complete_session(
         request.user,
-        lesson,
+        course,
+        session_number,
         time_spent_minutes=request.data.get("time_spent_minutes"),
         score=request.data.get("score"),
     )
     if result is None:
         return Response(
-            {"detail": "No enrollment for this lesson's course."},
+            {"detail": "No enrollment for this course."},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    data = LessonCompletionSerializer(result["completion"]).data
+    data = SessionCompletionSerializer(result["completion"]).data
     data["already_completed"] = result["already_completed"]
     data["newly_earned_achievements"] = result["newly_earned_achievements"]
     return Response(data)
@@ -665,18 +664,18 @@ def emotion_consent_withdraw(request):
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def practice_completion(request):
-    """Award bonus XP when a student passes a lesson-end practice problem.
+    """Award bonus XP when a student passes a session-end practice problem.
 
-    Body: { lesson_id: int, score: int }
+    Body: { session_number: int, score: int }
     Returns: { xp_awarded: int, new_total: int, new_level: int }
     """
     from apps.users.models import StudentProfile
 
     try:
         score = int(request.data.get('score', 0))
-        lesson_id = int(request.data.get('lesson_id', 0))
+        session_number = int(request.data.get('session_number', 0))
     except (TypeError, ValueError):
-        return Response({"error": "Invalid score or lesson_id"}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"error": "Invalid score or session_number"}, status=status.HTTP_400_BAD_REQUEST)
 
     if score < 60:
         return Response({"xp_awarded": 0, "new_total": 0, "new_level": 0})

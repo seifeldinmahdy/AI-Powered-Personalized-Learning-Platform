@@ -32,7 +32,7 @@ class MCQSettings(BaseSettings):
     )
 
     # ── Ollama ───────────────────────────────────────────────────────
-    OLLAMA_HOST: str = "https://ollama.com"
+    OLLAMA_HOST: str
     OLLAMA_API_KEY: str = ""
     OLLAMA_MODEL: str = "gpt-oss:120b"  # shared fallback
 

@@ -3,7 +3,7 @@ from django.dispatch import receiver
 from django.utils import timezone
 from datetime import date, timedelta
 
-from apps.progress.models import LessonCompletion
+from apps.progress.models import SessionCompletion
 from apps.users.models import StudentProfile
 from .models import Achievement, UserAchievement, DailyStudyStats, Notification
 
@@ -54,8 +54,8 @@ def update_streak(profile):
         profile.longest_streak = profile.current_streak
 
 
-@receiver(post_save, sender=LessonCompletion)
-def on_lesson_completion(sender, instance, **kwargs):
+@receiver(post_save, sender=SessionCompletion)
+def on_session_completion(sender, instance, **kwargs):
     if instance.status != "Completed" or not instance.completed_at:
         return
 
@@ -72,7 +72,7 @@ def on_lesson_completion(sender, instance, **kwargs):
         return
 
     # --- XP ---
-    completed_count = LessonCompletion.objects.filter(
+    completed_count = SessionCompletion.objects.filter(
         enrollment__student=user, status="Completed"
     ).count()
 
@@ -106,7 +106,7 @@ def on_lesson_completion(sender, instance, **kwargs):
 
     # Latch this completion so the awards above never fire twice. Use .update()
     # (not .save()) so we don't re-enter this post_save handler.
-    LessonCompletion.objects.filter(pk=instance.pk).update(gamification_awarded=True)
+    SessionCompletion.objects.filter(pk=instance.pk).update(gamification_awarded=True)
     instance.gamification_awarded = True
 
     # --- Achievements ---
@@ -144,28 +144,3 @@ def on_lesson_completion(sender, instance, **kwargs):
         if profile.level == threshold:
             if award_achievement(user, name):
                 newly_earned.append(name)
-
-    # Course completion bonus
-    from apps.courses.models import Enrollment
-    enrollment = instance.enrollment
-    total_lessons = enrollment.course.total_lessons_count
-    if total_lessons > 0:
-        completed_in_course = LessonCompletion.objects.filter(
-            enrollment=enrollment, status="Completed"
-        ).count()
-        if completed_in_course >= total_lessons:
-            # Award +200 XP bonus (once per course via a one-time enrollment flag check)
-            Enrollment.objects.filter(pk=enrollment.pk).update(progress_percentage=100.0)
-            profile.current_xp += XP_COURSE_COMPLETE
-            profile.level = xp_to_level(profile.current_xp)
-            profile.save()
-
-            # Count completed courses for this student
-            completed_courses = Enrollment.objects.filter(
-                student=user, progress_percentage=100.0
-            ).count()
-            course_milestones = {1: "Course Graduate", 2: "Double Major", 5: "Overachiever"}
-            for threshold, name in course_milestones.items():
-                if completed_courses == threshold:
-                    if award_achievement(user, name):
-                        newly_earned.append(name)

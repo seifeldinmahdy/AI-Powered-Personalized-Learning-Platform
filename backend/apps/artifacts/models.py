@@ -90,10 +90,7 @@ class StudentArtifact(models.Model):
         "courses.Course", on_delete=models.CASCADE, related_name="artifacts"
     )
     artifact_type = models.CharField(max_length=20, choices=ARTIFACT_TYPES)
-    session_number = models.IntegerField(null=True, blank=True)  # slides
-    lesson = models.ForeignKey(
-        "courses.Lesson", null=True, blank=True, on_delete=models.CASCADE, related_name="artifacts"
-    )
+    session_number = models.IntegerField(null=True, blank=True)
     plan_version = models.IntegerField()
     generation_index = models.IntegerField(default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="generated")
@@ -111,7 +108,7 @@ class StudentArtifact(models.Model):
         ordering = ["-updated_at"]
         constraints = [
             models.UniqueConstraint(
-                fields=["enrollment", "artifact_type", "session_number", "lesson",
+                fields=["enrollment", "artifact_type", "session_number",
                         "plan_version", "generation_index"],
                 name="uniq_student_artifact_key",
             )
@@ -122,7 +119,7 @@ class StudentArtifact(models.Model):
 
     def __str__(self):
         return (f"StudentArtifact({self.artifact_type} student={self.student_id} "
-                f"session={self.session_number} lesson={self.lesson_id} v{self.plan_version})")
+                f"session={self.session_number} v{self.plan_version})")
 
     @property
     def content_ref(self):
@@ -137,7 +134,7 @@ class StudentArtifact(models.Model):
 class ProblemSet(models.Model):
     """INDEX row for one generated problem set (a generation).
 
-    Keyed by (enrollment, lesson, plan_version, generation_index). A student
+    Keyed by (enrollment, session_number, plan_version, generation_index). A student
     regeneration creates generation_index+1 and marks the prior one superseded;
     the prior set and ALL its attempts are RETAINED (audit + mastery provenance).
     """
@@ -151,9 +148,7 @@ class ProblemSet(models.Model):
     course = models.ForeignKey(
         "courses.Course", on_delete=models.CASCADE, related_name="problem_sets"
     )
-    lesson = models.ForeignKey(
-        "courses.Lesson", on_delete=models.CASCADE, related_name="problem_sets"
-    )
+    session_number = models.IntegerField()
     plan_version = models.IntegerField()
     generation_index = models.IntegerField(default=0)
     # The AI service's problem_set_id (uuid) — submit resolves the set by this.
@@ -176,19 +171,19 @@ class ProblemSet(models.Model):
 
     class Meta:
         db_table = "artifact_problem_sets"
-        ordering = ["enrollment_id", "lesson_id", "generation_index"]
+        ordering = ["enrollment_id", "session_number", "generation_index"]
         constraints = [
             models.UniqueConstraint(
-                fields=["enrollment", "lesson", "plan_version", "generation_index"],
+                fields=["enrollment", "session_number", "plan_version", "generation_index"],
                 name="uniq_problem_set_generation",
             )
         ]
         indexes = [
-            models.Index(fields=["enrollment", "lesson", "plan_version"]),
+            models.Index(fields=["enrollment", "session_number", "plan_version"]),
         ]
 
     def __str__(self):
-        return (f"ProblemSet(student={self.student_id} lesson={self.lesson_id} "
+        return (f"ProblemSet(student={self.student_id} session={self.session_number} "
                 f"v{self.plan_version} gen{self.generation_index})")
 
     @property

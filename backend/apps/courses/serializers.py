@@ -1,17 +1,12 @@
 from rest_framework import serializers
 from .models import (
-    Course, Module, Lesson, Slide, CodeChallenge, Enrollment, CourseRating,
+    Course, Enrollment, CourseRating,
     Concept, CourseLearningOutcome, CourseCorpus, CorpusSource,
 )
 
 
 class CourseSerializer(serializers.ModelSerializer):
-    total_lessons_count = serializers.SerializerMethodField()
     corpus_id = serializers.SerializerMethodField()
-
-    def get_total_lessons_count(self, obj):
-        from .models import Lesson
-        return Lesson.objects.filter(module__course=obj).count()
 
     def get_corpus_id(self, obj):
         # Exposed read-only so clients/diagnostics can see the scope, but the AI
@@ -24,58 +19,11 @@ class CourseSerializer(serializers.ModelSerializer):
         fields = [
             "id", "title", "description",
             "difficulty", "status", "tags", "is_published", "price",
-            "total_lessons_count", "avg_rating", "created_at", "syllabus",
+            "avg_rating", "created_at", "syllabus",
             "corpus_id",
         ]
         read_only_fields = ["id", "created_at"]
 
-
-class ModuleSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Module
-        fields = ["id", "course", "title", "module_order"]
-        read_only_fields = ["id"]
-
-
-class LessonSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Lesson
-        fields = ["id", "module", "title", "lesson_order"]
-        read_only_fields = ["id"]
-
-
-class SlideSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Slide
-        fields = ["id", "lesson", "content_json", "slide_order"]
-        read_only_fields = ["id"]
-
-
-class CodeChallengeSerializer(serializers.ModelSerializer):
-    """Full serializer for admin use."""
-    class Meta:
-        model = CodeChallenge
-        fields = ["id", "lesson", "problem_text", "starter_code", "solution_code", "test_cases_json", "hint_text"]
-        read_only_fields = ["id"]
-
-
-class CodeChallengeStudentSerializer(serializers.ModelSerializer):
-    """Safe serializer for students — hides solution_code and test_cases_json."""
-    class Meta:
-        model = CodeChallenge
-        fields = ["id", "lesson", "problem_text", "starter_code", "hint_text"]
-        read_only_fields = ["id"]
-
-
-class LessonDetailSerializer(serializers.ModelSerializer):
-    """Lesson with nested slides and code challenges (read-only detail view)."""
-    slides = SlideSerializer(many=True, read_only=True)
-    code_challenges = CodeChallengeStudentSerializer(many=True, read_only=True)
-
-    class Meta:
-        model = Lesson
-        fields = ["id", "module", "title", "lesson_order", "slides", "code_challenges"]
-        read_only_fields = ["id"]
 
 
 class CourseRatingSerializer(serializers.ModelSerializer):
@@ -92,7 +40,7 @@ class EnrollmentSerializer(serializers.ModelSerializer):
         model = Enrollment
         fields = [
             "id", "student", "course", "course_title",
-            "current_lesson", "progress_percentage", "current_score",
+            "current_session_number", "progress_percentage", "current_score",
             "placement_score", "current_pathway", "is_pathway_ready",
             "is_assessment_started", "is_paid", "enrolled_at", "last_accessed",
         ]
@@ -107,8 +55,8 @@ class ConceptSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Concept
-        fields = ["id", "course", "label", "slug", "parent", "lessons", "order", "children"]
-        read_only_fields = ["id"]
+        fields = ["id", "course", "label", "slug", "parent", "order", "children"]
+        read_only_fields = ["id", "course", "slug"]
 
 
 class CorpusSourceSerializer(serializers.ModelSerializer):

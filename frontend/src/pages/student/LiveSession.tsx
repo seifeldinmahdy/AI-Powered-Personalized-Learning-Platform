@@ -9,8 +9,8 @@ import { createPortal } from 'react-dom';
 import { getLesson, getModules, getLessons, type LessonDetail, type Lesson, type Module } from '../../services/lessons';
 import { getEnrollments } from '../../services/api';
 import {
-  getLessonCompletions,
-  createLessonCompletion,
+  getSessionCompletions,
+  createSessionCompletion,
 } from '../../services/progress';
 import { Loader2, Route, CheckCircle2, PlayCircle, Lock, Circle, Camera, CameraOff, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -47,7 +47,8 @@ function generateUUID() {
 }
 
 export default function LiveSession() {
-  const { courseId, lessonId } = useParams();
+  const { courseId, sessionNumber } = useParams();
+  const lessonId = sessionNumber; // Legacy alias for backward compat during refactor
   const navigate = useNavigate();
 
   const [lesson, setLesson] = useState<LessonDetail | null>(null);
@@ -66,6 +67,7 @@ export default function LiveSession() {
   const [allLessons, setAllLessons] = useState<Lesson[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
   const [completedLessonIds, setCompletedLessonIds] = useState<Set<number>>(new Set());
+  const [maxAllowedSessionNumber, setMaxAllowedSessionNumber] = useState(1);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [expandedModules, setExpandedModules] = useState<Set<number>>(new Set());
 
@@ -111,10 +113,10 @@ export default function LiveSession() {
   }, []);
 
   useEffect(() => {
-    if (!lessonId) return;
-    const id = Number(lessonId);
-    if (isNaN(id)) {
-      setError('Invalid lesson ID');
+    if (!sessionNumber) return;
+    const sessionNum = Number(sessionNumber);
+    if (isNaN(sessionNum)) {
+      setError('Invalid session number');
       setLoading(false);
       return;
     }
@@ -123,43 +125,8 @@ export default function LiveSession() {
 
     async function load() {
       try {
-        const lessonData = await getLesson(id);
-        if (cancelled) return;
-        setLesson(lessonData);
         setCurrentSlide(0);
         lessonStartTimeRef.current = Date.now();
-
-        let sessionNum = 1;
-
-        if (courseId) {
-          try {
-            const mods = await getModules(Number(courseId));
-            const mod = mods.find((m) => m.id === lessonData.module);
-            if (mod) setModuleTitle(mod.title);
-            if (!cancelled) {
-              setModules(mods);
-              setExpandedModules(new Set([lessonData.module]));
-            }
-
-            const lessonArrays = await Promise.all(
-              mods
-                .sort((a, b) => a.module_order - b.module_order)
-                .map((m) => getLessons(m.id))
-            );
-            const ordered = lessonArrays.flat().sort((a, b) => {
-              const aMod = mods.find((m) => m.id === a.module)?.module_order ?? 0;
-              const bMod = mods.find((m) => m.id === b.module)?.module_order ?? 0;
-              if (aMod !== bMod) return aMod - bMod;
-              return a.lesson_order - b.lesson_order;
-            });
-            if (!cancelled) setAllLessons(ordered);
-
-            const idx = ordered.findIndex((l) => l.id === id);
-            if (idx >= 0) sessionNum = idx + 1;
-          } catch {
-            // non-critical
-          }
-        }
 
         // ─── AI Slide Generation (with cache) ─────────────────
         // Read the CURRENT authoritative plan (single source of truth) — not a
@@ -317,13 +284,17 @@ export default function LiveSession() {
           if (enrollment) {
             setCourseTitle(enrollment.course_title);
             try {
-              const completions = await getLessonCompletions(enrollment.id);
+              const completions = await getSessionCompletions(enrollment.id);
               const completedIds = new Set(
                 completions
                   .filter((c) => c.status === 'Completed')
-                  .map((c) => c.lesson as number)
+                  .map((c) => c.session_number as number)
               );
-              if (!cancelled) setCompletedLessonIds(completedIds);
+              if (!cancelled) {
+                setCompletedLessonIds(completedIds);
+                const maxCompleted = completedIds.size > 0 ? Math.max(...Array.from(completedIds)) : 0;
+                setMaxAllowedSessionNumber(Math.max(enrollment.current_session_number || 1, maxCompleted + 1));
+              }
             } catch {
               // non-critical
             }
@@ -542,10 +513,10 @@ export default function LiveSession() {
   // ─── Navigation callbacks ─────────────────────────────────────
 
   // Current lesson index in the full ordered list
-  const currentLessonIndex = allLessons.findIndex((l) => l.id === Number(lessonId));
-  const prevLesson = currentLessonIndex > 0 ? allLessons[currentLessonIndex - 1] : null;
-  const nextLesson = currentLessonIndex >= 0 && currentLessonIndex < allLessons.length - 1
-    ? allLessons[currentLessonIndex + 1]
+  const currentLessonIndex = (plan?.sessions?.findIndex(s => s.session_number === Number(sessionNumber)) ?? -1);
+  const prevLesson = currentLessonIndex > 0 ? plan?.sessions[currentLessonIndex - 1] : null;
+  const nextLesson = currentLessonIndex >= 0 && currentLessonIndex < (plan?.sessions?.length ?? 0) - 1
+    ? plan?.sessions[currentLessonIndex + 1]
     : null;
 
   const handlePrevSlideOrLesson = () => {
@@ -567,12 +538,12 @@ export default function LiveSession() {
         }).catch(console.error);
       }
     } else if (prevLesson) {
-      navigate(`/course/${courseId}/lesson/${prevLesson.id}`);
+      navigate(`/course/${courseId}/session/${prevLesson.session_number}`);
     }
   };
 
   const handleNextSlideOrLesson = () => {
-    const totalSlides = slides.length > 0 ? slides.length : (lesson?.slides?.length || 0);
+    const totalSlides = slides.length > 0 ? slides.length : 0;
     if (currentSlide < totalSlides - 1) {
       const nextIdx = currentSlide + 1;
       setCurrentSlide(nextIdx);
@@ -591,12 +562,12 @@ export default function LiveSession() {
         }).catch(console.error);
       }
     } else if (nextLesson) {
-      navigate(`/course/${courseId}/lesson/${nextLesson.id}`);
+      navigate(`/course/${courseId}/session/${nextLesson.session_number}`);
     }
   };
 
   const handleComplete = useCallback(async () => {
-    if (!lesson || !courseId) return;
+    if (!courseId || !sessionNumber) return;
     setIsCompleting(true);
 
     // Fire-and-forget profiler before navigating away
@@ -614,59 +585,62 @@ export default function LiveSession() {
         return;
       }
 
-      const completions = await getLessonCompletions(enrollment.id);
-      const existing = completions.find(
-        (c) => String(c.lesson) === String(lesson.id),
-      );
 
       const timeSpentMinutes = Math.max(1, Math.round((Date.now() - lessonStartTimeRef.current) / 60000));
 
-      // The lesson is NOT complete yet — the lab and problem set still have to
-      // run, and the problem set is what writes concept_mastery. We only record
-      // that the live session is done (In Progress, with the time we measured).
-      // The Completed transition + XP/streak/progress fire server-side once the
-      // problem set finishes, so closing the tab here can't skip them.
-      if (!existing) {
-        await createLessonCompletion({
-          enrollment: enrollment.id,
-          lesson: lesson.id,
-          status: 'In Progress',
-          time_spent_minutes: timeSpentMinutes,
+      const timeSpentMins = Math.max(1, Math.round((Date.now() - lessonStartTimeRef.current) / 60000));
+      const score = 100; // Placeholder for session completion metric
+
+      try {
+        await createSessionCompletion(Number(courseId), {
+          session_number: Number(sessionNumber),
+          score: Math.round(score),
+          time_spent_minutes: timeSpentMins,
         });
+      } catch {
+        toast.error('Failed to save completion status. Your progress might not be fully recorded.');
       }
 
-      const labSlides = slides.length > 0
+      const compactSlides = slides.length > 0
         ? slides.map((slide) => ({
           title: slide.title,
           content: slide.body_content?.map((item) => item.text).join('\n') || '',
           code: slide.code_block?.code || '',
         }))
-        : (lesson.slides || []).map((slide, index) => ({
+        : (lesson?.slides || []).map((slide, index) => ({
           title: String(slide.content_json?.title || `Slide ${index + 1}`),
           content: JSON.stringify(slide.content_json || {}),
           code: String((slide.content_json?.code as string | undefined) || ''),
         }));
-
-      // Route to the lesson-end coding lab before the existing practice question.
-      navigate(`/course/${courseId}/lesson/${lesson.id}/lab`, {
-        state: {
-          nextLessonId: nextLesson?.id ?? null,
-          courseId,
-          lessonTitle: lesson.title,
-          sessionId: sessionIdRef.current,
-          studentProfileSummary,
-          slides: labSlides,
-        },
-      });
+      if (compactSlides.length > 0 && compactSlides.some(s => s.code)) {
+        navigate(`/course/${courseId}/session/${sessionNumber}/lab`, {
+          state: {
+            sessionId: sessionIdRef.current,
+            sessionTitle: plan?.sessions.find(s => s.session_number === Number(sessionNumber))?.session_title,
+            studentProfileSummary,
+            slides: compactSlides,
+          }
+        });
+      } else {
+        navigate(`/course/${courseId}/session/${sessionNumber}/problem-set`, {
+          state: {
+            sessionId: sessionIdRef.current,
+            sessionTitle: plan?.sessions.find(s => s.session_number === Number(sessionNumber))?.session_title,
+            studentProfileSummary,
+            slides: compactSlides,
+            nextSessionId: nextLesson ? nextLesson.session_number : undefined,
+          }
+        });
+      }
       if (!nextLesson) {
         toast.success('Final session complete. Finish the lab and coding question to wrap up.');
       }
     } catch {
-      toast.error('Failed to mark lesson as complete. Please try again.');
+      toast.error('Failed to mark session as complete. Please try again.');
     } finally {
       setIsCompleting(false);
     }
-  }, [lesson, courseId, navigate, nextLesson, fireAndForgetProfiler, stopFERPolling, slides, studentProfileSummary]);
+  }, [lesson, courseId, navigate, nextLesson, fireAndForgetProfiler, stopFERPolling, slides, studentProfileSummary, sessionNumber, plan]);
 
   // ─── Callbacks for CompactTutor ───────────────────────────────
 
@@ -724,17 +698,16 @@ export default function LiveSession() {
 
   // ─── Course pathway for the left nav ──────────────────────────
   // Session N maps to the Nth lesson in course order; titles/topics come from
-  // the authoritative plan when available, falling back to the lesson title.
-  const pathwaySessions = allLessons.map((l, i) => {
-    const ps = plan?.sessions.find((s) => s.session_number === i + 1);
+  // the authoritative plan.
+  const pathwaySessions = plan?.sessions.map((ps, i) => {
     return {
-      lessonId: l.id,
-      number: i + 1,
-      title: ps?.session_title || l.title,
-      topics: ps?.topics_covered ?? [],
-      completed: completedLessonIds.has(l.id),
+      lessonId: String(ps.session_number),
+      number: ps.session_number,
+      title: ps.session_title,
+      topics: ps.topics_covered ?? [],
+      completed: completedLessonIds.has(ps.session_number),
     };
-  });
+  }) || [];
   const totalSessions = pathwaySessions.length;
   const completedSessions = pathwaySessions.filter((s) => s.completed).length;
   const currentSessionNo = currentLessonIndex >= 0 ? currentLessonIndex + 1 : 1;
@@ -766,7 +739,7 @@ export default function LiveSession() {
 
       {/* Slide-out Drawer — rendered into document.body via portal to escape overflow:hidden stacking context */}
       {drawerOpen && typeof document !== 'undefined' && createPortal(
-        <div className="codex" style={{ position: 'fixed', inset: 0, zIndex: 9999 }}>
+        <div className="codex" style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'transparent' }}>
           {/* Backdrop */}
           <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)' }} onClick={() => setDrawerOpen(false)} />
 
@@ -794,32 +767,42 @@ export default function LiveSession() {
                 <div className="t-mono steel" style={{ padding: '24px 18px', textAlign: 'center' }}>NO SESSIONS YET</div>
               ) : (
                 pathwaySessions.map((s, i) => {
-                  const isCurrent = i === currentLessonIndex;
-                  const isPrevious = i < currentLessonIndex;
-                  // status colour: done → green, current → blue, prior-not-done → steel, upcoming → faded steel
-                  const accent = s.completed ? 'var(--accent-success)'
+                  const isCurrent = s.number === Number(sessionNumber);
+                  const isLocked = s.number > maxAllowedSessionNumber;
+                  const isCompleted = s.completed;
+                  
+                  // status colour: done → green, current → blue, prior-not-done → steel, upcoming/locked → faded steel
+                  const accent = isCompleted ? 'var(--accent-success)'
                     : isCurrent ? 'var(--accent-primary)'
-                      : isPrevious ? 'var(--steel-light)' : 'var(--steel)';
-                  const statusTag = s.completed ? 'DONE' : isCurrent ? 'IN PROGRESS' : isPrevious ? 'REVISIT' : 'UPCOMING';
-                  const titleColor = isCurrent ? 'var(--accent-primary)' : s.completed || isPrevious ? 'var(--text-primary)' : 'var(--text-secondary)';
+                      : isLocked ? 'var(--steel)' : 'var(--steel-light)';
+                  const statusTag = isCompleted ? 'DONE' : isCurrent ? 'IN PROGRESS' : isLocked ? 'LOCKED' : 'REVISIT';
+                  const titleColor = isCurrent ? 'var(--accent-primary)' : isLocked ? 'var(--text-secondary)' : 'var(--text-primary)';
+                  
                   return (
                     <button
                       key={s.lessonId}
-                      onClick={() => { navigate(`/course/${courseId}/lesson/${s.lessonId}`); setDrawerOpen(false); }}
+                      onClick={() => { 
+                        if (isLocked) {
+                          toast.error('Complete previous sessions to unlock this one.');
+                          return;
+                        }
+                        navigate(`/course/${courseId}/session/${s.number}`); 
+                        setDrawerOpen(false); 
+                      }}
                       style={{
-                        width: '100%', display: 'block', textAlign: 'left', cursor: 'pointer',
+                        width: '100%', display: 'block', textAlign: 'left', cursor: isLocked ? 'not-allowed' : 'pointer',
                         padding: '12px 16px 12px 14px',
                         background: isCurrent ? 'rgba(37,99,235,0.06)' : 'transparent',
                         borderTop: 'none', borderRight: 'none', borderBottom: '1px solid var(--hairline)',
-                        borderLeft: `3px solid ${isCurrent ? 'var(--accent-primary)' : s.completed ? 'var(--accent-success)' : 'transparent'}`,
-                        opacity: !isCurrent && !s.completed && !isPrevious ? 0.6 : 1,
+                        borderLeft: `3px solid ${isCurrent ? 'var(--accent-primary)' : isCompleted ? 'var(--accent-success)' : 'transparent'}`,
+                        opacity: isLocked ? 0.6 : 1,
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                        {s.completed ? <CheckCircle2 size={15} style={{ color: accent, flexShrink: 0, marginTop: 1 }} />
+                        {isCompleted ? <CheckCircle2 size={15} style={{ color: accent, flexShrink: 0, marginTop: 1 }} />
                           : isCurrent ? <PlayCircle size={15} style={{ color: accent, flexShrink: 0, marginTop: 1 }} />
-                            : isPrevious ? <Circle size={15} style={{ color: accent, flexShrink: 0, marginTop: 1 }} />
-                              : <Lock size={15} style={{ color: accent, flexShrink: 0, marginTop: 1 }} />}
+                            : isLocked ? <Lock size={15} style={{ color: accent, flexShrink: 0, marginTop: 1 }} />
+                              : <Circle size={15} style={{ color: accent, flexShrink: 0, marginTop: 1 }} />}
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                             <span className="t-mono steel">SESSION {pad2(s.number)}</span>

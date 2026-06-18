@@ -1,0 +1,52 @@
+{
+  "profile": {
+    "student_id": "36",
+    "course_id": "16",
+    "mastery_level": "Expert",
+    "composition_mode": "balanced",
+    "language_proficiency": "Intermediate",
+    "strengths": [
+      "Integration Testing",
+      "Understand Python",
+      "Understand Unit Testing"
+    ],
+    "weaknesses": [],
+    "strength_concept_ids": [
+      "28",
+      "29",
+      "30"
+    ],
+    "weak_concept_ids": [],
+    "topic_performance": {},
+    "incorrectly_answered": [
+      {
+        "question": "Which of the following is a common strategy for integration testing?",
+        "chosen_option": "Big‑bang integration",
+        "correct_option": "All of the above",
+        "concept_id": "30"
+      }
+    ],
+    "use_synthetic_context": false,
+    "course_intent": "Python Testing QA",
+    "student_profile_summary": "Expert learner in Python Testing QA. Strong in: Integration Testing, Understand Python, Understand Unit Testing. Needs work on: no concepts yet."
+  },
+  "live": {
+    "session_id": "",
+    "current_slide_index": 0,
+    "current_slide_title": "",
+    "current_slide_content": "",
+    "current_topic": "",
+    "current_subtopic": "",
+    "current_concept_id": "",
+    "running_summary": "",
+    "tutor_transcript": [],
+    "visited_slides": [],
+    "time_spent_per_slide": {},
+    "tutor_events": [],
+    "emotion_signals": [],
+    "fused_emotion": "",
+    "fused_emotion_confidence": 0.0,
+    "pace_modifier": 0,
+    "last_updated_at": 1781726551.1545737
+  }
+}
