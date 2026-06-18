@@ -134,6 +134,7 @@ async def continue_session(request: ContinueRequest):
         # Generate TTS audio if requested and there's text
         audio_base64 = None
         blendshapes = None
+        
         if request.include_audio and result["text"]:
             audio_base64 = await _synthesize_audio(
                 result["text"], 

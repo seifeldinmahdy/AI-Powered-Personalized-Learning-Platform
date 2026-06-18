@@ -1498,10 +1498,10 @@ export default function AdminCourseEditor() {
                   </tr>
                 </thead>
                 <tbody>
-                  {clos.map((clo) => {
+                  {clos.map((clo, index) => {
                     const isEditing = editingCLOId === clo.id;
                     return (
-                      <tr key={clo.id} className="relative" style={{ zIndex: isEditing && cloEditDropdownOpen ? 50 : 1 }}>
+                      <tr key={clo.id} className="relative" style={{ zIndex: isEditing && cloEditDropdownOpen ? 50 : (clos.length - index) }}>
                         {isEditing ? (
                           <>
                             <td>
@@ -1699,7 +1699,7 @@ export default function AdminCourseEditor() {
                         ? 'admin-badge admin-badge-blue'
                         : 'admin-badge admin-badge-amber';
                     return (
-                      <tr key={idx} className="relative" style={{ zIndex: cloDraftConceptDropdown === idx ? 50 : 1 }}>
+                      <tr key={idx} className="relative" style={{ zIndex: cloDraftConceptDropdown === idx ? 50 : (cloDrafts.length - idx) }}>
                         {/* Code */}
                         <td>
                           {isEditing ? (

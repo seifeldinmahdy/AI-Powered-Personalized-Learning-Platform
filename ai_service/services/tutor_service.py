@@ -506,7 +506,7 @@ async def _call_ollama(
     system_prompt: str,
     user_prompt: str,
     temperature: float = 0.7,
-    num_predict: int = 180,
+    num_predict: int = 256,
     conversation_history: Optional[List[dict]] = None,
 ) -> str:
     """Call Ollama Cloud chat API and return the text response.
@@ -522,8 +522,8 @@ async def _call_ollama(
         (summarisation → 0.2, relevance → 0.0) and higher for generative
         tasks (lecture → 0.7, emotion handling → 0.6).
     num_predict:
-        Max tokens to generate. 180 covers ~50-80 spoken words with margin.
-        Summarisation tasks should pass 400.
+        Max tokens to generate. 256 covers thinking tokens plus ~50-80 spoken words.
+        Summarisation tasks should pass 2048.
     conversation_history:
         Optional list of prior turns in ``[{"role": ..., "content": ...}]``
         format. When provided, these are injected between the system prompt
@@ -546,6 +546,8 @@ async def _call_ollama(
         },
     }
 
+    
+
     headers = {}
     if OLLAMA_API_KEY:
         headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
@@ -555,7 +557,7 @@ async def _call_ollama(
         response.raise_for_status()
         data = response.json()
         return data["message"]["content"].strip()
-
+        
 
 def _build_conversation_history(session: TutorSession, max_turns: int = 4) -> List[dict]:
     """
@@ -1218,12 +1220,15 @@ async def answer_question(
         })
         if len(session.transcript) > 10:
             session.transcript = session.transcript[-10:]
-        return await generate_lecture_chunk(
+        chunk_result = await generate_lecture_chunk(
             session_id,
             student_emotion=student_emotion,
             intent=intent,
             intent_confidence=intent_confidence,
         )
+        # Ensure the 'answer' key exists since the router expects it
+        chunk_result["answer"] = chunk_result.get("text", "")
+        return chunk_result
 
     prev_status = session.status
 
@@ -1742,7 +1747,7 @@ async def _update_summary(session: TutorSession, new_content: str):
         # Low temperature: this is factual compression, not generation.
         # Higher token budget: the summary itself can be up to 300 words.
         session.running_summary = await _call_ollama(
-            SUMMARIZE_SYSTEM_PROMPT, prompt, temperature=0.2, num_predict=400
+            SUMMARIZE_SYSTEM_PROMPT, prompt, temperature=0.2, num_predict=700
         )
     except Exception as e:
         logger.warning(f"Summary compression failed, appending raw: {e}")
