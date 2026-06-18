@@ -85,62 +85,36 @@ export interface CategoryGroup {
     questions: AssessmentQuestion[];
 }
 
-/** Generate placement-test questions grouped by LLM-derived categories.
- *  Falls back to flat generation if the categorized endpoint is unavailable or
- *  returns no questions. Throws if no real questions can be produced at all —
- *  the caller surfaces an error+retry rather than rendering a blank quiz. */
-export async function generateCategorizedQuestions(
-    courseTitle: string,
+/** Fetch placement-test questions for a course from the Django backend.
+ *  Questions are pre-authored by the admin. We group them into a single "General" category
+ *  for compatibility with the UI. */
+export async function fetchPlacementTest(
     courseId: string,
-    totalQuestions = 12,
+    courseTitle: string,
 ): Promise<CategoryGroup[]> {
-    try {
-        const res = await fetch(`${AI_SERVICE}/assessments/generate-categorized`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                course_title: courseTitle,
-                course_id: courseId,
-                total_questions: totalQuestions,
-            }),
-        });
-        if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data.categories)) {
-                let globalId = 1;
-                const mapped: CategoryGroup[] = data.categories.map((cat: any) => ({
-                    name: cat.name || 'General',
-                    description: cat.description || '',
-                    questions: (cat.questions || []).map((q: any) => {
-                        const correctIndex = q.options?.findIndex(
-                            (opt: string) => opt === q.correct_answer
-                        ) ?? 0;
-                        return {
-                            id: globalId++,
-                            question: q.question,
-                            options: q.options || [],
-                            correct: correctIndex >= 0 ? correctIndex : 0,
-                            topic: q.topic || cat.name || 'General',
-                            concept_id: q.concept_id ?? null,
-                    };
-                    }),
-                })).filter((cat: CategoryGroup) => cat.questions.length > 0);
-
-                const total = mapped.reduce((n, c) => n + c.questions.length, 0);
-                if (total > 0) return mapped;
-                console.warn('Categorized endpoint returned 0 questions — falling back to flat generation.');
-            }
-        } else {
-            console.warn(`Categorized endpoint returned ${res.status} — falling back to flat generation.`);
-        }
-    } catch (e) {
-        console.warn('Categorized generation failed — falling back to flat generation:', e);
+    const res = await api.get(`/courses/courses/${courseId}/placement-test/`);
+    const data = res.data;
+    
+    if (!Array.isArray(data) || data.length === 0) {
+        throw new Error('No placement questions found for this course. Contact your instructor.');
     }
 
-    // Fallback: flat generation wrapped in a single category. This throws if the
-    // service is unavailable or returns nothing, which propagates to the caller.
-    const flat = await generateAssessmentQuestions(courseTitle, totalQuestions);
-    return [{ name: 'General', description: `General knowledge of ${courseTitle}.`, questions: flat }];
+    const questions: AssessmentQuestion[] = data.map((q: any) => ({
+        id: q.id,
+        question: q.question,
+        options: q.options || [],
+        correct: -1, // Not provided by the backend to prevent cheating
+        topic: q.topic || 'General',
+        concept_id: q.concept_id ?? null,
+    }));
+
+    // Group into a single category since pre-authored questions don't have LLM categories yet,
+    // or group by topic if we prefer, but single group matches the generic UI.
+    return [{
+        name: 'Placement Test',
+        description: `Assess your knowledge of ${courseTitle}.`,
+        questions,
+    }];
 }
 
 /** Submit placement answers to backend, which builds and persists the student context. */

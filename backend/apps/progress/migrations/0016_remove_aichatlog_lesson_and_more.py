@@ -26,7 +26,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='aichatlog',
             name='course',
-            field=models.ForeignKey(default=1, on_delete=django.db.models.deletion.CASCADE, related_name='ai_chat_logs', to='courses.course'),
+            field=models.ForeignKey(default=3, on_delete=django.db.models.deletion.CASCADE, related_name='ai_chat_logs', to='courses.course'),
             preserve_default=False,
         ),
         migrations.AddField(
@@ -37,7 +37,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='bookmark',
             name='course',
-            field=models.ForeignKey(default=1, on_delete=django.db.models.deletion.CASCADE, related_name='bookmarks', to='courses.course'),
+            field=models.ForeignKey(default=3, on_delete=django.db.models.deletion.CASCADE, related_name='bookmarks', to='courses.course'),
             preserve_default=False,
         ),
         migrations.AddField(

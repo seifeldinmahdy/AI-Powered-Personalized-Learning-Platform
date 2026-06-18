@@ -2,7 +2,7 @@ import { useParams, useNavigate, useLocation } from "react-router";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import {
-  generateCategorizedQuestions,
+  fetchPlacementTest,
   submitPlacementResults,
   updatePlacementScore,
   type PlacementResult,
@@ -117,7 +117,7 @@ export default function Assessment() {
       } catch { /* ignore */ }
     }
     try {
-      const cats = await generateCategorizedQuestions(courseTitle, String(id), 50);
+      const cats = await fetchPlacementTest(String(id), courseTitle);
       const total = cats.reduce((n, c) => n + c.questions.length, 0);
       if (total === 0) throw new Error("No questions were generated.");
       setCategories(cats);
@@ -145,8 +145,8 @@ export default function Assessment() {
         topic: q.topic || "General",
         concept_id: q.concept_id ?? null,
         chosen_option: chosenIdx >= 0 ? q.options[chosenIdx] : "",
-        correct_option: q.options[q.correct],
-        is_correct: chosenIdx === q.correct,
+        correct_option: "", // Backfilled by server
+        is_correct: false,  // Backfilled by server
       };
     });
 

@@ -278,3 +278,28 @@ class CourseLearningOutcome(models.Model):
 
     def __str__(self):
         return f"{self.course.title} — {self.code}"
+
+
+class PlacementQuestion(models.Model):
+    """A pre-authored MCQ for a course's placement test.
+
+    Questions are authored/approved by admins and served directly to
+    students — no per-enrollment regeneration.
+    """
+    course = models.ForeignKey(
+        Course, on_delete=models.CASCADE, related_name='placement_questions'
+    )
+    question = models.TextField()
+    options = models.JSONField(default=list)          # list[str], exactly 4 items
+    correct_answer = models.CharField(max_length=512)
+    topic = models.CharField(max_length=255, blank=True, default='')
+    concept_id = models.CharField(max_length=255, blank=True, null=True)
+    order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['order', 'id']
+
+    def __str__(self) -> str:
+        return f"PlacementQuestion({self.course_id}): {self.question[:60]}"

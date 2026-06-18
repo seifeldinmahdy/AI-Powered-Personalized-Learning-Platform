@@ -15,6 +15,7 @@ from .models import (
     StudentLearningProfile, Bookmark, ConceptMasteryEvent,
     IntentFeedbackBuffer, IntentRetrainingCounter,
 )
+from apps.core.permissions import IsVerifiedAdmin
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +201,7 @@ class IntentFeedbackBufferViewSet(viewsets.ModelViewSet):
     Allows relabelling thumbs-down entries via PATCH corrected_intent.
     """
     serializer_class = IntentFeedbackBufferSerializer
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [IsVerifiedAdmin]
     http_method_names = ["get", "patch", "head", "options"]
 
     def get_queryset(self):

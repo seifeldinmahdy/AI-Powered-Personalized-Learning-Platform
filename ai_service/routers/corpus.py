@@ -15,6 +15,7 @@ router = APIRouter(prefix="/corpus", tags=["corpus-authoring"])
 
 def _require_service_key(x_service_key: str | None) -> None:
     expected = os.getenv("INTERNAL_SERVICE_KEY", "")
+    print(f"DEBUG: expected='{expected}', received='{x_service_key}'")
     if not expected or x_service_key != expected:
         raise HTTPException(status_code=403, detail="Service key required")
 

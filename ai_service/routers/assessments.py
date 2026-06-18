@@ -91,6 +91,106 @@ async def generate_endpoint(req: GenerateRequest):
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
+@router.post("/generate-for-course")
+async def generate_placement_questions(request: dict):
+    """Generate placement MCQs for a course using CLO-backed generation
+    if CLOs exist, else fallback to topic-discovery generation.
+
+    Body:
+        course_title: str
+        clos: list[{name, description, concepts: [{id, label}]}]  # optional
+        num_questions: int  # default 10
+    """
+    course_title: str = request.get("course_title", "")
+    clos: list = request.get("clos", [])
+    num_questions: int = request.get("num_questions", 10)
+
+    if not course_title:
+        raise HTTPException(status_code=422, detail="course_title is required")
+
+    try:
+        if clos:
+            from services.assessment_service import generate_clo_questions
+            results = await generate_clo_questions(
+                course_title=course_title,
+                plan=clos,
+                total_questions=num_questions,
+            )
+            questions = []
+            for group in results:
+                questions.extend(group.get("questions", []))
+        else:
+            result = await generate_assessment_questions(
+                course_title=course_title,
+                num_questions=num_questions,
+            )
+            questions = result.get("questions", [])
+        return {"questions": questions}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Placement question generation failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/refine-question")
+async def refine_placement_question(request: dict):
+    """Refine a single MCQ using AI.
+
+    Body:
+        question: {question, options, correct_answer, topic, concept_id}
+        instruction: str
+        course_title: str
+    """
+    import json
+    import asyncio
+    from services.ollama_client import get_ollama_client
+    
+    question = request.get("question", {})
+    instruction: str = request.get("instruction", "Improve this question")
+    course_title: str = request.get("course_title", "")
+
+    prompt = f"""You are refining a multiple choice question for a placement test in the course "{course_title}".
+
+Original question:
+Question: {question.get('question', '')}
+Options: {question.get('options', [])}
+Correct Answer: {question.get('correct_answer', '')}
+Topic: {question.get('topic', '')}
+
+Instruction: {instruction}
+
+Return ONLY valid JSON with no markdown fences:
+{{
+  "question": "Refined question text?",
+  "options": ["A", "B", "C", "D"],
+  "correct_answer": "A",
+  "topic": "{question.get('topic', '')}",
+  "concept_id": {json.dumps(question.get('concept_id'))}
+}}
+
+Requirements:
+- Exactly 4 options
+- correct_answer must exactly match one option
+- Keep the same topic and concept_id unless the instruction changes them
+- Improve per the instruction"""
+
+    client = get_ollama_client()
+    try:
+        loop = asyncio.get_running_loop()
+        data = await loop.run_in_executor(
+            None,
+            lambda: client.chat_json(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.5,
+                timeout_override=90,
+            ),
+        )
+        return data
+    except Exception as e:
+        logger.error("Question refinement failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 @router.post("/generate-categorized")
 async def generate_categorized_endpoint(req: GenerateCategorizedRequest):
@@ -179,6 +279,32 @@ async def submit_placement(req: SubmitPlacementRequest):
     total = len(req.answers)
     if total == 0:
         raise HTTPException(status_code=400, detail="No answers provided")
+
+    import httpx
+    import os
+    answers_dict = {str(a.question_id): a.chosen_option for a in req.answers}
+    django_url = os.getenv("DJANGO_API_URL", "http://localhost:8000/api")
+    service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{django_url}/courses/courses/{req.course_id}/placement-test/score/",
+                json={"answers": answers_dict},
+                headers={"X-Service-Key": service_key},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            score_results = resp.json()
+            for a in req.answers:
+                res = score_results.get(str(a.question_id))
+                if res:
+                    a.is_correct = res.get("correct", False)
+                    a.correct_option = res.get("correct_answer", a.correct_option)
+                    a.topic = res.get("topic", a.topic)
+                    a.concept_id = res.get("concept_id", a.concept_id)
+    except Exception as e:
+        logger.error("Failed to score placement answers via Django: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to score placement test")
 
     correct_count = sum(1 for a in req.answers if a.is_correct)
     score_pct = round((correct_count / total) * 100)

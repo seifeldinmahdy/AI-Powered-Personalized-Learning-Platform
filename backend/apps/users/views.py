@@ -7,6 +7,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 from django.contrib.auth import authenticate
 from .models import User, StudentProfile, UserPreferences
 from .serializers import UserSerializer, StudentProfileSerializer, UserPreferencesSerializer
+from apps.core.permissions import IsVerifiedAdmin
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -20,7 +21,7 @@ class UserViewSet(viewsets.ModelViewSet):
         Custom actions define their own permissions.
         """
         if self.action in ('list', 'retrieve', 'create', 'update', 'partial_update', 'destroy'):
-            return [permissions.IsAdminUser()]
+            return [IsVerifiedAdmin()]
         return super().get_permissions()
 
     # ---------------------------------------------------------
