@@ -21,5 +21,7 @@ export async function markNotificationRead(id: number): Promise<Notification> {
 }
 
 export async function markAllNotificationsRead(): Promise<void> {
-    await api.post('/gamification/notifications/read-all/');
+    // DRF registers the `read_all` action at `read_all/` (method name verbatim),
+    // not `read-all/`.
+    await api.post('/gamification/notifications/read_all/');
 }

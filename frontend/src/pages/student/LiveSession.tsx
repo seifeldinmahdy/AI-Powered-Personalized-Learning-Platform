@@ -232,6 +232,9 @@ export default function LiveSession() {
                         chunk_id: c.chunk_id,
                         raw_text: c.raw_text,
                         topic: c.topic,
+                        // Forward the chunk's concept so the generator resolves
+                        // per-concept mastery instead of falling back to global.
+                        concept_id: c.concept_id || '',
                         page_start: c.page_start,
                         page_end: c.page_end,
                       })),
