@@ -103,6 +103,7 @@ export interface SessionChunk {
   chunk_id: string;
   raw_text: string;
   topic?: string;
+  concept_id?: string;   // Concept this chunk teaches → per-concept slide mastery
   page_start?: number;
   page_end?: number;
 }
