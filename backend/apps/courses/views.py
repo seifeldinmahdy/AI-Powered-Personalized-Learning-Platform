@@ -11,11 +11,13 @@ from apps.core.authentication import InternalServiceAuthentication
 from .models import (
     Course, Enrollment, CourseRating,
     Concept, CourseLearningOutcome, CourseCorpus, CorpusSource,
+    PlacementQuestion,
 )
 from .serializers import (
     CourseSerializer, EnrollmentSerializer, CourseRatingSerializer,
     ConceptSerializer, CourseLearningOutcomeSerializer,
     CourseCorpusSerializer, CorpusSourceSerializer,
+    PlacementQuestionSerializer, PlacementQuestionWriteSerializer
 )
 from django.conf import settings
 
@@ -842,3 +844,108 @@ class CourseCorpusViewSet(viewsets.ViewSet):
         if not deleted:
             return Response({"error": "Source not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+from rest_framework import generics
+from django.db import transaction
+from apps.core.permissions import IsVerifiedAdmin
+
+class PlacementQuestionViewSet(viewsets.ModelViewSet):
+    """CRUD for per-course placement questions (admin only for write)."""
+    serializer_class = PlacementQuestionSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        course_id = self.kwargs.get('course_pk')
+        if not course_id:
+            return PlacementQuestion.objects.none()
+        return PlacementQuestion.objects.filter(course_id=course_id)
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated()]
+        return [IsVerifiedAdmin()]
+
+    def get_serializer_class(self):
+        if self.action in ('create', 'update', 'partial_update'):
+            return PlacementQuestionWriteSerializer
+        return PlacementQuestionSerializer
+
+    def perform_create(self, serializer):
+        course_id = self.kwargs['course_pk']
+        from django.db.models import Max
+        max_order = PlacementQuestion.objects.filter(
+            course_id=course_id
+        ).aggregate(m=Max('order'))['m'] or 0
+        
+        from apps.core.audit import log_admin_action
+        pq = serializer.save(course_id=course_id, order=max_order + 1)
+        log_admin_action(self.request, action="create_placement_question", target_type="PlacementQuestion", target_id=str(pq.id))
+
+    def perform_update(self, serializer):
+        from apps.core.audit import log_admin_action
+        pq = serializer.save()
+        log_admin_action(self.request, action="update_placement_question", target_type="PlacementQuestion", target_id=str(pq.id))
+
+    def perform_destroy(self, instance):
+        from apps.core.audit import log_admin_action
+        log_admin_action(self.request, action="delete_placement_question", target_type="PlacementQuestion", target_id=str(instance.id))
+        instance.delete()
+
+    @action(detail=False, methods=['post'], url_path='bulk-save')
+    def bulk_save(self, request, course_pk=None):
+        """Save AI-generated questions into the course."""
+        questions_data = request.data
+        if not isinstance(questions_data, list):
+            return Response({"error": "Expected a list"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        created = []
+        with transaction.atomic():
+            for i, q_data in enumerate(questions_data):
+                serializer = PlacementQuestionWriteSerializer(data={**q_data, 'order': i})
+                serializer.is_valid(raise_exception=True)
+                obj = serializer.save(course_id=course_pk, order=i)
+                created.append(obj)
+        return Response(
+            PlacementQuestionSerializer(created, many=True).data,
+            status=status.HTTP_200_OK,
+        )
+
+class StudentPlacementTestView(generics.ListAPIView):
+    """Return the pre-authored placement questions for a course."""
+    serializer_class = PlacementQuestionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        course_id = self.kwargs['course_pk']
+        return PlacementQuestion.objects.filter(course_id=course_id)
+
+    def list(self, request, *args, **kwargs):
+        import random
+        queryset = list(self.get_queryset())
+        random.shuffle(queryset)
+        serializer = self.get_serializer(queryset, many=True)
+        data = serializer.data
+        for q in data:
+            q.pop('correct_answer', None)
+        return Response(data)
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def score_placement_submission(request, course_pk):
+    """Score student answers against DB-stored correct answers."""
+    answers = request.data.get("answers", {})
+    questions = PlacementQuestion.objects.filter(
+        course_id=course_pk,
+        id__in=answers.keys(),
+    ).values('id', 'correct_answer', 'topic', 'concept_id')
+    
+    results = {}
+    for q in questions:
+        student_ans = answers.get(str(q['id']), answers.get(q['id'], ''))
+        results[str(q['id'])] = {
+            'correct': student_ans.strip() == q['correct_answer'].strip(),
+            'correct_answer': q['correct_answer'],
+            'topic': q['topic'],
+            'concept_id': q['concept_id'],
+        }
+    return Response(results)

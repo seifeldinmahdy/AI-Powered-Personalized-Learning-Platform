@@ -105,4 +105,33 @@ urlpatterns = [
         certificate.certificate_pdf,
         name="certificate-pdf",
     ),
+    # Placement test (admin and student)
+    path(
+        'courses/<int:course_pk>/placement-questions/',
+        views.PlacementQuestionViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='placement-questions-list',
+    ),
+    path(
+        'courses/<int:course_pk>/placement-questions/bulk-save/',
+        views.PlacementQuestionViewSet.as_view({'post': 'bulk_save'}),
+        name='placement-questions-bulk-save',
+    ),
+    path(
+        'courses/<int:course_pk>/placement-questions/<int:pk>/',
+        views.PlacementQuestionViewSet.as_view({
+            'get': 'retrieve', 'put': 'update',
+            'patch': 'partial_update', 'delete': 'destroy'
+        }),
+        name='placement-questions-detail',
+    ),
+    path(
+        'courses/<int:course_pk>/placement-test/',
+        views.StudentPlacementTestView.as_view(),
+        name='student-placement-test',
+    ),
+    path(
+        'courses/<int:course_pk>/placement-test/score/',
+        views.score_placement_submission,
+        name='score-placement-submission',
+    ),
 ]

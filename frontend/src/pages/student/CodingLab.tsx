@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Nova3DAvatar } from '../../components/Nova3DAvatar';
+import { TypewriterLoader } from '../../components/personifai/TypewriterLoader';
 import { getLesson } from '../../services/lessons';
 import {
   generateCodingLab,
@@ -46,21 +47,22 @@ const LAB_STYLES = `.coding-lab-page {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  background: var(--background);
-  color: var(--foreground);
-  --lab-surface: var(--card);
-  --lab-text: var(--foreground);
-  --lab-muted-text: var(--muted-foreground);
-  --lab-border: var(--border);
-  --lab-soft: color-mix(in oklab, var(--muted) 45%, var(--card));
-  --lab-softer: color-mix(in oklab, var(--muted) 24%, var(--card));
-  --lab-primary: var(--secondary);
-  --lab-primary-soft: color-mix(in oklab, var(--secondary) 14%, var(--card));
-  --lab-success: #10b981;
-  --lab-warning: #f59e0b;
-  --lab-code-bg: #111827;
-  --lab-code-text: #e5edf8;
-  --lab-shadow: rgba(31, 41, 55, 0.08);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  --lab-surface: var(--bg-surface);
+  --lab-text: var(--text-primary);
+  --lab-muted-text: var(--text-secondary);
+  --lab-border: var(--hairline);
+  --lab-soft: var(--bg-surface);
+  --lab-softer: var(--bg-paper-hover);
+  --lab-primary: var(--accent-primary);
+  --lab-primary-soft: color-mix(in oklab, var(--accent-primary) 12%, var(--bg-surface));
+  --lab-on-primary: #ffffff;
+  --lab-success: var(--accent-success);
+  --lab-warning: #B45309;
+  --lab-code-bg: var(--code-bg);
+  --lab-code-text: #F3ECDF;
+  --lab-shadow: rgba(19, 16, 13, 0.06);
 }
 
 .lab-header {
@@ -71,8 +73,7 @@ const LAB_STYLES = `.coding-lab-page {
   align-items: center;
   gap: 16px;
   padding: 14px 24px;
-  border-bottom: 1px solid #d9e2ef;
-  border-color: var(--lab-border);
+  border-bottom: 1px solid var(--lab-border);
   background: color-mix(in oklab, var(--lab-surface) 94%, transparent);
   backdrop-filter: blur(12px);
 }
@@ -86,7 +87,7 @@ const LAB_STYLES = `.coding-lab-page {
 
 .lab-kicker {
   display: block;
-  color: #53627a;
+  color: var(--text-secondary);
   color: var(--lab-muted-text);
   font-size: 12px;
   font-weight: 700;
@@ -179,7 +180,7 @@ const LAB_STYLES = `.coding-lab-page {
   border: 1px solid var(--lab-primary);
   border-radius: 8px;
   background: var(--lab-primary);
-  color: var(--secondary-foreground);
+  color: var(--lab-on-primary);
   font-size: 13px;
   font-weight: 800;
   cursor: pointer;
@@ -415,7 +416,7 @@ const LAB_STYLES = `.coding-lab-page {
 .completion-card button {
   border-color: var(--lab-primary);
   background: var(--lab-primary);
-  color: var(--secondary-foreground);
+  color: var(--lab-on-primary);
 }
 
 button:disabled {
@@ -515,7 +516,7 @@ button:disabled {
   border: 3px solid var(--lab-surface);
   border-radius: 999px;
   background: linear-gradient(135deg, #4c6fff, #10b981);
-  box-shadow: 0 14px 30px color-mix(in oklab, var(--foreground) 18%, transparent);
+  box-shadow: 0 14px 30px color-mix(in oklab, var(--text-primary) 18%, transparent);
 }
 
 .lab-tutor-bubble.speaking .lab-tutor-avatar {
@@ -532,7 +533,7 @@ button:disabled {
   border: 1px solid var(--lab-border);
   border-radius: 8px;
   background: color-mix(in oklab, var(--lab-surface) 96%, transparent);
-  box-shadow: 0 16px 40px color-mix(in oklab, var(--foreground) 16%, transparent);
+  box-shadow: 0 16px 40px color-mix(in oklab, var(--text-primary) 16%, transparent);
 }
 
 .lab-tutor-title {
@@ -588,7 +589,7 @@ button:disabled {
 }
 
 .lab-run-output.error {
-  border-color: color-mix(in oklab, var(--destructive) 55%, var(--lab-border));
+  border-color: color-mix(in oklab, var(--error-red) 55%, var(--lab-border));
 }
 
 .lab-run-output span {
@@ -628,7 +629,7 @@ button:disabled {
   display: grid;
   min-height: 100vh;
   place-items: center;
-  background: var(--background);
+  background: var(--bg-primary);
 }
 
 .lab-loading-panel,
@@ -652,7 +653,7 @@ button:disabled {
 .lab-loading-panel p,
 .lab-error-panel p {
   margin: 0;
-  color: #53627a;
+  color: var(--text-secondary);
 }
 
 .lab-spin {
@@ -687,7 +688,7 @@ button:disabled {
   border: 1px solid var(--lab-primary);
   border-radius: 8px;
   background: var(--lab-primary);
-  color: var(--secondary-foreground);
+  color: var(--lab-on-primary);
   font-weight: 800;
   cursor: pointer;
 }
@@ -698,7 +699,7 @@ button:disabled {
   z-index: 100;
   display: grid;
   place-items: center;
-  background: color-mix(in oklab, var(--foreground) 58%, transparent);
+  background: color-mix(in oklab, var(--text-primary) 58%, transparent);
   backdrop-filter: blur(7px);
 }
 
@@ -1105,7 +1106,7 @@ button:disabled {
   border: 2px solid var(--lab-primary);
   border-radius: 999px;
   background: var(--lab-primary);
-  color: var(--secondary-foreground);
+  color: var(--lab-on-primary);
   cursor: pointer;
   box-shadow: 0 8px 28px color-mix(in oklab, var(--lab-primary) 35%, transparent);
   transition: transform 180ms ease, box-shadow 180ms ease;
@@ -1124,7 +1125,7 @@ button:disabled {
   height: 18px;
   padding: 0 5px;
   border-radius: 999px;
-  background: var(--destructive);
+  background: var(--error-red);
   color: white;
   font-size: 10px;
   font-weight: 800;
@@ -1141,7 +1142,7 @@ button:disabled {
   border: 1px solid var(--lab-border);
   border-radius: 12px;
   background: var(--lab-surface);
-  box-shadow: 0 20px 60px color-mix(in oklab, var(--foreground) 22%, transparent);
+  box-shadow: 0 20px 60px color-mix(in oklab, var(--text-primary) 22%, transparent);
   animation: lab-pop 280ms ease both;
   user-select: none;
 }
@@ -1242,6 +1243,92 @@ button:disabled {
     right: 12px;
     bottom: 12px;
   }
+}
+
+/* ── Codex design-language layer ───────────────────────────────────
+   Brings the lab onto the student "codex" system to match LiveSession:
+   editorial display headings (Space Grotesk), mono uppercase labels
+   (JetBrains Mono) and ink-black / ghost buttons. The floating tutor
+   bubble + avatar (.lab-tutor-*) are intentionally left untouched. */
+
+.coding-lab-page { font-family: var(--ff-body); }
+
+/* Display headings */
+.coding-lab-page .lab-header h1,
+.coding-lab-page .cell-heading h2,
+.coding-lab-page .lab-finish-panel h2,
+.coding-lab-page .completion-card h2,
+.coding-lab-page .checklist-title h2,
+.coding-lab-page .lab-error-panel h1,
+.coding-lab-page .notepad-header h3 {
+  font-family: var(--ff-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Mono uppercase labels / eyebrows */
+.coding-lab-page .lab-kicker,
+.coding-lab-page .cell-type,
+.coding-lab-page .criteria h3,
+.coding-lab-page .sq-box-header,
+.coding-lab-page .cell-notes-toggle,
+.coding-lab-page .cell-output span,
+.coding-lab-page .lab-run-output span,
+.coding-lab-page .lab-time {
+  font-family: var(--ff-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* Buttons → codex. Primary = ink-black on paper; secondary = ghost with
+   a steel hairline. Tutor controls (.lab-tutor-controls button) excluded. */
+.coding-lab-page .lab-secondary-button,
+.coding-lab-page .lab-icon-button,
+.coding-lab-page .task-actions button,
+.coding-lab-page .lab-finish-panel button,
+.coding-lab-page .completion-card button,
+.coding-lab-page .lab-guide-button,
+.coding-lab-page .lab-error-panel button {
+  font-family: var(--ff-mono);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: var(--radius-md);
+  transition: transform 120ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.coding-lab-page .lab-secondary-button:active,
+.coding-lab-page .lab-icon-button:active,
+.coding-lab-page .task-actions button:active,
+.coding-lab-page .lab-finish-panel button:active,
+.coding-lab-page .completion-card button:active,
+.coding-lab-page .lab-guide-button:active { transform: scale(0.97); }
+
+/* Primary actions → ink-black */
+.coding-lab-page .task-actions button.primary,
+.coding-lab-page .lab-finish-panel button,
+.coding-lab-page .completion-card button,
+.coding-lab-page .lab-guide-button,
+.coding-lab-page .lab-error-panel button {
+  background: var(--ink-black);
+  border-color: var(--ink-black);
+  color: var(--bg-paper);
+}
+
+/* Secondary / ghost → transparent with a steel hairline */
+.coding-lab-page .lab-secondary-button,
+.coding-lab-page .lab-icon-button,
+.coding-lab-page .task-actions button:not(.primary) {
+  background: transparent;
+  border-color: var(--steel);
+  color: var(--text-primary);
+}
+
+.coding-lab-page .lab-secondary-button:hover,
+.coding-lab-page .lab-icon-button:hover,
+.coding-lab-page .task-actions button:not(.primary):hover {
+  background: var(--bg-paper-hover);
+  border-color: var(--text-primary);
 }`;
 
 interface LocationState {
@@ -1314,7 +1401,6 @@ export default function CodingLab() {
   const resolvedSessionId = sessionNumber ?? '';
   const [labResponse, setLabResponse] = useState<CodingLabGenerateResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadingStep, setLoadingStep] = useState(0);
   const [error, setError] = useState('');
   const [activeCell, setActiveCell] = useState(0);
   const [taskCode, setTaskCode] = useState<Record<string, string>>({});
@@ -1424,13 +1510,6 @@ export default function CodingLab() {
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [notepadOpen]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setLoadingStep((prev) => (prev + 1) % LOADING_STEPS.length);
-    }, 2500);
-    return () => clearInterval(timer);
-  }, []);
 
   async function buildFallbackSlides(): Promise<{ lessonTitle: string; slides: LabSlideContext[] }> {
     return { lessonTitle: state.lessonTitle || state.sessionTitle || 'Session', slides: state.slides || [] };
@@ -1774,27 +1853,18 @@ export default function CodingLab() {
 
   if (loading) {
     return (
-      <div className="coding-lab-page">
-        <style>{LAB_STYLES}</style>
-        <div className="lab-loading">
-          <div className="lab-loading-panel">
-            <Loader2 size={36} className="lab-spin" />
-            <h1>Preparing Your Coding Lab</h1>
-            <p>{LOADING_STEPS[loadingStep]}</p>
-            <div className="lab-loading-steps">
-              {LOADING_STEPS.map((step, index) => (
-                <span key={step} className={index <= loadingStep ? 'active' : ''} />
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
+      <TypewriterLoader
+        variant="fixed"
+        label="PREPARING YOUR CODING LAB"
+        caption="Building a hands-on notebook for this session"
+        messages={LOADING_STEPS}
+      />
     );
   }
 
   if (error || !labResponse || !lab) {
     return (
-      <div className="coding-lab-page">
+      <div className="codex coding-lab-page">
         <style>{LAB_STYLES}</style>
         <div className="lab-error">
           <div className="lab-error-panel">
@@ -1820,7 +1890,7 @@ export default function CodingLab() {
   const displayedBubbleText = bubbleText || current?.tutor_script || lab.tutor_opening;
 
   return (
-    <div className="coding-lab-page">
+    <div className="codex coding-lab-page">
       <style>{LAB_STYLES}</style>
       <audio
         ref={audioRef}

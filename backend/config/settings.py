@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -246,3 +246,4 @@ AXES_FAILURE_LIMIT = 5
 AXES_COOLOFF_TIME = 0.25  # hours (= 15 minutes)
 AXES_RESET_ON_SUCCESS = True
 AXES_LOCKOUT_CALLABLE = "apps.core.lockout.axes_lockout_handler"
+

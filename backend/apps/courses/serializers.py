@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (
     Course, Enrollment, CourseRating,
-    Concept, CourseLearningOutcome, CourseCorpus, CorpusSource,
+    Concept, CourseLearningOutcome, CourseCorpus, CorpusSource, PlacementQuestion
 )
 
 
@@ -85,3 +85,31 @@ class CourseLearningOutcomeSerializer(serializers.ModelSerializer):
         model = CourseLearningOutcome
         fields = ["id", "course", "code", "text", "bloom_level", "concepts", "order"]
         read_only_fields = ["id", "course"]
+
+
+class PlacementQuestionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PlacementQuestion
+        fields = ['id', 'question', 'options', 'correct_answer', 'topic',
+                  'concept_id', 'order', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+class PlacementQuestionWriteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PlacementQuestion
+        fields = ['id', 'question', 'options', 'correct_answer', 'topic', 'concept_id', 'order']
+        read_only_fields = ['id']
+
+    def validate_options(self, value):
+        if not isinstance(value, list) or len(value) != 4:
+            raise serializers.ValidationError("options must be a list of exactly 4 strings.")
+        if not all(isinstance(o, str) for o in value):
+            raise serializers.ValidationError("All options must be strings.")
+        return value
+
+    def validate(self, data):
+        if data.get('correct_answer') and data['correct_answer'] not in data.get('options', []):
+            raise serializers.ValidationError(
+                "correct_answer must exactly match one of the options."
+            )
+        return data

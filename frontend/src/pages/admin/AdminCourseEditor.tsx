@@ -36,6 +36,11 @@ import {
   removeCorpusSource, getIndexStatus, type CourseCorpus, type CorpusSource,
   type CorpusSourceType, type AvailableBook,
 } from '../../services/corpus';
+import {
+  getPlacementQuestions, createPlacementQuestion, updatePlacementQuestion,
+  deletePlacementQuestion, bulkSavePlacementQuestions, generatePlacementQuestions,
+  refinePlacementQuestion, type PlacementQuestion, type PlacementQuestionDraft
+} from '../../services/placementQuestions';
 
 interface LessonState {
   data: AdminLesson;
@@ -254,6 +259,49 @@ export default function AdminCourseEditor() {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [refreshingSummary, setRefreshingSummary] = useState(false);
 
+  // Placement Test state
+  const [pqs, setPqs] = useState<PlacementQuestion[]>([]);
+  const [pqLoading, setPqLoading] = useState(false);
+  const [pqDrafts, setPqDrafts] = useState<PlacementQuestionDraft[]>([]);
+  const [pqDraftStatuses, setPqDraftStatuses] = useState<('pending' | 'approved' | 'edited')[]>([]);
+  const [generatingPQs, setGeneratingPQs] = useState(false);
+  const [savingPqDrafts, setSavingPqDrafts] = useState(false);
+  const [refiningPqIdx, setRefiningPqIdx] = useState<number | null>(null);
+  const [pqRefineInstruction, setPqRefineInstruction] = useState('');
+  const [pqTab, setPqTab] = useState<'list' | 'draft'>('list');
+
+  // Manual Edit State
+  const [editingPqId, setEditingPqId] = useState<number | null>(null); // -1 for "New"
+  const [pqEditForm, setPqEditForm] = useState<PlacementQuestionDraft>({
+    question: '',
+    options: ['', '', '', ''],
+    correct_answer: '',
+    topic: '',
+    concept_id: null,
+    order: 0,
+  });
+
+  const handleSaveEditedPq = async (pqId: number) => {
+    if (!pqEditForm.question || pqEditForm.options.some(o => !o) || !pqEditForm.correct_answer) {
+      toast.error('Please fill all fields and select a correct answer');
+      return;
+    }
+    try {
+      if (pqId === -1) {
+        const created = await createPlacementQuestion(id, pqEditForm);
+        setPqs([...pqs, created]);
+        toast.success('Question added manually');
+      } else {
+        const updated = await updatePlacementQuestion(id, pqId, pqEditForm);
+        setPqs(pqs.map(q => (q.id === pqId ? updated : q)));
+        toast.success('Question updated successfully');
+      }
+      setEditingPqId(null);
+    } catch {
+      toast.error('Failed to save question');
+    }
+  };
+
   useEffect(() => {
     Promise.all([getAdminCourses(), getCourse(id)])
       .then(([courses, detail]) => {
@@ -289,6 +337,12 @@ export default function AdminCourseEditor() {
       .then(setSummary)
       .catch(() => setSummary(null))
       .finally(() => setSummaryLoading(false));
+
+    setPqLoading(true);
+    getPlacementQuestions(id)
+      .then(setPqs)
+      .catch(() => toast.error('Failed to load placement questions'))
+      .finally(() => setPqLoading(false));
 
     // Load corpus
     loadCorpus();
@@ -770,6 +824,82 @@ export default function AdminCourseEditor() {
       .filter(Boolean)
       .map(Number)
       .filter((n) => Number.isFinite(n) && n > 0);
+
+  // ---- Placement Test helpers ----
+  const handleGeneratePQs = async () => {
+    setGeneratingPQs(true);
+    try {
+      const draftQs = await generatePlacementQuestions({
+        courseTitle: courseDetail?.title || '',
+        clos: clos.map(c => ({
+          name: c.code,
+          description: c.text,
+          concepts: c.concepts.map(cid => {
+            const concept = concepts.find(con => con.id === cid);
+            return { id: String(cid), label: concept?.label || String(cid) };
+          })
+        }))
+      });
+      setPqDrafts(draftQs);
+      setPqTab('draft');
+      setPqDraftStatuses(draftQs.map(() => 'pending'));
+      toast.success(`Generated ${draftQs.length} placement questions`);
+    } catch {
+      toast.error('Failed to generate placement questions');
+    } finally {
+      setGeneratingPQs(false);
+    }
+  };
+
+
+  const handleSavePqDrafts = async () => {
+    const toSave = pqDrafts.filter((_, i) => pqDraftStatuses[i] === 'approved' || pqDraftStatuses[i] === 'edited');
+    if (toSave.length === 0) {
+      toast.error('Approve at least one question before saving.');
+      return;
+    }
+    setSavingPqDrafts(true);
+    try {
+      const saved = await bulkSavePlacementQuestions(id, toSave);
+      setPqs(saved);
+      setPqTab('list');
+      setPqDrafts([]);
+      setPqDraftStatuses([]);
+      toast.success('Placement questions saved');
+    } catch {
+      toast.error('Failed to save placement questions');
+    } finally {
+      setSavingPqDrafts(false);
+    }
+  };
+
+  const handleRefinePq = async (idx: number) => {
+    if (!pqRefineInstruction.trim()) return;
+    try {
+      const refined = await refinePlacementQuestion({
+        question: pqDrafts[idx],
+        instruction: pqRefineInstruction,
+        courseTitle: courseDetail?.title || '',
+      });
+      setPqDrafts(prev => prev.map((q, i) => i === idx ? refined : q));
+      setPqDraftStatuses(prev => prev.map((s, i) => i === idx ? 'edited' : s));
+      setRefiningPqIdx(null);
+      setPqRefineInstruction('');
+      toast.success('Question refined');
+    } catch {
+      toast.error('Failed to refine question');
+    }
+  };
+
+  const handleDeletePq = async (pqId: number) => {
+    try {
+      await deletePlacementQuestion(id, pqId);
+      setPqs(prev => prev.filter(q => q.id !== pqId));
+      toast.success('Placement question deleted');
+    } catch {
+      toast.error('Failed to delete placement question');
+    }
+  };
 
   // ---- Course metadata helpers ----
 
@@ -1910,6 +2040,291 @@ export default function AdminCourseEditor() {
               </tbody>
             </table>
           )}
+        </div>
+      </section>
+
+      {/* ── Placement Test ── */}
+      <section>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <BookOpen size={20} style={{ color: 'var(--admin-accent)' }} />
+            <h2 className="admin-heading-xs">Placement Test</h2>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleGeneratePQs}
+              disabled={generatingPQs || clos.length === 0}
+              className="admin-btn admin-btn-secondary admin-btn-sm"
+              title={clos.length === 0 ? "Add CLOs first to enable generation" : ""}
+            >
+              {generatingPQs ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              Generate via AI
+            </button>
+          </div>
+        </div>
+
+        <div className="admin-card p-0">
+          <div className="flex border-b" style={{ borderColor: 'var(--admin-hairline)' }}>
+            <button
+              className={`px-4 py-2 text-sm font-medium border-b-2 ${pqTab === 'list' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500'}`}
+              onClick={() => setPqTab('list')}
+            >
+              Saved Questions ({pqs.length})
+            </button>
+            <button
+              className={`px-4 py-2 text-sm font-medium border-b-2 ${pqTab === 'draft' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500'}`}
+              onClick={() => setPqTab('draft')}
+            >
+              AI Drafts {pqDrafts.length > 0 && <span className="ml-1 bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5 rounded-full">{pqDrafts.length}</span>}
+            </button>
+          </div>
+
+          <div className="p-5">
+            {pqLoading ? (
+              <div className="flex justify-center py-8"><Loader2 className="animate-spin" style={{ color: 'var(--admin-ink-secondary)' }} /></div>
+            ) : pqTab === 'list' ? (
+              pqs.length === 0 && !editingPqId ? (
+                <div className="text-center py-8">
+                  <p className="text-sm" style={{ color: 'var(--admin-ink-tertiary)' }}>No placement questions saved.</p>
+                  <button onClick={() => { setEditingPqId(-1); setPqEditForm({ question: '', options: ['', '', '', ''], correct_answer: '', topic: '', concept_id: null, order: 0 }); }} className="admin-btn admin-btn-ghost mt-4">
+                    <Plus size={14} className="mr-1" /> Add Question Manually
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {pqs.map((q, idx) => {
+                    const isEditing = editingPqId === q.id;
+                    return (
+                      <div key={q.id} className="border rounded-md p-4" style={{ borderColor: isEditing ? 'var(--admin-accent)' : 'var(--admin-hairline)' }}>
+                        {isEditing ? (
+                          <div className="space-y-3">
+                            <div>
+                              <label className="admin-input-label">Question</label>
+                              <textarea
+                                className="admin-input w-full" rows={2}
+                                value={pqEditForm.question}
+                                onChange={(e) => setPqEditForm({ ...pqEditForm, question: e.target.value })}
+                              />
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {pqEditForm.options.map((opt, i) => (
+                                <div key={i} className="flex gap-2 items-center">
+                                  <span className="font-mono text-xs opacity-50">{String.fromCharCode(65 + i)}</span>
+                                  <input
+                                    className="admin-input flex-1 text-sm"
+                                    value={opt}
+                                    onChange={(e) => {
+                                      const newOpts = [...pqEditForm.options];
+                                      newOpts[i] = e.target.value;
+                                      setPqEditForm({ ...pqEditForm, options: newOpts });
+                                    }}
+                                  />
+                                  <input
+                                    type="radio"
+                                    name={`correct_opt_${q.id}`}
+                                    checked={pqEditForm.correct_answer === opt && opt !== ''}
+                                    onChange={() => setPqEditForm({ ...pqEditForm, correct_answer: opt })}
+                                    title="Mark as correct answer"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                            <div className="flex gap-4">
+                              <div className="flex-1">
+                                <label className="admin-input-label">Topic</label>
+                                <input className="admin-input w-full" value={pqEditForm.topic} onChange={(e) => setPqEditForm({ ...pqEditForm, topic: e.target.value })} />
+                              </div>
+                              <div className="flex-1">
+                                <label className="admin-input-label">Concept</label>
+                                <select className="admin-input admin-select w-full" value={pqEditForm.concept_id || ''} onChange={(e) => setPqEditForm({ ...pqEditForm, concept_id: e.target.value || null })}>
+                                  <option value="">—</option>
+                                  {concepts.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                                </select>
+                              </div>
+                            </div>
+                            <div className="flex justify-end gap-2 mt-2">
+                              <button onClick={() => setEditingPqId(null)} className="admin-btn admin-btn-ghost admin-btn-sm">Cancel</button>
+                              <button onClick={() => handleSaveEditedPq(q.id)} className="admin-btn admin-btn-primary admin-btn-sm">Save</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex justify-between items-start gap-4 mb-2">
+                              <div>
+                                <span className="text-xs font-mono bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded mr-2">Q{idx + 1}</span>
+                                <span className="text-sm font-medium" style={{ color: 'var(--admin-ink)' }}>{q.question}</span>
+                              </div>
+                              <div className="flex gap-2">
+                                <button onClick={() => { setEditingPqId(q.id); setPqEditForm({ question: q.question, options: [...q.options], correct_answer: q.correct_answer, topic: q.topic, concept_id: q.concept_id ? String(q.concept_id) : null, order: q.order }); }} className="text-blue-500 hover:text-blue-600"><Edit size={16} /></button>
+                                <button onClick={() => handleDeletePq(q.id)} className="text-red-500 hover:text-red-600"><Trash2 size={16} /></button>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3 pl-8">
+                              {q.options.map((opt, i) => (
+                                <div key={i} className={`text-sm px-3 py-1.5 rounded border ${opt === q.correct_answer ? 'bg-green-50 border-green-200 text-green-800' : 'bg-gray-50 border-gray-200'}`}>
+                                  <span className="font-mono text-xs mr-2 opacity-50">{String.fromCharCode(65 + i)}</span>
+                                  {opt}
+                                </div>
+                              ))}
+                            </div>
+                            <div className="mt-3 pl-8 flex gap-2">
+                              {q.topic && <span className="admin-badge text-xs px-2 py-0.5">{q.topic}</span>}
+                              {q.concept_id && <span className="admin-badge text-xs px-2 py-0.5" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}>#{q.concept_id}</span>}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Add New Question Row */}
+                  {editingPqId === -1 && (
+                    <div className="border rounded-md p-4" style={{ borderColor: 'var(--admin-accent)' }}>
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center">
+                          <h4 className="admin-heading-xs text-sm">New Placement Question</h4>
+                        </div>
+                        <div>
+                          <label className="admin-input-label">Question</label>
+                          <textarea
+                            className="admin-input w-full" rows={2}
+                            value={pqEditForm.question}
+                            onChange={(e) => setPqEditForm({ ...pqEditForm, question: e.target.value })}
+                          />
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {pqEditForm.options.map((opt, i) => (
+                            <div key={i} className="flex gap-2 items-center">
+                              <span className="font-mono text-xs opacity-50">{String.fromCharCode(65 + i)}</span>
+                              <input
+                                className="admin-input flex-1 text-sm"
+                                placeholder={`Option ${i + 1}`}
+                                value={opt}
+                                onChange={(e) => {
+                                  const newOpts = [...pqEditForm.options];
+                                  newOpts[i] = e.target.value;
+                                  setPqEditForm({ ...pqEditForm, options: newOpts });
+                                }}
+                              />
+                              <input
+                                type="radio"
+                                name="correct_opt_new"
+                                checked={pqEditForm.correct_answer === opt && opt !== ''}
+                                onChange={() => setPqEditForm({ ...pqEditForm, correct_answer: opt })}
+                                title="Mark as correct answer"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex gap-4">
+                          <div className="flex-1">
+                            <label className="admin-input-label">Topic</label>
+                            <input className="admin-input w-full" value={pqEditForm.topic} onChange={(e) => setPqEditForm({ ...pqEditForm, topic: e.target.value })} />
+                          </div>
+                          <div className="flex-1">
+                            <label className="admin-input-label">Concept</label>
+                            <select className="admin-input admin-select w-full" value={pqEditForm.concept_id || ''} onChange={(e) => setPqEditForm({ ...pqEditForm, concept_id: e.target.value || null })}>
+                              <option value="">—</option>
+                              {concepts.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                        <div className="flex justify-end gap-2 mt-2">
+                          <button onClick={() => setEditingPqId(null)} className="admin-btn admin-btn-ghost admin-btn-sm">Cancel</button>
+                          <button onClick={() => handleSaveEditedPq(-1)} className="admin-btn admin-btn-primary admin-btn-sm">Create Question</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {editingPqId !== -1 && (
+                    <button onClick={() => { setEditingPqId(-1); setPqEditForm({ question: '', options: ['', '', '', ''], correct_answer: '', topic: '', concept_id: null, order: pqs.length + 1 }); }} className="admin-btn admin-btn-ghost admin-btn-sm mt-2">
+                      <Plus size={14} className="mr-1" /> Add Question Manually
+                    </button>
+                  )}
+                </div>
+              )
+            ) : (
+              // Drafts Tab
+              pqDrafts.length === 0 ? (
+                <p className="text-center text-sm" style={{ color: 'var(--admin-ink-tertiary)' }}>No AI drafts. Click "Generate via AI" to create some.</p>
+              ) : (
+                <div className="space-y-6">
+                  <div className="space-y-4">
+                    {pqDrafts.map((q, idx) => {
+                      const status = pqDraftStatuses[idx];
+                      return (
+                        <div key={idx} className={`border rounded-md p-4 transition-colors ${status === 'approved' ? 'border-green-300 bg-green-50/30' : status === 'edited' ? 'border-blue-300 bg-blue-50/30' : 'border-gray-200'}`}>
+                          <div className="flex justify-between items-start gap-4">
+                            <div className="flex-1">
+                              <span className="text-xs font-mono bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded mr-2">DRAFT {idx + 1}</span>
+                              <span className="text-sm font-medium" style={{ color: 'var(--admin-ink)' }}>{q.question}</span>
+                            </div>
+                            <div className="flex gap-2 shrink-0">
+                              {status !== 'approved' && (
+                                <button onClick={() => setPqDraftStatuses(prev => prev.map((s, i) => i === idx ? 'approved' : s))} className="admin-btn admin-btn-sm text-green-600 border-green-200 hover:bg-green-50"><Check size={14} /> Approve</button>
+                              )}
+                              <button onClick={() => setPqDrafts(prev => prev.filter((_, i) => i !== idx))} className="admin-btn admin-btn-sm text-red-600 border-red-200 hover:bg-red-50"><Trash2 size={14} /></button>
+                            </div>
+                          </div>
+                          
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3 pl-8">
+                            {q.options.map((opt, i) => (
+                              <div key={i} className={`text-sm px-3 py-1.5 rounded border ${opt === q.correct_answer ? 'bg-green-50 border-green-200 text-green-800' : 'bg-gray-50 border-gray-200'}`}>
+                                <span className="font-mono text-xs mr-2 opacity-50">{String.fromCharCode(65 + i)}</span>
+                                {opt}
+                              </div>
+                            ))}
+                          </div>
+                          
+                          <div className="mt-3 pl-8 flex items-center justify-between">
+                            <div className="flex gap-2">
+                              {q.topic && <span className="admin-badge text-xs px-2 py-0.5">{q.topic}</span>}
+                              {q.concept_id && <span className="admin-badge text-xs px-2 py-0.5" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}>#{q.concept_id}</span>}
+                            </div>
+                            <button
+                              onClick={() => setRefiningPqIdx(refiningPqIdx === idx ? null : idx)}
+                              className="text-xs flex items-center gap-1 text-blue-600 hover:text-blue-800"
+                            >
+                              <Sparkles size={12} /> Refine with AI
+                            </button>
+                          </div>
+                          
+                          {refiningPqIdx === idx && (
+                            <div className="mt-4 pl-8">
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  className="admin-input flex-1 text-sm"
+                                  placeholder='e.g. "Make the options harder" or "Change the topic to arrays"'
+                                  value={pqRefineInstruction}
+                                  onChange={(e) => setPqRefineInstruction(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') handleRefinePq(idx); }}
+                                />
+                                <button onClick={() => handleRefinePq(idx)} className="admin-btn admin-btn-primary admin-btn-sm">
+                                  Refine
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  <div className="flex justify-end pt-4 border-t" style={{ borderColor: 'var(--admin-hairline)' }}>
+                    <button
+                      onClick={handleSavePqDrafts}
+                      disabled={savingPqDrafts || !pqDraftStatuses.some(s => s === 'approved' || s === 'edited')}
+                      className="admin-btn admin-btn-primary flex items-center gap-2"
+                    >
+                      {savingPqDrafts ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                      Save Approved to Course
+                    </button>
+                  </div>
+                </div>
+              )
+            )}
+          </div>
         </div>
       </section>
 
