@@ -122,7 +122,7 @@ export async function submitPlacementResults(
     payload: SubmitPlacementPayload,
 ): Promise<PlacementResult> {
     // Through Django (JWT) — identity is set server-side from the authenticated user.
-    const res = await api.post<PlacementResult>('/ai/assessments/submit-placement', payload);
+    const res = await api.post<PlacementResult>('/ai/assessments/submit-placement/', payload);
     return res.data;
 }
 
@@ -236,7 +236,7 @@ export interface GenerateCheckpointPayload {
 export async function generateSessionCheckpoint(
     payload: GenerateCheckpointPayload,
 ): Promise<AssessmentResponseData> {
-    const res = await api.post('/ai/assessments/session', payload);
+    const res = await api.post('/ai/assessments/session/', payload);
     const data = res.data as AssessmentResponseData;
     if (!data || !Array.isArray(data.questions) || data.questions.length === 0) {
         throw new Error('The checkpoint generator returned no questions.');
@@ -257,6 +257,6 @@ export interface SubmitCheckpointPayload {
 export async function submitCheckpoint(
     payload: SubmitCheckpointPayload,
 ): Promise<CheckpointResultData> {
-    const res = await api.post('/ai/assessments/submit', payload);
+    const res = await api.post('/ai/assessments/submit/', payload);
     return res.data as CheckpointResultData;
 }
