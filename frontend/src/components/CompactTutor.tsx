@@ -1,4 +1,4 @@
-import { Mic, MicOff, Volume2, VolumeX, MessageCircle, Pause, Play, Send, Loader2, Code2, GripHorizontal, Maximize2, Minimize2, ThumbsUp, ThumbsDown, Info } from 'lucide-react';
+import { Mic, MicOff, Volume2, VolumeX, MessageCircle, Pause, Play, Send, Loader2, Code2, GripHorizontal, Maximize2, Minimize2, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import {
@@ -6,6 +6,7 @@ import {
   continueTutorSession,
   askTutor,
   stopTutorSession,
+  abandonSocraticExchange,
   transcribeAudio,
   classifyIntent,
   askRag,
@@ -14,48 +15,19 @@ import {
   setTutorPace,
   persistChatLog,
   submitFeedback,
+  fetchIntentChoices,
   type SERResult,
   type IntentPrediction,
   type FeedbackValue,
   type TutorStreamChunk,
+  type IntentChoice,
 } from '../services/tutor';
 
 import { fuseEmotions } from '../services/emotionFusion';
 import { Nova3DAvatar } from './Nova3DAvatar';
 import type { BlendshapeData } from '../services/tutor';
-
-const INTENT_OPTIONS: { value: string; label: string; description: string }[] = [
-  {
-    value: 'On-Topic Question',
-    label: 'On-Topic Question',
-    description: 'Asking about the current Python topic — explanation, example, clarification, or debugging help.',
-  },
-  {
-    value: 'Off-Topic Question',
-    label: 'Off-Topic',
-    description: 'Completely unrelated to the lesson or programming.',
-  },
-  {
-    value: 'Emotional-State',
-    label: 'Emotional State',
-    description: 'Expressing a feeling like frustration, confusion, excitement, boredom, or anxiety.',
-  },
-  {
-    value: 'Pace-Related',
-    label: 'Pace-Related',
-    description: 'Wants to change speed — slow down, speed up, skip, or take a break.',
-  },
-  {
-    value: 'Repeat/clarification',
-    label: 'Repeat / Clarification',
-    description: 'Wants something repeated or explained again (uses "again", "back", "repeat", "missed").',
-  },
-  {
-    value: 'Debugging/Code-Sharing',
-    label: 'Debugging / Code',
-    description: 'Sharing code, error messages, tracebacks, or asking for debugging help.',
-  },
-];
+import { INTENT_OPTIONS as FALLBACK_INTENT_OPTIONS } from '../lib/intents';
+import type { IntentName } from '../services/tutor';
 
 interface TranscriptEntry {
   role: 'tutor' | 'student';
@@ -126,7 +98,11 @@ export function CompactTutor({
   const [tutorEmotion, setTutorEmotion] = useState('calm');
   const [currentBlendshapes, setCurrentBlendshapes] = useState<BlendshapeData | null>(null);
   const [sessionContext, setSessionContext] = useState('');
-  const [correctionModal, setCorrectionModal] = useState<{ index: number; chatLogId: number } | null>(null);
+  const [intentOptions, setIntentOptions] = useState<IntentChoice[]>(FALLBACK_INTENT_OPTIONS);
+  const [correctingIndex, setCorrectingIndex] = useState<number | null>(null);
+  const [correctingFeedback, setCorrectingFeedback] = useState<FeedbackValue | null>(null);
+  const [selectedCorrectedIntent, setSelectedCorrectedIntent] = useState<string>('');
+  const [showingDescriptionFor, setShowingDescriptionFor] = useState<string | null>(null);
 
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -190,6 +166,18 @@ export function CompactTutor({
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcript]);
 
+  useEffect(() => {
+    let mounted = true;
+    fetchIntentChoices().then((choices) => {
+      if (mounted && choices.length > 0) {
+        setIntentOptions(choices);
+      }
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   // ── Drag: starts inline, becomes floating when dragged away, snaps back when dropped on panel ──
   const onDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -244,6 +232,13 @@ export function CompactTutor({
 
       // Stop any ongoing lecture
       stopCurrentAudio();
+
+      // If the student navigated away before resolving a Socratic follow-up,
+      // abandon it explicitly so the tutor doesn't assess stale replies later.
+      if (awaitingResponseRef.current) {
+        abandonSocraticExchange(sessionIdRef.current);
+        awaitingResponseRef.current = false;
+      }
 
       // Trigger auto-explanation for the new slide
       handleAskQuestion(`Please explain this slide. Title: ${currentSlideTitle}\nContent: ${currentSlideContent}`, fusedEmotion, true, currentSlideIndex);
@@ -453,7 +448,7 @@ export function CompactTutor({
       const paceKeywords = ['slow down', 'too fast', 'speed up', 'faster', 'slower', 'skip'];
       const emotionKeywords = ['confused', 'lost', 'frustrated', "don't understand", 'hard', 'difficult', 'give up', 'struggling'];
       const lower = q.toLowerCase();
-      let intent: string = 'On-Topic Question';
+      let intent: IntentName = 'On-Topic Question';
       let intentPrediction: IntentPrediction | null = null;
 
       if (!isAutoTrigger) {
@@ -640,38 +635,30 @@ export function CompactTutor({
     }
   };
 
-  const handleFeedback = async (index: number, feedback: FeedbackValue) => {
+  const handleFeedback = (index: number, feedback: FeedbackValue) => {
     const entry = transcript[index];
-    if (!entry?.chatLogId || entry.feedback) return;
+    if (!entry?.chatLogId || entry.feedback || correctingIndex === index) return;
 
-    if (feedback === 'thumbs_down') {
-      setCorrectionModal({ index, chatLogId: entry.chatLogId });
-      return;
-    }
-
-    const result = await submitFeedback(entry.chatLogId, feedback);
-    if (result) {
-      setTranscript((prev) => {
-        const updated = [...prev];
-        updated[index] = { ...updated[index], feedback };
-        return updated;
-      });
-      if (result.retraining_recommended) {
-        console.log('[Intent Feedback] Retraining threshold reached.');
-      }
-    }
+    const defaultValue = entry.intent?.intent_name || intentOptions[0]?.value || '';
+    setCorrectingIndex(index);
+    setCorrectingFeedback(feedback);
+    setSelectedCorrectedIntent(defaultValue);
+    setShowingDescriptionFor(null);
   };
 
-  const handleCorrectIntent = async (correctedIntent: string) => {
-    if (!correctionModal) return;
-    const { index, chatLogId } = correctionModal;
-    const result = await submitFeedback(chatLogId, 'thumbs_down', correctedIntent);
+  const handleCorrectIntent = async () => {
+    if (correctingIndex === null || !correctingFeedback) return;
+    const entry = transcript[correctingIndex];
+    if (!entry?.chatLogId) return;
+
+    const correctedIntent = selectedCorrectedIntent;
+    const result = await submitFeedback(entry.chatLogId, correctingFeedback, correctedIntent);
     if (result) {
       setTranscript((prev) => {
         const updated = [...prev];
-        updated[index] = {
-          ...updated[index],
-          feedback: 'thumbs_down',
+        updated[correctingIndex] = {
+          ...updated[correctingIndex],
+          feedback: correctingFeedback,
           correctedIntent,
         };
         return updated;
@@ -680,10 +667,16 @@ export function CompactTutor({
         console.log('[Intent Feedback] Retraining threshold reached.');
       }
     }
-    setCorrectionModal(null);
+    setCorrectingIndex(null);
+    setCorrectingFeedback(null);
+    setShowingDescriptionFor(null);
   };
 
-  const closeCorrectionModal = () => setCorrectionModal(null);
+  const closeCorrection = () => {
+    setCorrectingIndex(null);
+    setCorrectingFeedback(null);
+    setShowingDescriptionFor(null);
+  };
 
   const handleVoiceInput = async () => {
     if (isRecording) {
@@ -996,7 +989,7 @@ export function CompactTutor({
                 </div>
               )}
               {entry.role === 'tutor' && entry.chatLogId && (
-                <div className="mt-2 flex flex-col gap-1">
+                <div className="mt-2 flex flex-col gap-1.5">
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] text-muted-foreground">Was this helpful?</span>
                     <button
@@ -1016,9 +1009,83 @@ export function CompactTutor({
                       <ThumbsDown size={12} />
                     </button>
                   </div>
-                  {entry.feedback === 'thumbs_down' && entry.correctedIntent && (
-                    <span className="text-[10px] text-red-600">
-                      Marked as: {INTENT_OPTIONS.find(o => o.value === entry.correctedIntent)?.label ?? entry.correctedIntent}
+
+                  {correctingIndex === i && !entry.feedback && (
+                    <div className="rounded-lg border border-border bg-card p-2 space-y-2">
+                      <p className="text-[10px] text-muted-foreground">
+                        Which intent best matches this?
+                      </p>
+                      <div className="space-y-1">
+                        {intentOptions.map((option) => {
+                          const isSelected = selectedCorrectedIntent === option.value;
+                          const showingDescription = showingDescriptionFor === option.value;
+                          return (
+                            <div key={option.value} className="space-y-1">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedCorrectedIntent(option.value)}
+                                className={`w-full flex items-center justify-between rounded-md border px-2 py-1.5 text-left text-xs transition-colors ${
+                                  isSelected
+                                    ? 'border-secondary bg-secondary/10 text-secondary'
+                                    : 'border-border hover:bg-muted'
+                                }`}
+                              >
+                                <span className="font-medium">{option.label}</span>
+                                <span className="flex items-center gap-1">
+                                  <span
+                                    className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-current text-[9px]"
+                                    title={option.description}
+                                    tabIndex={0}
+                                    onMouseEnter={() => setShowingDescriptionFor(option.value)}
+                                    onMouseLeave={() => setShowingDescriptionFor(null)}
+                                    onFocus={() => setShowingDescriptionFor(option.value)}
+                                    onBlur={() => setShowingDescriptionFor(null)}
+                                    onTouchStart={() =>
+                                      setShowingDescriptionFor((prev) =>
+                                        prev === option.value ? null : option.value
+                                      )
+                                    }
+                                    role="button"
+                                    aria-label={`Definition for ${option.label}`}
+                                  >
+                                    i
+                                  </span>
+                                  <span
+                                    className={`w-3 h-3 rounded-full border ${
+                                      isSelected ? 'bg-secondary border-secondary' : 'border-muted-foreground'
+                                    }`}
+                                  />
+                                </span>
+                              </button>
+                              {showingDescription && (
+                                <p className="text-[10px] text-muted-foreground leading-snug px-1">
+                                  {option.description}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleCorrectIntent}
+                          className="flex-1 px-2 py-1 text-[10px] font-medium rounded-md bg-secondary text-white"
+                        >
+                          Submit
+                        </button>
+                        <button
+                          onClick={closeCorrection}
+                          className="px-2 py-1 text-[10px] rounded-md border border-border hover:bg-muted"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {entry.feedback && entry.correctedIntent && (
+                    <span className="text-[10px] text-muted-foreground">
+                      Marked as: {intentOptions.find(o => o.value === entry.correctedIntent)?.label ?? entry.correctedIntent}
                     </span>
                   )}
                 </div>
@@ -1078,40 +1145,6 @@ export function CompactTutor({
         </div>
       )}
 
-      {/* Correction modal for thumbs-down feedback */}
-      {correctionModal && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm rounded-xl border border-border bg-card p-4 shadow-2xl">
-            <h4 className="text-sm font-semibold mb-1">Which intent fits better?</h4>
-            <p className="text-xs text-muted-foreground mb-3">
-              Help us improve by selecting the correct category for your question.
-            </p>
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {INTENT_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  onClick={() => handleCorrectIntent(option.value)}
-                  className="w-full flex items-center justify-between rounded-lg border border-border px-3 py-2 text-left text-xs hover:bg-muted transition-colors"
-                >
-                  <span className="font-medium">{option.label}</span>
-                  <span
-                    className="ml-2 text-muted-foreground"
-                    title={option.description}
-                  >
-                    <Info size={14} />
-                  </span>
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={closeCorrectionModal}
-              className="mt-3 w-full py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

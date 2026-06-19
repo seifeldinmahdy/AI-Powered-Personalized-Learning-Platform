@@ -97,3 +97,4 @@ AGENTS.md
 Obsidian_vault/
 docs/
 .playwright-mcp/
+*.whl

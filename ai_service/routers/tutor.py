@@ -17,6 +17,7 @@ from services.tutor_service import (
     repeat_lecture_chunk,
     stop_session,
     get_session_state,
+    abandon_socratic_exchange,
 )
 from services.tts_service import get_tts_service
 from services.tts_tags import strip_all_tags
@@ -224,6 +225,28 @@ async def stop(request: StopRequest):
     if not success:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"success": True, "session_id": request.session_id, "status": "finished"}
+
+
+class AbandonSocraticRequest(BaseModel):
+    session_id: str = Field(..., description="Session ID")
+
+
+@router.post("/abandon-socratic")
+async def abandon_socratic(request: AbandonSocraticRequest):
+    """Mark any open Socratic exchange as abandoned (e.g. after slide navigation)."""
+    session = get_session(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    was_open = abandon_socratic_exchange(request.session_id)
+    return {
+        "success": True,
+        "session_id": request.session_id,
+        "abandoned": was_open,
+        "socratic_status": (
+            session.socratic_exchange.status
+            if session.socratic_exchange else None
+        ),
+    }
 
 
 class SetPaceRequest(BaseModel):

@@ -50,6 +50,9 @@ INTENT_LABEL_MAP = {
     "Debugging/Code-Sharing": 5,
 }
 
+# No single student's feedback may dominate a retraining batch.
+MAX_STUDENT_FRACTION = 0.40
+
 
 # ------------------------------------------------------------------------------
 # Simple cross-platform file lock to prevent concurrent retraining runs.
@@ -142,12 +145,14 @@ class Command(BaseCommand):
         FEEDBACK_CSV.parent.mkdir(parents=True, exist_ok=True)
 
         exported_ids = []
+        student_counts: dict[int, int] = {}
         with open(FEEDBACK_CSV, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
                 f,
                 fieldnames=[
                     "id",
                     "chat_log_id",
+                    "student_id",
                     "student_input",
                     "session_context",
                     "predicted_intent",
@@ -161,10 +166,13 @@ class Command(BaseCommand):
             for entry in pending:
                 label_name = entry.effective_label()
                 label_id = INTENT_LABEL_MAP.get(label_name, 0)
+                student_id = entry.chat_log.user_id
+                student_counts[student_id] = student_counts.get(student_id, 0) + 1
                 writer.writerow(
                     {
                         "id": entry.id,
                         "chat_log_id": entry.chat_log_id,
+                        "student_id": student_id,
                         "student_input": entry.student_input,
                         "session_context": entry.session_context,
                         "predicted_intent": entry.predicted_intent,
@@ -176,11 +184,25 @@ class Command(BaseCommand):
                 )
                 exported_ids.append(entry.id)
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Exported {len(exported_ids)} feedback utterances to {FEEDBACK_CSV}"
+        total = len(exported_ids)
+        overrepresented = [
+            (sid, count)
+            for sid, count in student_counts.items()
+            if count / total > MAX_STUDENT_FRACTION
+        ]
+        if overrepresented:
+            self.stdout.write(
+                self.style.WARNING(
+                    "Student(s) exceed the per-student cap for this batch: "
+                    + ", ".join(f"#{s}={c} ({c/total:.0%})" for s, c in overrepresented)
+                )
             )
-        )
+        else:
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Exported {len(exported_ids)} feedback utterances to {FEEDBACK_CSV}"
+                )
+            )
 
         if dry_run:
             self.stdout.write(self.style.NOTICE("Dry run: not triggering retraining."))

@@ -24,16 +24,7 @@ import {
   type IntentFeedbackEntry,
   type RetrainingCounter,
 } from "../../services/admin";
-
-/* ─── Intent Labels ─── */
-const INTENT_LABELS = [
-  "On-Topic Question",
-  "Off-Topic Question",
-  "Emotional-State",
-  "Pace-Related",
-  "Repeat/clarification",
-  "Debugging/Code-Sharing",
-];
+import { INTENT_LABELS } from "../../lib/intents";
 
 /* ─── Tabs ─── */
 const TABS = ["Feedback Queue", "Retraining"] as const;
