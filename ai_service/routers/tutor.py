@@ -2,11 +2,12 @@
 Tutor Router — AI tutoring session endpoints.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 import json
 from pydantic import BaseModel, Field
 from typing import List, Optional
+from routers._auth import jwt_verified_student_id
 from services.tutor_service import (
     create_session,
     get_session,
@@ -45,7 +46,6 @@ class StartSessionRequest(BaseModel):
     voice: str = Field(default="en-US-GuyNeural", description="TTS voice name")
     student_profile_summary: Optional[str] = Field(default=None, description="Student's learning profile summary for personalization")
     student_profile_data: Optional[dict] = Field(default=None, description="Profiler engagement patterns and recommended approaches for personalization")
-    student_id: Optional[str] = Field(default=None, description="Student ID for automatic profile fetch if profile data not provided")
     prior_topics: Optional[List[str]] = Field(default=None, description="Titles of lessons the student already completed, so the tutor can call back to them ('as we saw last lesson…')")
 
 
@@ -86,12 +86,19 @@ class StopRequest(BaseModel):
 
 
 @router.post("/start")
-async def start_session(request: StartSessionRequest):
+async def start_session(
+    request: StartSessionRequest,
+    student_id: str = Depends(jwt_verified_student_id),
+):
     """
     Start a new AI tutoring session.
 
     Provide a list of topics (with optional subtopics). The tutor will
     lecture through them in order, recursively summarizing context.
+
+    The student identity comes ONLY from the verified token (``student_id``),
+    never from the request body — the session (and any profile fetch it triggers)
+    is bound to the authenticated student.
     """
     try:
         topics = [t.model_dump() for t in request.topics]
@@ -101,7 +108,7 @@ async def start_session(request: StartSessionRequest):
             session_id=request.session_id,
             student_profile_summary=request.student_profile_summary,
             student_profile_data=request.student_profile_data,
-            student_id=request.student_id,
+            student_id=student_id,
             prior_topics=request.prior_topics,
         )
         return {
@@ -117,11 +124,29 @@ async def start_session(request: StartSessionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _assert_session_owner(session, student_id: str) -> None:
+    """Reject a verified student operating on someone else's tutor session.
+
+    The session records the ``student_id`` it was started for (from the verified
+    token at ``/start``). A different verified student — even with a valid token —
+    cannot drive or read another student's live session by guessing its id.
+    Sessions without a recorded owner (legacy) are not blocked, since there is no
+    owner to compare against.
+    """
+    owner = getattr(session, "student_id", None)
+    if owner and str(owner) != str(student_id):
+        raise HTTPException(status_code=403, detail="This session belongs to another student.")
+
+
 @router.post("/continue")
-async def continue_session(request: ContinueRequest):
+async def continue_session(
+    request: ContinueRequest,
+    student_id: str = Depends(jwt_verified_student_id),
+):
     session = get_session(request.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    _assert_session_owner(session, student_id)
 
     async def event_generator():
         try:
@@ -161,10 +186,14 @@ async def continue_session(request: ContinueRequest):
 
 
 @router.post("/ask")
-async def ask(request: AskQuestionRequest):
+async def ask(
+    request: AskQuestionRequest,
+    student_id: str = Depends(jwt_verified_student_id),
+):
     session = get_session(request.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    _assert_session_owner(session, student_id)
 
     async def event_generator():
         try:

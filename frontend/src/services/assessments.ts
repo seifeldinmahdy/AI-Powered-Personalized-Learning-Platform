@@ -28,7 +28,7 @@ export interface PlacementResult {
 }
 
 export interface SubmitPlacementPayload {
-    student_id: string;
+    // student_id is no longer sent — Django sets the verified identity (Track 1).
     course_id: string;
     course_title: string;
     enrollment_id: number;
@@ -121,16 +121,9 @@ export async function fetchPlacementTest(
 export async function submitPlacementResults(
     payload: SubmitPlacementPayload,
 ): Promise<PlacementResult> {
-    const res = await fetch(`${AI_SERVICE}/assessments/submit-placement`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(`Placement submission failed: ${detail}`);
-    }
-    return res.json();
+    // Through Django (JWT) — identity is set server-side from the authenticated user.
+    const res = await api.post<PlacementResult>('/ai/assessments/submit-placement', payload);
+    return res.data;
 }
 
 /** Fetch the persisted student context for the authenticated student + course.

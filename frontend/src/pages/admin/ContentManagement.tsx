@@ -244,7 +244,7 @@ export default function ContentManagement() {
                 <Users size={12} /> {course.difficulty || "—"}
               </span>
               <span className="flex items-center gap-1">
-                ★ {(course.avg_rating != null && !isNaN(course.avg_rating)) ? Number(course.avg_rating).toFixed(1) : "0.0"}
+                ★ {(course.avg_rating != null && !isNaN(Number(course.avg_rating))) ? Number(course.avg_rating).toFixed(1) : "0.0"}
               </span>
             </div>
 

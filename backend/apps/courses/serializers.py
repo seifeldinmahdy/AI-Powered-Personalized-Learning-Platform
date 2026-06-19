@@ -108,8 +108,66 @@ class PlacementQuestionWriteSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, data):
-        if data.get('correct_answer') and data['correct_answer'] not in data.get('options', []):
-            raise serializers.ValidationError(
-                "correct_answer must exactly match one of the options."
-            )
+        correct = data.get('correct_answer')
+        options = data.get('options', []) or []
+        if correct:
+            match = self._match_option(correct, options)
+            if match is None:
+                raise serializers.ValidationError({
+                    "correct_answer": (
+                        f"correct_answer {correct!r} must match one of the options "
+                        f"{[o for o in options]!r}."
+                    )
+                })
+            # Normalize to the EXACT option text so storage is canonical and the
+            # scoring path (student_ans.strip() == correct_answer.strip()) matches.
+            data['correct_answer'] = match
         return data
+
+    @staticmethod
+    def _match_option(correct, options):
+        """Map an AI-supplied correct_answer to the exact option string, or None.
+
+        Tolerant of the ways generators diverge — but only ever returns an actual
+        option (never fabricates), so stored data stays canonical and scoring is
+        unaffected. Tries, in order:
+
+        1. Exact match on stripped text (case-sensitive) — the strict path.
+        2. A bare option letter ("A".."D") → that option by position.
+        3. A letter-prefixed answer ("B) Paris", "B. Paris", "B: Paris", "B - Paris")
+           → strip the prefix, then match the remainder.
+        4. Case-insensitive stripped match as a last resort.
+        """
+        opts = [o for o in options if isinstance(o, str)]
+        target = correct.strip()
+
+        # 1. Exact stripped match.
+        for o in opts:
+            if o.strip() == target:
+                return o
+
+        # 2. Bare letter → positional option.
+        if len(target) == 1 and target.upper() in "ABCD":
+            idx = "ABCD".index(target.upper())
+            if idx < len(opts):
+                return opts[idx]
+
+        # 3. Letter prefix like "B) ...", "B. ...", "B: ...", "B - ...".
+        import re
+        m = re.match(r"^\s*([A-Da-d])\s*[\).:\-]\s*(.+)$", correct)
+        if m:
+            idx = "ABCD".index(m.group(1).upper())
+            remainder = m.group(2).strip()
+            for o in opts:
+                if o.strip() == remainder:
+                    return o
+            if idx < len(opts):
+                return opts[idx]
+
+        # 4. Case-insensitive stripped match.
+        low = target.lower()
+        for o in opts:
+            if o.strip().lower() == low:
+                return o
+
+        return None

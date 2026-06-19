@@ -170,3 +170,120 @@ def slides_persisted(request, course_id: str):
         if v is not None:
             params[k] = v
     return _forward(request, "GET", "/slides/persisted", params=params)
+
+
+# ── Group D: assessments ─────────────────────────────────────────
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def assessments_submit_placement(request):
+    """POST placement answers for the authenticated student (scores + builds context)."""
+    return _forward(request, "POST", "/assessments/submit-placement",
+                    json=_body_without_student_id(request), timeout=600)
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def assessments_session(request):
+    """POST: generate an in-session MCQ checkpoint for the authenticated student."""
+    return _forward(request, "POST", "/assessments/session",
+                    json=_body_without_student_id(request), timeout=120)
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def assessments_submit(request):
+    """POST: score an in-session MCQ checkpoint for the authenticated student."""
+    return _forward(request, "POST", "/assessments/submit",
+                    json=_body_without_student_id(request), timeout=120)
+
+
+# ── Group E: problem-set ─────────────────────────────────────────
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def problem_set_generate(request):
+    return _forward(request, "POST", "/problem-set/generate",
+                    json=_body_without_student_id(request), timeout=300)
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def problem_set_regenerate(request):
+    return _forward(request, "POST", "/problem-set/regenerate",
+                    json=_body_without_student_id(request), timeout=300)
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def problem_set_submit(request):
+    return _forward(request, "POST", "/problem-set/submit",
+                    json=_body_without_student_id(request), timeout=120)
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def problem_set_hint(request):
+    return _forward(request, "POST", "/problem-set/hint",
+                    json=_body_without_student_id(request), timeout=120)
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def problem_set_summary_viewed(request):
+    return _forward(request, "POST", "/problem-set/summary-viewed",
+                    json=_body_without_student_id(request), timeout=60)
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def problem_set_by_lesson(request, lesson_id: str):
+    """GET all problem sets for the authenticated student + lesson."""
+    return _forward(request, "GET", f"/problem-set/lesson/{lesson_id}")
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def problem_set_get(request, problem_set_id: str):
+    """GET a single problem set for the authenticated student."""
+    return _forward(request, "GET", f"/problem-set/{problem_set_id}")
+
+
+# ── Group F: coding labs (AI router prefix is /api/coding) ───────
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def coding_lab_generate(request):
+    return _forward(request, "POST", "/api/coding/labs/generate",
+                    json=_body_without_student_id(request), timeout=300)
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def coding_lab_note_cell(request, lab_id: str):
+    return _forward(request, "POST", f"/api/coding/labs/{lab_id}/note/cell",
+                    json=_body_without_student_id(request))
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def coding_lab_note_general(request, lab_id: str):
+    return _forward(request, "POST", f"/api/coding/labs/{lab_id}/note/general",
+                    json=_body_without_student_id(request))
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def coding_lab_question_asked(request, lab_id: str):
+    return _forward(request, "POST", f"/api/coding/labs/{lab_id}/question/asked",
+                    json=_body_without_student_id(request))
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def coding_lab_complete(request):
+    return _forward(request, "POST", "/api/coding/labs/complete",
+                    json=_body_without_student_id(request), timeout=60)

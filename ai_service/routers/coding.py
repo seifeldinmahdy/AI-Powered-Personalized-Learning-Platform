@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from routers._auth import verified_student_id
 from schemas.coding import (
     TopicRequest, SubmitRequest,
     RubricRequest, RubricModel,
@@ -68,8 +69,14 @@ async def hint_endpoint(req: HintRequest):
 
 
 @router.post("/labs/generate", response_model=CodingLabGenerateResponse)
-async def generate_lab_endpoint(req: CodingLabGenerateRequest):
+async def generate_lab_endpoint(
+    req: CodingLabGenerateRequest,
+    student_id: str = Depends(verified_student_id),
+):
     """Generate or load a local notebook-style coding lab for a completed session."""
+    # Verified identity replaces any client-supplied student_id before any read
+    # (generate_coding_lab reads req.student_id internally).
+    req.student_id = student_id
     try:
         return await generate_coding_lab(req)
     except Exception as e:
@@ -103,36 +110,38 @@ async def run_lab_code_endpoint(req: CodingLabRunRequest):
 
 # ── Notes, questions, completion ────────────────────────────────
 
+# NB: student_id is NOT a request field on these — it comes from the verified
+# X-Student-ID header (Django sets it from the authenticated user).
 class CellNoteRequest(BaseModel):
     cell_id: str
     content: str
-    student_id: str
 
 class GeneralNoteRequest(BaseModel):
     content: str
-    student_id: str
 
 class QuestionAskedRequest(BaseModel):
     cell_id: str
     question_text: str
-    student_id: str
 
 class LabCompleteRequest(BaseModel):
     lab_id: str
-    student_id: str
     course_id: str
     lesson_id: str
 
 
 @router.post("/labs/{lab_id}/note/cell")
-async def save_cell_note_endpoint(lab_id: str, req: CellNoteRequest):
+async def save_cell_note_endpoint(
+    lab_id: str,
+    req: CellNoteRequest,
+    student_id: str = Depends(verified_student_id),
+):
     """Save a student note on a specific cell."""
     from services.lab_service import save_lab_cell_note
     parts = lab_id.split("_")
     course_id = parts[1] if len(parts) > 1 else ""
     lesson_id = parts[2] if len(parts) > 2 else ""
     await save_lab_cell_note(
-        student_id=req.student_id,
+        student_id=student_id,
         course_id=course_id,
         lesson_id=lesson_id,
         cell_id=req.cell_id,
@@ -142,14 +151,18 @@ async def save_cell_note_endpoint(lab_id: str, req: CellNoteRequest):
 
 
 @router.post("/labs/{lab_id}/note/general")
-async def save_general_note_endpoint(lab_id: str, req: GeneralNoteRequest):
+async def save_general_note_endpoint(
+    lab_id: str,
+    req: GeneralNoteRequest,
+    student_id: str = Depends(verified_student_id),
+):
     """Save a general lab note."""
     from services.lab_service import save_lab_general_note
     parts = lab_id.split("_")
     course_id = parts[1] if len(parts) > 1 else ""
     lesson_id = parts[2] if len(parts) > 2 else ""
     await save_lab_general_note(
-        student_id=req.student_id,
+        student_id=student_id,
         course_id=course_id,
         lesson_id=lesson_id,
         content=req.content,
@@ -158,14 +171,18 @@ async def save_general_note_endpoint(lab_id: str, req: GeneralNoteRequest):
 
 
 @router.post("/labs/{lab_id}/question/asked")
-async def mark_question_asked_endpoint(lab_id: str, req: QuestionAskedRequest):
+async def mark_question_asked_endpoint(
+    lab_id: str,
+    req: QuestionAskedRequest,
+    student_id: str = Depends(verified_student_id),
+):
     """Mark a suggested question as asked."""
     from services.lab_service import mark_lab_question_asked
     parts = lab_id.split("_")
     course_id = parts[1] if len(parts) > 1 else ""
     lesson_id = parts[2] if len(parts) > 2 else ""
     await mark_lab_question_asked(
-        student_id=req.student_id,
+        student_id=student_id,
         course_id=course_id,
         lesson_id=lesson_id,
         cell_id=req.cell_id,
@@ -182,7 +199,10 @@ LAB_PROFILER_WAIT_SECONDS = 30
 
 
 @router.post("/labs/complete")
-async def complete_lab_endpoint(req: LabCompleteRequest):
+async def complete_lab_endpoint(
+    req: LabCompleteRequest,
+    student_id: str = Depends(verified_student_id),
+):
     """Mark the lab complete, then run the lab profiler BEFORE returning.
 
     Running the profiler synchronously (bounded) closes the race where the
@@ -199,7 +219,7 @@ async def complete_lab_endpoint(req: LabCompleteRequest):
     log = logging.getLogger(__name__)
     try:
         await mark_lab_completed(
-            student_id=req.student_id,
+            student_id=student_id,
             course_id=req.course_id,
             lesson_id=req.lesson_id,
         )
@@ -209,7 +229,7 @@ async def complete_lab_endpoint(req: LabCompleteRequest):
     profile_updated = False
     task = asyncio.create_task(
         run_lab_profiler(
-            student_id=req.student_id,
+            student_id=student_id,
             lab_id=req.lab_id,
             course_id=req.course_id,
             lesson_id=req.lesson_id,

@@ -38,3 +38,7 @@ PyMuPDF>=1.23
 
 # Optional: Supabase / Postgres pgvector vector-store backend (VECTOR_BACKEND=supabase)
 psycopg2-binary>=2.9.0
+
+# Local verification of Django access tokens for the tutor SSE / live-session
+# endpoints (Track 2). HS256 with the shared DJANGO_SECRET_KEY — no network hop.
+PyJWT>=2.8.0

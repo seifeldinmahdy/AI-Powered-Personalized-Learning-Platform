@@ -62,6 +62,7 @@ interface LocationState {
     sessionTitle?: string;
     studentProfileSummary?: string;
     nextLessonId?: number | string | null;
+    nextSessionId?: number | string | null;
     slides?: { title: string; content: string; code?: string }[];
     labCells?: { id: string; cell_type: string; title: string; narrative?: string; code?: string; starter_code?: string; task_prompt?: string }[];
 }

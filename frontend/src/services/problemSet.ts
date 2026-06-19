@@ -1,11 +1,11 @@
 /**
  * Problem Set API service.
- * Talks directly to the AI service's /problem-set endpoints.
+ * Talks to the AI service's /problem-set endpoints THROUGH Django (JWT), which
+ * sets the verified student identity server-side — the browser never sends a
+ * student_id (Track 1 / Approach A).
  */
 
 import api from './api';
-
-const AI_URL = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001';
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -92,62 +92,44 @@ export interface GenerateProblemSetOptions {
 }
 
 export async function generateProblemSet(opts: GenerateProblemSetOptions): Promise<ProblemSetData> {
-    const res = await fetch(`${AI_URL}/problem-set/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            session_id: opts.sessionId,
-            student_id: opts.studentId,
-            course_id: opts.courseId,
-            lesson_id: String(opts.sessionNumber),
-            lesson_title: opts.sessionTitle || '',
-            student_profile_summary: opts.studentProfileSummary || '',
-            slides: opts.slides || [],
-            lab_cells: opts.labCells || [],
-        }),
+    const res = await api.post<ProblemSetData>('/ai/problem-set/generate', {
+        session_id: opts.sessionId,
+        course_id: opts.courseId,
+        lesson_id: String(opts.sessionNumber),
+        lesson_title: opts.sessionTitle || '',
+        student_profile_summary: opts.studentProfileSummary || '',
+        slides: opts.slides || [],
+        lab_cells: opts.labCells || [],
     });
-    if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(`Problem set generation failed: ${detail}`);
-    }
-    return res.json();
+    return res.data;
 }
 
-export async function getProblemSet(problemSetId: string, studentId: string = ''): Promise<ProblemSetData> {
-    const params = studentId ? `?student_id=${studentId}` : '';
-    const res = await fetch(`${AI_URL}/problem-set/${problemSetId}${params}`);
-    if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(`Failed to load problem set: ${detail}`);
-    }
-    return res.json();
+export async function getProblemSet(problemSetId: string, _studentId: string = ''): Promise<ProblemSetData> {
+    const res = await api.get<ProblemSetData>(`/ai/problem-set/${problemSetId}/`);
+    return res.data;
 }
 
 /** Student-initiated regeneration (MAX 3 per plan_version, cap enforced
  *  server-side). Throws with the server message on 409 (limit reached). */
 export async function regenerateProblemSet(opts: GenerateProblemSetOptions): Promise<ProblemSetData> {
-    const res = await fetch(`${AI_URL}/problem-set/regenerate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+    try {
+        const res = await api.post<ProblemSetData>('/ai/problem-set/regenerate', {
             session_id: opts.sessionId,
-            student_id: opts.studentId,
             course_id: opts.courseId,
             lesson_id: String(opts.sessionNumber),
             lesson_title: opts.sessionTitle || '',
             student_profile_summary: opts.studentProfileSummary || '',
             slides: opts.slides || [],
             lab_cells: opts.labCells || [],
-        }),
-    });
-    if (res.status === 409) {
-        const d = await res.json().catch(() => ({}));
-        throw new Error(d.detail || 'Regeneration limit reached for this lesson.');
+        });
+        return res.data;
+    } catch (err: any) {
+        if (err?.response?.status === 409) {
+            throw new Error(err.response.data?.detail || 'Regeneration limit reached for this lesson.');
+        }
+        const detail = err?.response?.data?.detail || err?.message || 'unknown error';
+        throw new Error(`Problem set regeneration failed: ${detail}`);
     }
-    if (!res.ok) {
-        throw new Error(`Problem set regeneration failed: ${await res.text()}`);
-    }
-    return res.json();
 }
 
 /** Remaining regenerations for a lesson at a plan version (Django). */
@@ -171,42 +153,29 @@ export async function getProblemSetBestScore(
 }
 
 export async function getStudentProblemSets(
-    studentId: string,
+    _studentId: string,
     sessionNumber: string,
 ): Promise<ProblemSetData[]> {
-    const res = await fetch(`${AI_URL}/problem-set/student/${studentId}/lesson/${sessionNumber}`);
-    if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(`Failed to load problem sets: ${detail}`);
-    }
-    return res.json();
+    const res = await api.get<ProblemSetData[]>(`/ai/problem-set/lesson/${sessionNumber}/`);
+    return res.data;
 }
 
 export async function submitAnswer(
     problemSetId: string,
     questionId: string,
-    studentId: string,
+    _studentId: string,
     code: string,
     language: string,
     hintsUsed: number,
 ): Promise<EvaluationResult> {
-    const res = await fetch(`${AI_URL}/problem-set/submit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            problem_set_id: problemSetId,
-            question_id: questionId,
-            student_id: studentId,
-            code,
-            language,
-            hints_used: hintsUsed,
-        }),
+    const res = await api.post<EvaluationResult>('/ai/problem-set/submit', {
+        problem_set_id: problemSetId,
+        question_id: questionId,
+        code,
+        language,
+        hints_used: hintsUsed,
     });
-    if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(`Submission failed: ${detail}`);
-    }
-    return res.json();
+    return res.data;
 }
 
 export async function getDynamicHint(params: {
@@ -224,24 +193,15 @@ export async function getDynamicHint(params: {
     penalty_applied: number;
     hint_deductions: Record<string, number>;
 }> {
-    const res = await fetch(`${AI_URL}/problem-set/hint`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            problem_set_id: params.problemSetId,
-            question_id: params.questionId,
-            student_id: params.studentId,
-            lesson_id: String(params.sessionNumber),
-            current_code: params.currentCode,
-            hint_number: params.hintNumber,
-            evaluated_rubric: params.evaluatedRubric ?? null,
-        }),
+    const res = await api.post('/ai/problem-set/hint', {
+        problem_set_id: params.problemSetId,
+        question_id: params.questionId,
+        lesson_id: String(params.sessionNumber),
+        current_code: params.currentCode,
+        hint_number: params.hintNumber,
+        evaluated_rubric: params.evaluatedRubric ?? null,
     });
-    if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(`Hint generation failed: ${detail}`);
-    }
-    return res.json();
+    return res.data;
 }
 
 export interface NewlyEarnedAchievement {
@@ -259,18 +219,9 @@ export async function notifySummaryViewed(params: {
     newly_earned_achievements?: NewlyEarnedAchievement[];
     already_completed?: boolean;
 }> {
-    const res = await fetch(`${AI_URL}/problem-set/summary-viewed`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            problem_set_id: params.problemSetId,
-            student_id: params.studentId,
-            lesson_id: String(params.sessionNumber),
-        }),
+    const res = await api.post('/ai/problem-set/summary-viewed', {
+        problem_set_id: params.problemSetId,
+        lesson_id: String(params.sessionNumber),
     });
-    if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(`Summary viewed notification failed: ${detail}`);
-    }
-    return res.json();
+    return res.data;
 }

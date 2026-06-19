@@ -5,6 +5,9 @@ interface SessionControlsProps {
   totalSlides: number;
   onPrev: () => void;
   onNext: () => void;
+  // When true, slide navigation is locked (the tutor is speaking): the arrows
+  // become non-interactive and show a not-allowed cursor on hover.
+  navLocked?: boolean;
   onComplete: () => void;
   isCompleting?: boolean;
   hasPrevLesson?: boolean;
@@ -17,6 +20,7 @@ export function SessionControls({
   totalSlides,
   onPrev,
   onNext,
+  navLocked = false,
   onComplete,
   isCompleting,
   hasPrevLesson,
@@ -31,6 +35,12 @@ export function SessionControls({
   // Next is disabled only if it's the last slide AND there's no next lesson
   const nextDisabled = isLastSlide && !hasNextLesson;
 
+  // While the tutor speaks we keep the buttons hoverable (so the not-allowed
+  // cursor shows) but no-op the click — a `disabled` attribute would force the
+  // default cursor and hide that affordance.
+  const lockStyle = navLocked ? { cursor: 'not-allowed' as const, opacity: 0.45 } : {};
+  const lockTitle = navLocked ? 'Wait for the tutor to finish speaking' : undefined;
+
   const prevLabel = isFirstSlide && hasPrevLesson ? '← PREV LESSON' : 'PREVIOUS';
   const nextLabel = isLastSlide && hasNextLesson ? 'NEXT LESSON →' : 'NEXT';
 
@@ -43,10 +53,24 @@ export function SessionControls({
       <div style={{ padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
         {/* Navigation */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button onClick={onPrev} disabled={prevDisabled} className="btn btn-ghost-dark" style={{ padding: '12px 18px' }}>
+          <button
+            onClick={navLocked ? undefined : onPrev}
+            disabled={prevDisabled}
+            aria-disabled={navLocked || prevDisabled}
+            title={lockTitle}
+            className="btn btn-ghost-dark"
+            style={{ padding: '12px 18px', ...lockStyle }}
+          >
             <ChevronLeft size={16} /> {prevLabel}
           </button>
-          <button onClick={onNext} disabled={nextDisabled} className="btn btn-paper" style={{ padding: '12px 18px' }}>
+          <button
+            onClick={navLocked ? undefined : onNext}
+            disabled={nextDisabled}
+            aria-disabled={navLocked || nextDisabled}
+            title={lockTitle}
+            className="btn btn-paper"
+            style={{ padding: '12px 18px', ...lockStyle }}
+          >
             {nextLabel} <ChevronRight size={16} />
           </button>
         </div>

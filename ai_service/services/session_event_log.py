@@ -15,6 +15,7 @@ SQLite (local file) keeps high-frequency emotion writes off the Django HTTP path
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -167,6 +168,33 @@ class SessionEventLog:
             conn.commit()
             return cur.rowcount or 0
 
+    # ── Step 2: purge ALL consumed events (not just emotion) ─────────
+    # Enabled via SESSION_EVENTS_PURGE_ON_CONSOLIDATION; the caller gates the
+    # per-session purge on a CONFIRMED Django profile write.
+
+    def purge_consumed_session(self, session_id: str) -> int:
+        """Delete ALL of a session's CONSUMED events (any type). Used after the
+        derived profile is confirmed in Django — the raw events have no value
+        left and would otherwise accumulate."""
+        with self._lock, sqlite3.connect(self._db_path) as conn:
+            cur = conn.execute(
+                "DELETE FROM session_events WHERE session_id=? AND consumed=1",
+                (session_id,),
+            )
+            conn.commit()
+            return cur.rowcount or 0
+
+    def purge_consumed_older_than(self, older_than_iso: str) -> int:
+        """TTL backstop for ALL consumed events (any type) older than the cutoff.
+        Only consumed rows are eligible, so this never races the profiler."""
+        with self._lock, sqlite3.connect(self._db_path) as conn:
+            cur = conn.execute(
+                "DELETE FROM session_events WHERE consumed=1 AND created_at < ?",
+                (older_than_iso,),
+            )
+            conn.commit()
+            return cur.rowcount or 0
+
     def sessions_with_unconsumed(self, older_than_iso: str | None = None) -> list[str]:
         """Distinct session_ids that still have unconsumed events (for the sweeper)."""
         q = "SELECT DISTINCT session_id FROM session_events WHERE consumed=0"
@@ -178,5 +206,38 @@ class SessionEventLog:
             return [r[0] for r in conn.execute(q, params).fetchall()]
 
 
-def get_session_event_log() -> SessionEventLog:
+def _use_pg_events() -> bool:
+    """Whether the shared Supabase/Postgres event log is selected.
+
+    Explicit opt-in (default = local SQLite), reversible via env:
+    ``SESSION_EVENTS_BACKEND=supabase`` / ``postgres`` / ``pg``. Reuses the
+    SUPABASE_DB_URL of the other shared stores.
+    """
+    return os.getenv("SESSION_EVENTS_BACKEND", "").strip().lower() in (
+        "supabase", "postgres", "pg", "pgvector"
+    )
+
+
+def purge_on_consolidation() -> bool:
+    """Whether step-2 purge-on-consolidation + all-consumed TTL is enabled.
+
+    Default OFF → behavior is IDENTICAL to today (emotion-only purges). When ON,
+    a session's consumed events are purged after a CONFIRMED Django profile write,
+    and the TTL backstop drops all consumed (not just emotion). Fully reversible.
+    """
+    return os.getenv("SESSION_EVENTS_PURGE_ON_CONSOLIDATION", "").strip().lower() in (
+        "1", "true", "yes", "on"
+    )
+
+
+def get_session_event_log():
+    """Return the session-event log singleton.
+
+    Returns the Supabase-backed log when ``SESSION_EVENTS_BACKEND`` selects it,
+    otherwise the local SQLite log. Both expose the identical method surface and
+    (in this step) identical retention behavior, so callers are unchanged.
+    """
+    if _use_pg_events():
+        from services.pg_session_event_log import PgSessionEventLog
+        return PgSessionEventLog()
     return SessionEventLog()

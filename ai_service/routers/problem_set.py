@@ -6,16 +6,21 @@ Endpoints:
   POST /problem-set/submit
   POST /problem-set/hint
   GET  /problem-set/{problem_set_id}
-  GET  /problem-set/student/{student_id}/lesson/{lesson_id}
+  GET  /problem-set/lesson/{lesson_id}
+
+Per-student endpoints take identity ONLY from the verified X-Student-ID header
+(Django sets it from the authenticated user); they are service-key gated and not
+reachable directly from a browser. See ``routers/_auth.py``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from routers._auth import verified_student_id
 from schemas.problem_set import (
     ProblemSetGenerateRequest,
     ProblemSetSubmitRequest,
@@ -34,8 +39,14 @@ router = APIRouter(prefix="/problem-set", tags=["problem-set"])
 
 
 @router.post("/generate")
-async def generate_problem_set(request: ProblemSetGenerateRequest):
+async def generate_problem_set(
+    request: ProblemSetGenerateRequest,
+    student_id: str = Depends(verified_student_id),
+):
     """Generate a problem set from session context."""
+    # Verified identity replaces any client-supplied student_id BEFORE any read
+    # (generate() reads request.student_id internally).
+    request.student_id = student_id
     try:
         problem_set = await generate(request)
         return problem_set.model_dump()
@@ -48,13 +59,18 @@ async def generate_problem_set(request: ProblemSetGenerateRequest):
 
 
 @router.post("/regenerate")
-async def regenerate_problem_set(request: ProblemSetGenerateRequest):
+async def regenerate_problem_set(
+    request: ProblemSetGenerateRequest,
+    student_id: str = Depends(verified_student_id),
+):
     """Regenerate a problem set for a lesson (student-initiated, MAX 3 per
     plan_version). The cap is pre-checked server-side so we don't spend an LLM
     generation only to be rejected; it resets when plan_version changes. The
     previous generation and ALL its attempts are retained (superseded), not
     deleted — they fed mastery and stay auditable.
     """
+    # Verified identity replaces any client-supplied student_id before any read.
+    request.student_id = student_id
     from services.plan_resolver import current_plan_version
     from services import artifact_client
 
@@ -81,8 +97,13 @@ async def regenerate_problem_set(request: ProblemSetGenerateRequest):
 
 
 @router.post("/submit")
-async def submit_answer(request: ProblemSetSubmitRequest):
+async def submit_answer(
+    request: ProblemSetSubmitRequest,
+    student_id: str = Depends(verified_student_id),
+):
     """Submit a code answer for evaluation."""
+    # Verified identity replaces any client-supplied student_id before any read.
+    request.student_id = student_id
     from services import artifact_client
     raw_ps = await artifact_client.get_problem_set(str(request.student_id), request.problem_set_id)
     if not raw_ps:
@@ -149,7 +170,8 @@ async def submit_answer(request: ProblemSetSubmitRequest):
 class HintRequest(BaseModel):
     problem_set_id: str
     question_id: str
-    student_id: str
+    # Set server-side from the verified header; router overwrites before any read.
+    student_id: str = ""
     lesson_id: str
     current_code: str = ""
     hint_number: int  # 2 = first dynamic hint, 3 = second
@@ -157,8 +179,13 @@ class HintRequest(BaseModel):
 
 
 @router.post("/hint")
-async def get_hint(request: HintRequest):
+async def get_hint(
+    request: HintRequest,
+    student_id: str = Depends(verified_student_id),
+):
     """Generate a context-aware dynamic hint."""
+    # Verified identity replaces any client-supplied student_id before any read.
+    request.student_id = student_id
     # Validate hint_number
     if request.hint_number not in (2, 3):
         raise HTTPException(status_code=400, detail="hint_number must be 2 or 3")
@@ -206,12 +233,16 @@ async def get_hint(request: HintRequest):
 
 class SummaryViewedRequest(BaseModel):
     problem_set_id: str
-    student_id: str
+    # Set server-side from the verified header; router overwrites before any read.
+    student_id: str = ""
     lesson_id: str
 
 
 @router.post("/summary-viewed")
-async def summary_viewed(request: SummaryViewedRequest):
+async def summary_viewed(
+    request: SummaryViewedRequest,
+    student_id: str = Depends(verified_student_id),
+):
     """
     Fired when the student reaches the problem set summary screen — the genuine
     end of the lesson (the final, mastery-writing step).
@@ -224,6 +255,8 @@ async def summary_viewed(request: SummaryViewedRequest):
     Returns the completion result (incl. newly-earned achievements) so the
     frontend can surface XP/achievement toasts at the correct moment.
     """
+    # Verified identity replaces any client-supplied student_id before any read.
+    request.student_id = student_id
     import asyncio
 
     from services import artifact_client
@@ -265,8 +298,11 @@ async def summary_viewed(request: SummaryViewedRequest):
 
 
 @router.get("/{problem_set_id}")
-async def get_problem_set(problem_set_id: str, student_id: str = ""):
-    """Get a problem set with submissions merged."""
+async def get_problem_set(
+    problem_set_id: str,
+    student_id: str = Depends(verified_student_id),
+):
+    """Get a problem set with submissions merged (for the authenticated student)."""
     from services import artifact_client
     raw_ps = await artifact_client.get_problem_set(student_id, problem_set_id)
     if not raw_ps:
@@ -302,9 +338,12 @@ async def get_problem_set(problem_set_id: str, student_id: str = ""):
     return raw_ps
 
 
-@router.get("/student/{student_id}/lesson/{lesson_id}")
-async def get_student_problem_sets(student_id: str, lesson_id: str):
-    """Get all problem sets for a student + lesson."""
+@router.get("/lesson/{lesson_id}")
+async def get_student_problem_sets(
+    lesson_id: str,
+    student_id: str = Depends(verified_student_id),
+):
+    """Get all problem sets for the authenticated student + lesson."""
     from services import artifact_client
     raw_problem_sets = await artifact_client.get_problem_sets(student_id, lesson_id)
     

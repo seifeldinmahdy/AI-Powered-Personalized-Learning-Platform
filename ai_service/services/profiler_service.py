@@ -154,7 +154,43 @@ LAB_CLAIMS_SYSTEM = (
 _AUDIT_DIR = Path(__file__).resolve().parent.parent / "data" / "profile_audit"
 
 
+def _use_pg_audit() -> bool:
+    """Whether the shared Supabase/Postgres audit backend is selected.
+
+    Explicit opt-in (default = local JSON files), reversible via env:
+    ``PROFILE_AUDIT_BACKEND=supabase`` / ``postgres`` / ``pg``. Reuses the
+    SUPABASE_DB_URL of the corpus/plan/context stores.
+    """
+    return os.getenv("PROFILE_AUDIT_BACKEND", "").strip().lower() in (
+        "supabase", "postgres", "pg", "pgvector"
+    )
+
+
+_pg_audit_store = None
+
+
+def _get_pg_audit_store():
+    global _pg_audit_store
+    if _pg_audit_store is None:
+        from services.pg_profile_audit_store import PgProfileAuditStore
+        _pg_audit_store = PgProfileAuditStore()
+    return _pg_audit_store
+
+
 def _write_audit_entry(student_id, session_id, session_type, claims, summary=""):
+    # Serialize claims once (Pydantic models → dicts) for whichever backend.
+    serial_claims = [c.model_dump() if hasattr(c, "model_dump") else c for c in claims]
+
+    if _use_pg_audit():
+        try:
+            _get_pg_audit_store().write_entry(
+                str(student_id), str(session_id), session_type,
+                serial_claims, (summary or "")[:300],
+            )
+        except Exception as e:
+            logger.warning("Audit log (pg) write failed for student %s: %s", student_id, e)
+        return
+
     try:
         safe_id = str(student_id).replace("/", "_").replace("\\", "_").replace(":", "_")
         audit_dir = _AUDIT_DIR / safe_id
@@ -173,7 +209,7 @@ def _write_audit_entry(student_id, session_id, session_type, claims, summary="")
             "session_id": session_id,
             "session_type": session_type,
             "summary_written": (summary or "")[:300],
-            "claims": [c.model_dump() if hasattr(c, "model_dump") else c for c in claims],
+            "claims": serial_claims,
         })
         if len(entries) > 500:
             entries = entries[-500:]
@@ -183,6 +219,11 @@ def _write_audit_entry(student_id, session_id, session_type, claims, summary="")
 
 
 def get_audit_log(student_id: str, limit: int = 20) -> list[dict]:
+    if _use_pg_audit():
+        try:
+            return _get_pg_audit_store().get_log(str(student_id), limit=limit)
+        except Exception:
+            return []
     try:
         safe_id = str(student_id).replace("/", "_").replace("\\", "_").replace(":", "_")
         audit_path = _AUDIT_DIR / safe_id / "audit.json"
@@ -196,15 +237,20 @@ def get_audit_log(student_id: str, limit: int = 20) -> list[dict]:
 
 # ── The single writer client (all profilers go through here) ─────────
 
-async def post_profile_claims(student_id, claims, summary=None, summary_source=None) -> None:
+async def post_profile_claims(student_id, claims, summary=None, summary_source=None) -> bool:
     """Send validated claims to the ONE server-side writer (/progress/profile/apply).
 
     No client-side merge/overwrite — the Django writer applies them additively
     with provenance-based resolution under a row lock.
+
+    Returns True iff the derived profile was DURABLY written (HTTP 200/201) — or
+    there was nothing to persist. Returns False on a failed/errored write. This
+    confirmation is the gate for purging the raw session events (step 2): raw
+    events are only deleted once their derived value is known to be in Django.
     """
     payload_claims = [c.model_dump() if hasattr(c, "model_dump") else c for c in (claims or [])]
     if not payload_claims and summary is None:
-        return
+        return True  # nothing to persist → vacuously confirmed
     service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
     body: dict = {"claims": payload_claims}
     if summary is not None:
@@ -217,10 +263,13 @@ async def post_profile_claims(student_id, claims, summary=None, summary_source=N
                 json=body,
                 headers={"X-Student-ID": str(student_id), "X-Service-Key": service_key},
             )
-            if resp.status_code not in (200, 201):
-                logger.warning("profile/apply returned %d for student %s", resp.status_code, student_id)
+            if resp.status_code in (200, 201):
+                return True
+            logger.warning("profile/apply returned %d for student %s", resp.status_code, student_id)
+            return False
     except Exception as e:
         logger.warning("Could not POST profile claims for student %s: %s", student_id, e)
+        return False
 
 
 # ── Emotion fusion (unchanged) ───────────────────────────────────────
@@ -399,21 +448,34 @@ async def run_session_profiler(session_id: str, student_id: str, lesson_title: s
         except Exception as e:
             logger.error("session profiler LLM failed for session %s: %s", session_id, e)
 
-    await post_profile_claims(student_id, claims, summary=summary, summary_source="session")
+    confirmed = await post_profile_claims(
+        student_id, claims, summary=summary, summary_source="session"
+    )
     _write_audit_entry(student_id, session_id, "session", claims, summary or "")
 
     # Idempotency marker: consume what we just folded.
     elog.mark_consumed(session_id, max_id)
-    # Retention boundary (Batch 11b): the derived low-confidence claim is now
-    # persisted, so the RAW emotion for this session is no longer needed — purge
-    # it. Only the qualitative claim remains; no raw biometric is retained.
+    # Retention boundary. Default (flag OFF): purge only RAW emotion — the
+    # derived low-confidence claim is kept, no biometric retained (Batch 11b).
+    # Step 2 (flag ON) AND only once the Django profile write is CONFIRMED:
+    # purge ALL of the session's consumed events (slide/tutor too), since their
+    # derived value is now durably in Django and they would otherwise accumulate.
+    # If the write is NOT confirmed we still drop raw emotion but KEEP the rest,
+    # so nothing is deleted before its value is known to have landed.
+    from services.session_event_log import purge_on_consolidation
     try:
-        purged = elog.purge_consumed_emotion(session_id)
-        if purged:
-            logger.info("session profiler: purged %d raw emotion rows session=%s", purged, session_id)
+        if purge_on_consolidation() and confirmed:
+            purged = elog.purge_consumed_session(session_id)
+            if purged:
+                logger.info("session profiler: purged %d consumed rows session=%s", purged, session_id)
+        else:
+            purged = elog.purge_consumed_emotion(session_id)
+            if purged:
+                logger.info("session profiler: purged %d raw emotion rows session=%s", purged, session_id)
     except Exception:
-        logger.warning("session profiler: emotion purge failed session=%s", session_id)
-    logger.info("session profiler: session=%s claims=%d consumed<=%d", session_id, len(claims), max_id)
+        logger.warning("session profiler: consumed purge failed session=%s", session_id)
+    logger.info("session profiler: session=%s claims=%d consumed<=%d confirmed=%s",
+                session_id, len(claims), max_id, confirmed)
     return {"claims": len(claims), "consumed": max_id}
 
 
@@ -438,8 +500,15 @@ async def purge_emotion_retention(ttl_seconds: int) -> dict:
             consolidated += 1
         except Exception:
             logger.warning("retention sweep: consolidation failed session=%s", sid)
-    purged = elog.purge_emotion_older_than(cutoff)
-    logger.info("emotion retention sweep: consolidated=%d purged=%d", consolidated, purged)
+    # TTL backstop. Default (flag OFF): emotion-only (current behavior). Step 2
+    # (flag ON): drop ALL consumed events older than the cutoff. Only consumed
+    # rows are eligible either way, so this can never race the profiler.
+    from services.session_event_log import purge_on_consolidation
+    if purge_on_consolidation():
+        purged = elog.purge_consumed_older_than(cutoff)
+    else:
+        purged = elog.purge_emotion_older_than(cutoff)
+    logger.info("retention sweep: consolidated=%d purged=%d", consolidated, purged)
     return {"consolidated": consolidated, "purged": purged}
 
 

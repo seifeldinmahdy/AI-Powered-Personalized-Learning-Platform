@@ -893,20 +893,47 @@ class PlacementQuestionViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='bulk-save')
     def bulk_save(self, request, course_pk=None):
-        """Save AI-generated questions into the course."""
+        """Save AI-generated questions into the course.
+
+        Accepts either a bare JSON array of questions, or the
+        ``{"questions": [...]}`` envelope the frontend sends.
+        """
         questions_data = request.data
+        if isinstance(questions_data, dict):
+            questions_data = questions_data.get("questions", questions_data.get("results"))
         if not isinstance(questions_data, list):
-            return Response({"error": "Expected a list"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        created = []
+            return Response(
+                {"error": "Expected a list of questions (or {\"questions\": [...]})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from django.db.models import Max
+        from rest_framework.exceptions import ValidationError
         with transaction.atomic():
+            # Append after the current max order (0-based ``i`` would collide with
+            # existing rows). This is additive — existing questions are kept.
+            base_order = PlacementQuestion.objects.filter(
+                course_id=course_pk
+            ).aggregate(m=Max('order'))['m'] or 0
             for i, q_data in enumerate(questions_data):
-                serializer = PlacementQuestionWriteSerializer(data={**q_data, 'order': i})
-                serializer.is_valid(raise_exception=True)
-                obj = serializer.save(course_id=course_pk, order=i)
-                created.append(obj)
+                order = base_order + 1 + i
+                serializer = PlacementQuestionWriteSerializer(data={**q_data, 'order': order})
+                if not serializer.is_valid():
+                    # Identify the offending draft so the editor can surface it,
+                    # instead of an opaque non_field_errors. Raised inside the
+                    # atomic block, so nothing is partially saved.
+                    raise ValidationError({
+                        "error": f"Question {i + 1} of {len(questions_data)} is invalid.",
+                        "question": str(q_data.get("question", ""))[:120],
+                        "detail": serializer.errors,
+                    })
+                serializer.save(course_id=course_pk, order=order)
+
+        # Return the FULL set for the course so the editor reflects every question
+        # (not just the newly-added drafts, which would hide the existing ones).
+        full = PlacementQuestion.objects.filter(course_id=course_pk).order_by('order')
         return Response(
-            PlacementQuestionSerializer(created, many=True).data,
+            PlacementQuestionSerializer(full, many=True).data,
             status=status.HTTP_200_OK,
         )
 

@@ -42,6 +42,7 @@ interface EnrollmentRow {
   id: number;
   course: number;
   current_lesson: number | null;
+  current_session_number: number | null;
   progress_percentage: string;
   placement_score: number | null;
   enrolled_at: string;

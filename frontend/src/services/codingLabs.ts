@@ -1,3 +1,7 @@
+import api from './api';
+
+// explain/run carry no student_id and stay direct; per-student calls go through
+// Django (JWT), which sets the verified identity server-side (Track 1).
 const AI_URL = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001';
 
 export interface LabSlideContext {
@@ -84,16 +88,10 @@ export interface LabRunResponse {
 export async function generateCodingLab(
   request: CodingLabGenerateRequest,
 ): Promise<CodingLabGenerateResponse> {
-  const res = await fetch(`${AI_URL}/api/coding/labs/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
-  });
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(`Lab generation failed: ${detail}`);
-  }
-  return res.json();
+  // Drop student_id — Django sets the verified identity server-side.
+  const { student_id: _omit, ...body } = request;
+  const res = await api.post<CodingLabGenerateResponse>('/ai/coding/labs/generate', body);
+  return res.data;
 }
 
 export async function explainLabCell(request: {
@@ -131,47 +129,31 @@ export async function runLabCode(code: string): Promise<LabRunResponse> {
 // ── Notes, questions, completion ────────────────────────────────
 
 export async function saveCellNote(
-  labId: string, cellId: string, content: string, studentId: string,
+  labId: string, cellId: string, content: string, _studentId?: string,
 ): Promise<void> {
-  await fetch(`${AI_URL}/api/coding/labs/${labId}/note/cell`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cell_id: cellId, content, student_id: studentId }),
-  });
+  await api.post(`/ai/coding/labs/${labId}/note/cell`, { cell_id: cellId, content });
 }
 
 export async function saveGeneralNote(
-  labId: string, content: string, studentId: string,
+  labId: string, content: string, _studentId?: string,
 ): Promise<void> {
-  await fetch(`${AI_URL}/api/coding/labs/${labId}/note/general`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, student_id: studentId }),
-  });
+  await api.post(`/ai/coding/labs/${labId}/note/general`, { content });
 }
 
 export async function markQuestionAsked(
-  labId: string, cellId: string, questionText: string, studentId: string,
+  labId: string, cellId: string, questionText: string, _studentId?: string,
 ): Promise<void> {
-  await fetch(`${AI_URL}/api/coding/labs/${labId}/question/asked`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cell_id: cellId, question_text: questionText, student_id: studentId }),
-  });
+  await api.post(`/ai/coding/labs/${labId}/question/asked`,
+    { cell_id: cellId, question_text: questionText });
 }
 
 export async function completeLab(params: {
-  labId: string; studentId: string; courseId: string; sessionNumber: string;
+  labId: string; studentId?: string; courseId: string; sessionNumber: string;
 }): Promise<void> {
-  await fetch(`${AI_URL}/api/coding/labs/complete`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      lab_id: params.labId,
-      student_id: params.studentId,
-      course_id: params.courseId,
-      lesson_id: params.sessionNumber,
-    }),
+  await api.post('/ai/coding/labs/complete', {
+    lab_id: params.labId,
+    course_id: params.courseId,
+    lesson_id: params.sessionNumber,
   });
 }
 

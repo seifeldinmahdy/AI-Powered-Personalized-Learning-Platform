@@ -31,7 +31,10 @@ class LabCellContext(BaseModel):
 
 class ProblemSetGenerateRequest(BaseModel):
     session_id: str = ""
-    student_id: str
+    # Identity is set server-side from the verified X-Student-ID header; the
+    # router overwrites this before any read. Optional so the Django proxy can
+    # strip the browser-supplied value without breaking construction.
+    student_id: str = ""
     course_id: str
     lesson_id: str
     lesson_title: str = ""
@@ -43,7 +46,8 @@ class ProblemSetGenerateRequest(BaseModel):
 class ProblemSetSubmitRequest(BaseModel):
     problem_set_id: str
     question_id: str
-    student_id: str
+    # Set server-side from the verified header; router overwrites before any read.
+    student_id: str = ""
     code: str
     language: str = "python"
     hints_used: int = Field(default=0, ge=0, le=3)

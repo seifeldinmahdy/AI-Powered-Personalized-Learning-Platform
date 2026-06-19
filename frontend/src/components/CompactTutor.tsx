@@ -88,6 +88,9 @@ interface CompactTutorProps {
   onLatestSER?: (ser: SERResult) => void;
   onUpdateFusedEmotion?: (emotion: string) => void;
   onNextSlide?: () => void;
+  // Fired whenever the tutor starts/stops speaking, so the parent can lock slide
+  // navigation while a chunk is being narrated.
+  onSpeakingChange?: (speaking: boolean) => void;
   studentProfileSummary?: string;
   isFloating?: boolean;
 }
@@ -107,6 +110,7 @@ export function CompactTutor({
   onLatestSER,
   onUpdateFusedEmotion,
   onNextSlide,
+  onSpeakingChange,
   studentProfileSummary,
   isFloating = false,
 }: CompactTutorProps) {
@@ -114,6 +118,10 @@ export function CompactTutor({
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  // Surface speaking state to the parent (slide-nav lock) on every change.
+  useEffect(() => {
+    onSpeakingChange?.(isSpeaking);
+  }, [isSpeaking, onSpeakingChange]);
   const [isPaused, setIsPaused] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isFinished, setIsFinished] = useState(false);

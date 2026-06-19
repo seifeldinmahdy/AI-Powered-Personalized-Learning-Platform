@@ -1,3 +1,5 @@
+import { aiFetch } from './aiClient';
+
 const AI_URL = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001';
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
@@ -73,7 +75,7 @@ export async function startTutorSession(
   if (prior_topics && prior_topics.length > 0) {
     body.prior_topics = prior_topics;
   }
-  const res = await fetch(`${AI_URL}/tutor/start`, {
+  const res = await aiFetch(`${AI_URL}/tutor/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -146,7 +148,7 @@ export async function continueTutorSession(
   student_emotion?: string,
   onChunk?: (chunk: TutorStreamChunk) => void
 ): Promise<LectureChunk> {
-  const res = await fetch(`${AI_URL}/tutor/continue`, {
+  const res = await aiFetch(`${AI_URL}/tutor/continue`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id, include_audio, student_emotion }),
@@ -168,7 +170,7 @@ export async function askTutor(
   grounding?: RAGPassage[],
   onChunk?: (chunk: TutorStreamChunk) => void
 ): Promise<AskResponse> {
-  const res = await fetch(`${AI_URL}/tutor/ask`, {
+  const res = await aiFetch(`${AI_URL}/tutor/ask`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     // `grounding` carries the RAW retrieved passages; the tutor grounds on these

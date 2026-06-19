@@ -23,6 +23,7 @@ import {
   type GeneratedSlide,
 } from '../../services/pathway';
 
+import { aiFetch } from '../../services/aiClient';
 import { fuseEmotions } from '../../services/emotionFusion';
 import { getEmotionConsent, grantEmotionConsent, withdrawEmotionConsent } from '../../services/emotionConsent';
 import type { SERResult } from '../../services/tutor';
@@ -54,6 +55,10 @@ export default function LiveSession() {
   const [lesson, setLesson] = useState<LessonDetail | null>(null);
   const [slides, setSlides] = useState<GeneratedSlide[]>([]);
   const [currentSlide, setCurrentSlide] = useState(0);
+  // True while the tutor is narrating a chunk — slide navigation is locked so the
+  // student can't skip ahead mid-sentence. The tutor's own auto-advance is
+  // unaffected (it doesn't go through the nav buttons).
+  const [isTutorSpeaking, setIsTutorSpeaking] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [moduleTitle, setModuleTitle] = useState('');
@@ -149,7 +154,7 @@ export default function LiveSession() {
                   setSlides(parsed);
 
                   // Re-initialize backend session context from cached slides
-                  await fetch(`${AI_URL}/session/${sessionIdRef.current}`, {
+                  await aiFetch(`${AI_URL}/session/${sessionIdRef.current}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -180,7 +185,7 @@ export default function LiveSession() {
                 if (persisted && persisted.slides?.length > 0 && !cancelled) {
                   setSlides(persisted.slides);
                   try { sessionStorage.setItem(cacheKey, JSON.stringify(persisted.slides)); } catch { /* full */ }
-                  await fetch(`${AI_URL}/session/${sessionIdRef.current}`, {
+                  await aiFetch(`${AI_URL}/session/${sessionIdRef.current}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -241,7 +246,7 @@ export default function LiveSession() {
 
                       // Initialize backend session context
                       if (slideResponse.slides.length > 0) {
-                        await fetch(`${AI_URL}/session/${sessionIdRef.current}`, {
+                        await aiFetch(`${AI_URL}/session/${sessionIdRef.current}`, {
                           method: 'PATCH',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({
@@ -510,7 +515,7 @@ export default function LiveSession() {
       setCurrentSlide(nextIdx);
       // Sync backward navigation to backend session state
       if (slides.length > 0) {
-        fetch(`${AI_URL}/session/${sessionIdRef.current}`, {
+        aiFetch(`${AI_URL}/session/${sessionIdRef.current}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -535,7 +540,7 @@ export default function LiveSession() {
       setCurrentSlide(nextIdx);
       // Sync forward navigation to backend session state
       if (slides.length > 0) {
-        fetch(`${AI_URL}/session/${sessionIdRef.current}`, {
+        aiFetch(`${AI_URL}/session/${sessionIdRef.current}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -845,6 +850,7 @@ export default function LiveSession() {
             currentIndex={currentSlide}
             sessionTitle={plan?.sessions.find((s) => s.session_number === currentLessonIndex + 1)?.session_title || 'AI Session'}
             onSlideChange={setCurrentSlide}
+            navLocked={isTutorSpeaking}
             isFullscreen={isFullscreen}
             onFullscreenToggle={toggleFullscreen}
           />
@@ -878,6 +884,7 @@ export default function LiveSession() {
           onLatestSER={handleLatestSER}
           onUpdateFusedEmotion={setFusedEmotion}
           onNextSlide={handleNextSlideOrLesson}
+          onSpeakingChange={setIsTutorSpeaking}
           studentProfileSummary={studentProfileSummary}
           isFloating={isFullscreen}
         />
@@ -889,6 +896,7 @@ export default function LiveSession() {
         totalSlides={totalSlides}
         onPrev={handlePrevSlideOrLesson}
         onNext={handleNextSlideOrLesson}
+        navLocked={isTutorSpeaking}
         onComplete={handleComplete}
         isCompleting={isCompleting}
         hasPrevLesson={currentSlide === 0 && !!prevLesson}

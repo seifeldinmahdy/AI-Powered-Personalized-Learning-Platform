@@ -8,6 +8,9 @@ interface GeneratedSlidesViewerProps {
   currentIndex: number;
   sessionTitle: string;
   onSlideChange?: (index: number) => void;
+  // When true, slide navigation is locked (the tutor is speaking): the arrows
+  // and the slide-strip dots become non-interactive with a not-allowed cursor.
+  navLocked?: boolean;
   isFullscreen?: boolean;
   onFullscreenToggle?: () => void;
 }
@@ -17,6 +20,7 @@ export function GeneratedSlidesViewer({
   currentIndex,
   sessionTitle,
   onSlideChange,
+  navLocked = false,
   isFullscreen = false,
   onFullscreenToggle,
 }: GeneratedSlidesViewerProps) {
@@ -24,14 +28,21 @@ export function GeneratedSlidesViewer({
   const totalSlides = slides.length;
 
   const handlePrev = () => {
+    if (navLocked) return;
     if (currentIndex > 0) onSlideChange?.(currentIndex - 1);
     else onSlideChange?.(totalSlides - 1); // wrap to last
   };
 
   const handleNext = () => {
+    if (navLocked) return;
     if (currentIndex < totalSlides - 1) onSlideChange?.(currentIndex + 1);
     else onSlideChange?.(0); // wrap to first
   };
+
+  // Hoverable-but-inert styling while locked (a `disabled` attribute would hide
+  // the not-allowed cursor affordance).
+  const navCursor = navLocked ? 'not-allowed' : 'pointer';
+  const lockTitle = navLocked ? 'Wait for the tutor to finish speaking' : undefined;
 
   return (
     <div className="codex" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)', minHeight: 0 }}>
@@ -41,8 +52,9 @@ export function GeneratedSlidesViewer({
         {/* Left arrow */}
         <button
           onClick={handlePrev}
-          style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 20, padding: 8, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--hairline)', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex' }}
-          title="Previous slide"
+          aria-disabled={navLocked}
+          style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 20, padding: 8, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--hairline)', color: 'var(--text-primary)', cursor: navCursor, opacity: navLocked ? 0.45 : 1, display: 'flex' }}
+          title={lockTitle ?? 'Previous slide'}
         >
           <ChevronLeft size={20} />
         </button>
@@ -50,8 +62,9 @@ export function GeneratedSlidesViewer({
         {/* Right arrow */}
         <button
           onClick={handleNext}
-          style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 20, padding: 8, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--hairline)', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex' }}
-          title="Next slide"
+          aria-disabled={navLocked}
+          style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 20, padding: 8, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--hairline)', color: 'var(--text-primary)', cursor: navCursor, opacity: navLocked ? 0.45 : 1, display: 'flex' }}
+          title={lockTitle ?? 'Next slide'}
         >
           <ChevronRight size={20} />
         </button>
@@ -101,8 +114,10 @@ export function GeneratedSlidesViewer({
                 return (
                   <button
                     key={i}
-                    onClick={() => onSlideChange?.(i)}
-                    style={{ width: active ? 24 : 6, height: 4, borderRadius: 0, border: 'none', padding: 0, cursor: 'pointer', background: active ? 'var(--accent-primary)' : visited ? 'var(--steel-light)' : 'var(--steel)', opacity: visited || active ? 1 : 0.4, transition: 'width 200ms ease' }}
+                    onClick={navLocked ? undefined : () => onSlideChange?.(i)}
+                    aria-disabled={navLocked}
+                    title={lockTitle}
+                    style={{ width: active ? 24 : 6, height: 4, borderRadius: 0, border: 'none', padding: 0, cursor: navCursor, background: active ? 'var(--accent-primary)' : visited ? 'var(--steel-light)' : 'var(--steel)', opacity: navLocked ? (visited || active ? 0.5 : 0.25) : (visited || active ? 1 : 0.4), transition: 'width 200ms ease' }}
                   />
                 );
               })}

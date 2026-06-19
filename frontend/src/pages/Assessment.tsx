@@ -152,7 +152,6 @@ export default function Assessment() {
 
     try {
       const result = await submitPlacementResults({
-        student_id: String(studentId),
         course_id: String(id),
         course_title: courseTitle,
         enrollment_id: enrollmentId ?? 0,

@@ -19,9 +19,10 @@ import sys
 from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from routers._auth import verified_student_id
 from services.assessment_service import generate_assessment_questions
 from services.student_context_store import get_student_context_store
 from schemas.student_context import (
@@ -60,7 +61,8 @@ class AnswerItem(BaseModel):
 
 
 class SubmitPlacementRequest(BaseModel):
-    student_id: str
+    # student_id is NOT a request field — it comes from the verified X-Student-ID
+    # header (Django sets it from the authenticated user).
     course_id: str
     course_title: str
     enrollment_id: int
@@ -267,7 +269,10 @@ async def generate_categorized_endpoint(req: GenerateCategorizedRequest):
 
 
 @router.post("/submit-placement", response_model=PlacementResultResponse)
-async def submit_placement(req: SubmitPlacementRequest):
+async def submit_placement(
+    req: SubmitPlacementRequest,
+    student_id: str = Depends(verified_student_id),
+):
     """Score placement answers CONCEPT-KEYED, seed concept_mastery, persist context.
 
     Backward-designed: each question probes a CLO concept (concept_id). Results
@@ -340,10 +345,10 @@ async def submit_placement(req: SubmitPlacementRequest):
         for cid, score in concept_scores.items()
     ]
     if events:
-        await post_mastery_events(req.student_id, events)
+        await post_mastery_events(student_id, events)
 
     # Re-read the updated projection to derive the live mastery_level.
-    merged_cm = await fetch_concept_mastery(req.student_id)
+    merged_cm = await fetch_concept_mastery(student_id)
     course_concept_ids = set(concept_scores.keys()) or None
     mastery_level = derive_mastery_level(merged_cm, course_concept_ids)
 
@@ -367,7 +372,7 @@ async def submit_placement(req: SubmitPlacementRequest):
 
     # ── Build UnifiedStudentContext (topic_performance intentionally empty) ──
     profile = StudentProfileState(
-        student_id=req.student_id,
+        student_id=student_id,
         course_id=req.course_id,
         mastery_level=mastery_level,
         composition_mode=req.composition_mode,
@@ -396,7 +401,7 @@ async def submit_placement(req: SubmitPlacementRequest):
     try:
         from services.artifact_client import post_placement_attempt
         await post_placement_attempt(
-            req.student_id, req.course_id,
+            student_id, req.course_id,
             answers=[a.model_dump() for a in req.answers],
             per_question=[{
                 "question": a.question, "chosen_option": a.chosen_option,
@@ -410,12 +415,12 @@ async def submit_placement(req: SubmitPlacementRequest):
 
     # ── Persist (derived snapshot) ───────────────────────────────
     store = get_student_context_store()
-    store.save(req.student_id, req.course_id, context)
+    store.save(student_id, req.course_id, context)
 
     logger.info(
         "placement_submitted student=%s course=%s score=%s mastery=%s "
         "concepts_scored=%d strengths=%s weaknesses=%s",
-        req.student_id, req.course_id, score_pct, mastery_level,
+        student_id, req.course_id, score_pct, mastery_level,
         len(concept_scores), strengths, weaknesses,
     )
 
@@ -426,10 +431,10 @@ async def submit_placement(req: SubmitPlacementRequest):
         import asyncio
         from services.pathway_trigger import generate_after_placement, mark_pathway_ready
         pathway_ready = await asyncio.to_thread(
-            generate_after_placement, req.student_id, req.course_id, profile,
+            generate_after_placement, student_id, req.course_id, profile,
         )
         if pathway_ready:
-            await asyncio.to_thread(mark_pathway_ready, req.enrollment_id, req.student_id)
+            await asyncio.to_thread(mark_pathway_ready, req.enrollment_id, student_id)
     except Exception:
         logger.exception("placement: pathway generation trigger failed")
 
@@ -488,12 +493,21 @@ def _get_mcq_settings():
 
 
 @router.post("/session")
-async def mcq_session_endpoint(req: dict):
+async def mcq_session_endpoint(
+    req: dict,
+    student_id: str = Depends(verified_student_id),
+):
     """Generate MCQ session checkpoint via the mcq_service pipeline.
 
     Accepts SessionAssessmentRequest body.
     Validates student context exists before generation.
     Returns AssessmentResponse.
+
+    Identity comes ONLY from the verified X-Student-ID header. We stamp it onto
+    the raw dict — BOTH the top-level ``student_id`` and the nested
+    ``context.student_id`` — BEFORE constructing the model, so the model never
+    holds a client-supplied identity and every downstream read (incl. the
+    generator that receives ``session_req.context``) sees the verified value.
     """
     import asyncio
 
@@ -501,6 +515,14 @@ async def mcq_session_endpoint(req: dict):
         _ensure_mcq_imports()
         from mcq.models import SessionAssessmentRequest  # type: ignore
         from mcq.orchestrator import generate_session_assessment  # type: ignore
+
+        # Stamp the verified identity before construction (overwrite-before-read).
+        req["student_id"] = student_id
+        if isinstance(req.get("context"), dict):
+            req["context"]["student_id"] = student_id
+            # Align the nested scope to the request's course_id (server-side),
+            # replacing the old untrusted-vs-untrusted equality check.
+            req["context"]["course_id"] = req.get("course_id", req["context"].get("course_id"))
 
         session_req = SessionAssessmentRequest(**req)
 
@@ -513,23 +535,19 @@ async def mcq_session_endpoint(req: dict):
 
         # Validate student context exists
         store = get_student_context_store()
-        student_context = store.load(session_req.student_id, session_req.course_id)
+        student_context = store.load(student_id, session_req.course_id)
         if student_context is None:
             raise HTTPException(
                 status_code=404,
                 detail=(
-                    f"No student context found for student={session_req.student_id}, "
+                    f"No student context found for student={student_id}, "
                     f"course={session_req.course_id}. Complete placement test first."
                 ),
             )
 
-        # Verify request context matches stored context
-        if (session_req.context.student_id != session_req.student_id or
-                session_req.context.course_id != session_req.course_id):
-            raise HTTPException(
-                status_code=422,
-                detail="context.student_id/course_id must match request student_id/course_id.",
-            )
+        # (The old context-vs-request equality check is gone: it compared two
+        # untrusted client values. Both the top-level and nested ids were stamped
+        # from the verified id above, so there is nothing to reconcile.)
 
         # ── Enrich with the authoritative per-concept knowledge signal ──
         # Difficulty is resolved from concept mastery when a chunk is concept-
@@ -542,7 +560,7 @@ async def mcq_session_endpoint(req: dict):
             from services.mastery import fetch_concept_mastery, fetch_course_concepts
 
             if not session_req.context.concept_mastery:
-                cm = await fetch_concept_mastery(session_req.student_id)
+                cm = await fetch_concept_mastery(student_id)
                 session_req.context.concept_mastery = {
                     str(cid): float(v["score"])
                     for cid, v in cm.items()
@@ -584,7 +602,10 @@ async def mcq_session_endpoint(req: dict):
 
 
 @router.post("/submit")
-async def mcq_submit_endpoint(req: dict):
+async def mcq_submit_endpoint(
+    req: dict,
+    student_id: str = Depends(verified_student_id),
+):
     """Score an in-session MCQ checkpoint and record concept-mastery events.
 
     When the checkpoint questions are concept-tagged, the per-CONCEPT scores are
@@ -599,6 +620,9 @@ async def mcq_submit_endpoint(req: dict):
         from mcq.scoring import score_checkpoint  # type: ignore
         from services.mastery import post_mastery_events
 
+        # Stamp the verified identity before construction (overwrite-before-read).
+        # CheckpointSubmission has no nested context — only the top-level id.
+        req["student_id"] = student_id
         submission = CheckpointSubmission(**req)
         result = score_checkpoint(submission)
 

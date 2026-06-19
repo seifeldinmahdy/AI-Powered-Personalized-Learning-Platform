@@ -2,9 +2,10 @@
 Session Router — cleanup endpoint for shared session state.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 import logging
 from services.session_store import get_session_store
+from routers._auth import jwt_verified_student_id
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +92,18 @@ class UpdateLiveSessionRequest(BaseModel):
     tutor_event_push: Optional[Dict[str, Any]] = None
 
 @router.patch("/{session_id}")
-async def update_session_state(session_id: str, request: UpdateLiveSessionRequest):
-    """Update fields in the live session state. Auto-creates if not found."""
+async def update_session_state(
+    session_id: str,
+    request: UpdateLiveSessionRequest,
+    student_id: str = Depends(jwt_verified_student_id),
+):
+    """Update fields in the live session state. Auto-creates if not found.
+
+    Requires a verified student (Track 2): live-session state is mutated only by an
+    authenticated caller, never by an unauthenticated client that guessed a
+    session id. The body carries no student id, so authentication itself is the
+    control here.
+    """
     store = get_session_store()
     data = store.get_session(session_id)
 
