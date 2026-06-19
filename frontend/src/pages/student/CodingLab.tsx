@@ -1243,6 +1243,92 @@ button:disabled {
     right: 12px;
     bottom: 12px;
   }
+}
+
+/* ── Codex design-language layer ───────────────────────────────────
+   Brings the lab onto the student "codex" system to match LiveSession:
+   editorial display headings (Space Grotesk), mono uppercase labels
+   (JetBrains Mono) and ink-black / ghost buttons. The floating tutor
+   bubble + avatar (.lab-tutor-*) are intentionally left untouched. */
+
+.coding-lab-page { font-family: var(--ff-body); }
+
+/* Display headings */
+.coding-lab-page .lab-header h1,
+.coding-lab-page .cell-heading h2,
+.coding-lab-page .lab-finish-panel h2,
+.coding-lab-page .completion-card h2,
+.coding-lab-page .checklist-title h2,
+.coding-lab-page .lab-error-panel h1,
+.coding-lab-page .notepad-header h3 {
+  font-family: var(--ff-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Mono uppercase labels / eyebrows */
+.coding-lab-page .lab-kicker,
+.coding-lab-page .cell-type,
+.coding-lab-page .criteria h3,
+.coding-lab-page .sq-box-header,
+.coding-lab-page .cell-notes-toggle,
+.coding-lab-page .cell-output span,
+.coding-lab-page .lab-run-output span,
+.coding-lab-page .lab-time {
+  font-family: var(--ff-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* Buttons → codex. Primary = ink-black on paper; secondary = ghost with
+   a steel hairline. Tutor controls (.lab-tutor-controls button) excluded. */
+.coding-lab-page .lab-secondary-button,
+.coding-lab-page .lab-icon-button,
+.coding-lab-page .task-actions button,
+.coding-lab-page .lab-finish-panel button,
+.coding-lab-page .completion-card button,
+.coding-lab-page .lab-guide-button,
+.coding-lab-page .lab-error-panel button {
+  font-family: var(--ff-mono);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: var(--radius-md);
+  transition: transform 120ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.coding-lab-page .lab-secondary-button:active,
+.coding-lab-page .lab-icon-button:active,
+.coding-lab-page .task-actions button:active,
+.coding-lab-page .lab-finish-panel button:active,
+.coding-lab-page .completion-card button:active,
+.coding-lab-page .lab-guide-button:active { transform: scale(0.97); }
+
+/* Primary actions → ink-black */
+.coding-lab-page .task-actions button.primary,
+.coding-lab-page .lab-finish-panel button,
+.coding-lab-page .completion-card button,
+.coding-lab-page .lab-guide-button,
+.coding-lab-page .lab-error-panel button {
+  background: var(--ink-black);
+  border-color: var(--ink-black);
+  color: var(--bg-paper);
+}
+
+/* Secondary / ghost → transparent with a steel hairline */
+.coding-lab-page .lab-secondary-button,
+.coding-lab-page .lab-icon-button,
+.coding-lab-page .task-actions button:not(.primary) {
+  background: transparent;
+  border-color: var(--steel);
+  color: var(--text-primary);
+}
+
+.coding-lab-page .lab-secondary-button:hover,
+.coding-lab-page .lab-icon-button:hover,
+.coding-lab-page .task-actions button:not(.primary):hover {
+  background: var(--bg-paper-hover);
+  border-color: var(--text-primary);
 }`;
 
 interface LocationState {
@@ -1769,7 +1855,7 @@ export default function CodingLab() {
 
   if (error || !labResponse || !lab) {
     return (
-      <div className="coding-lab-page">
+      <div className="codex coding-lab-page">
         <style>{LAB_STYLES}</style>
         <div className="lab-error">
           <div className="lab-error-panel">
@@ -1795,7 +1881,7 @@ export default function CodingLab() {
   const displayedBubbleText = bubbleText || current?.tutor_script || lab.tutor_opening;
 
   return (
-    <div className="coding-lab-page">
+    <div className="codex coding-lab-page">
       <style>{LAB_STYLES}</style>
       <audio
         ref={audioRef}
