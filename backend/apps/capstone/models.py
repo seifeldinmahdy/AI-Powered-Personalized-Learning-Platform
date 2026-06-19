@@ -31,6 +31,14 @@ class Capstone(models.Model):
     team_mode = models.CharField(
         max_length=10, choices=TEAM_MODE_CHOICES, default="solo"
     )
+    # Primary programming language of the capstone (the course's language). Drives
+    # the local "Run" sandbox defaults (interpreter + default entry file) and is
+    # advisory metadata for the UI. Grading is language-agnostic (the LLM judge
+    # reads the code bundle), so this never affects the rubric verdict.
+    language = models.CharField(
+        max_length=30, default="python",
+        help_text="e.g. python, javascript, typescript, java, go, cpp, ruby, php.",
+    )
     team_cap = models.PositiveIntegerField(default=4)
     deadline = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
@@ -42,6 +50,12 @@ class Capstone(models.Model):
     github_template_repo = models.CharField(max_length=300, blank=True)
     # Configurable run command stored on the capstone for the CI template
     run_command = models.CharField(max_length=500, blank=True)
+    # Canonical CI workflow (.github/workflows/ci.yml) for this course, seeded
+    # verbatim into every student's repo at provisioning so the required "ci"
+    # check is identical for all students. Authored once by the admin (AI-suggested
+    # language → generated YAML → review/edit). When blank and no template repo is
+    # set, a language-appropriate default is generated at provision time.
+    ci_workflow = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

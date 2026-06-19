@@ -50,7 +50,46 @@ class IntentRetrainingCounterAdmin(admin.ModelAdmin):
 
 @admin.register(StudentLearningProfile)
 class StudentLearningProfileAdmin(admin.ModelAdmin):
-    list_display = ("student", "sessions_count", "last_updated")
-    list_filter = ("last_updated",)
+    list_display = ("student", "sessions_count", "profile_summary_source", "last_updated")
+    list_filter = ("last_updated", "profile_summary_source")
     search_fields = ("student__username",)
-    readonly_fields = ("profile_summary", "profile_data", "last_updated")
+    # concept_mastery is an event-sourced READ-MODEL (folded from
+    # ConceptMasteryEvent). Hide the raw editable JSON so it can't be hand-edited
+    # out of sync with its event log, and show a label-resolved, readable view.
+    exclude = ("concept_mastery",)
+    readonly_fields = (
+        "profile_summary", "profile_summary_source", "profile_data",
+        "concept_mastery_readable", "last_updated",
+    )
+
+    @admin.display(description="Concept mastery (read-model — folded, read-only)")
+    def concept_mastery_readable(self, obj):
+        from django.utils.html import format_html, format_html_join
+        from apps.courses.models import Concept
+
+        cm = obj.concept_mastery or {}
+        if not cm:
+            return "—"
+        numeric_ids = [int(k) for k in cm if str(k).isdigit()]
+        labels = {str(c.id): c.label for c in Concept.objects.filter(id__in=numeric_ids)}
+        rows = format_html_join(
+            "",
+            "<tr><td style='padding:2px 14px 2px 0'>{}</td>"
+            "<td style='padding:2px 14px 2px 0'>{}</td>"
+            "<td style='padding:2px 14px 2px 0'>{}</td>"
+            "<td style='padding:2px 14px 2px 0'>{}</td></tr>",
+            (
+                (labels.get(str(cid), "concept %s" % cid),
+                 entry.get("score"), entry.get("trend"), entry.get("evidence"))
+                for cid, entry in cm.items() if isinstance(entry, dict)
+            ),
+        )
+        return format_html(
+            "<table><thead><tr>"
+            "<th style='text-align:left;padding:2px 14px 2px 0'>Concept</th>"
+            "<th style='text-align:left;padding:2px 14px 2px 0'>Score</th>"
+            "<th style='text-align:left;padding:2px 14px 2px 0'>Trend</th>"
+            "<th style='text-align:left;padding:2px 14px 2px 0'>Evidence</th>"
+            "</tr></thead><tbody>{}</tbody></table>",
+            rows,
+        )

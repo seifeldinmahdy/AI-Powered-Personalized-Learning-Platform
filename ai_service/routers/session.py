@@ -79,6 +79,7 @@ class UpdateLiveSessionRequest(BaseModel):
     current_slide_index: Optional[int] = None
     current_slide_title: Optional[str] = None
     current_slide_content: Optional[str] = None
+    next_slide_title: Optional[str] = None
     current_topic: Optional[str] = None
     current_subtopic: Optional[str] = None
     # Authoritative concept the current slide teaches (slide provenance:
@@ -110,6 +111,8 @@ async def update_session_state(session_id: str, request: UpdateLiveSessionReques
         live_kwargs["current_slide_title"] = request.current_slide_title
     if request.current_slide_content is not None:
         live_kwargs["current_slide_content"] = request.current_slide_content
+    if request.next_slide_title is not None:
+        live_kwargs["next_slide_title"] = request.next_slide_title
     if request.current_topic is not None:
         live_kwargs["current_topic"] = request.current_topic
     if request.current_subtopic is not None:

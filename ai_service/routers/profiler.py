@@ -7,9 +7,10 @@ Integrates with SharedSessionStore: when ``session_id`` is provided,
 fusion the ``fused_emotion`` and ``confidence`` are written back.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional
+from routers._auth import verified_student_id
 from services.profiler_service import run_session_profiler, fuse_emotions
 from services.session_store import get_session_store
 from schemas.student_context import UnifiedStudentContext
@@ -53,13 +54,15 @@ class RunSessionRequest(BaseModel):
     frontend just fires this at session end (fire-and-forget).
     """
     session_id: str = Field(..., description="Backend session ID (durable-log key)")
-    student_id: int = Field(..., description="Student user ID")
     lesson_title: str = Field(default="", description="Lesson title just completed")
+    # NB: student_id is NOT a request field — it is taken from the verified
+    # X-Student-ID header (Django sets it from the authenticated user).
 
 
 class FuseEmotionsRequest(BaseModel):
-    # Required for consent enforcement + attributable retention (Batch 11b).
-    student_id: str = Field(default="", description="Student user ID (consent + attribution)")
+    # student_id is NOT a request field — it comes from the verified X-Student-ID
+    # header (Django sets it from the authenticated user). Used for consent
+    # enforcement + attributable retention (Batch 11b).
     course_id: str = Field(default="", description="Course ID (attribution)")
     fer_emotion: str = Field(..., description="FER emotion label")
     fer_confidence: float = Field(default=0.0, description="FER confidence 0-1")
@@ -171,18 +174,24 @@ def _group_session_log_by_slide(session_data) -> list[dict]:
 
 
 @router.post("/run-session")
-async def run_session(request: RunSessionRequest):
+async def run_session(
+    request: RunSessionRequest,
+    student_id: str = Depends(verified_student_id),
+):
     """Server-side session profiling from the DURABLE log (no client merge).
 
     Consolidates the session's durable event log into claims and applies them via
     the single writer. Idempotent: consumed events aren't re-applied, so the
     explicit end-call and the sweeper can't double-apply. Works after an
     AI-service restart because it reads the durable log, not memory.
+
+    Identity comes ONLY from the verified X-Student-ID header (Django sets it
+    from the authenticated user); the browser cannot reach this directly.
     """
     try:
         result = await run_session_profiler(
             session_id=request.session_id,
-            student_id=str(request.student_id),
+            student_id=str(student_id),
             lesson_title=request.lesson_title,
         )
         return {"success": True, **result}
@@ -192,7 +201,10 @@ async def run_session(request: RunSessionRequest):
 
 
 @router.post("/fuse-emotions")
-async def fuse(request: FuseEmotionsRequest):
+async def fuse(
+    request: FuseEmotionsRequest,
+    student_id: str = Depends(verified_student_id),
+):
     """
     Resolve conflicting FER and SER emotions using LLM arbitration.
 
@@ -211,10 +223,10 @@ async def fuse(request: FuseEmotionsRequest):
         # timeout) drops the emotion and treats it as the existing "uncertain =
         # missing" state. Nothing downstream depends on emotion existing.
         from services.emotion_consent import consent_granted
-        if not await consent_granted(request.student_id):
+        if not await consent_granted(student_id):
             logger.info(
                 "Profiler /fuse-emotions: no consent (or unavailable) for student=%r — "
-                "emotion dropped, not persisted", request.student_id,
+                "emotion dropped, not persisted", student_id,
             )
             return {"fused_emotion": "uncertain",
                     "reasoning": "Emotion capture not consented — signal dropped (treated as missing)."}
@@ -293,7 +305,7 @@ async def fuse(request: FuseEmotionsRequest):
                         from services.session_event_log import get_session_event_log
                         get_session_event_log().append(
                             request.session_id, "emotion", new_signal,
-                            student_id=request.student_id, course_id=request.course_id,
+                            student_id=student_id, course_id=request.course_id,
                         )
                     except Exception:
                         pass
@@ -316,8 +328,16 @@ async def fuse(request: FuseEmotionsRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/audit-log/{student_id}")
-async def get_audit_log_endpoint(student_id: str, limit: int = 50):
+@router.get("/audit-log")
+async def get_audit_log_endpoint(
+    limit: int = 50,
+    student_id: str = Depends(verified_student_id),
+):
+    """Return the authenticated student's own profiling-claim audit log.
+
+    Identity comes ONLY from the verified X-Student-ID header. (An admin
+    cross-student view would be a separate, admin-gated proxy.)
+    """
     try:
         from services.profiler_service import get_audit_log
         entries = get_audit_log(student_id, limit=limit)

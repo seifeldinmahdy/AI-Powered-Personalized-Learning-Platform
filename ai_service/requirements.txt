@@ -10,6 +10,9 @@ python-multipart>=0.0.6
 soundfile>=0.12
 librosa>=0.10
 edge-tts>=6.1
+# Optional: Chatterbox Turbo TTS backend (set TTS_BACKEND=chatterbox). Needs a
+# CUDA GPU for real-time latency; the service falls back to Edge if unavailable.
+chatterbox-tts
 tensorflow>=2.15
 opencv-python>=4.8
 pygame>=2.5
@@ -32,3 +35,6 @@ imageio-ffmpeg          # Bundled ffmpeg — no system install needed
 pytest>=8.0
 pytest-asyncio>=0.23
 PyMuPDF>=1.23
+
+# Optional: Supabase / Postgres pgvector vector-store backend (VECTOR_BACKEND=supabase)
+psycopg2-binary>=2.9.0

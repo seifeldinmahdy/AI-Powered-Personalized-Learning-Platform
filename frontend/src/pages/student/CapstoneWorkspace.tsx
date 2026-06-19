@@ -19,9 +19,13 @@ interface OpenFile {
 }
 
 const LANG_BY_EXT: Record<string, string> = {
-    py: 'python', js: 'javascript', ts: 'typescript', tsx: 'typescript', jsx: 'javascript',
-    json: 'json', md: 'markdown', html: 'html', css: 'css', yml: 'yaml', yaml: 'yaml',
-    java: 'java', c: 'c', cpp: 'cpp', go: 'go', rs: 'rust', sh: 'shell',
+    py: 'python', js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+    ts: 'typescript', tsx: 'typescript', jsx: 'javascript',
+    json: 'json', md: 'markdown', html: 'html', css: 'css', scss: 'scss',
+    yml: 'yaml', yaml: 'yaml', toml: 'ini', ini: 'ini', xml: 'xml',
+    java: 'java', kt: 'kotlin', c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', hpp: 'cpp',
+    cs: 'csharp', go: 'go', rs: 'rust', rb: 'ruby', php: 'php', swift: 'swift',
+    sql: 'sql', sh: 'shell', bash: 'shell', lua: 'lua', r: 'r', pl: 'perl',
 };
 
 function langForPath(path: string): string {

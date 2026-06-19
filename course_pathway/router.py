@@ -2,11 +2,15 @@
 
 Endpoints
 ---------
-POST  /pathway/generate           — Generate a personalised session plan
-GET   /pathway/{student_id}       — Retrieve all cached plans for a student
-POST  /pathway/regenerate         — Force-regenerate ignoring cache
+POST  /pathway/generate           — Generate a personalised session plan (service-key only)
+GET   /pathway/mine               — Retrieve the authenticated student's cached plans
+POST  /pathway/regenerate         — Force-regenerate ignoring cache (service-key only)
 GET   /pathway/courses            — List available courses in ChromaDB
 GET   /pathway/health             — Health check
+
+Per-student READ endpoints (current/mine/versions/provenance/session-chunks) take
+identity ONLY from the verified X-Student-ID header (Django sets it from the
+authenticated user); they are service-key gated and not reachable from a browser.
 """
 
 from __future__ import annotations
@@ -16,7 +20,7 @@ import os
 import sys
 from pathlib import Path
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
@@ -31,7 +35,7 @@ def _require_service_key(x_service_key: Optional[str]) -> None:
     A student's browser cannot call generate/regenerate: these require the
     internal service key (used by the placement trigger and the admin-only Django
     regenerate proxy). A keyless/wrong-key call gets a clear 403 — never a silent
-    regeneration. (Read endpoints stay open to the enrolled student.)
+    regeneration.
     """
     expected = os.getenv("INTERNAL_SERVICE_KEY", "")
     if not expected or x_service_key != expected:
@@ -43,6 +47,31 @@ def _require_service_key(x_service_key: Optional[str]) -> None:
                 "after placement and re-versioned only by the system or an admin."
             ),
         )
+
+
+def _verified_student_id(
+    x_service_key: Optional[str] = Header(default=None, alias="X-Service-Key"),
+    x_student_id: Optional[str] = Header(default=None, alias="X-Student-ID"),
+) -> str:
+    """Verified caller identity for per-student READ endpoints (Track 1).
+
+    Identity comes ONLY from the ``X-Student-ID`` header that Django sets from the
+    authenticated user — never from the URL/query/body. Service-key gated so the
+    browser cannot reach these directly. (A local copy of ai_service's
+    ``routers/_auth.verified_student_id`` to avoid coupling this package to it.)
+    """
+    expected = os.getenv("INTERNAL_SERVICE_KEY", "")
+    if not expected or x_service_key != expected:
+        raise HTTPException(
+            status_code=403,
+            detail="This endpoint is internal-only; call it through Django.",
+        )
+    if not x_student_id:
+        raise HTTPException(
+            status_code=401,
+            detail="X-Student-ID is required (set by Django from the authenticated user).",
+        )
+    return str(x_student_id)
 
 # ── Lazy singleton initialisation ────────────────────────────────
 
@@ -259,9 +288,15 @@ async def regenerate_pathway(
 
 
 @router.get("/versions")
-async def pathway_versions(student_id: str, course_id: str):
-    """Admin/instructor: list all plan versions for a student+course (metadata
-    only — no full plan JSON). The current version is flagged is_current."""
+async def pathway_versions(
+    course_id: str,
+    student_id: str = Depends(_verified_student_id),
+):
+    """List all plan versions for a student+course (metadata only — no full plan
+    JSON). The current version is flagged is_current.
+
+    Admin path: Django's admin-gated proxy sets X-Student-ID to the target
+    student; the browser cannot reach this directly (service-key gated)."""
     try:
         gen = _get_generator()
         return {"versions": gen._store.list_versions(student_id, course_id)}
@@ -272,11 +307,15 @@ async def pathway_versions(student_id: str, course_id: str):
 
 
 @router.get("/current", response_model=PlanSummary)
-async def current_pathway(student_id: str, course_id: str):
+async def current_pathway(
+    course_id: str,
+    student_id: str = Depends(_verified_student_id),
+):
     """Read-only: return the CURRENT authoritative plan (no generation).
 
     The pathway page and live session read this — opening the page never
-    triggers regeneration.
+    triggers regeneration. Identity comes only from the verified X-Student-ID
+    header (Django sets it from the authenticated user).
     """
     try:
         gen = _get_generator()
@@ -301,8 +340,11 @@ class SessionProvenance(BaseModel):
     clo_codes: list[str]
 
 
-@router.get("/{student_id}/{course_id}/provenance", response_model=list[SessionProvenance])
-async def pathway_provenance(student_id: str, course_id: str):
+@router.get("/{course_id}/provenance", response_model=list[SessionProvenance])
+async def pathway_provenance(
+    course_id: str,
+    student_id: str = Depends(_verified_student_id),
+):
     """List, per session, the concepts and CLOs it covers (explainability)."""
     try:
         gen = _get_generator()
@@ -323,9 +365,9 @@ async def pathway_provenance(student_id: str, course_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{student_id}", response_model=list[PlanListItem])
-async def list_student_plans(student_id: str):
-    """List all cached pathway plans for a student."""
+@router.get("/mine", response_model=list[PlanListItem])
+async def list_student_plans(student_id: str = Depends(_verified_student_id)):
+    """List all cached pathway plans for the authenticated student."""
     try:
         gen = _get_generator()
         plans = gen._store.list_plans(student_id)
@@ -346,7 +388,8 @@ async def available_courses():
 
 
 class SessionChunksRequest(BaseModel):
-    student_id: str
+    # student_id is NOT a request field — it comes from the verified X-Student-ID
+    # header (Django sets it from the authenticated user).
     course_id: str
     session_number: int
 
@@ -361,7 +404,10 @@ class SessionChunkOut(BaseModel):
 
 
 @router.post("/session-chunks", response_model=list[SessionChunkOut])
-async def get_session_chunks(request: SessionChunksRequest):
+async def get_session_chunks(
+    request: SessionChunksRequest,
+    student_id: str = Depends(_verified_student_id),
+):
     """Return the raw text chunks for a specific session from a cached plan.
 
     Loads the plan from the store, finds the session by number, and
@@ -371,7 +417,7 @@ async def get_session_chunks(request: SessionChunksRequest):
         gen = _get_generator()
 
         # Load cached plan
-        cached_plan = gen._store.load(request.student_id, request.course_id)
+        cached_plan = gen._store.load(student_id, request.course_id)
         if cached_plan is None:
             raise HTTPException(status_code=404, detail="No cached plan found")
 

@@ -34,6 +34,8 @@ from schemas.capstone import (
     CapstoneAssistResponse,
     CapstoneRunRequest,
     CapstoneRunResponse,
+    SuggestLanguageRequest,
+    SuggestLanguageResponse,
     TeamRolesRequest,
 )
 
@@ -654,15 +656,190 @@ Group the work into a handful of areas mapped to the rubric criteria/concepts. R
 # Batch 3 — run uncommitted files in the sandbox (local feedback only)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Language inference — AI suggests; admin reviews/overrides. Suggestion only.
+# ---------------------------------------------------------------------------
+
+_KNOWN_LANGUAGES = [
+    "python", "javascript", "typescript", "java", "go", "cpp", "c",
+    "ruby", "php", "rust", "csharp", "kotlin", "swift", "bash",
+]
+
+# Ordered keyword → language (first hit wins). Order matters: check the more
+# specific tokens before substrings (typescript before js, c++ before c, and
+# javascript before java so it isn't misread as Java).
+_LANG_KEYWORDS = [
+    ("typescript", "typescript"),
+    ("javascript", "javascript"), ("node.js", "javascript"), ("nodejs", "javascript"),
+    ("react", "javascript"),
+    ("python", "python"), ("django", "python"), ("flask", "python"), ("pandas", "python"),
+    ("c++", "cpp"), ("cpp", "cpp"),
+    ("c#", "csharp"), (".net", "csharp"), ("csharp", "csharp"),
+    ("golang", "go"),
+    ("rust", "rust"),
+    ("kotlin", "kotlin"), ("android", "kotlin"),
+    ("swift", "swift"), ("ios", "swift"),
+    ("ruby", "ruby"), ("rails", "ruby"),
+    ("php", "php"), ("laravel", "php"),
+    ("java", "java"),
+    ("bash", "bash"), ("shell script", "bash"),
+    ("c programming", "c"),
+]
+
+
+def _keyword_language(text: str) -> str | None:
+    t = f" {text.lower()} "
+    for kw, lang in _LANG_KEYWORDS:
+        if kw in t:
+            return lang
+    return None
+
+
+async def suggest_language(req: SuggestLanguageRequest) -> SuggestLanguageResponse:
+    """Suggest the capstone's programming language from the course metadata.
+
+    AI-assisted with a deterministic keyword fallback. SUGGESTION ONLY — the
+    admin reviews and can override before it is saved on the capstone.
+    """
+    blob = " ".join([req.course_title, req.course_description, " ".join(req.concepts or [])])
+    heuristic = _keyword_language(blob)
+
+    if not os.getenv("OLLAMA_API_KEY", ""):
+        return SuggestLanguageResponse(
+            language=heuristic or "python",
+            confidence=0.5 if heuristic else 0.2,
+            rationale="Heuristic keyword match (no LLM configured).",
+        )
+
+    system = (
+        "You identify the single primary programming language a course teaches, "
+        "for setting up its capstone project. Respond with valid JSON only: "
+        '{"language": "<one token>", "confidence": 0.0-1.0, "rationale": "<one sentence>"}. '
+        f"language MUST be exactly one of: {', '.join(_KNOWN_LANGUAGES)}."
+    )
+    user = (
+        f"Course title: {req.course_title}\n"
+        f"Course description: {req.course_description or '(none)'}\n"
+        f"Key concepts: {', '.join(req.concepts or []) or '(none)'}\n\n"
+        "Which one language does this course primarily teach?"
+    )
+    try:
+        client = _get_gen_client()
+        data = client.chat_json(
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.1,
+            timeout_override=60,
+        )
+        lang = str((data or {}).get("language", "")).strip().lower()
+        if lang not in _KNOWN_LANGUAGES:
+            return SuggestLanguageResponse(
+                language=heuristic or "python", confidence=0.4,
+                rationale=f"LLM returned unsupported '{lang}'; used heuristic.",
+            )
+        conf = float((data or {}).get("confidence", 0.7) or 0.7)
+        return SuggestLanguageResponse(
+            language=lang, confidence=max(0.0, min(1.0, conf)),
+            rationale=str((data or {}).get("rationale", "")),
+        )
+    except Exception:
+        logger.exception("suggest_language LLM call failed")
+        return SuggestLanguageResponse(
+            language=heuristic or "python", confidence=0.3,
+            rationale="LLM error; used heuristic.",
+        )
+
+
+# Local "Run" sandbox — language-agnostic. Scripting languages get a default
+# interpreter by file extension; ANY language (incl. compiled: Java, C++, Rust)
+# is supported via the capstone's admin-configured ``run_command``. Runtimes must
+# be installed on the AI-service host; a missing one fails gracefully. Run is
+# OPTIONAL local feedback — CI remains the official, authoritative check.
+_INTERPRETER_BY_EXT: dict[str, list[str]] = {
+    "py": [sys.executable],
+    "js": ["node"], "mjs": ["node"], "cjs": ["node"],
+    "rb": ["ruby"],
+    "php": ["php"],
+    "pl": ["perl"],
+    "sh": ["bash"], "bash": ["bash"],
+    "r": ["Rscript"],
+    "lua": ["lua"],
+    "go": ["go", "run"],          # `go run main.go`
+}
+_LANG_DEFAULT_ENTRY: dict[str, str] = {
+    "python": "main.py", "javascript": "index.js", "node": "index.js",
+    "typescript": "index.ts", "ruby": "main.rb", "php": "index.php",
+    "bash": "main.sh", "shell": "main.sh", "go": "main.go", "perl": "main.pl",
+    "r": "main.R", "lua": "main.lua",
+}
+_ENTRY_STEMS = ("main", "index", "app", "run", "solution")
+
+
+def _interpreter_argv(rel_path: str) -> list[str] | None:
+    """argv to run a single script file, by extension. None = no known interpreter."""
+    ext = rel_path.rsplit(".", 1)[-1].lower() if "." in rel_path else ""
+    prefix = _INTERPRETER_BY_EXT.get(ext)
+    return [*prefix, rel_path] if prefix else None
+
+
+def _detect_entry(written: list[str]) -> str | None:
+    """Pick a runnable scripting entry among written files (main.* / index.* / first)."""
+    scripts = [p for p in written if _interpreter_argv(p) is not None]
+    for stem in _ENTRY_STEMS:
+        for p in scripts:
+            name = p.rsplit("/", 1)[-1].lower()
+            if name.startswith(stem + "."):
+                return p
+    return scripts[0] if scripts else None
+
+
+def _resolve_run(req: "CapstoneRunRequest", tmpdir: str, written: list[str]):
+    """Resolve how to run the files. Returns (cmd, use_shell) or (None, False).
+
+    Precedence:
+      1. admin ``run_command`` → run via shell (supports any language, incl.
+         compiled, e.g. "javac Main.java && java Main", "go run .").
+      2. student ``entry`` → treated ONLY as a file (never a shell string), run
+         with the interpreter for its extension.
+      3. capstone ``language`` default entry file (e.g. main.py / index.js).
+      4. auto-detected scripting entry among the written files.
+    """
+    import os as _os
+
+    run_command = (getattr(req, "run_command", "") or "").strip()
+    if run_command:
+        return run_command, True
+
+    entry = (req.entry or "").strip()
+    if entry and _os.path.exists(_os.path.join(tmpdir, entry)):
+        argv = _interpreter_argv(entry)
+        if argv:
+            return argv, False
+
+    lang = (getattr(req, "language", "") or "").strip().lower()
+    default_entry = _LANG_DEFAULT_ENTRY.get(lang)
+    if default_entry and _os.path.exists(_os.path.join(tmpdir, default_entry)):
+        argv = _interpreter_argv(default_entry)
+        if argv:
+            return argv, False
+
+    candidate = _detect_entry(written)
+    if candidate:
+        argv = _interpreter_argv(candidate)
+        if argv:
+            return argv, False
+
+    return None, False
+
+
 def run_capstone_files(req: CapstoneRunRequest) -> CapstoneRunResponse:
     """
-    Write the (uncommitted) files to a temp dir and run the entry file in a
-    short-lived subprocess. Reuses the lab sandbox approach. Python-only.
+    Write the (uncommitted) files to a temp dir and run them in a short-lived
+    subprocess. Language-agnostic: a scripting entry runs with its interpreter,
+    and any language runs via the capstone's ``run_command``.
     """
     import os as _os
     import re
     import subprocess
-    import sys as _sys
     import tempfile
 
     if not req.files:
@@ -672,7 +849,7 @@ def run_capstone_files(req: CapstoneRunRequest) -> CapstoneRunResponse:
     timeout_seconds = 8
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        py_files: list[str] = []
+        written: list[str] = []
         for f in req.files:
             path = f.path
             # Path safety: no traversal, no absolute paths
@@ -682,29 +859,25 @@ def run_capstone_files(req: CapstoneRunRequest) -> CapstoneRunResponse:
             _os.makedirs(_os.path.dirname(dest) or tmpdir, exist_ok=True)
             with open(dest, "w", encoding="utf-8") as handle:
                 handle.write(f.content or "")
-            if path.endswith(".py"):
-                py_files.append(path)
+            written.append(path)
 
-        # Resolve entry file
-        entry = (req.entry or "").strip()
-        entry_file = None
-        if entry.endswith(".py") and _os.path.exists(_os.path.join(tmpdir, entry)):
-            entry_file = entry
-        elif _os.path.exists(_os.path.join(tmpdir, "main.py")):
-            entry_file = "main.py"
-        elif py_files:
-            entry_file = py_files[0]
-
-        if not entry_file:
+        cmd, use_shell = _resolve_run(req, tmpdir, written)
+        if cmd is None:
             return CapstoneRunResponse(
                 success=False,
-                stderr="No runnable Python entry file found (expected main.py or an entry .py).",
+                stderr=(
+                    "No runnable entry found. Set a Run command on the capstone "
+                    "(e.g. 'javac Main.java && java Main', 'go run .', "
+                    "'node index.js') or include a main.py / index.js / main.rb "
+                    "file. Local Run is optional — CI is the official check."
+                ),
                 exit_code=1,
             )
 
         try:
             result = subprocess.run(
-                [_sys.executable, entry_file],
+                cmd,
+                shell=use_shell,
                 cwd=tmpdir,
                 capture_output=True,
                 text=True,
@@ -715,6 +888,14 @@ def run_capstone_files(req: CapstoneRunRequest) -> CapstoneRunResponse:
                 stdout=result.stdout,
                 stderr=result.stderr,
                 exit_code=result.returncode,
+            )
+        except FileNotFoundError as exc:
+            # Interpreter/runtime not installed on the host — Run is best-effort.
+            return CapstoneRunResponse(
+                success=False,
+                stderr=(f"Runtime not available on the server: {exc}. "
+                        "Local Run is optional — push and rely on CI."),
+                exit_code=127,
             )
         except subprocess.TimeoutExpired:
             return CapstoneRunResponse(

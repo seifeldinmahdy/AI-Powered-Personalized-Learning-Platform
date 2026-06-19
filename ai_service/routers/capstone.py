@@ -13,6 +13,8 @@ from schemas.capstone import (
     CapstoneAssistResponse,
     CapstoneRunRequest,
     CapstoneRunResponse,
+    SuggestLanguageRequest,
+    SuggestLanguageResponse,
     TeamRolesRequest,
 )
 from services.capstone_rubric_service import (
@@ -22,6 +24,7 @@ from services.capstone_rubric_service import (
     evaluate_capstone_rubric,
     assist_student,
     run_capstone_files,
+    suggest_language,
     suggest_team_roles,
 )
 
@@ -57,6 +60,11 @@ async def assist(request: CapstoneAssistRequest) -> CapstoneAssistResponse:
 async def run(request: CapstoneRunRequest) -> CapstoneRunResponse:
     import asyncio
     return await asyncio.to_thread(run_capstone_files, request)
+
+
+@router.post("/suggest-language", response_model=SuggestLanguageResponse)
+async def suggest_language_endpoint(request: SuggestLanguageRequest) -> SuggestLanguageResponse:
+    return await suggest_language(request)
 
 
 @router.post("/team-roles")

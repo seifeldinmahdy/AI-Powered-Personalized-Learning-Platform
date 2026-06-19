@@ -33,6 +33,7 @@ from schemas.coding import (
     LabChecklistItem,
 )
 from services.session_store import get_session_store
+from services.text_sanitize import strip_emojis_deep
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +154,30 @@ def _extract_relevant_profile_context(
             f"{', '.join(flat['unresolved_questions'][:5])}"
         )
 
-    return "\n".join(parts) if parts else "No relevant profile data available"
+    text = "\n".join(parts) if parts else "No relevant profile data available"
+    # Cap the injected profile so a large/odd profile can never crowd out the
+    # session content or destabilize the JSON the model must return.
+    return text[:_MAX_PROFILE_CONTEXT_CHARS]
+
+
+# Hard cap on the profile text injected into lab prompts (injection safety).
+_MAX_PROFILE_CONTEXT_CHARS = 1200
+
+
+def _lab_is_valid(lab) -> bool:
+    """A usable lab has enough cells and at least one actionable task cell.
+
+    Used by the retry loop so a parseable-but-empty lab is retried rather than
+    silently shipped.
+    """
+    cells = getattr(lab, "cells", None) or []
+    if len(cells) < 3:
+        return False
+    return any(
+        getattr(c, "cell_type", "") == "task"
+        and (getattr(c, "starter_code", "") or getattr(c, "task_prompt", ""))
+        for c in cells
+    )
 
 
 def _generate_suggested_questions(
@@ -180,7 +204,8 @@ def _generate_suggested_questions(
         "- Do not generate questions that are already answered by the cell text\n"
         "- If the student profile shows difficulty with certain topics, include "
         "questions that directly address those confusion points for relevant cells\n"
-        "- Return ONLY valid JSON — no markdown fences, no preamble\n\n"
+        "- Return ONLY valid JSON — no markdown fences, no preamble\n"
+        "- Do NOT use emojis in any question\n\n"
         'Output format:\n'
         '[\n  {"cell_id": "the cell id", "questions": ["question 1", ...]},\n  ...\n]'
     )
@@ -376,7 +401,8 @@ def _generate_checklist(
 ) -> list[LabChecklistItem]:
     system = (
         "You design personalized programming labs after an AI tutoring session. "
-        "Return raw JSON only. Build a checklist the lab MUST satisfy before it is generated."
+        "Return raw JSON only. Build a checklist the lab MUST satisfy before it is generated. "
+        "Do NOT use emojis anywhere in the output."
     )
     # Personalize the lab's BACKBONE, not just the cells: the checklist must
     # reflect the student's remediation/strength targets and learning style.
@@ -417,7 +443,7 @@ def _generate_lab(
         "You generate notebook-style Python coding labs for beginners. "
         "Return raw JSON only. The lab must satisfy every checklist item. "
         "Use short explanations, concrete code, and hands-on tasks. "
-        "Do not include markdown fences."
+        "Do not include markdown fences. Do NOT use emojis anywhere in the output."
     )
     schema = {
         "title": "string",
@@ -534,16 +560,33 @@ async def generate_coding_lab(request: CodingLabGenerateRequest) -> CodingLabGen
     except Exception as exc:
         logger.warning("lab_profile_fetch_failed: %s — continuing without profile", exc)
 
-    try:
-        checklist = _generate_checklist(request, session, profile_context=profile_context)
-    except Exception as exc:
-        logger.warning("lab_checklist_fallback lab_id=%s error=%s", lab_id, exc)
+    # Up to 3 attempts each before the static fallback — transient LLM / JSON /
+    # schema failures usually pass on a retry, so the canned fallback lab is a
+    # last resort rather than the first response to a hiccup.
+    checklist = None
+    for attempt in range(1, 4):
+        try:
+            checklist = _generate_checklist(request, session, profile_context=profile_context)
+            break
+        except Exception as exc:
+            logger.warning("lab_checklist attempt %d/3 failed lab_id=%s error=%s", attempt, lab_id, exc)
+    if checklist is None:
+        logger.error("lab_checklist: all 3 attempts failed lab_id=%s — using fallback", lab_id)
         checklist = _fallback_checklist(request, session)
 
-    try:
-        lab = _generate_lab(request, session, checklist, profile_context=profile_context)
-    except Exception as exc:
-        logger.warning("lab_generation_fallback lab_id=%s error=%s", lab_id, exc)
+    lab = None
+    for attempt in range(1, 4):
+        try:
+            candidate = _generate_lab(request, session, checklist, profile_context=profile_context)
+        except Exception as exc:
+            logger.warning("lab_generation attempt %d/3 failed lab_id=%s error=%s", attempt, lab_id, exc)
+            continue
+        if _lab_is_valid(candidate):
+            lab = candidate
+            break
+        logger.warning("lab_generation attempt %d/3 produced an unusable lab lab_id=%s — retrying", attempt, lab_id)
+    if lab is None:
+        logger.error("lab_generation: all 3 attempts failed/invalid lab_id=%s — using fallback", lab_id)
         lab = _fallback_lab(request, checklist)
 
     # Generate suggested questions per cell (separate LLM pass)
@@ -556,6 +599,11 @@ async def generate_coding_lab(request: CodingLabGenerateRequest) -> CodingLabGen
         generated_at=_dt.datetime.utcnow().isoformat() + "Z",
         checklist=checklist,
         lab=lab,
+    )
+    # Guarantee no emojis in generated content (the prompts ask; this enforces),
+    # then persist. persist_lab applies the format gate before saving.
+    response = CodingLabGenerateResponse.model_validate(
+        strip_emojis_deep(response.model_dump())
     )
     await persist_lab(request.student_id, request.course_id, request.lesson_id,
                       response.model_dump(), status="generated")
@@ -573,6 +621,11 @@ async def persist_lab(student_id: str, course_id: str, lesson_id: str,
     completion; the read-path migration off files is a later stage.)
     """
     if not (student_id and course_id and lesson_id):
+        return
+    # Format gate: never persist a malformed lab artifact (must have lab cells).
+    lab_obj = content_json.get("lab") if isinstance(content_json, dict) else None
+    if not isinstance(lab_obj, dict) or not lab_obj.get("cells"):
+        logger.error("lab: refusing to persist malformed lab artifact (lesson=%s)", lesson_id)
         return
     try:
         import asyncio

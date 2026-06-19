@@ -3,6 +3,8 @@
  * Talks to the AI service's /pathway and /slides endpoints.
  */
 
+import api from './api';
+
 const AI_URL = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001';
 
 // ── Pathway types ──────────────────────────────────────────────
@@ -115,9 +117,8 @@ export interface SlideGenerateRequest {
   book: string;
   chunks: SessionChunk[];
   // Personalization (mastery_level / composition_mode / language_proficiency)
-  // is derived server-side from the student's stored context. The client only
-  // identifies the student; it never sends personalization literals.
-  student_id: string;
+  // is derived server-side from the student's stored context. The client never
+  // sends a student_id — Django sets the verified identity (Track 1).
   course_id: string;
   // Authoritative plan version that pins the persisted deck (Batch 5/10a).
   plan_version?: number;
@@ -128,17 +129,13 @@ export interface SlideGenerateRequest {
 /** Read-only fetch of the CURRENT authoritative plan. Opening the pathway page
  *  must NOT generate — generation happens once, server-side, after placement. */
 export async function getCurrentPathway(
-  studentId: string,
   courseId: string,
 ): Promise<PathwayPlan> {
-  const res = await fetch(
-    `${AI_URL}/pathway/current?student_id=${encodeURIComponent(studentId)}&course_id=${encodeURIComponent(courseId)}`,
+  // Through Django (JWT) — the browser never sends a student_id (Track 1).
+  const res = await api.get<PathwayPlan>(
+    `/ai/pathway/current/${encodeURIComponent(courseId)}/`,
   );
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(`No pathway available: ${detail}`);
-  }
-  return res.json();
+  return res.data;
 }
 
 /** @deprecated Generation is server-side (post-placement) and service-key gated;
@@ -161,35 +158,28 @@ export async function generatePathway(
 export async function generateSlides(
   request: SlideGenerateRequest,
 ): Promise<SlideGenerateResponse> {
-  const res = await fetch(`${AI_URL}/slides/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
-  });
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(`Slide generation failed: ${detail}`);
-  }
-  return res.json();
+  // Through Django (JWT) — identity is set server-side from the authenticated user.
+  const res = await api.post<SlideGenerateResponse>('/ai/slides/generate', request);
+  return res.data;
 }
 
 /** Fetch a previously persisted deck (resume) so we don't regenerate after a
  *  restart / on another device. Returns null when none is saved. */
 export async function getPersistedSlides(
-  studentId: string,
   courseId: string,
   sessionNumber: number,
   planVersion: number,
 ): Promise<SlideGenerateResponse | null> {
-  const params = new URLSearchParams({
-    student_id: studentId,
-    course_id: courseId,
-    session_number: String(sessionNumber),
-    plan_version: String(planVersion),
-  });
-  const res = await fetch(`${AI_URL}/slides/persisted?${params.toString()}`);
-  if (!res.ok) return null;
-  return res.json();
+  // Through Django (JWT) — the browser never sends a student_id (Track 1).
+  try {
+    const res = await api.get<SlideGenerateResponse>(
+      `/ai/slides/persisted/${encodeURIComponent(courseId)}/`,
+      { params: { session_number: sessionNumber, plan_version: planVersion } },
+    );
+    return res.data;
+  } catch {
+    return null;
+  }
 }
 
 export async function checkPathwayHealth(): Promise<{

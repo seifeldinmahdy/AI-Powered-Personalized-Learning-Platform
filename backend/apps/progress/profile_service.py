@@ -63,6 +63,54 @@ def _same_subject(incoming: dict, existing: dict) -> bool:
     return SequenceMatcher(None, _normalize(a), _normalize(b)).ratio() >= NEAR_DUP_RATIO
 
 
+def _provisional_summary(claims: list[dict]) -> str:
+    """Deterministic plain-English summary synthesized from the LIVE claims.
+
+    A stopgap used ONLY until the session profiler authors the canonical summary,
+    so Dr. Nova has context after placement/lab even when no LLM summary exists
+    yet. No LLM, and it never echoes field descriptions — just the student's
+    current signals.
+    """
+    live = [c for c in claims
+            if not c.get("superseded") and str(c.get("value", "")).strip()]
+    if not live:
+        return ""
+    live.sort(key=lambda c: c.get("created_at", ""), reverse=True)  # newest signal wins
+
+    modality = pace = engagement = ""
+    approaches: list[str] = []
+    mistakes: list[str] = []
+    for c in live:
+        field, value = c.get("field"), str(c.get("value", "")).strip()
+        if field == "preferred_modality" and not modality:
+            modality = value
+        elif field == "pace" and not pace:
+            pace = value
+        elif field == "engagement" and not engagement:
+            engagement = value
+        elif field == "recommended_approach" and value not in approaches:
+            approaches.append(value)
+        elif field == "recurrent_process_mistake" and value not in mistakes:
+            mistakes.append(value)
+
+    traits = []
+    if modality:
+        traits.append(f"prefers {modality} explanations")
+    if pace:
+        traits.append(f"works at a {pace} pace")
+    if engagement:
+        traits.append(f"shows {engagement} engagement")
+
+    sentences: list[str] = []
+    if traits:
+        sentences.append("This learner " + ", ".join(traits) + ".")
+    if approaches:
+        sentences.append("Approaches that help: " + "; ".join(approaches[:3]) + ".")
+    if mistakes:
+        sentences.append("Watch for: " + "; ".join(mistakes[:3]) + ".")
+    return " ".join(sentences)
+
+
 def apply_claims(student_id: int, claims: list[dict],
                  summary: str | None = None, summary_source: str | None = None) -> dict:
     """Apply structured claims additively under a row lock. Returns the profile_data.
@@ -123,11 +171,28 @@ def apply_claims(student_id: int, claims: list[dict],
                     e["superseded"] = True
 
         profile.profile_data = {"schema_version": SCHEMA_VERSION, "claims": existing}
-        # Summary is session-authored only, with the optimistic version guard.
+
+        # ── Summary authoring (single canonical author + provisional stopgap) ──
+        # The SESSION profiler is the ONLY canonical author: when it supplies a
+        # summary it always wins and is stamped source="session". Before the first
+        # live session has authored one, we keep a deterministic PROVISIONAL
+        # summary, regenerated from the live claims on each non-session update, so
+        # Dr. Nova has context after placement/lab. A provisional NEVER overwrites
+        # a canonical summary — clean sourcing keeps the audit unambiguous.
         if summary is not None and summary_source == "session":
             profile.profile_summary = summary
+            profile.profile_summary_source = "session"
+        elif (profile.profile_summary_source or "") != "session":
+            provisional = _provisional_summary(existing)
+            if provisional:
+                profile.profile_summary = provisional
+                profile.profile_summary_source = "provisional"
+
         profile.profile_version = int(profile.profile_version or 0) + 1
-        profile.save(update_fields=["profile_data", "profile_summary", "profile_version", "last_updated"])
+        profile.save(update_fields=[
+            "profile_data", "profile_summary", "profile_summary_source",
+            "profile_version", "last_updated",
+        ])
 
     logger.info(
         "profile_claims_applied student=%s applied=%d version=%d",

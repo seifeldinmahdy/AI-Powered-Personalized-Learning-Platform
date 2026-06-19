@@ -41,6 +41,7 @@ from schemas.problem_set import (
     SubmissionData,
 )
 from services.session_store import get_session_store
+from services.text_sanitize import strip_emojis_deep
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +178,14 @@ def _extract_relevant_profile_context(
             f"{', '.join(flat['unresolved_questions'][:5])}"
         )
 
-    return "\n".join(parts) if parts else "No relevant profile data available"
+    text = "\n".join(parts) if parts else "No relevant profile data available"
+    # Cap the injected profile (injection safety): a large/odd profile must never
+    # crowd out the session content or destabilize the JSON the model returns.
+    return text[:_MAX_PROFILE_CONTEXT_CHARS]
+
+
+# Hard cap on the profile text injected into problem-set prompts.
+_MAX_PROFILE_CONTEXT_CHARS = 1200
 
 
 # ── Generation ───────────────────────────────────────────────────
@@ -204,7 +212,7 @@ valuable learning targets.
 - Include an example_solution: ONE possible correct implementation. This is for student reference only — evaluation is rubric-based, not diffing against this solution.
 - DO NOT rely on the example_solution for grading. The rubric is the sole basis for evaluation.
 
-Output ONLY a valid JSON array of question objects. No markdown fences, no preamble, no explanation.
+Output ONLY a valid JSON array of question objects. No markdown fences, no preamble, no explanation. Do NOT use emojis anywhere in the output.
 Each question object must have these exact fields:
   - id: a unique UUID string
   - topic: the specific topic this question covers
@@ -258,6 +266,25 @@ def mastery_weight_for_generation(generation_index: int) -> tuple[float, str]:
     return ORIGINAL_MASTERY_ALPHA, "problem_set"
 
 
+def _problem_set_format_ok(problem_set: ProblemSetData) -> bool:
+    """Structural format gate applied before a set is saved as an artifact.
+
+    Requires at least one question, and every question to carry an id, a problem
+    statement, and a rubric whose criteria each have checks. Stops a malformed
+    generation from ever being persisted.
+    """
+    questions = problem_set.questions or []
+    if not questions:
+        return False
+    for q in questions:
+        if not (getattr(q, "id", "") and getattr(q, "problem_statement", "") and getattr(q, "rubric", None)):
+            return False
+        for crit in q.rubric:
+            if not getattr(crit, "checks", None):
+                return False
+    return True
+
+
 async def _persist_problem_set(problem_set: ProblemSetData, *, regenerate: bool) -> None:
     """Durably record a generated set in Django (best-effort), and stamp the
     authoritative plan_version / generation_index back onto the in-memory object.
@@ -268,6 +295,11 @@ async def _persist_problem_set(problem_set: ProblemSetData, *, regenerate: bool)
     """
     if not (problem_set.student_id and problem_set.course_id and problem_set.lesson_id):
         return
+    # Format gate: never save a malformed problem set as an artifact.
+    if not _problem_set_format_ok(problem_set):
+        logger.error("problem_set: refusing to persist malformed set (ps=%s)",
+                     problem_set.problem_set_id)
+        raise RuntimeError("generated problem set failed format validation")
     try:
         import asyncio
         from services.plan_resolver import current_plan_version
@@ -583,8 +615,11 @@ Based on the breadth and depth of the material above, decide how many questions 
         questions=questions,
         submissions={},
     )
+    # Guarantee no emojis in generated content (the prompt asks; this enforces).
+    problem_set = ProblemSetData.model_validate(strip_emojis_deep(problem_set.model_dump()))
     # Durably record in Django first (stamps plan_version + generation_index),
     # then keep the file working-copy for the live in-session flow.
+    # _persist_problem_set applies the format gate before saving.
     await _persist_problem_set(problem_set, regenerate=regenerate)
     logger.info("Problem set saved: id=%s questions=%d gen=%d v%d",
                 problem_set.problem_set_id, len(questions),

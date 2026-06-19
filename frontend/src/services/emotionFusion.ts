@@ -7,7 +7,7 @@
  * Both missing→ "neutral".
  */
 
-const AI_URL = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001';
+import api from './api';
 
 export interface FusionInput {
   fer_emotion?: string;
@@ -21,7 +21,8 @@ export interface FusionContext {
   slide_title?: string;
   subtopic?: string;
   session_id?: string;
-  student_id?: string;   // consent enforcement + attributable retention (11b)
+  // student_id is no longer sent by the browser — Django sets the verified
+  // identity server-side for consent/attribution (Track 1 / Approach A).
   course_id?: string;
 }
 
@@ -54,55 +55,40 @@ export async function fuseEmotions(
     // If they agree, we still want to log it if session_id is present
     if (context.session_id) {
       try {
-        fetch(`${AI_URL}/profiler/fuse-emotions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fer_emotion,
-            fer_confidence: fer_confidence ?? 0,
-            ser_emotion,
-            ser_confidence: ser_confidence ?? 0,
-            slide_index: context.slide_index ?? 0,
-            slide_title: context.slide_title ?? '',
-            subtopic: context.subtopic ?? '',
-            session_id: context.session_id,
-            student_id: context.student_id ?? '',
-            course_id: context.course_id ?? '',
-          }),
+        api.post('/ai/profiler/fuse-emotions', {
+          fer_emotion,
+          fer_confidence: fer_confidence ?? 0,
+          ser_emotion,
+          ser_confidence: ser_confidence ?? 0,
+          slide_index: context.slide_index ?? 0,
+          slide_title: context.slide_title ?? '',
+          subtopic: context.subtopic ?? '',
+          session_id: context.session_id,
+          course_id: context.course_id ?? '',
         }).catch(console.error);
       } catch {}
     }
     return { fused_emotion: fer_emotion, reasoning: 'FER and SER agree' };
   }
 
-  // Conflict — ask the AI service with a timeout
+  // Conflict — ask the AI service (through Django) with a 3 s timeout
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const res = await api.post('/ai/profiler/fuse-emotions', {
+      fer_emotion,
+      fer_confidence: fer_confidence ?? 0,
+      ser_emotion,
+      ser_confidence: ser_confidence ?? 0,
+      slide_index: context.slide_index ?? 0,
+      slide_title: context.slide_title ?? '',
+      subtopic: context.subtopic ?? '',
+      session_id: context.session_id,
+      course_id: context.course_id ?? '',
+    }, { timeout: 3000 });
 
-    const res = await fetch(`${AI_URL}/profiler/fuse-emotions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fer_emotion,
-        fer_confidence: fer_confidence ?? 0,
-        ser_emotion,
-        ser_confidence: ser_confidence ?? 0,
-        slide_index: context.slide_index ?? 0,
-        slide_title: context.slide_title ?? '',
-        subtopic: context.subtopic ?? '',
-        session_id: context.session_id,
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const data = await res.json();
+    if (res.status >= 200 && res.status < 300) {
       return {
-        fused_emotion: data.fused_emotion,
-        reasoning: data.reasoning,
+        fused_emotion: res.data.fused_emotion,
+        reasoning: res.data.reasoning,
       };
     }
   } catch {

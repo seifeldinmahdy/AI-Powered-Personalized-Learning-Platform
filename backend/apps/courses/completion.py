@@ -48,6 +48,29 @@ def is_course_complete(enrollment) -> bool:
     return material_complete(enrollment)
 
 
+def _award_course_completion_xp(student) -> None:
+    """Grant the one-time course-completion XP bonus.
+
+    Called exactly once per enrollment — the moment ``completed_at`` is first
+    stamped (that field is the idempotency latch), so it can never double-fire
+    even though ``mark_complete_if_eligible`` is invoked from several paths
+    (capstone grade, survey-status, certificate).
+    """
+    try:
+        from apps.users.models import StudentProfile
+        from apps.gamification.signals import XP_COURSE_COMPLETE, xp_to_level
+
+        profile = StudentProfile.objects.filter(user=student).first()
+        if not profile:
+            return
+        profile.current_xp = (profile.current_xp or 0) + XP_COURSE_COMPLETE
+        profile.level = xp_to_level(profile.current_xp)
+        profile.save(update_fields=["current_xp", "level"])
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("course-completion XP award failed")
+
+
 def mark_complete_if_eligible(enrollment):
     """
     Stamp completed_at the first time the course is complete. Idempotent:
@@ -60,4 +83,6 @@ def mark_complete_if_eligible(enrollment):
         return None
     enrollment.completed_at = timezone.now()
     enrollment.save(update_fields=["completed_at"])
+    # First-time completion → award the one-time course-completion XP bonus.
+    _award_course_completion_xp(enrollment.student)
     return enrollment.completed_at

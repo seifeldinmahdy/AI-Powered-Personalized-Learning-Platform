@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -80,14 +81,39 @@ class StudentContextStore:
         return self._key_path(student_id, course_id).exists()
 
 
+# ── Backend selection ────────────────────────────────────────────
+
+
+def _use_pg_contexts() -> bool:
+    """Whether the shared Supabase/Postgres context backend is selected.
+
+    Explicit opt-in (default = local JSON files), reversible via env:
+      - ``STUDENT_CONTEXT_BACKEND=supabase`` / ``postgres`` / ``pg`` → True.
+      - anything else (incl. unset, ``file``, ``local``)             → False.
+
+    Reuses ``SUPABASE_DB_URL`` (the same DSN as the corpus and plan stores).
+    """
+    backend = os.getenv("STUDENT_CONTEXT_BACKEND", "").strip().lower()
+    return backend in ("supabase", "postgres", "pg", "pgvector")
+
+
 # ── Module-level singleton ───────────────────────────────────────
 
-_store: StudentContextStore | None = None
+_store = None
 
 
-def get_student_context_store() -> StudentContextStore:
-    """Get or create the global StudentContextStore singleton."""
+def get_student_context_store():
+    """Get or create the global student-context store singleton.
+
+    Returns the Supabase-backed store when ``STUDENT_CONTEXT_BACKEND`` selects it,
+    otherwise the local file-backed store. Both expose the same save/load/exists
+    surface, so callers are unchanged.
+    """
     global _store
     if _store is None:
-        _store = StudentContextStore()
+        if _use_pg_contexts():
+            from services.pg_student_context_store import PgStudentContextStore
+            _store = PgStudentContextStore()
+        else:
+            _store = StudentContextStore()
     return _store

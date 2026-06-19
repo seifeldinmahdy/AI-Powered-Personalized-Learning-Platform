@@ -174,13 +174,29 @@ async def mark_question_asked_endpoint(lab_id: str, req: QuestionAskedRequest):
     return {"status": "ok"}
 
 
+# How long /labs/complete will wait for the lab profiler before returning. The
+# profiler updates the Django learning profile that the NEXT step (problem-set
+# generation) reads, so we wait for it to land — bounded so a slow LLM can't hang
+# the request (on timeout it finishes in the background, shielded).
+LAB_PROFILER_WAIT_SECONDS = 30
+
+
 @router.post("/labs/complete")
 async def complete_lab_endpoint(req: LabCompleteRequest):
-    """Mark the lab as completed and trigger the lab profiler asynchronously."""
+    """Mark the lab complete, then run the lab profiler BEFORE returning.
+
+    Running the profiler synchronously (bounded) closes the race where the
+    problem set was generated against a STALE learning profile: the client awaits
+    this call before navigating to the problem set, so the profile is updated
+    first. On timeout the profiler keeps running in the background and the problem
+    set just uses the prior profile.
+    """
     import asyncio
+    import logging
     from services.lab_service import mark_lab_completed
     from services.profiler_service import run_lab_profiler
 
+    log = logging.getLogger(__name__)
     try:
         await mark_lab_completed(
             student_id=req.student_id,
@@ -188,12 +204,10 @@ async def complete_lab_endpoint(req: LabCompleteRequest):
             lesson_id=req.lesson_id,
         )
     except Exception:
-        import logging
-        logging.getLogger(__name__).warning(
-            "lab complete: durable persist failed (lab_id=%s)", req.lab_id, exc_info=True)
+        log.warning("lab complete: durable persist failed (lab_id=%s)", req.lab_id, exc_info=True)
 
-    # Fire lab profiler as background task — student does not wait
-    asyncio.create_task(
+    profile_updated = False
+    task = asyncio.create_task(
         run_lab_profiler(
             student_id=req.student_id,
             lab_id=req.lab_id,
@@ -201,5 +215,14 @@ async def complete_lab_endpoint(req: LabCompleteRequest):
             lesson_id=req.lesson_id,
         )
     )
-    return {"status": "ok", "profile_updated": True}
+    try:
+        # shield → a timeout stops us WAITING but never cancels the profiler.
+        await asyncio.wait_for(asyncio.shield(task), timeout=LAB_PROFILER_WAIT_SECONDS)
+        profile_updated = True
+    except asyncio.TimeoutError:
+        log.info("lab complete: profiler still running after %ss (lab_id=%s) — continuing",
+                 LAB_PROFILER_WAIT_SECONDS, req.lab_id)
+    except Exception:
+        log.warning("lab complete: profiler failed (lab_id=%s)", req.lab_id, exc_info=True)
+    return {"status": "ok", "profile_updated": profile_updated}
 

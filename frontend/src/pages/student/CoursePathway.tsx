@@ -101,7 +101,7 @@ export default function CoursePathway() {
 
       // the authoritative plan (server-generated). Throws if not ready yet.
       try {
-        const p = await getCurrentPathway(String(studentId), String(courseId));
+        const p = await getCurrentPathway(String(courseId));
         if (cancelled) return;
         if (p && Array.isArray(p.sessions) && p.sessions.length > 0) {
           setPlan(p);

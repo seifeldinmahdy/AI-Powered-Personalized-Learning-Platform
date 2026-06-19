@@ -23,8 +23,9 @@ import time
 from pathlib import Path
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from routers._auth import verified_student_id
 from schemas.student_context import UnifiedStudentContext
 
 import logging
@@ -65,17 +66,14 @@ class SlideGenerateRequest(BaseModel):
     topics_covered: list[str] = Field(default_factory=list)
     book: str = ""
     chunks: list[SessionChunkIn]
-    # Preferred: the AI service derives personalization server-side from the
-    # student's stored context. The frontend only needs to identify the student.
-    student_id: Optional[str] = Field(
-        default=None,
-        description="Student ID. When provided with course_id, the stored "
-                    "UnifiedStudentContext is loaded server-side to drive "
-                    "mastery_level / composition_mode / language_proficiency.",
-    )
+    # student_id is NOT a request field — it comes from the verified X-Student-ID
+    # header (Django sets it from the authenticated user). With course_id it loads
+    # the stored UnifiedStudentContext server-side to drive personalization.
     course_id: Optional[str] = Field(
         default=None,
-        description="Course ID. See student_id.",
+        description="Course ID. With the verified student id, loads the stored "
+                    "UnifiedStudentContext to drive mastery_level / "
+                    "composition_mode / language_proficiency.",
     )
     plan_version: Optional[int] = Field(
         default=None,
@@ -273,12 +271,13 @@ def _normalize_for_t5(text: str) -> str:
 
 def _resolve_student_context(
     request: SlideGenerateRequest,
+    student_id: Optional[str],
 ) -> Optional[UnifiedStudentContext]:
     """Resolve the student's UnifiedStudentContext for slide personalization.
 
     Resolution priority:
       1. An explicit ``request.student_context`` (back-compat / internal callers).
-      2. Server-side load from the StudentContextStore keyed by
+      2. Server-side load from the StudentContextStore keyed by the VERIFIED
          ``student_id`` + ``course_id`` (the placement-derived context).
       3. ``None`` — the caller then falls back to the deprecated literal
          fields / defaults so slide generation still succeeds.
@@ -286,11 +285,11 @@ def _resolve_student_context(
     if request.student_context is not None:
         return request.student_context
 
-    if request.student_id and request.course_id:
+    if student_id and request.course_id:
         try:
             from services.student_context_store import get_student_context_store
             return get_student_context_store().load(
-                request.student_id, request.course_id,
+                student_id, request.course_id,
             )
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("slides: student context load failed: %s", exc)
@@ -635,7 +634,10 @@ def _generate_session_slides(
 
 
 @router.post("/generate", response_model=SlideGenerateResponse)
-async def generate_slides(request: SlideGenerateRequest):
+async def generate_slides(
+    request: SlideGenerateRequest,
+    student_id: str = Depends(verified_student_id),
+):
     """Generate a full slide deck for a session from its chunks.
 
     When ``session_id`` is provided, tutor context is read from
@@ -659,13 +661,13 @@ async def generate_slides(request: SlideGenerateRequest):
     # load the student's placement-derived UnifiedStudentContext here so every
     # student drives their own slide-generation inputs.
     if request.student_context is None:
-        resolved = _resolve_student_context(request)
+        resolved = _resolve_student_context(request, student_id)
         if resolved is not None:
             request.student_context = resolved
             logger.info(
                 "slides_personalization_source=stored_context student=%s course=%s "
                 "mastery=%s composition=%s language=%s",
-                request.student_id, request.course_id,
+                student_id, request.course_id,
                 resolved.profile.mastery_level,
                 resolved.profile.composition_mode,
                 resolved.profile.language_proficiency,
@@ -674,7 +676,7 @@ async def generate_slides(request: SlideGenerateRequest):
             logger.info(
                 "slides_personalization_source=defaults student=%s course=%s "
                 "mastery=%s composition=%s language=%s (no stored context found)",
-                request.student_id, request.course_id,
+                student_id, request.course_id,
                 request.mastery_level, request.composition_mode,
                 request.language_proficiency,
             )
@@ -696,10 +698,10 @@ async def generate_slides(request: SlideGenerateRequest):
 
     # ── Fetch the single knowledge signal for concept-keyed per-slide mastery ──
     concept_mastery: dict = {}
-    if request.student_id:
+    if student_id:
         try:
             from services.mastery import fetch_concept_mastery
-            concept_mastery = await fetch_concept_mastery(str(request.student_id))
+            concept_mastery = await fetch_concept_mastery(str(student_id))
         except Exception as exc:
             logger.warning("slides: failed to fetch concept_mastery: %s", exc)
 
@@ -729,19 +731,21 @@ async def generate_slides(request: SlideGenerateRequest):
     # Persist the deck durably (net-new). Keyed by plan_version so a pathway
     # regeneration can never serve stale slides. Best-effort: a storage failure
     # must not fail slide generation.
-    await _persist_deck(request, response)
+    await _persist_deck(request, response, student_id)
 
     return response
 
 
-async def _persist_deck(request: "SlideGenerateRequest", response: "SlideGenerateResponse") -> None:
+async def _persist_deck(request: "SlideGenerateRequest", response: "SlideGenerateResponse",
+                        student_id: Optional[str]) -> None:
     """Persist a generated deck as StudentArtifact(type=slides), best-effort.
 
     Resolves plan_version server-side (validating any client-supplied value via
     the guard — never coercing). Skips persistence when student/course/plan are
-    not resolvable (legacy/internal callers) and logs why.
+    not resolvable (legacy/internal callers) and logs why. ``student_id`` is the
+    verified identity (from the X-Student-ID header), never a client field.
     """
-    if not (request.student_id and request.course_id):
+    if not (student_id and request.course_id):
         logger.info("slides: not persisting deck — missing student_id/course_id")
         return
     try:
@@ -750,24 +754,24 @@ async def _persist_deck(request: "SlideGenerateRequest", response: "SlideGenerat
         from services.artifact_client import upsert_artifact
 
         plan_version = await asyncio.to_thread(
-            resolve_for_write, str(request.student_id), str(request.course_id),
+            resolve_for_write, str(student_id), str(request.course_id),
             request.plan_version,
         )
         if plan_version is None:
             logger.info(
                 "slides: no plan_version resolved — deck NOT persisted (student=%s course=%s)",
-                request.student_id, request.course_id,
+                student_id, request.course_id,
             )
             return
         saved = await upsert_artifact(
-            str(request.student_id), str(request.course_id), "slides",
+            str(student_id), str(request.course_id), "slides",
             plan_version=plan_version, session_number=request.session_number,
             content_json=response.model_dump(),
         )
         if saved:
             logger.info(
                 "slides: persisted deck student=%s course=%s session=%d v%s",
-                request.student_id, request.course_id, request.session_number, plan_version,
+                student_id, request.course_id, request.session_number, plan_version,
             )
     except Exception:
         logger.warning("slides: deck persistence failed", exc_info=True)
@@ -775,17 +779,16 @@ async def _persist_deck(request: "SlideGenerateRequest", response: "SlideGenerat
 
 @router.get("/persisted")
 async def persisted_slides(
-    student_id: str,
     course_id: str,
     session_number: int,
     plan_version: Optional[int] = None,
+    student_id: str = Depends(verified_student_id),
 ):
     """Return a previously persisted deck for resume, or 404.
 
     Lets the client read a saved deck instead of regenerating after a restart /
-    on another device. Ownership is enforced server-side (Django authorizes
-    artifact.student == X-Student-ID). When plan_version is omitted, the current
-    version is resolved server-side.
+    on another device. Identity comes only from the verified X-Student-ID header.
+    When plan_version is omitted, the current version is resolved server-side.
     """
     import asyncio
     from services.artifact_client import get_slides_artifact

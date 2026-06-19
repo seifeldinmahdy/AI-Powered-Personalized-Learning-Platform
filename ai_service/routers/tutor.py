@@ -3,19 +3,23 @@ Tutor Router — AI tutoring session endpoints.
 """
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+import json
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from services.tutor_service import (
     create_session,
     get_session,
     generate_lecture_chunk,
+    generate_lecture_chunk_stream,
     answer_question,
+    answer_question_stream,
     repeat_lecture_chunk,
     stop_session,
     get_session_state,
-    check_relevance,
 )
 from services.tts_service import get_tts_service
+from services.tts_tags import strip_all_tags
 import base64
 import logging
 
@@ -42,6 +46,7 @@ class StartSessionRequest(BaseModel):
     student_profile_summary: Optional[str] = Field(default=None, description="Student's learning profile summary for personalization")
     student_profile_data: Optional[dict] = Field(default=None, description="Profiler engagement patterns and recommended approaches for personalization")
     student_id: Optional[str] = Field(default=None, description="Student ID for automatic profile fetch if profile data not provided")
+    prior_topics: Optional[List[str]] = Field(default=None, description="Titles of lessons the student already completed, so the tutor can call back to them ('as we saw last lesson…')")
 
 
 class ContinueRequest(BaseModel):
@@ -97,6 +102,7 @@ async def start_session(request: StartSessionRequest):
             student_profile_summary=request.student_profile_summary,
             student_profile_data=request.student_profile_data,
             student_id=request.student_id,
+            prior_topics=request.prior_topics,
         )
         return {
             "success": True,
@@ -113,114 +119,93 @@ async def start_session(request: StartSessionRequest):
 
 @router.post("/continue")
 async def continue_session(request: ContinueRequest):
-    """
-    Generate the next lecture chunk.
-
-    Call this in a loop — the tutor will advance through topics/subtopics
-    and return is_finished=true when the lecture is complete.
-    Each call triggers:
-    1. LLM generates lecture text for the current subtopic
-    2. Running summary is recursively compressed
-    3. Topic pointer advances to the next item
-    4. Optionally, TTS audio is generated and returned as base64
-    """
     session = get_session(request.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    try:
-        result = await generate_lecture_chunk(request.session_id, student_emotion=request.student_emotion)
-
-        # Generate TTS audio if requested and there's text
-        audio_base64 = None
-        blendshapes = None
-        
-        if request.include_audio and result["text"]:
-            audio_base64 = await _synthesize_audio(
-                result["text"], 
-                session.voice, 
-                request.student_emotion,
-                request.session_id
-            )
-            # Generate A2F blendshapes (falls back to None if unavailable)
-            blendshapes = await _generate_blendshapes(
-                result["text"], session.voice,
-                request.student_emotion, request.session_id,
-            )
-
-        return {
-            "success": True,
-            "session_id": request.session_id,
-            "text": result["text"],
-            "audio_base64": audio_base64,
-            "blendshapes": blendshapes,
-            "topic": result["topic"],
-            "subtopic": result["subtopic"],
-            "progress": result["progress"],
-            "is_finished": result["is_finished"],
-            "status": result["status"],
-            "inference_time": result.get("inference_time"),
-        }
-    except Exception as e:
-        logger.error(f"Continue session error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    async def event_generator():
+        try:
+            async for item in generate_lecture_chunk_stream(request.session_id, student_emotion=request.student_emotion):
+                if item["type"] == "chunk":
+                    raw_text = item["text"]
+                    # Display/transcript gets NO spoken cues; the raw text (with
+                    # cues) goes to TTS — Chatterbox speaks the valid cues, Edge
+                    # strips them.
+                    chunk_data = {
+                        "text_chunk": strip_all_tags(raw_text),
+                        "audio_base64": None,
+                        "blendshapes": None
+                    }
+                    if request.include_audio and raw_text.strip():
+                        chunk_data["audio_base64"] = await _synthesize_audio(
+                            raw_text,
+                            session.voice,
+                            request.student_emotion,
+                            request.session_id
+                        )
+                        chunk_data["blendshapes"] = await _generate_blendshapes(
+                            raw_text, session.voice,
+                            request.student_emotion, request.session_id,
+                        )
+                    yield f"data: {json.dumps(chunk_data)}\n\n"
+                elif item["type"] == "metadata":
+                    meta = item["metadata"]
+                    meta["success"] = True
+                    meta["session_id"] = request.session_id
+                    yield f"data: {json.dumps(meta)}\n\n"
+        except Exception as e:
+            logger.error(f"Stream error: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.post("/ask")
 async def ask(request: AskQuestionRequest):
-    """
-    Ask a question mid-lecture.
-
-    The tutor pauses the lecture flow, answers the question using
-    the full accumulated context, then resumes.
-    """
     session = get_session(request.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    try:
-        grounding_passages = (
-            [p.model_dump() for p in request.grounding] if request.grounding else None
-        )
-        result = await answer_question(
-            request.session_id,
-            request.question,
-            student_emotion=request.student_emotion,
-            grounding_passages=grounding_passages,
-        )
-
-        audio_base64 = None
-        blendshapes = None
-        if request.include_audio and result["answer"]:
-            audio_base64 = await _synthesize_audio(
-                result["answer"], 
-                session.voice, 
-                request.student_emotion,
-                request.session_id
+    async def event_generator():
+        try:
+            grounding_passages = (
+                [p.model_dump() for p in request.grounding] if request.grounding else None
             )
-            # Generate A2F blendshapes (falls back to None if unavailable)
-            blendshapes = await _generate_blendshapes(
-                result["answer"], session.voice,
-                request.student_emotion, request.session_id,
-            )
+            async for item in answer_question_stream(
+                request.session_id,
+                request.question,
+                student_emotion=request.student_emotion,
+                grounding_passages=grounding_passages,
+            ):
+                if item["type"] == "chunk":
+                    raw_text = item["text"]
+                    chunk_data = {
+                        "text_chunk": strip_all_tags(raw_text),
+                        "audio_base64": None,
+                        "blendshapes": None
+                    }
+                    if request.include_audio and raw_text.strip():
+                        chunk_data["audio_base64"] = await _synthesize_audio(
+                            raw_text,
+                            session.voice,
+                            request.student_emotion,
+                            request.session_id
+                        )
+                        chunk_data["blendshapes"] = await _generate_blendshapes(
+                            raw_text, session.voice,
+                            request.student_emotion, request.session_id,
+                        )
+                    yield f"data: {json.dumps(chunk_data)}\n\n"
+                elif item["type"] == "metadata":
+                    meta = item["metadata"]
+                    meta["success"] = True
+                    meta["session_id"] = request.session_id
+                    yield f"data: {json.dumps(meta)}\n\n"
+        except Exception as e:
+            logger.error(f"Stream error: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-        return {
-            "success": True,
-            "session_id": request.session_id,
-            "answer": result["answer"],
-            "audio_base64": audio_base64,
-            "blendshapes": blendshapes,
-            "topic": result["topic"],
-            "subtopic": result["subtopic"],
-            "progress": result["progress"],
-            "is_finished": result["is_finished"],
-            "status": result["status"],
-            "inference_time": result.get("inference_time"),
-            "grounded": result.get("grounded", False),
-        }
-    except Exception as e:
-        logger.error(f"Ask question error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/status")
@@ -230,22 +215,6 @@ async def session_status(session_id: str):
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"success": True, **state}
-
-
-class RelevanceRequest(BaseModel):
-    question: str
-    lesson_title: str
-
-
-@router.post("/relevance")
-async def relevance_check(request: RelevanceRequest):
-    """Check if a student's question is relevant to the current lesson."""
-    try:
-        is_relevant = await check_relevance(request.question, request.lesson_title)
-        return {"relevant": is_relevant}
-    except Exception as e:
-        logger.error(f"Relevance check error: {e}")
-        return {"relevant": True}  # fail open
 
 
 @router.post("/stop")
@@ -493,6 +462,54 @@ def _get_prosody(
     return rate, pitch
 
 
+# ─── Emotion → Chatterbox delivery (tag + temperature) ──────────
+# Edge uses rate/pitch (above); Chatterbox Turbo has no cfg_weight/exaggeration,
+# so it uses a whitelisted delivery TAG + temperature (pace reuses the rate above
+# as a time-stretch, so both backends stay in sync). The tutor RESPONDS to the
+# student's emotion supportively — it never MIRRORS it (a fearful student gets a
+# calm [whispering] delivery, never [fear]). Excluded: [angry] [sarcastic]
+# [crying] [fear].
+_EMOTION_TAG_TEMP: dict[str, tuple[str, float]] = {
+    "bored":      ("[sigh]", 0.90),
+    "happy":      ("[chuckle]", 0.85),
+    "excited":    ("[laugh]", 0.85),
+    "surprise":   ("[gasp]", 0.85),
+    "surprised":  ("[gasp]", 0.85),
+    "confused":   ("", 0.70),
+    "sad":        ("[sigh]", 0.70),
+    "anxious":    ("[clear throat]", 0.70),
+    "fear":       ("[shush]", 0.70),
+    "fearful":    ("[shush]", 0.70),
+    "frustrated": ("[sigh]", 0.72),
+    "angry":      ("[clear throat]", 0.72),
+    "disgust":    ("", 0.72),
+    "neutral":    ("", 0.80),
+    "uncertain":  ("", 0.80),
+    "question":   ("", 0.80),
+    "calm":       ("", 0.75),
+}
+
+
+def _get_delivery(student_emotion: Optional[str] = None, session_id: Optional[str] = None):
+    """Resolve a backend-agnostic Delivery from the student's emotion.
+
+    Spoken cue tags are now emitted by the tutor LLM inline (where natural), NOT
+    mechanically prefixed here — so ``tag`` stays empty. Emotion still drives
+    Turbo ``temperature`` and the pace ``time_stretch`` (and Edge ``rate``/``pitch``).
+    """
+    from services.tts_chatterbox import Delivery
+    rate, pitch = _get_prosody(student_emotion, session_id)  # existing pace logic (+ pace_modifier)
+    key = (student_emotion or "").strip().lower()
+    _legacy_tag, temperature = _EMOTION_TAG_TEMP.get(key, ("", 0.80))
+    # Derive time-stretch from the SAME rate so Edge and Turbo pace match.
+    try:
+        pct = int(rate.replace("%", "").replace("+", ""))
+    except ValueError:
+        pct = 0
+    stretch = max(0.7, min(1.3, 1.0 + pct / 100.0))
+    return Delivery(tag="", temperature=temperature, time_stretch=stretch, rate=rate, pitch=pitch)
+
+
 async def _synthesize_audio(
     text: str,
     voice: str,
@@ -506,9 +523,10 @@ async def _synthesize_audio(
     carries. Overridden by permanent pace if set by student intent.
     """
     try:
-        rate, pitch = _get_prosody(student_emotion, session_id)
+        delivery = _get_delivery(student_emotion, session_id)
         tts = get_tts_service()
-        result = await tts.synthesize(text=text, voice=voice, rate=rate, pitch=pitch)
+        result = await tts.synthesize(text=text, voice=voice, rate=delivery.rate,
+                                      pitch=delivery.pitch, delivery=delivery)
         return base64.b64encode(result["audio_bytes"]).decode("utf-8")
     except Exception as e:
         logger.warning(f"TTS synthesis failed, returning text only: {e}")
@@ -528,12 +546,27 @@ async def _generate_blendshapes(
     """
     import os
     try:
-        rate, pitch = _get_prosody(student_emotion, session_id)
+        delivery = _get_delivery(student_emotion, session_id)
         tts = get_tts_service()
-        wav_path = await tts.synthesize_wav(text=text, voice=voice, rate=rate, pitch=pitch)
+        wav_path = await tts.synthesize_wav(text=text, voice=voice, rate=delivery.rate,
+                                            pitch=delivery.pitch, delivery=delivery)
 
         from services.a2f_client import get_blendshapes
-        result = get_blendshapes(wav_path)
+
+        # Map student_emotion to A2F tutor emotion (empathetic response)
+        a2f_emotion = None
+        if student_emotion:
+            key = student_emotion.strip().lower()
+            if key in ["bored"]:
+                a2f_emotion = {"amazement": 0.3}
+            elif key in ["happy", "excited", "surprise", "surprised"]:
+                a2f_emotion = {"joy": 0.8}
+            elif key in ["sad", "anxious", "fear", "fearful", "frustrated", "angry"]:
+                a2f_emotion = {"sadness": 0.5}  # Empathetic concern
+            elif key in ["disgust"]:
+                a2f_emotion = {"amazement": 0.5}
+
+        result = get_blendshapes(wav_path, emotion_dict=a2f_emotion)
 
         # Cleanup temp WAV
         try:

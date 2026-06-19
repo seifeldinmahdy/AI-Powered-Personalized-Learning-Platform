@@ -2,19 +2,24 @@
 Student Context Router — retrieval and update endpoints for persisted student context.
 
 Provides:
-- ``GET  /student-context/{student_id}/{course_id}``
-     Read the student's placement-derived context.
-- ``POST /student-context/{student_id}/{course_id}/update-performance``
+- ``GET  /student-context/{course_id}``
+     Read the caller's placement-derived context.
+- ``POST /student-context/{course_id}/update-performance``
      Update topic_performance after a session assessment.
+
+Identity is taken ONLY from the verified ``X-Student-ID`` header (set by Django
+from the authenticated user); these endpoints are service-key gated and not
+reachable directly from a browser. See ``routers/_auth.py``.
 """
 
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from routers._auth import verified_student_id
 from services.student_context_store import get_student_context_store
 from services.topic_mastery import update_topic_performance_scores
 
@@ -57,14 +62,19 @@ class TopicPerformanceUpdateResponse(BaseModel):
 # ── Endpoints ────────────────────────────────────────────────────
 
 
-@router.get("/{student_id}/{course_id}")
-async def get_student_context(student_id: str, course_id: str):
-    """Return the persisted UnifiedStudentContext for a student+course pair.
+@router.get("/{course_id}")
+async def get_student_context(
+    course_id: str,
+    student_id: str = Depends(verified_student_id),
+):
+    """Return the persisted UnifiedStudentContext for the caller + course.
+
+    Identity (``student_id``) comes ONLY from the verified service header set by
+    Django from the authenticated user — never from the URL. The browser cannot
+    reach this directly (it is service-key gated); it goes through Django.
 
     Parameters
     ----------
-    student_id : str
-        The student's user ID (as string).
     course_id : str
         The course identifier.
 
@@ -91,13 +101,13 @@ async def get_student_context(student_id: str, course_id: str):
 
 
 @router.post(
-    "/{student_id}/{course_id}/update-performance",
+    "/{course_id}/update-performance",
     response_model=TopicPerformanceUpdateResponse,
 )
 async def update_performance(
-    student_id: str,
     course_id: str,
     body: TopicPerformanceUpdate,
+    student_id: str = Depends(verified_student_id),
 ):
     """In-session performance update → concept-mastery events (single writer).
 

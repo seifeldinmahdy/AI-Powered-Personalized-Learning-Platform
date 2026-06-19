@@ -6,7 +6,7 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 const AI_URL = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001';
 
 export interface Nova3DAvatarProps {
-  audioRef: React.RefObject<HTMLAudioElement | null>;
+  isSpeaking: boolean;
   emotion?: string;
   blendshapeData?: { names: string[]; frames: number[][] } | null;
   size?: number;
@@ -69,7 +69,7 @@ const EYE_LOOK_NAMES = [
 const VISEME_NAMES = ['JawOpen', 'MouthFunnel', 'MouthPucker', 'MouthLowerDownLeft', 'MouthLowerDownRight'];
 const BLINK_NAMES = ['EyeBlinkLeft', 'EyeBlinkRight'];
 
-export function Nova3DAvatar({ audioRef, emotion, blendshapeData, size = 120, isFloating = false }: Nova3DAvatarProps) {
+export function Nova3DAvatar({ isSpeaking, emotion, blendshapeData, size = 120, isFloating = false }: Nova3DAvatarProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef({
     renderer: null as THREE.WebGLRenderer | null,
@@ -81,6 +81,8 @@ export function Nova3DAvatar({ audioRef, emotion, blendshapeData, size = 120, is
     timeouts: [] as ReturnType<typeof setTimeout>[],
     mounted: true,
     loaded: false,
+    bsStartTime: 0,
+    lastBsData: null as any,
     // Idle state
     blinkValue: 0,
     blinkPhase: 'idle' as 'idle' | 'closing' | 'hold' | 'opening',
@@ -100,10 +102,12 @@ export function Nova3DAvatar({ audioRef, emotion, blendshapeData, size = 120, is
 
   const emotionRef = useRef(emotion);
   const blendshapeRef = useRef(blendshapeData);
+  const isSpeakingRef = useRef(isSpeaking);
 
   // Keep refs in sync
   useEffect(() => { emotionRef.current = emotion; }, [emotion]);
   useEffect(() => { blendshapeRef.current = blendshapeData; }, [blendshapeData]);
+  useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
 
   // Update emotion targets
   useEffect(() => {
@@ -139,7 +143,7 @@ export function Nova3DAvatar({ audioRef, emotion, blendshapeData, size = 120, is
 
     // ── Load model ──
     const loader = new GLTFLoader();
-    
+
     // Add DRACOLoader to support compressed .glb models
     const dracoLoader = new DRACOLoader();
     dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
@@ -300,22 +304,34 @@ export function Nova3DAvatar({ audioRef, emotion, blendshapeData, size = 120, is
 
       const dt = Math.min((now - prevTime) / 1000, 0.05);
       prevTime = now;
-      const audio = audioRef.current;
-      const isPlaying = audio && !audio.paused && !audio.ended && audio.currentTime > 0;
+      const isPlaying = isSpeakingRef.current;
 
       // ── LAYER 1: Speech ──
       const bsData = blendshapeRef.current;
+
+      // Track start time when bsData changes
+      if (bsData && bsData !== s.lastBsData) {
+        s.lastBsData = bsData;
+        s.bsStartTime = now / 1000;
+      }
+      if (!isPlaying) {
+        s.lastBsData = null;
+      }
+
       if (isPlaying && bsData && bsData.frames.length > 0) {
         // A2F mode
         s.speechFading = false;
-        const frameIdx = Math.min(Math.floor(audio!.currentTime * 30), bsData.frames.length - 1);
+        const elapsed = (now / 1000) - s.bsStartTime;
+        // Audio2Face NIM outputs blendshapes at 30 FPS
+        const frameIdx = Math.min(Math.floor(elapsed * 30), bsData.frames.length - 1);
         const frame = bsData.frames[frameIdx];
         bsData.names.forEach((name, i) => { lerpBS(name, frame[i], 0.25); });
         s.lastA2fNames = bsData.names;
       } else if (isPlaying && !bsData) {
         // Fallback viseme mode
         s.speechFading = false;
-        const progress = (audio!.currentTime % CYCLE_DUR) / CYCLE_DUR;
+        // Use global time for fallback
+        const progress = ((now / 1000) % CYCLE_DUR) / CYCLE_DUR;
         // Find surrounding keyframes
         let lo = VISEME_SEQ[0], hi = VISEME_SEQ[1];
         for (let i = 0; i < VISEME_SEQ.length - 1; i++) {

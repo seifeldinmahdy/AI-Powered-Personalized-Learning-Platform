@@ -21,6 +21,7 @@ from nvidia_audio2face_3d.messages_pb2 import (
     AudioWithEmotionStream,
     AudioWithEmotionStreamHeader,
     AudioWithEmotion,
+    EmotionWithTimeCode,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ A2F_GRPC_PORT = int(os.getenv("A2F_GRPC_PORT", "52000"))
 A2F_CHUNK_SIZE = 8192  # bytes per audio chunk
 
 
-def _audio_stream_generator(wav_path: str):
+def _audio_stream_generator(wav_path: str, emotion_dict: dict | None = None):
     """Yield AudioWithEmotionStream messages for the A2F bidirectional RPC.
 
     Protocol:
@@ -71,14 +72,17 @@ def _audio_stream_generator(wav_path: str):
             chunk = f.read(A2F_CHUNK_SIZE)
             if not chunk:
                 break
-            audio_data = AudioWithEmotion(audio_buffer=chunk)
+            kwargs = {"audio_buffer": chunk}
+            if emotion_dict:
+                kwargs["emotions"] = [EmotionWithTimeCode(time_code=0.0, emotion=emotion_dict)]
+            audio_data = AudioWithEmotion(**kwargs)
             yield AudioWithEmotionStream(audio_with_emotion=audio_data)
 
     # 3 — End-of-audio
     yield AudioWithEmotionStream(end_of_audio=AudioWithEmotionStream.EndOfAudio())
 
 
-def get_blendshapes(wav_path: str) -> dict | None:
+def get_blendshapes(wav_path: str, emotion_dict: dict | None = None) -> dict | None:
     """Send WAV audio to Audio2Face-3D NIM and return blendshape frames.
 
     Parameters
@@ -98,7 +102,7 @@ def get_blendshapes(wav_path: str) -> dict | None:
         channel = grpc.insecure_channel(target)
         stub = A2FControllerServiceStub(channel)
 
-        request_iter = _audio_stream_generator(wav_path)
+        request_iter = _audio_stream_generator(wav_path, emotion_dict)
         responses = stub.ProcessAudioStream(request_iter)
 
         blendshape_names: list[str] = []

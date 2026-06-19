@@ -26,9 +26,14 @@ export interface Capstone {
     pass_policy?: string | null;
     github_template_repo: string;
     run_command: string;
+    language?: string;
+    ci_workflow?: string;
     rubric_items: CapstoneRubricItem[];
     created_at: string;
     updated_at: string;
+    // Server-suggested GitHub handle to pre-fill provisioning (the student's
+    // most recently used one; empty on their first capstone).
+    suggested_github_username?: string;
 }
 
 export interface CapstoneProposal {
@@ -141,6 +146,32 @@ export async function extractSpec(
     const resp = await api.post<{ rubric_items: RubricDraft[] }>(
         `/capstone/capstones/${capstoneId}/extract-spec/`,
         { spec_text: specText },
+    );
+    return resp.data;
+}
+
+// ---- Language + CI authoring (admin) ----
+
+/** AI suggests the course's programming language (admin reviews/overrides). */
+export async function suggestLanguage(
+    capstoneId: number,
+): Promise<{ language: string; confidence: number; rationale: string }> {
+    const resp = await api.post(`/capstone/capstones/${capstoneId}/suggest-language/`, {});
+    return resp.data;
+}
+
+/**
+ * Generate a standardized CI workflow (.github/workflows/ci.yml) for a language
+ * + run command. Deterministic on the server (vetted templates), so the YAML is
+ * always valid. Preview it, edit if needed, then save it on the capstone.
+ */
+export async function draftCi(
+    capstoneId: number,
+    opts?: { language?: string; run_command?: string },
+): Promise<{ language: string; run_command: string; ci_workflow: string }> {
+    const resp = await api.post(
+        `/capstone/capstones/${capstoneId}/draft-ci/`,
+        opts ?? {},
     );
     return resp.data;
 }

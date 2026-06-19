@@ -98,7 +98,9 @@ class CapstoneRunFile(BaseModel):
 
 class CapstoneRunRequest(BaseModel):
     files: list[CapstoneRunFile]
-    entry: str = ""                          # entry command/file; defaults to main.py
+    entry: str = ""                          # student hint: entry FILE (never a shell command)
+    run_command: str = ""                    # admin-configured shell command (any language)
+    language: str = ""                       # capstone language → default entry + interpreter
 
 
 class CapstoneRunResponse(BaseModel):
@@ -106,6 +108,20 @@ class CapstoneRunResponse(BaseModel):
     stdout: str = ""
     stderr: str = ""
     exit_code: int = 0
+
+
+# ---- Language inference (admin authoring; suggestion only, human-reviewed) ----
+
+class SuggestLanguageRequest(BaseModel):
+    course_title: str
+    course_description: str = ""
+    concepts: list[str] = Field(default_factory=list)
+
+
+class SuggestLanguageResponse(BaseModel):
+    language: str                            # canonical token (python, javascript, …)
+    confidence: float = 0.5                  # 0–1; advisory, never a grade
+    rationale: str = ""
 
 
 # ---- Team role advisor (advisory only — never feeds scoring/verdict) ----

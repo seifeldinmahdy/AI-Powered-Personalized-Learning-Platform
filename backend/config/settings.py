@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "apps.feedback",
     "apps.capstone",
     "apps.artifacts",
+    "apps.ai_proxy",
 ]
 
 MIDDLEWARE = [

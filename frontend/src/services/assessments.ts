@@ -159,14 +159,17 @@ export async function submitPlacementResults(
     return res.json();
 }
 
-/** Fetch the persisted student context for a student+course pair. */
-export async function getStudentContext(
-    studentId: string,
-    courseId: string,
-): Promise<any> {
-    const res = await fetch(`${AI_SERVICE}/student-context/${studentId}/${courseId}`);
-    if (!res.ok) return null;
-    return res.json();
+/** Fetch the persisted student context for the authenticated student + course.
+ *
+ * Goes through Django (JWT) which sets the verified student identity server-side
+ * — the browser never sends a student_id (Track 1 / Approach A). */
+export async function getStudentContext(courseId: string): Promise<any> {
+    try {
+        const res = await api.get(`/ai/student-context/${courseId}/`);
+        return res.data;
+    } catch {
+        return null;
+    }
 }
 
 /** Save the placement score back to the enrollment record. */

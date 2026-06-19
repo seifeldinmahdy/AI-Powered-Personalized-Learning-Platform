@@ -468,12 +468,22 @@ def _positive_signal_score(lab_data: dict) -> tuple[int, int]:
 
 async def run_lab_profiler(student_id: str, lab_id: str, course_id: str, lesson_id: str) -> dict:
     """Lab profiler — junior/conservative. Positive actions only; declines on no signal."""
-    from services.lab_store import get_coding_lab_store
-    lab_store = get_coding_lab_store()
-    lab_data = lab_store.get_lab_notes_for_profiler(lab_id)
-    if not lab_data:
-        logger.warning("Lab profiler: no lab data for lab_id=%s", lab_id)
+    # Read the DURABLE lab artifact from Django (StudentArtifact type=lab); the
+    # on-disk lab_store was retired with the artifact-backbone migration.
+    from services.lab_service import _get_lab_artifact
+    artifact = await _get_lab_artifact(str(student_id), str(course_id), str(lesson_id))
+    content_json = (artifact or {}).get("content_json") if artifact else None
+    if not content_json:
+        logger.warning(
+            "Lab profiler: no lab artifact for student=%s course=%s lesson=%s",
+            student_id, course_id, lesson_id,
+        )
         return {"claims": 0, "declined": True}
+    lab = content_json.get("lab", {}) or {}
+    lab_data = {
+        "general_notes": lab.get("general_notes", []) or [],
+        "cells": lab.get("cells", []) or [],
+    }
 
     positive, unasked = _positive_signal_score(lab_data)
 
@@ -543,35 +553,58 @@ async def run_lab_profiler(student_id: str, lab_id: str, course_id: str, lesson_
 
 async def run_problem_set_profiler(student_id: str, problem_set_id: str, lesson_id: str) -> dict:
     """Problem-set profiler — process signals from graded work (no competence)."""
-    from services.problem_set_store import get_problem_set_store
+    # Read the DURABLE problem set + append-only attempts from Django; the on-disk
+    # problem_set_store was retired with the artifact-backbone migration.
+    from services import artifact_client
     from collections import Counter
 
-    ps_store = get_problem_set_store()
-    problem_set = ps_store.load(student_id, lesson_id, problem_set_id)
-    if not problem_set:
+    raw_ps = await artifact_client.get_problem_set(str(student_id), problem_set_id)
+    if not raw_ps:
         logger.warning("Problem set profiler: no problem set id=%s", problem_set_id)
         return {"claims": 0}
+
+    content = raw_ps.get("content_json") or {}
+    questions = content.get("questions", []) or []
+    # Latest attempt per question (attempts are chronologically ordered).
+    latest_attempt: dict[str, dict] = {}
+    for att in raw_ps.get("attempts", []) or []:
+        qid = att.get("question_id")
+        if qid:
+            latest_attempt[qid] = att
 
     questions_summary = []
     all_mistake_tags = []
     hint_3 = 0
-    for question in (problem_set.questions or []):
-        qid = question.id if hasattr(question, "id") else question.get("id", "")
-        sub = (problem_set.submissions or {}).get(qid)
-        if not sub:
+    for question in questions:
+        qid = question.get("id", "") if isinstance(question, dict) else getattr(question, "id", "")
+        att = latest_attempt.get(qid)
+        if not att:
             continue
-        sub_dict = sub.model_dump() if hasattr(sub, "model_dump") else sub
-        result = sub_dict.get("result", {})
-        hints_used = sub_dict.get("hints_used", 0)
-        final_score = result.get("final_score", result.get("score", 0))
-        mistake_tags = result.get("mistake_tags", [])
+        evaluated = att.get("evaluated_rubric", []) or []
+        final_score = att.get("score", 0)
+        hints_used = att.get("hints_used", 0)
+        # Derive process signals from the stored binary rubric — the SAME
+        # derivation evaluate_submission uses (failed-check categories + their
+        # evidence). The attempt row stores the evaluated rubric, not these.
+        mistake_tags = sorted({
+            crit.get("category", "")
+            for crit in evaluated
+            for check in (crit.get("checks", []) or [])
+            if check.get("result") is False and crit.get("category")
+        })
+        failed_evidence = [
+            check.get("evidence", "")
+            for crit in evaluated
+            for check in (crit.get("checks", []) or [])
+            if check.get("result") is False and check.get("evidence")
+        ][:3]
         all_mistake_tags.extend(mistake_tags)
         if hints_used >= 3:
             hint_3 += 1
         questions_summary.append({
             "final_score": final_score, "hints_used": hints_used,
             "mistake_tags": mistake_tags,
-            "failed_evidence": result.get("failed_evidence", [])[:3],
+            "failed_evidence": failed_evidence,
         })
 
     if not questions_summary:

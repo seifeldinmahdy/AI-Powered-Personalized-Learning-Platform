@@ -8,7 +8,7 @@ import {
 import {
     getCapstoneForCourse, createCapstone, updateCapstone,
     createRubricItem, updateRubricItem, deleteRubricItem,
-    draftRubric, extractSpec,
+    draftRubric, extractSpec, suggestLanguage, draftCi,
     listProposals, approveProposal,
     listSubmissions, processMatchmaking,
     type Capstone, type CapstoneProposal,
@@ -84,6 +84,10 @@ export default function AdminCapstoneEditor() {
     // Matchmaking
     const [processingQueue, setProcessingQueue] = useState(false);
 
+    // Language + CI authoring
+    const [suggesting, setSuggesting] = useState(false);
+    const [generatingCi, setGeneratingCi] = useState(false);
+
     useEffect(() => {
         setLoading(true);
         getCapstoneForCourse(id)
@@ -142,6 +146,39 @@ export default function AdminCapstoneEditor() {
             toast.error('Spec extraction failed.');
         } finally {
             setSpecExtracting(false);
+        }
+    }
+
+    async function handleSuggestLanguage() {
+        if (!capstone) return;
+        setSuggesting(true);
+        try {
+            const r = await suggestLanguage(capstone.id);
+            setForm(f => ({ ...f, language: r.language }));
+            toast.success(
+                `Suggested: ${r.language} (${Math.round((r.confidence ?? 0) * 100)}% confidence)`,
+            );
+        } catch {
+            toast.error('Could not suggest a language.');
+        } finally {
+            setSuggesting(false);
+        }
+    }
+
+    async function handleGenerateCi() {
+        if (!capstone) return;
+        setGeneratingCi(true);
+        try {
+            const r = await draftCi(capstone.id, {
+                language: form.language,
+                run_command: form.run_command,
+            });
+            setForm(f => ({ ...f, ci_workflow: r.ci_workflow }));
+            toast.success('CI workflow generated — review it, then Save.');
+        } catch {
+            toast.error('Could not generate the CI workflow.');
+        } finally {
+            setGeneratingCi(false);
         }
     }
 
@@ -301,10 +338,61 @@ export default function AdminCapstoneEditor() {
                         />
                         <input
                             className="w-full border rounded-lg px-3 py-2 text-sm"
-                            placeholder="CI run command (e.g. pytest)"
+                            placeholder="CI run command (e.g. pytest, npm test, go test ./...)"
                             value={form.run_command ?? ''}
                             onChange={e => setForm(f => ({ ...f, run_command: e.target.value }))}
                         />
+
+                        {/* Programming language (AI-suggested, admin-editable) */}
+                        <div className="space-y-1">
+                            <label className="text-xs text-muted-foreground">Programming language</label>
+                            <div className="flex gap-2">
+                                <input
+                                    className="flex-1 border rounded-lg px-3 py-2 text-sm"
+                                    placeholder="e.g. python, javascript, java, go, cpp"
+                                    value={form.language ?? ''}
+                                    onChange={e => setForm(f => ({ ...f, language: e.target.value }))}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handleSuggestLanguage}
+                                    disabled={suggesting || !capstone}
+                                    title={!capstone ? 'Save the capstone first' : 'Infer from the course'}
+                                    className="flex items-center gap-1.5 border px-3 py-2 rounded-lg text-sm hover:bg-muted disabled:opacity-50 shrink-0"
+                                >
+                                    {suggesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                                    Suggest (AI)
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Standardized CI workflow (generated, admin-editable) */}
+                        <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                                <label className="text-xs text-muted-foreground">
+                                    CI workflow (.github/workflows/ci.yml)
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={handleGenerateCi}
+                                    disabled={generatingCi || !capstone}
+                                    title={!capstone ? 'Save the capstone first' : 'Generate from language + run command'}
+                                    className="flex items-center gap-1.5 text-xs text-primary hover:underline disabled:opacity-50"
+                                >
+                                    {generatingCi ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                                    Generate CI
+                                </button>
+                            </div>
+                            <textarea
+                                className="w-full border rounded-lg px-3 py-2 text-xs font-mono min-h-[160px]"
+                                placeholder="Click 'Generate CI' to create a standard workflow for this language, or paste your own. If left blank (and no template repo is set), a language default is generated automatically at provisioning."
+                                value={form.ci_workflow ?? ''}
+                                onChange={e => setForm(f => ({ ...f, ci_workflow: e.target.value }))}
+                            />
+                            <p className="text-[11px] text-muted-foreground">
+                                Seeded verbatim into every student's repo at provisioning so the required <code>ci</code> check is identical for all students.
+                            </p>
+                        </div>
                         <div className="flex gap-2">
                             <button
                                 onClick={handleCreateOrSave}
@@ -330,6 +418,8 @@ export default function AdminCapstoneEditor() {
                             <span>Spec: <strong>{capstone.spec_mode}</strong></span>
                             <span>Mode: <strong>{capstone.team_mode}</strong></span>
                             <span>Status: <strong>{capstone.status}</strong></span>
+                            <span>Language: <strong>{capstone.language || 'python'}</strong></span>
+                            <span>CI: <strong>{capstone.ci_workflow ? 'custom' : (capstone.github_template_repo ? 'from template' : 'auto-generated')}</strong></span>
                             {capstone.github_template_repo && (
                                 <span>Template: <strong>{capstone.github_template_repo}</strong></span>
                             )}

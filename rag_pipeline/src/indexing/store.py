@@ -7,9 +7,9 @@ batch inserts, and semantic queries with optional metadata filters.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
-import chromadb
 import structlog
 
 from src.models.schemas import IndexedChunk
@@ -17,15 +17,47 @@ from src.models.schemas import IndexedChunk
 logger = structlog.get_logger(__name__)
 
 
+def _use_supabase() -> bool:
+    """Whether the shared Supabase/pgvector backend is selected.
+
+    Resolution:
+      - ``VECTOR_BACKEND=supabase`` / ``pgvector`` / ``postgres`` → True.
+      - ``VECTOR_BACKEND=chroma`` / ``chromadb`` / ``local``      → False.
+      - unset → auto: True iff a vector DSN is configured.
+    """
+    backend = os.getenv("VECTOR_BACKEND", "").strip().lower()
+    if backend in ("supabase", "pgvector", "postgres"):
+        return True
+    if backend in ("chroma", "chromadb", "local"):
+        return False
+    return bool(os.getenv("SUPABASE_DB_URL") or os.getenv("VECTOR_DB_URL"))
+
+
 class VectorStore:
-    """Persistent ChromaDB wrapper for the course_chunks collection.
+    """Vector store for the course_chunks collection.
+
+    Backed by a local ChromaDB directory by default, or by Supabase/Postgres
+    ``pgvector`` when configured (see :func:`_use_supabase`). Both backends expose
+    the same method surface; the pgvector backend is returned transparently from
+    ``__new__`` so every caller is unchanged.
 
     The same collection serves two query patterns:
       1. Pathway Generator  →  metadata-filtered queries
       2. Conversational RAG  →  semantic similarity queries
     """
 
+    def __new__(cls, persist_dir: str | None = None,
+                collection_name: str = "course_chunks"):
+        # Transparently swap in the shared pgvector backend when configured.
+        # It implements the identical interface, so callers need no changes and
+        # Chroma remains the default/fallback (fully reversible via env).
+        if cls is VectorStore and _use_supabase():
+            from src.indexing.pgvector_store import PgVectorStore
+            return PgVectorStore(persist_dir=persist_dir, collection_name=collection_name)
+        return super().__new__(cls)
+
     def __init__(self, persist_dir: str, collection_name: str) -> None:
+        import chromadb  # lazy: pure-Supabase environments need not install it
         logger.info(
             "vectorstore_init",
             persist_dir=persist_dir,

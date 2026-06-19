@@ -1321,6 +1321,9 @@ export default function CodingLab() {
   const [completedTasks, setCompletedTasks] = useState<Set<string>>(new Set());
   const [tipIndex, setTipIndex] = useState<Record<string, number>>({});
   const [showCompletion, setShowCompletion] = useState(false);
+  // True while we await lab completion (which awaits the lab profiler) before
+  // navigating to the problem set — drives the "preparing" retention state.
+  const [finalizing, setFinalizing] = useState(false);
   const [bubblePosition, setBubblePosition] = useState({ top: 140, left: 900 });
   const [bubbleText, setBubbleText] = useState('');
   const [isNarrating, setIsNarrating] = useState(false);
@@ -1728,15 +1731,21 @@ export default function CodingLab() {
 
   // ────────────────────────────────────────────────────────────
 
-  function continueToProblemSet() {
-    // Fire lab completion + profiler as background (no await)
+  async function continueToProblemSet() {
+    // AWAIT lab completion before navigating: the server runs the lab profiler
+    // before responding, so the problem set we open next is generated against the
+    // UPDATED learning profile (no stale-profile race). Best-effort — a failure
+    // here must not trap the student on the lab.
+    setFinalizing(true);
     if (labResponse) {
-      completeLab({
-        labId: labResponse.lab_id,
-        studentId: getStudentId(),
-        courseId: resolvedCourseId,
-        sessionNumber: resolvedSessionId,
-      }).catch(() => { });
+      try {
+        await completeLab({
+          labId: labResponse.lab_id,
+          studentId: getStudentId(),
+          courseId: resolvedCourseId,
+          sessionNumber: resolvedSessionId,
+        });
+      } catch { /* best-effort */ }
     }
 
     // Pass slides and lab cells so the problem set has full context
@@ -1847,7 +1856,7 @@ export default function CodingLab() {
       <aside className={`lab-tutor-bubble ${isNarrating ? 'speaking' : ''}`} style={bubbleStyle}>
         <div className="lab-tutor-avatar">
           <Nova3DAvatar
-            audioRef={audioRef}
+            isSpeaking={isNarrating}
             emotion={isNarrating ? 'excited' : 'happy'}
             blendshapeData={blendshapes}
             size={72}
@@ -2180,10 +2189,14 @@ export default function CodingLab() {
               <CheckCircle2 size={64} />
             </div>
             <h2>Session Lab Complete</h2>
-            <p>You practiced the concepts and syntax. Now tackle the problem set!</p>
-            <button onClick={continueToProblemSet}>
+            <p>
+              {finalizing
+                ? 'Updating your learning profile and preparing your problem set…'
+                : 'You practiced the concepts and syntax. Now tackle the problem set!'}
+            </p>
+            <button onClick={continueToProblemSet} disabled={finalizing}>
               <Code2 size={18} />
-              Continue to Problem Set
+              {finalizing ? 'Preparing…' : 'Continue to Problem Set'}
             </button>
           </div>
         </div>

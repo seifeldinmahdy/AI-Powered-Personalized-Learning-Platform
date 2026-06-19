@@ -384,10 +384,15 @@ def pathway_versions(request, course_id):
     if not student_id:
         return Response({"error": "student_id is required."}, status=status.HTTP_400_BAD_REQUEST)
     try:
+        # The AI /pathway/versions endpoint now takes identity from the verified
+        # X-Student-ID header. This is the one admin exception: the admin chose
+        # the target (authorized by the admin gate above), so we set the header
+        # to that target — not request.user.
+        headers = {**_svc_headers(), "X-Student-ID": str(student_id)}
         resp = requests.get(
             f"{_ai_url().rstrip('/')}/pathway/versions",
-            params={"student_id": str(student_id), "course_id": str(course_id)},
-            headers=_svc_headers(), timeout=30,
+            params={"course_id": str(course_id)},
+            headers=headers, timeout=30,
         )
         return Response(resp.json(), status=resp.status_code)
     except requests.exceptions.ConnectionError:

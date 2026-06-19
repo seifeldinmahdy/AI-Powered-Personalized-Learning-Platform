@@ -21,8 +21,8 @@ class CapstoneSerializer(serializers.ModelSerializer):
         model = Capstone
         fields = [
             "id", "course", "title", "spec_mode", "team_mode", "team_cap",
-            "deadline", "status", "brief_text", "github_template_repo",
-            "run_command", "rubric_items", "created_at", "updated_at",
+            "language", "deadline", "status", "brief_text", "github_template_repo",
+            "run_command", "ci_workflow", "rubric_items", "created_at", "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
 

@@ -13,4 +13,5 @@ urlpatterns = [
     path("api/feedback/", include("apps.feedback.urls")),
     path("api/capstone/", include("apps.capstone.urls")),
     path("api/artifacts/", include("apps.artifacts.urls")),
+    path("api/ai/", include("apps.ai_proxy.urls")),
 ]

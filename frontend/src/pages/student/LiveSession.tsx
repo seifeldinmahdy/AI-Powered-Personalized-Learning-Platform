@@ -7,7 +7,7 @@ import { useParams, useNavigate } from 'react-router';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { getLesson, getModules, getLessons, type LessonDetail, type Lesson, type Module } from '../../services/lessons';
-import { getEnrollments } from '../../services/api';
+import api, { getEnrollments } from '../../services/api';
 import {
   getSessionCompletions,
   createSessionCompletion,
@@ -76,11 +76,6 @@ export default function LiveSession() {
   const [cameraEnabled, setCameraEnabled] = useState(false);
   // Emotion-capture consent (Batch 11b): OFF by default, explicit opt-in.
   const [showConsentModal, setShowConsentModal] = useState(false);
-  const studentId = (() => {
-    try { return String(JSON.parse(localStorage.getItem('auth_user') || '{}').id || ''); }
-    catch { return ''; }
-  })();
-
   // ─── Student profile for Dr. Nova personalization ─────────────
   const [studentProfileSummary, setStudentProfileSummary] = useState<string | undefined>();
 
@@ -134,10 +129,8 @@ export default function LiveSession() {
         // version bump makes stale slides structurally unreachable.
         let pathwayPlan: PathwayPlan | null = null;
         try {
-          const authUser = localStorage.getItem('auth_user');
-          const studentId = authUser ? JSON.parse(authUser).id : '';
-          if (studentId && courseId) {
-            pathwayPlan = await getCurrentPathway(String(studentId), String(courseId));
+          if (courseId) {
+            pathwayPlan = await getCurrentPathway(String(courseId));
           }
         } catch {
           // No current plan yet — leave pathwayPlan null (handled below).
@@ -163,6 +156,7 @@ export default function LiveSession() {
                       current_slide_index: 0,
                       current_slide_title: parsed[0].title,
                       current_slide_content: parsed[0].body_content?.map((i: any) => i.text).join('\n') || '',
+                      next_slide_title: parsed[1]?.title || '',
                       current_concept_id: parsed[0].concept_id || '',
                       current_topic: currentSession.session_title,
                       visited_slides_push: 0
@@ -181,8 +175,7 @@ export default function LiveSession() {
             if (!cachedSlides) {
               try {
                 const persisted = await getPersistedSlides(
-                  String(pathwayPlan.student_id), String(pathwayPlan.course_id),
-                  sessionNum, pathwayPlan.plan_version,
+                  String(pathwayPlan.course_id), sessionNum, pathwayPlan.plan_version,
                 );
                 if (persisted && persisted.slides?.length > 0 && !cancelled) {
                   setSlides(persisted.slides);
@@ -194,6 +187,7 @@ export default function LiveSession() {
                       current_slide_index: 0,
                       current_slide_title: persisted.slides[0].title,
                       current_slide_content: persisted.slides[0].body_content?.map(i => i.text).join('\n') || '',
+                      next_slide_title: persisted.slides[1]?.title || '',
                       current_concept_id: persisted.slides[0].concept_id || '',
                       current_topic: currentSession.session_title,
                       visited_slides_push: 0,
@@ -207,18 +201,13 @@ export default function LiveSession() {
             // Only generate if we loaded from neither cache nor persisted store
             if (!cachedSlides && !loadedFromPersisted) {
               try {
-                const chunksRes = await fetch(`${AI_URL}/pathway/session-chunks`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    student_id: pathwayPlan.student_id,
-                    course_id: pathwayPlan.course_id,
-                    session_number: sessionNum,
-                  }),
+                const chunksRes = await api.post('/ai/pathway/session-chunks', {
+                  course_id: pathwayPlan.course_id,
+                  session_number: sessionNum,
                 });
 
-                if (chunksRes.ok) {
-                  const chunks = await chunksRes.json();
+                {
+                  const chunks = chunksRes.data;
                   if (chunks.length > 0) {
                     // Personalization (mastery / composition / language) is
                     // derived server-side from the student's stored context —
@@ -238,7 +227,6 @@ export default function LiveSession() {
                         page_start: c.page_start,
                         page_end: c.page_end,
                       })),
-                      student_id: pathwayPlan.student_id,
                       course_id: pathwayPlan.course_id,
                       plan_version: pathwayPlan.plan_version,
                     });
@@ -260,6 +248,7 @@ export default function LiveSession() {
                             current_slide_index: 0,
                             current_slide_title: slideResponse.slides[0].title,
                             current_slide_content: slideResponse.slides[0].body_content?.map(i => i.text).join('\n') || '',
+                            next_slide_title: slideResponse.slides[1]?.title || '',
                             current_concept_id: slideResponse.slides[0].concept_id || '',
                             current_topic: currentSession.session_title,
                             visited_slides_push: 0
@@ -403,7 +392,6 @@ export default function LiveSession() {
               slide_index: currentSlide,
               subtopic: lesson?.title,
               session_id: sessionIdRef.current,
-              student_id: studentId,
               course_id: String(courseId ?? ''),
             },
           );
@@ -488,24 +476,18 @@ export default function LiveSession() {
     };
   }, [stopFERPolling]);
 
-  // ─── Session end: profile update + audit log (fire-and-forget) ─
+  // ─── Session end: consolidate this session's learning profile ─
+  // AWAITED at completion so the lab generated next reads the updated profile.
 
-  const fireAndForgetProfiler = useCallback(async () => {
+  const consolidateSessionProfile = useCallback(async () => {
     try {
-      const authUser = localStorage.getItem('auth_user');
-      const studentId = authUser ? JSON.parse(authUser).id : 0;
-
-      // The frontend NO LONGER reads/merges/overwrites the profile. It just asks
-      // the server to consolidate this session's DURABLE event log. The single
-      // server-side writer applies the resulting claims additively.
-      await fetch(`${AI_URL}/profiler/run-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          student_id: studentId,
-          session_id: sessionIdRef.current,
-          lesson_title: lesson?.title || plan?.sessions.find(s => s.session_number === 1)?.session_title || '',
-        }),
+      // The frontend NO LONGER reads/merges/overwrites the profile, and no longer
+      // sends a student_id. It just asks the server (through Django, which sets the
+      // verified identity) to consolidate this session's DURABLE event log. The
+      // single server-side writer applies the resulting claims additively.
+      await api.post('/ai/profiler/run-session', {
+        session_id: sessionIdRef.current,
+        lesson_title: lesson?.title || plan?.sessions.find(s => s.session_number === 1)?.session_title || '',
       });
     } catch {
       // Fire-and-forget — entire block is non-blocking
@@ -535,6 +517,7 @@ export default function LiveSession() {
             current_slide_index: nextIdx,
             current_slide_title: slides[nextIdx].title,
             current_slide_content: slides[nextIdx].body_content?.map((i) => i.text).join('\n') || '',
+            next_slide_title: slides[nextIdx + 1]?.title || '',
             current_concept_id: slides[nextIdx].concept_id || '',
             visited_slides_push: nextIdx
           })
@@ -559,6 +542,7 @@ export default function LiveSession() {
             current_slide_index: nextIdx,
             current_slide_title: slides[nextIdx].title,
             current_slide_content: slides[nextIdx].body_content?.map((i) => i.text).join('\n') || '',
+            next_slide_title: slides[nextIdx + 1]?.title || '',
             current_concept_id: slides[nextIdx].concept_id || '',
             visited_slides_push: nextIdx
           })
@@ -572,10 +556,11 @@ export default function LiveSession() {
   const handleComplete = useCallback(async () => {
     if (!courseId || !sessionNumber) return;
     setIsCompleting(true);
-
-    // Fire-and-forget profiler before navigating away
-    fireAndForgetProfiler();
     stopFERPolling();
+
+    // Consolidate this session's profile and AWAIT it, so the lab we navigate to
+    // next is generated against the UPDATED learning profile (no stale-profile race).
+    await consolidateSessionProfile();
 
     try {
       const { data: raw } = await getEnrollments();
@@ -643,7 +628,7 @@ export default function LiveSession() {
     } finally {
       setIsCompleting(false);
     }
-  }, [lesson, courseId, navigate, nextLesson, fireAndForgetProfiler, stopFERPolling, slides, studentProfileSummary, sessionNumber, plan]);
+  }, [lesson, courseId, navigate, nextLesson, consolidateSessionProfile, stopFERPolling, slides, studentProfileSummary, sessionNumber, plan]);
 
   // ─── Callbacks for CompactTutor ───────────────────────────────
 
@@ -697,6 +682,14 @@ export default function LiveSession() {
   const subtopics = (slides.length > 0
     ? slides.map((s) => s.title)
     : (lesson?.slides.map((s) => (s.content_json?.title as string) || '') || []))
+    .filter(Boolean);
+
+  // Titles of the sessions BEFORE this one — lets Dr. Nova call back to prior
+  // lessons ("as we saw last lesson…") instead of treating each lesson in isolation.
+  const priorTopics = (plan?.sessions || [])
+    .filter((s) => s.session_number < currentLessonIndex + 1)
+    .sort((a, b) => a.session_number - b.session_number)
+    .map((s) => s.session_title)
     .filter(Boolean);
 
   // ─── Course pathway for the left nav ──────────────────────────
@@ -876,6 +869,7 @@ export default function LiveSession() {
           courseId={courseId}
           sessionId={sessionIdRef.current}
           subtopics={subtopics}
+          priorTopics={priorTopics}
           fusedEmotion={fusedEmotion}
           currentSlideIndex={currentSlide}
           currentSlideTitle={currentSlideTitle as string}

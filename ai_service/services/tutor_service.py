@@ -33,6 +33,8 @@ else:
     load_dotenv()  # fallback: default search
 logger = logging.getLogger(__name__)
 
+from services.tts_tags import TAG_PROMPT_GUIDANCE, strip_all_tags
+
 # ── Configure Ollama Cloud ──
  
 OLLAMA_HOST = os.getenv("OLLAMA_HOST")
@@ -45,7 +47,7 @@ _TTS_AWARENESS = (
     "and spoken aloud by an avatar. Therefore: "
     "never use markdown, bullet points, numbered lists, headers, asterisks, or any visual formatting. "
     "Write in natural spoken sentences. Avoid parenthetical asides. "
-    "Do not include stage directions like '[pause]' or '(laughs)'. "
+    f"{TAG_PROMPT_GUIDANCE} "
     "Spell out abbreviations the first time (for example say 'Application Programming Interface' not 'API'). "
     "Keep sentences short so the TTS sounds natural."
 )
@@ -53,11 +55,20 @@ _TTS_AWARENESS = (
 # ── System prompts (finetuned for pedagogical benchmarks) ──
 
 LECTURE_SYSTEM_PROMPT = f"""\
-You are Dr. Nova, an expert AI tutor giving a private one-on-one lecture.
+You are Dr. Nova, an expert AI tutor giving a private one-on-one lecture that runs ALONGSIDE a slide deck the student is watching on screen.
 
 {_TTS_AWARENESS}
 
 TURN LENGTH: Keep each turn to roughly 50 to 80 words. Aim for about 30 seconds of speech, not 90.
+
+STAY ANCHORED TO THE SLIDE:
+- The student is looking at a specific slide. Teach what is ON that slide and refer to it naturally ("on this slide…", "notice here that…"). Do not lecture on something the slide does not show.
+- When the student turns to a new slide, first bridge from your last point into it ("Now that we've seen X, this next slide moves on to…"), THEN explain it.
+
+CONNECT THE MATERIAL — this is what makes it a real lecture and not isolated facts:
+- LOOK BACK when it aids understanding: link to something already covered earlier this session, or to a previously completed lesson ("remember last lesson when we…").
+- LOOK AHEAD: foreshadow what's coming so the student sees the arc ("we'll build on this in a moment when we reach…").
+- Use the LESSON ROADMAP to know exactly where this slide sits between what came before and what comes next.
 
 RULES:
 - Speak naturally as if talking to a student face-to-face.
@@ -65,7 +76,6 @@ RULES:
 - Do NOT greet or introduce yourself unless this is the very first chunk of the session.
 - End every turn with exactly ONE short, open-ended question to check understanding or spark curiosity. Never ask more than one question.
 - Do NOT give away the full answer to your own question. Let the student think.
-- If there is a next subtopic, weave a brief transition into your question.
 """
 
 SUMMARIZE_SYSTEM_PROMPT = """\
@@ -184,7 +194,8 @@ TUTOR_SKILLS = {
         "SKILL — SOURCE GROUNDING: You have been given RETRIEVED SOURCE PASSAGES "
         "(verbatim excerpts from this course's textbook corpus). Base every factual "
         "claim in your answer ONLY on those passages — they are the ground truth. "
-        "When you state a fact, attribute it to its source (book + page range). "
+        "Do NOT cite, name, or mention the sources or page numbers — just answer "
+        "naturally in your own words. "
         "If the passages do not actually contain what the student is asking about, "
         "say plainly that the course materials do not cover it rather than inventing "
         "an answer. This grounding does not override the Socratic style: use the "
@@ -403,8 +414,14 @@ class TutorSession:
     session_id: str
     topics: List[dict]  # [{name: str, subtopics: [str, ...]}]
     student_id: Optional[str] = None
+    # Titles of lessons the student already completed before this session, so the
+    # tutor can call back to them ("as we saw last lesson…"). Optional.
+    prior_topics: List[str] = field(default_factory=list)
     current_topic_idx: int = 0
     current_subtopic_idx: int = 0
+    # Last slide index seen at the start of a lecture turn — used to detect when
+    # the student has turned the slide so the tutor can bridge into the new one.
+    last_slide_index: Optional[int] = None
     running_summary: str = ""
     transcript: List[dict] = field(default_factory=list)  # [{role, text, timestamp}]
     status: str = "idle"  # idle | lecturing | answering | finished
@@ -506,7 +523,7 @@ async def _call_ollama(
     system_prompt: str,
     user_prompt: str,
     temperature: float = 0.7,
-    num_predict: int = 256,
+    num_predict: int = 1024,
     conversation_history: Optional[List[dict]] = None,
 ) -> str:
     """Call Ollama Cloud chat API and return the text response.
@@ -557,7 +574,70 @@ async def _call_ollama(
         response.raise_for_status()
         data = response.json()
         return data["message"]["content"].strip()
-        
+
+
+async def _call_ollama_stream(
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.7,
+    num_predict: int = 1024,
+    conversation_history: Optional[List[dict]] = None,
+):
+    """Call Ollama Cloud chat API and yield sentence-chunked text."""
+    url = f"{OLLAMA_HOST.rstrip('/')}/api/chat"
+
+    messages = [{"role": "system", "content": system_prompt}]
+    if conversation_history:
+        messages.extend(conversation_history)
+    messages.append({"role": "user", "content": user_prompt})
+
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": messages,
+        "stream": True,
+        "options": {
+            "temperature": temperature,
+            "num_predict": num_predict,
+        },
+    }
+
+    headers = {}
+    if OLLAMA_API_KEY:
+        headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
+
+    import json
+    import re
+    
+    buffer = ""
+    # We yield sentences by accumulating tokens and splitting on punctuation.
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        async with client.stream("POST", url, json=payload, headers=headers) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    content = data.get("message", {}).get("content", "")
+                    buffer += content
+                    
+                    # Sentence boundary detection: match punctuation followed by space or newline
+                    while True:
+                        match = re.search(r'([.!?])(?:\s+|\n+)', buffer)
+                        if not match:
+                            break
+                        end_idx = match.end()
+                        sentence = buffer[:end_idx].strip()
+                        buffer = buffer[end_idx:]
+                        if sentence:
+                            yield sentence
+                            
+                except json.JSONDecodeError:
+                    continue
+                    
+    if buffer.strip():
+        yield buffer.strip()
+
 
 def _build_conversation_history(session: TutorSession, max_turns: int = 4) -> List[dict]:
     """
@@ -668,22 +748,23 @@ def _assemble_user_prompt(
         if profile_context:
             parts.append(profile_context)
 
+    if not minimal and not repeat:
+        prior_block = _prior_lessons_block(session)
+        if prior_block:
+            parts.append(prior_block)
+        roadmap = _lesson_roadmap(session)
+        if roadmap:
+            parts.append(roadmap)
+
     parts.append(f"CURRENT TOPIC: {session.current_topic or 'N/A'}")
     if session.current_subtopic:
         parts.append(f"CURRENT SUBTOPIC: {session.current_subtopic}")
 
     if not minimal and not repeat and include_slide:
-        try:
-            from services.session_store import get_session_store
-            ctx = get_session_store().get_session(session.session_id)
-            if ctx and ctx.live.current_slide_content:
-                slide_info = "CURRENT SLIDE CONTENT:\n"
-                if ctx.live.current_slide_title:
-                    slide_info += f"Slide title: {ctx.live.current_slide_title}\n"
-                slide_info += ctx.live.current_slide_content
-                parts.append(slide_info)
-        except Exception:
-            pass
+        # Read-only here (no slide-turn bridge — that belongs to lecture turns).
+        slide_block = _slide_block(session, mark_transition=False)
+        if slide_block:
+            parts.append(slide_block)
 
     if not minimal and student_emotion and student_emotion.lower() not in ("neutral", "unknown"):
         emotion_guidance = {
@@ -704,20 +785,6 @@ def _assemble_user_prompt(
         parts.append(f"STUDENT'S QUESTION: {question}")
 
     return "\n\n".join(parts)
-
-
-# ── Relevance check ──
-
-async def check_relevance(question: str, lesson_title: str) -> bool:
-    """
-    Deprecated. Off-topic detection is now the responsibility of the intent
-    classifier (Off-Topic Question class). This stub always returns True so
-    existing call sites do not break while they are migrated to read the
-    classifier's intent label directly.
-
-    See fix guide Fix 4 for the replacement routing pattern.
-    """
-    return True
 
 
 # ── Shared-store helper ──────────────────────────────────────────
@@ -812,6 +879,7 @@ def create_session(
     student_profile_summary: Optional[str] = None,
     student_profile_data: Optional[dict] = None,
     student_id: Optional[str] = None,
+    prior_topics: Optional[List[str]] = None,
 ) -> TutorSession:
     """Create a new tutoring session."""
     sid = session_id or str(uuid.uuid4())
@@ -837,6 +905,7 @@ def create_session(
         student_profile_summary=student_profile_summary,
         student_profile_data=student_profile_data,
         student_id=student_id,
+        prior_topics=list(prior_topics or []),
     )
     _sessions[sid] = session
     logger.info(f"Session {sid} created with {len(topics)} topics")
@@ -1058,25 +1127,25 @@ async def generate_lecture_chunk(
     if profile_context:
         context_parts.append(profile_context)
 
+    # ── Prior lessons + roadmap give the tutor backward/forward awareness ──
+    prior_block = _prior_lessons_block(session)
+    if prior_block:
+        context_parts.append(prior_block)
+
+    roadmap = _lesson_roadmap(session)
+    if roadmap:
+        context_parts.append(roadmap)
+
     context_parts.append(f"CURRENT MAIN TOPIC: {topic_name}")
     if subtopic_name:
         context_parts.append(f"CURRENT SUBTOPIC TO EXPLAIN NOW: {subtopic_name}")
     else:
         context_parts.append("Explain this topic as a whole.")
 
-    # ── Inject current slide content from SharedSessionStore ──
-    try:
-        from services.session_store import get_session_store
-        store = get_session_store()
-        ctx = store.get_session(session.session_id)
-        if ctx and ctx.live.current_slide_content:
-            slide_info = "CURRENT SLIDE CONTENT (base your explanation on this material):\n"
-            if ctx.live.current_slide_title:
-                slide_info += f"Slide title: {ctx.live.current_slide_title}\n"
-            slide_info += ctx.live.current_slide_content
-            context_parts.append(slide_info)
-    except Exception as exc:
-        logger.debug("Could not inject slide content: %s", exc)
+    # ── Inject current slide content (+ slide-turn bridge) from SharedSessionStore ──
+    slide_block = _slide_block(session, mark_transition=True)
+    if slide_block:
+        context_parts.append(slide_block)
 
     if session.is_first_chunk:
         context_parts.append("This is the BEGINNING of the session. Start with a brief warm greeting.")
@@ -1086,9 +1155,13 @@ async def generate_lecture_chunk(
     # Look ahead to tell the model what's next
     next_item = _peek_next(session)
     if next_item:
-        context_parts.append(f"NEXT UP AFTER THIS: {next_item}")
+        context_parts.append(
+            f"COMING UP NEXT: {next_item}. Foreshadow it in one phrase as you close so the lesson feels connected."
+        )
     else:
-        context_parts.append("This is the LAST subtopic. Wrap up with a brief conclusion.")
+        context_parts.append(
+            "This is the LAST item in the lesson. Wrap up with a brief conclusion that ties the whole lesson together."
+        )
 
     # Inject student emotion for tone adaptation
     if student_emotion:
@@ -1147,6 +1220,10 @@ async def generate_lecture_chunk(
         "status": session.status,
         "inference_time": elapsed,
         "active_skills": active_skills,
+        # True when this chunk asked the student something (background probe /
+        # teach-back) and is awaiting their reply. The client uses this to treat
+        # the next utterance as a RESPONSE — and skip retrieval for it.
+        "awaiting_response": session.awaiting_student_response,
     }
 
 
@@ -1160,8 +1237,11 @@ def _format_grounding_block(passages: Optional[list[dict]]) -> str:
     if not passages:
         return ""
     lines = [
-        "RETRIEVED SOURCE PASSAGES (verbatim textbook excerpts — ground your "
-        "answer ONLY in these and cite book + pages):"
+        "INTERNAL REFERENCE — textbook excerpts for YOUR grounding only. The "
+        "student does NOT see these and you are NOT a search engine: do NOT quote, "
+        "paste, list, or read them back verbatim, and do NOT cite or mention sources, "
+        "page numbers, or that you were given any references. Just answer the student "
+        "in a concise, natural way (2–4 sentences) in your own words:"
     ]
     for i, p in enumerate(passages, 1):
         book = p.get("book", "?")
@@ -1170,6 +1250,36 @@ def _format_grounding_block(passages: Optional[list[dict]]) -> str:
         text = (p.get("text") or "").strip()
         lines.append(f"[{i}] {book} p.{ps}-{pe}" + (f" ({topic})" if topic else "") + f":\n{text}")
     return "\n\n".join(lines)
+
+
+# A verbatim run at least this many words long ⇒ the model pasted source text
+# rather than answering in its own words.
+_DUMP_RUN_WORDS = 18
+
+
+def _answer_echoes_passages(answer: str, passages: Optional[list[dict]]) -> bool:
+    """Heuristic guard: True if the answer copies a long verbatim run from a
+    retrieved passage (i.e. it dumped chunks instead of synthesizing).
+
+    Cheap and deterministic — normalizes whitespace/case and slides a word
+    window across each passage looking for a long contiguous match in the answer.
+    """
+    if not answer or not passages:
+        return False
+    import re
+    norm = lambda s: re.sub(r"\s+", " ", (s or "").lower()).strip()
+    ans = norm(answer)
+    if not ans:
+        return False
+    for p in passages:
+        words = norm(p.get("text", "")).split()
+        if len(words) < _DUMP_RUN_WORDS:
+            continue
+        for i in range(0, len(words) - _DUMP_RUN_WORDS + 1, 4):
+            run = " ".join(words[i:i + _DUMP_RUN_WORDS])
+            if len(run) >= 70 and run in ans:
+                return True
+    return False
 
 
 async def answer_question(
@@ -1379,6 +1489,23 @@ async def answer_question(
         temperature=0.65,
         conversation_history=conversation_history,
     )
+
+    # Anti-dump guard: the student must NEVER see raw retrieved chunks. If the
+    # model pasted source text verbatim despite the grounding instructions,
+    # regenerate once with a stricter directive (own words only, cite briefly).
+    if grounding_block and _answer_echoes_passages(answer_text, grounding_passages):
+        logger.info("tutor answer echoed source passages — regenerating without the dump")
+        strict_prompt = system_prompt + (
+            "\n\nCRITICAL: Your previous draft copied the textbook text verbatim. "
+            "Do NOT quote, paste, or list the passages, and do NOT cite sources or "
+            "page numbers. Answer the student in at most 3 ORIGINAL sentences in "
+            "your own words, and end with one short guiding question."
+        )
+        answer_text = await _call_ollama(
+            strict_prompt, user_prompt,
+            temperature=0.4,
+            conversation_history=conversation_history,
+        )
     elapsed = round(time.time() - start, 2)
 
     session.transcript.append({"role": "student", "text": question, "timestamp": time.time()})
@@ -1410,6 +1537,10 @@ async def answer_question(
         # False → the UI surfaces a "grounding unavailable" state instead of
         # silently presenting an ungrounded answer as if it were sourced.
         "grounded": bool(grounding_block),
+        # A Socratic answer ends by asking the student a guiding question, so the
+        # tutor is awaiting their reply. The client uses this to treat the next
+        # utterance as a Socratic CONTINUATION and skip a fresh retrieval for it.
+        "awaiting_response": True,
     }
 
 
@@ -1830,3 +1961,692 @@ def _peek_next(session: TutorSession) -> Optional[str]:
             return f"{next_topic['name']} > {next_sub[0]}"
         return next_topic["name"]
     return None
+
+
+# ── Lecture connective-tissue context (slide-anchoring + forward/back linking) ──
+# These three helpers give the tutor the same situational awareness a human
+# lecturer has: WHERE this slide sits in the lesson (roadmap), WHAT is on the
+# slide right now (and whether the student just turned to it), and what was
+# taught in PRIOR lessons. They are pure/read-only except `_slide_block` which,
+# when ``mark_transition`` is set, records the last slide index for change
+# detection. Kept here so the streaming and non-streaming lecture paths share
+# one source of truth and can never drift.
+
+def _lesson_roadmap(session: TutorSession) -> str:
+    """A compact map of the whole lesson with the current position marked.
+
+    Lets the tutor connect each turn to what came before and what's coming —
+    the backbone of "remember earlier…" and "next we'll see…" references.
+    """
+    if not session.topics:
+        return ""
+    lines: list[str] = []
+    for ti, topic in enumerate(session.topics):
+        name = topic.get("name", "Topic")
+        subs = topic.get("subtopics", []) or []
+        if ti == session.current_topic_idx and subs:
+            sub_marks = []
+            for si, s in enumerate(subs):
+                if si < session.current_subtopic_idx:
+                    sub_marks.append(f"{s} (covered)")
+                elif si == session.current_subtopic_idx:
+                    sub_marks.append(f">>> {s} <<< (teaching now)")
+                else:
+                    sub_marks.append(f"{s} (coming up)")
+            lines.append(f"{ti + 1}. {name} [CURRENT]: " + "; ".join(sub_marks))
+        else:
+            tag = "covered" if ti < session.current_topic_idx else "coming up"
+            lines.append(f"{ti + 1}. {name} ({tag})")
+    return (
+        "LESSON ROADMAP (your map of the whole lesson — look BACK to covered "
+        "material and look AHEAD to what's coming so each idea connects):\n"
+        + "\n".join(lines)
+    )
+
+
+def _slide_block(session: TutorSession, mark_transition: bool = False) -> str:
+    """The current slide's content, framed so the tutor teaches *to* the slide.
+
+    When ``mark_transition`` is set (lecture turns), detect whether the student
+    just turned the slide since the last turn and tell the tutor to bridge into
+    it — this is what makes the tutor actually acknowledge "this next slide…".
+    """
+    try:
+        from services.session_store import get_session_store
+        ctx = get_session_store().get_session(session.session_id)
+    except Exception:
+        return ""
+    if not ctx or not getattr(ctx, "live", None) or not ctx.live.current_slide_content:
+        return ""
+    live = ctx.live
+    block = "CURRENT SLIDE (teach what is on THIS slide and refer to it naturally):\n"
+    if live.current_slide_title:
+        block += f"Slide title: {live.current_slide_title}\n"
+    block += live.current_slide_content
+
+    next_title = getattr(live, "next_slide_title", "") or ""
+    if next_title:
+        block += (
+            f"\n\nNEXT SLIDE TITLE: {next_title}. You may foreshadow it in one phrase as "
+            "you close (e.g. 'next up we'll look at…') so the lesson flows forward."
+        )
+
+    if mark_transition:
+        prev = session.last_slide_index
+        cur = live.current_slide_index
+        if prev is not None and cur != prev:
+            if cur > prev:
+                block += (
+                    "\n\nThe student JUST MOVED to this new slide. Open by briefly "
+                    "bridging from your previous point into what this slide shows "
+                    "(e.g. 'Now, on this next slide…')."
+                )
+            else:
+                block += (
+                    "\n\nThe student went BACK to an earlier slide. Acknowledge "
+                    "revisiting it in one phrase, then re-anchor your explanation here."
+                )
+        session.last_slide_index = cur
+    return block
+
+
+def _prior_lessons_block(session: TutorSession) -> str:
+    """Titles of previously completed lessons, so the tutor can call back to them."""
+    priors = [str(p) for p in (getattr(session, "prior_topics", None) or []) if p]
+    if not priors:
+        return ""
+    return (
+        "PREVIOUSLY COMPLETED LESSONS (prior knowledge you may build on, e.g. "
+        "'as we saw last lesson…'): " + "; ".join(priors)
+    )
+
+
+async def handle_emotional_state_stream(
+    session_id: str,
+    student_message: str,
+    student_emotion: Optional[str] = None,
+):
+    session = _sessions.get(session_id)
+    if not session:
+        raise ValueError(f"Session {session_id} not found")
+
+    prev_status = session.status
+    session.status = "answering"
+
+    system_prompt = _build_system_prompt(EMOTIONAL_SYSTEM_PROMPT, ["EMOTIONAL_ACKNOWLEDGEMENT"])
+
+    context_parts = [
+        f"CURRENT TOPIC: {session.current_topic or 'N/A'}",
+        f"STUDENT'S MESSAGE: {student_message}",
+    ]
+    if student_emotion and student_emotion.lower() not in ("neutral", "unknown"):
+        context_parts.append(
+            f"DETECTED EMOTION (from facial/voice analysis): {student_emotion}. "
+            "Reference this naturally if it matches what the student said."
+        )
+
+    user_prompt = "\n\n".join(context_parts)
+
+    start = time.time()
+    response_text = ""
+    async for sentence in _call_ollama_stream(system_prompt, user_prompt, temperature=0.6):
+        response_text += " " + sentence
+        yield {"type": "chunk", "text": sentence}
+        
+    response_text = response_text.strip()
+    elapsed = round(time.time() - start, 2)
+
+    session.transcript.append({"role": "student", "text": student_message, "timestamp": time.time()})
+    session.transcript.append({
+        "role": "tutor", "text": response_text,
+        "topic": session.current_topic, "subtopic": session.current_subtopic,
+        "timestamp": time.time(), "is_emotional_response": True,
+    })
+    if len(session.transcript) > 10:
+        session.transcript = session.transcript[-10:]
+
+    session.socratic_attempt_count = 0
+    session.status = prev_status if prev_status != "answering" else "lecturing"
+    _sync_to_shared_store(session)
+
+    yield {
+        "type": "metadata",
+        "metadata": {
+            "answer": response_text,
+            "intent": "Emotional-State",
+            "topic": session.current_topic,
+            "subtopic": session.current_subtopic,
+            "progress": session.progress,
+            "is_finished": session.status == "finished",
+            "status": session.status,
+            "inference_time": elapsed,
+        }
+    }
+
+
+async def handle_pace_change_stream(
+    session_id: str,
+    student_message: str,
+    direction: Optional[str] = None,
+):
+    session = _sessions.get(session_id)
+    if not session:
+        raise ValueError(f"Session {session_id} not found")
+
+    if direction is None:
+        lower = student_message.lower()
+        slower_keywords = {"slow", "slower", "slow down", "too fast", "wait", "hold on", "again", "repeat"}
+        faster_keywords = {"faster", "speed up", "hurry", "quick", "quicker", "move on", "skip", "next"}
+        if any(k in lower for k in slower_keywords):
+            direction = "slower"
+        elif any(k in lower for k in faster_keywords):
+            direction = "faster"
+        else:
+            direction = "slower"
+
+    if direction == "slower":
+        session.pace_modifier = max(session.pace_modifier - 1, -3)
+    else:
+        session.pace_modifier = min(session.pace_modifier + 1, 3)
+
+    prev_status = session.status
+    session.status = "answering"
+
+    direction_instruction = (
+        "The student wants to slow down. Acknowledge this and confirm you will take it slower."
+        if direction == "slower"
+        else "The student wants to speed up. Acknowledge this and confirm you will move faster."
+    )
+
+    context_parts = [
+        f"CURRENT TOPIC: {session.current_topic or 'N/A'}",
+        f"PACE DIRECTION: {direction_instruction}",
+        f"STUDENT'S MESSAGE: {student_message}",
+    ]
+    user_prompt = "\n\n".join(context_parts)
+
+    start = time.time()
+    response_text = ""
+    system_prompt = _build_system_prompt(PACE_SYSTEM_PROMPT, ["PACE_ACKNOWLEDGEMENT"])
+    async for sentence in _call_ollama_stream(system_prompt, user_prompt, temperature=0.4):
+        response_text += " " + sentence
+        yield {"type": "chunk", "text": sentence}
+        
+    response_text = response_text.strip()
+    elapsed = round(time.time() - start, 2)
+
+    session.transcript.append({"role": "student", "text": student_message, "timestamp": time.time()})
+    session.transcript.append({
+        "role": "tutor", "text": response_text,
+        "topic": session.current_topic, "subtopic": session.current_subtopic,
+        "timestamp": time.time(), "is_pace_response": True,
+    })
+    if len(session.transcript) > 10:
+        session.transcript = session.transcript[-10:]
+
+    session.socratic_attempt_count = 0
+    session.status = prev_status if prev_status != "answering" else "lecturing"
+    _sync_to_shared_store(session)
+
+    yield {
+        "type": "metadata",
+        "metadata": {
+            "answer": response_text,
+            "intent": "Pace-Related",
+            "topic": session.current_topic,
+            "subtopic": session.current_subtopic,
+            "progress": session.progress,
+            "is_finished": session.status == "finished",
+            "status": session.status,
+            "inference_time": elapsed,
+        }
+    }
+
+
+async def answer_question_stream(
+    session_id: str,
+    question: str,
+    student_emotion: Optional[str] = None,
+    intent: Optional[str] = None,
+    intent_confidence: float = 0.0,
+    grounding_passages: Optional[list[dict]] = None,
+):
+    session = _sessions.get(session_id)
+    if not session:
+        raise ValueError(f"Session {session_id} not found")
+
+    if intent:
+        session.last_intent = intent
+        session.last_intent_confidence = intent_confidence
+
+    if session.awaiting_student_response:
+        session.transcript.append({
+            "role": "student",
+            "text": question,
+            "timestamp": time.time(),
+            "is_probe_response": True,
+            "probe_type": session.awaiting_response_type,
+        })
+        if len(session.transcript) > 10:
+            session.transcript = session.transcript[-10:]
+        async for item in generate_lecture_chunk_stream(
+            session_id,
+            student_emotion=student_emotion,
+            intent=intent,
+            intent_confidence=intent_confidence,
+        ):
+            if item["type"] == "metadata":
+                item["metadata"]["answer"] = item["metadata"].get("text", "")
+            yield item
+        return
+
+    prev_status = session.status
+    effective_intent = intent or "On-Topic Question"
+
+    if effective_intent == "Emotional-State":
+        async for item in handle_emotional_state_stream(
+            session_id,
+            student_message=question,
+            student_emotion=student_emotion,
+        ):
+            yield item
+        return
+
+    if effective_intent == "Pace-Related":
+        async for item in handle_pace_change_stream(session_id, student_message=question):
+            yield item
+        return
+
+    if effective_intent == "Off-Topic Question" and intent_confidence >= 0.65:
+        off_topic_text = (
+            f"That is a bit outside what we are covering right now. "
+            f"Let us stay focused on {session.current_topic or 'the current topic'} — "
+            f"feel free to ask me that after the session."
+        )
+        session.transcript.append({
+            "role": "student", "text": question, "timestamp": time.time(),
+        })
+        session.transcript.append({
+            "role": "tutor", "text": off_topic_text, "timestamp": time.time(),
+            "is_off_topic_redirect": True,
+        })
+        if len(session.transcript) > 10:
+            session.transcript = session.transcript[-10:]
+        _sync_to_shared_store(session)
+        yield {"type": "chunk", "text": off_topic_text}
+        yield {
+            "type": "metadata",
+            "metadata": {
+                "answer": off_topic_text,
+                "intent": "Off-Topic Question",
+                "topic": session.current_topic,
+                "subtopic": session.current_subtopic,
+                "progress": session.progress,
+                "is_finished": session.status == "finished",
+                "status": session.status,
+                "inference_time": 0.0,
+            }
+        }
+        return
+
+    if effective_intent == "Debugging/Code-Sharing":
+        session.status = "answering"
+        debug_skills: list[str] = ["DIRECT_DEBUG_HELP"]
+        if student_emotion and student_emotion.lower() in ("confused", "surprise", "fear"):
+            debug_skills.append("CONFUSION_DIAGNOSIS")
+        system_prompt = _build_system_prompt(ANSWER_SYSTEM_PROMPT, debug_skills)
+
+        user_prompt = _assemble_user_prompt(
+            session,
+            intent="Debugging/Code-Sharing",
+            question=question,
+            student_emotion=student_emotion,
+            include_slide=False,
+        )
+        conversation_history = _build_conversation_history(
+            session, max_turns=_history_turns_for_intent("Debugging/Code-Sharing")
+        )
+
+        start = time.time()
+        answer_text = ""
+        async for sentence in _call_ollama_stream(
+            system_prompt, user_prompt,
+            temperature=0.5,
+            conversation_history=conversation_history,
+        ):
+            answer_text += " " + sentence
+            yield {"type": "chunk", "text": sentence}
+        answer_text = answer_text.strip()
+        elapsed = round(time.time() - start, 2)
+
+        session.transcript.append({"role": "student", "text": question, "timestamp": time.time()})
+        session.transcript.append({
+            "role": "tutor", "text": answer_text,
+            "topic": session.current_topic, "subtopic": session.current_subtopic,
+            "timestamp": time.time(), "is_debug_answer": True,
+        })
+        if len(session.transcript) > 10:
+            session.transcript = session.transcript[-10:]
+
+        qa_text = f"Student debug request: {question}\nTutor fix: {answer_text}"
+        await _update_summary(session, qa_text)
+        session.status = prev_status if prev_status != "answering" else "lecturing"
+        _sync_to_shared_store(session)
+
+        yield {
+            "type": "metadata",
+            "metadata": {
+                "answer": answer_text,
+                "intent": "Debugging/Code-Sharing",
+                "topic": session.current_topic,
+                "subtopic": session.current_subtopic,
+                "progress": session.progress,
+                "is_finished": session.status == "finished",
+                "status": session.status,
+                "inference_time": elapsed,
+                "active_skills": debug_skills,
+            }
+        }
+        return
+
+    session.status = "answering"
+
+    qa_skills: list[str] = []
+
+    if session.socratic_attempt_count >= 2:
+        qa_skills.append("SOCRATIC_SCAFFOLD")
+        session.socratic_attempt_count = 0
+    else:
+        qa_skills.append("SOCRATIC_GUARD")
+        session.socratic_attempt_count += 1
+
+    if student_emotion and student_emotion.lower() in ("confused", "surprise", "fear"):
+        qa_skills.append("CONFUSION_DIAGNOSIS")
+
+    if session.student_profile_data:
+        from schemas.profile import flatten_profile_for_readers
+        flat = flatten_profile_for_readers(session.student_profile_data)
+        style_hint = " ".join(
+            [(flat.get("preferred_modality") or "")] + list(flat.get("recommended_approaches", []))
+        ).lower()
+        if "visual" in style_hint or "diagram" in style_hint:
+            qa_skills.append("VISUAL_LEARNER")
+        elif "hands" in style_hint or "concrete" in style_hint:
+            qa_skills.append("HANDS_ON_LEARNER")
+
+    grounding_block = _format_grounding_block(grounding_passages)
+    if grounding_block:
+        qa_skills.append("SOURCE_GROUNDING")
+
+    system_prompt = _build_system_prompt(ANSWER_SYSTEM_PROMPT, qa_skills)
+
+    user_prompt = _assemble_user_prompt(
+        session,
+        intent=effective_intent,
+        question=question,
+        grounding_block=grounding_block,
+        student_emotion=student_emotion,
+        include_slide=True,
+    )
+    conversation_history = _build_conversation_history(
+        session, max_turns=_history_turns_for_intent(effective_intent)
+    )
+
+    start = time.time()
+    answer_text = ""
+    async for sentence in _call_ollama_stream(
+        system_prompt, user_prompt,
+        temperature=0.65,
+        conversation_history=conversation_history,
+    ):
+        answer_text += " " + sentence
+        yield {"type": "chunk", "text": sentence}
+
+    # Stored/transcript/summary text is tag-free; the raw chunks already streamed to TTS.
+    answer_text = strip_all_tags(answer_text.strip())
+    elapsed = round(time.time() - start, 2)
+
+    # For streaming, we can't easily recall the dump because it's already sent to the client.
+    # We will log it instead of regenerating.
+    if grounding_block and _answer_echoes_passages(answer_text, grounding_passages):
+        logger.info("tutor answer echoed source passages in stream (could not prevent).")
+
+    session.transcript.append({"role": "student", "text": question, "timestamp": time.time()})
+    session.transcript.append({
+        "role": "tutor", "text": answer_text,
+        "topic": session.current_topic, "subtopic": session.current_subtopic,
+        "timestamp": time.time(), "is_answer": True,
+    })
+    if len(session.transcript) > 10:
+        session.transcript = session.transcript[-10:]
+
+    qa_text = f"Student asked: {question}\nTutor answered: {answer_text}"
+    await _update_summary(session, qa_text)
+
+    session.status = prev_status if prev_status != "answering" else "lecturing"
+    _sync_to_shared_store(session)
+
+    yield {
+        "type": "metadata",
+        "metadata": {
+            "answer": answer_text,
+            "intent": effective_intent,
+            "topic": session.current_topic,
+            "subtopic": session.current_subtopic,
+            "progress": session.progress,
+            "is_finished": session.status == "finished",
+            "status": session.status,
+            "inference_time": elapsed,
+            "active_skills": qa_skills,
+            "grounded": bool(grounding_block),
+            "awaiting_response": True,
+        }
+    }
+
+
+async def generate_lecture_chunk_stream(
+    session_id: str,
+    student_emotion: Optional[str] = None,
+    intent: Optional[str] = None,
+    intent_confidence: float = 0.0,
+):
+    session = _sessions.get(session_id)
+    if not session:
+        raise ValueError(f"Session {session_id} not found")
+
+    if session.status == "finished":
+        yield {
+            "type": "metadata",
+            "metadata": {
+                "text": "",
+                "topic": None,
+                "subtopic": None,
+                "progress": 100.0,
+                "is_finished": True,
+                "status": "finished",
+            }
+        }
+        return
+
+    if intent:
+        session.last_intent = intent
+        session.last_intent_confidence = intent_confidence
+
+    session.status = "lecturing"
+
+    active_skills: list[str] = []
+
+    if session.is_first_chunk:
+        active_skills.append("BACKGROUND_PROBE")
+        session.awaiting_student_response = True
+        session.awaiting_response_type = "background_probe"
+    elif session.awaiting_student_response:
+        active_skills.append("PROBE_RESPONSE_HANDLER")
+        session.awaiting_student_response = False
+        session.awaiting_response_type = None
+
+    if student_emotion and student_emotion.lower() in ("confused", "surprise", "fear"):
+        active_skills.append("CONFUSION_DIAGNOSIS")
+
+    session.teach_back_counter += 1
+    if session.teach_back_counter >= session.teach_back_interval:
+        active_skills.append("TEACH_BACK")
+        session.teach_back_counter = 0
+        session.awaiting_student_response = True
+        session.awaiting_response_type = "teach_back"
+
+    if session.student_profile_data or session.student_profile_summary:
+        active_skills.append("ENGAGEMENT_ADAPT")
+
+    topic_name = session.current_topic or "General Review"
+    subtopic_name = session.current_subtopic
+
+    current_concept_id = ""
+    try:
+        from services.session_store import get_session_store
+        live_data = get_session_store().get_session(session.session_id)
+        if live_data and getattr(live_data, "live", None) is not None:
+            current_concept_id = getattr(live_data.live, "current_concept_id", "") or ""
+    except Exception:
+        pass
+
+    new_interval = _resolve_teach_back_interval(session, current_concept_id)
+    if new_interval != session.teach_back_interval:
+        session.teach_back_interval = new_interval
+
+    active_skills += _competence_and_style_skills(session, current_concept_id)
+
+    from schemas.profile import flatten_profile_for_readers
+    flat = flatten_profile_for_readers(session.student_profile_data or {})
+    combined_lower = f"{(session.current_subtopic or '').lower()} {(session.current_topic or '').lower()}"
+    unresolved_match_text = (combined_lower + " " + _concept_label_for(session, current_concept_id)).strip()
+
+    skill_overrides: dict[str, str] = {}
+    if not hasattr(session, "_surfaced_unresolved"):
+        session._surfaced_unresolved = set()
+    for q in flat.get("unresolved_questions", []):
+        q_words = [w for w in q.lower().split() if len(w) > 4]
+        if q not in session._surfaced_unresolved and any(w in unresolved_match_text for w in q_words):
+            skill_overrides["SURFACE_UNRESOLVED"] = (
+                TUTOR_SKILLS["SURFACE_UNRESOLVED"]
+                + f' The specific unresolved question is: "{q}"'
+            )
+            active_skills.append("SURFACE_UNRESOLVED")
+            session._surfaced_unresolved.add(q)
+            break
+
+    profile_specific_skills = {
+        "DIFFICULTY_TOPIC", "STRENGTH_TOPIC", "VISUAL_LEARNER",
+        "HANDS_ON_LEARNER", "PACE_SLOW", "PACE_FAST",
+        "SURFACE_UNRESOLVED", "RECURRENT_MISTAKE"
+    }
+    if any(s in active_skills for s in profile_specific_skills):
+        active_skills = [s for s in active_skills if s != "ENGAGEMENT_ADAPT"]
+
+    system_prompt = _build_system_prompt(
+        LECTURE_SYSTEM_PROMPT, active_skills, overrides=skill_overrides
+    )
+
+    context_parts = []
+    if session.running_summary:
+        context_parts.append(f"SUMMARY OF WHAT YOU'VE COVERED SO FAR:\n{session.running_summary}")
+
+    profile_context = _build_profile_context(session)
+    if profile_context:
+        context_parts.append(profile_context)
+
+    prior_block = _prior_lessons_block(session)
+    if prior_block:
+        context_parts.append(prior_block)
+
+    roadmap = _lesson_roadmap(session)
+    if roadmap:
+        context_parts.append(roadmap)
+
+    context_parts.append(f"CURRENT MAIN TOPIC: {topic_name}")
+    if subtopic_name:
+        context_parts.append(f"CURRENT SUBTOPIC TO EXPLAIN NOW: {subtopic_name}")
+    else:
+        context_parts.append("Explain this topic as a whole.")
+
+    slide_block = _slide_block(session, mark_transition=True)
+    if slide_block:
+        context_parts.append(slide_block)
+
+    if session.is_first_chunk:
+        context_parts.append("This is the BEGINNING of the session. Start with a brief warm greeting.")
+        session.is_first_chunk = False
+
+    next_item = _peek_next(session)
+    if next_item:
+        context_parts.append(
+            f"COMING UP NEXT: {next_item}. Foreshadow it in one phrase as you close so the lesson feels connected."
+        )
+    else:
+        context_parts.append(
+            "This is the LAST item in the lesson. Wrap up with a brief conclusion that ties the whole lesson together."
+        )
+
+    if student_emotion:
+        context_parts.append(
+            f"Current student emotional state: {student_emotion}. "
+            "Adjust your tone accordingly — if bored, be more energetic; "
+            "if confused, slow down and simplify; if anxious, be reassuring; if engaged, maintain energy. "
+            "Do NOT skip planned material. Only adapt tone and pacing."
+        )
+
+    user_prompt = "\n\n".join(context_parts)
+
+    conversation_history = _build_conversation_history(
+        session, max_turns=_history_turns_for_intent(intent)
+    )
+
+    start = time.time()
+    lecture_text = ""
+    async for sentence in _call_ollama_stream(
+        system_prompt, user_prompt,
+        temperature=0.7,
+        conversation_history=conversation_history,
+    ):
+        lecture_text += " " + sentence
+        yield {"type": "chunk", "text": sentence}
+        
+    # Stored/transcript/summary text is tag-free (spoken cues never reach the
+    # display, the durable log, or the profiler); the raw chunks already went to
+    # TTS via the router.
+    lecture_text = strip_all_tags(lecture_text.strip())
+    elapsed = round(time.time() - start, 2)
+
+    session.transcript.append({
+        "role": "tutor",
+        "text": lecture_text,
+        "topic": topic_name,
+        "subtopic": subtopic_name,
+        "timestamp": time.time(),
+    })
+    if len(session.transcript) > 10:
+        session.transcript = session.transcript[-10:]
+
+    session.last_chunk_text = lecture_text
+    session.last_chunk_subtopic = subtopic_name
+
+    await _update_summary(session, lecture_text)
+
+    is_finished = _advance(session)
+    _sync_to_shared_store(session)
+
+    yield {
+        "type": "metadata",
+        "metadata": {
+            "text": lecture_text,
+            "topic": topic_name,
+            "subtopic": subtopic_name,
+            "progress": session.progress,
+            "is_finished": is_finished,
+            "status": session.status,
+            "inference_time": elapsed,
+            "active_skills": active_skills,
+            "awaiting_response": session.awaiting_student_response,
+        }
+    }
+

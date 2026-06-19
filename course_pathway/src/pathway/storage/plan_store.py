@@ -14,6 +14,7 @@ The database is auto-created and lazily migrated on first use.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,21 @@ import structlog
 from pathway.models.schemas import SessionPlan
 
 logger = structlog.get_logger(__name__)
+
+
+def _use_pg_plans() -> bool:
+    """Whether the shared Supabase/Postgres plan backend is selected.
+
+    Resolution (explicit opt-in — moving per-student plans is consequential, so
+    unlike the vector store we do NOT auto-switch merely because a DSN exists):
+      - ``PATHWAY_BACKEND=supabase`` / ``postgres`` / ``pg`` → True.
+      - anything else (incl. unset, ``sqlite``, ``local``)   → False.
+
+    The DSN itself is shared with the corpus vector store (``SUPABASE_DB_URL`` /
+    ``VECTOR_DB_URL``), so one Supabase project hosts both.
+    """
+    backend = os.getenv("PATHWAY_BACKEND", "").strip().lower()
+    return backend in ("supabase", "postgres", "pg", "pgvector")
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS session_plans_v2 (
@@ -56,7 +72,21 @@ CREATE TABLE IF NOT EXISTS curriculum_proposals (
 
 
 class PlanStore:
-    """Persist and retrieve VERSIONED session plans in SQLite."""
+    """Persist and retrieve VERSIONED session plans in SQLite.
+
+    Backed by a local SQLite file by default, or by the shared Supabase/Postgres
+    store when configured (see :func:`_use_pg_plans`). Both backends expose the
+    identical method surface; the Postgres backend is returned transparently from
+    ``__new__`` so every caller is unchanged and SQLite stays the default/fallback
+    (fully reversible via env).
+    """
+
+    def __new__(cls, db_path: str | None = None):
+        # Transparently swap in the shared Supabase plan store when configured.
+        if cls is PlanStore and _use_pg_plans():
+            from pathway.storage.pg_plan_store import PgPlanStore
+            return PgPlanStore(db_path=db_path)
+        return super().__new__(cls)
 
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path

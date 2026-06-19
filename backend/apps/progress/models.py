@@ -320,6 +320,11 @@ class StudentLearningProfile(models.Model):
             "This is what Dr. Nova reads at session start."
         ),
     )
+    # Provenance of the current profile_summary: "session" = canonical (authored
+    # by the session profiler, the single canonical author) or "provisional" = a
+    # deterministic stopgap synthesized from claims until the first live session
+    # completes. A provisional summary never overwrites a canonical one.
+    profile_summary_source = models.CharField(max_length=20, blank=True, default="")
     profile_data = models.JSONField(
         default=dict,
         help_text=(

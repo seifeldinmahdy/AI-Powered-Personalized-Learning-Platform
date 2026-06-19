@@ -237,7 +237,9 @@ async def summary_viewed(request: SummaryViewedRequest):
     try:
         from services.completion import post_lesson_complete
         completion = await post_lesson_complete(
-            student_id=request.student_id, lesson_id=request.lesson_id
+            student_id=request.student_id,
+            course_id=raw_ps.get("course_id", ""),
+            session_number=raw_ps.get("lesson_id", request.lesson_id),
         )
     except Exception as e:
         logger.warning("Failed to trigger server-side lesson completion: %s", e)

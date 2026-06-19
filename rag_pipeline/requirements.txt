@@ -9,3 +9,5 @@ streamlit>=1.35.0
 transformers>=4.40.0
 torch>=2.0.0
 pytest>=8.0.0
+# Optional: Supabase / Postgres pgvector backend (VECTOR_BACKEND=supabase)
+psycopg2-binary>=2.9.0

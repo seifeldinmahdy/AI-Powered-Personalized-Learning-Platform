@@ -46,15 +46,17 @@ class ChromaDBReader:
     """
 
     def __init__(self, persist_dir: str, collection_name: str = "course_chunks") -> None:
-        if not Path(persist_dir).exists():
+        _ensure_rag_pipeline_on_path()
+        from src.indexing.store import VectorStore, _use_supabase  # type: ignore
+        from src.retrieval.retrieval_service import RetrievalService  # type: ignore
+
+        # Local Chroma needs the persisted directory to exist; the shared
+        # Supabase/pgvector backend is remote, so skip the filesystem check.
+        if not _use_supabase() and not Path(persist_dir).exists():
             raise FileNotFoundError(
                 f"ChromaDB directory not found: {persist_dir}. "
                 "Run the RAG indexing pipeline first."
             )
-
-        _ensure_rag_pipeline_on_path()
-        from src.indexing.store import VectorStore  # type: ignore
-        from src.retrieval.retrieval_service import RetrievalService  # type: ignore
 
         store = VectorStore(persist_dir=persist_dir, collection_name=collection_name)
         self._service = RetrievalService(store=store)

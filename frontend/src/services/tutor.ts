@@ -25,6 +25,9 @@ export interface LectureChunk {
   progress: number;
   is_finished: boolean;
   status: string;
+  // True when this lecture chunk asked the student something (background probe /
+  // teach-back) and is awaiting a reply.
+  awaiting_response?: boolean;
 }
 
 export interface AskResponse {
@@ -39,6 +42,9 @@ export interface AskResponse {
   is_finished: boolean;
   status: string;
   grounded?: boolean;
+  // True when the tutor's turn ended by asking the student something (Socratic
+  // guiding question / probe). The next utterance is a reply → skip retrieval.
+  awaiting_response?: boolean;
 }
 
 export interface SERResult {
@@ -52,6 +58,7 @@ export async function startTutorSession(
   voice = 'en-US-GuyNeural',
   student_profile_summary?: string,
   session_id?: string,
+  prior_topics?: string[],
 ): Promise<TutorSession> {
   const body: Record<string, unknown> = {
     topics: [{ name: lessonTitle, subtopics }],
@@ -63,6 +70,9 @@ export async function startTutorSession(
   if (session_id) {
     body.session_id = session_id;
   }
+  if (prior_topics && prior_topics.length > 0) {
+    body.prior_topics = prior_topics;
+  }
   const res = await fetch(`${AI_URL}/tutor/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -72,10 +82,69 @@ export async function startTutorSession(
   return res.json();
 }
 
+export interface TutorStreamChunk {
+  text_chunk?: string;
+  audio_base64?: string | null;
+  blendshapes?: BlendshapeData | null;
+  success?: boolean;
+  session_id?: string;
+  topic?: string;
+  subtopic?: string | null;
+  progress?: number;
+  is_finished?: boolean;
+  status?: string;
+  answer?: string;
+  text?: string;
+  awaiting_response?: boolean;
+  grounded?: boolean;
+}
+
+async function processSSEStream(
+  res: Response, 
+  onChunk: (chunk: TutorStreamChunk) => void
+): Promise<TutorStreamChunk | null> {
+  const reader = res.body?.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalMeta: TutorStreamChunk | null = null;
+  if (!reader) return null;
+  
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary !== -1) {
+      const eventChunk = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf('\n\n');
+      
+      if (eventChunk.startsWith('data: ')) {
+        const dataStr = eventChunk.slice(6).trim();
+        if (dataStr) {
+          try {
+            const data = JSON.parse(dataStr) as TutorStreamChunk;
+            if (data.text_chunk !== undefined) {
+              onChunk(data);
+            } else if (data.success !== undefined) {
+              finalMeta = data;
+            }
+          } catch (e) {
+            console.error('SSE parse error:', e);
+          }
+        }
+      }
+    }
+  }
+  return finalMeta;
+}
+
 export async function continueTutorSession(
   session_id: string,
   include_audio = true,
   student_emotion?: string,
+  onChunk?: (chunk: TutorStreamChunk) => void
 ): Promise<LectureChunk> {
   const res = await fetch(`${AI_URL}/tutor/continue`, {
     method: 'POST',
@@ -83,6 +152,11 @@ export async function continueTutorSession(
     body: JSON.stringify({ session_id, include_audio, student_emotion }),
   });
   if (!res.ok) throw new Error('Failed to continue tutor session');
+  if (onChunk) {
+    const meta = await processSSEStream(res, onChunk);
+    if (!meta) throw new Error('Stream ended without metadata');
+    return meta as unknown as LectureChunk;
+  }
   return res.json();
 }
 
@@ -92,6 +166,7 @@ export async function askTutor(
   include_audio = true,
   student_emotion?: string,
   grounding?: RAGPassage[],
+  onChunk?: (chunk: TutorStreamChunk) => void
 ): Promise<AskResponse> {
   const res = await fetch(`${AI_URL}/tutor/ask`, {
     method: 'POST',
@@ -101,6 +176,11 @@ export async function askTutor(
     body: JSON.stringify({ session_id, question, include_audio, student_emotion, grounding }),
   });
   if (!res.ok) throw new Error('Failed to ask tutor');
+  if (onChunk) {
+    const meta = await processSSEStream(res, onChunk);
+    if (!meta) throw new Error('Stream ended without metadata');
+    return meta as unknown as AskResponse;
+  }
   return res.json();
 }
 
@@ -254,21 +334,6 @@ export async function askRag(question: string, courseId: string): Promise<RAGRes
   });
   if (!res.ok) throw new Error('RAG unavailable');
   return res.json();
-}
-
-export async function checkRelevance(question: string, lessonTitle: string): Promise<boolean> {
-  try {
-    const res = await fetch(`${AI_URL}/tutor/relevance`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, lesson_title: lessonTitle }),
-    });
-    if (!res.ok) return true;
-    const data = await res.json();
-    return data.relevant as boolean;
-  } catch {
-    return true; // fail open
-  }
 }
 
 export type IntentName = 'On-Topic Question' | 'Off-Topic Question' | 'Emotional-State' | 'Pace-Related' | 'Repeat/clarification';

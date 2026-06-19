@@ -51,6 +51,21 @@ def _is_admin(user) -> bool:
     return getattr(user, "role", None) == "admin"
 
 
+def _last_github_username(user) -> str:
+    """The student's most recently used GitHub handle across their submissions.
+
+    Lets repo provisioning reuse it so the student types their handle once, ever.
+    """
+    prior = (
+        CapstoneSubmission.objects
+        .filter(enrollment__student=user)
+        .exclude(github_username="")
+        .order_by("-submitted_at")
+        .first()
+    )
+    return prior.github_username if prior else ""
+
+
 def _get_effective_rubric(capstone: Capstone, team_size: int) -> list[CapstoneRubricItem]:
     """Return rubric items applicable to this team size."""
     return list(capstone.rubric_items.filter(min_team_size__lte=team_size))
@@ -366,6 +381,59 @@ class CapstoneViewSet(viewsets.ModelViewSet):
             logger.exception("extract_spec AI call failed")
             return Response({"error": "AI service unavailable."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
+    @action(detail=True, methods=["post"], url_path="suggest-language")
+    def suggest_language(self, request, pk=None):
+        """POST /capstone/<id>/suggest-language/ — AI suggests the course's language.
+
+        Suggestion only: returns {language, confidence, rationale}. The admin
+        reviews/overrides, then PATCHes the capstone to persist `language`.
+        """
+        if not _is_admin(request.user):
+            return Response({"error": "Admin only."}, status=status.HTTP_403_FORBIDDEN)
+        capstone = self.get_object()
+        from apps.courses.models import Concept
+        concepts = list(
+            Concept.objects.filter(course=capstone.course).values_list("label", flat=True)[:40]
+        )
+        payload = {
+            "course_title": capstone.course.title,
+            "course_description": capstone.course.description or "",
+            "concepts": concepts,
+        }
+        try:
+            resp = requests.post(
+                f"{AI_SERVICE_URL}/capstone/suggest-language",
+                json=payload,
+                headers={"X-Service-Key": settings.INTERNAL_SERVICE_KEY},
+                timeout=60,
+            )
+            resp.raise_for_status()
+            return Response(resp.json())
+        except Exception:
+            logger.exception("suggest_language AI call failed")
+            return Response({"error": "AI service unavailable."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    @action(detail=True, methods=["post"], url_path="draft-ci")
+    def draft_ci(self, request, pk=None):
+        """POST /capstone/<id>/draft-ci/ — generate a standardized CI workflow.
+
+        Deterministic (not LLM): a malformed ci.yml would block grading for every
+        student, so the YAML is assembled from vetted per-language templates. The
+        admin can preview with a chosen language/run_command in the body, then
+        PATCH `ci_workflow` (+ language/run_command) onto the capstone to save it.
+        """
+        if not _is_admin(request.user):
+            return Response({"error": "Admin only."}, status=status.HTTP_403_FORBIDDEN)
+        capstone = self.get_object()
+        from .ci_templates import generate_ci_workflow
+
+        language = (request.data.get("language") or capstone.language or "python")
+        run_command = request.data.get("run_command")
+        if run_command is None:
+            run_command = capstone.run_command or ""
+        workflow = generate_ci_workflow(language, run_command)
+        return Response({"language": language, "run_command": run_command, "ci_workflow": workflow})
+
 
 # ---------------------------------------------------------------------------
 # CapstoneRubricItemViewSet
@@ -520,7 +588,12 @@ def capstone_for_course(request, course_id):
 
     if not cap:
         return Response({"error": "No capstone found for this course."}, status=status.HTTP_404_NOT_FOUND)
-    return Response(CapstoneSerializer(cap).data)
+    data = CapstoneSerializer(cap).data
+    if not _is_admin(user):
+        # Pre-fill the provisioning input so the student doesn't retype their
+        # GitHub handle (empty on their very first capstone).
+        data["suggested_github_username"] = _last_github_username(user)
+    return Response(data)
 
 
 @api_view(["GET"])
@@ -639,7 +712,14 @@ def provision_repo(request, capstone_id):
 
     github_username = request.data.get("github_username", "").strip()
     if not github_username:
-        return Response({"error": "github_username required."}, status=status.HTTP_400_BAD_REQUEST)
+        # Reuse the student's most recently used GitHub handle so they only ever
+        # type it once — every later capstone auto-provisions with no input.
+        github_username = _last_github_username(request.user)
+    if not github_username:
+        return Response(
+            {"error": "github_username required.", "reason": "first_time"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     try:
         capstone = Capstone.objects.get(pk=capstone_id)
@@ -723,6 +803,29 @@ def provision_repo(request, capstone_id):
             ensure_branch(repo_url, branch)
         except Exception:
             logger.exception("Could not pre-create work branch for %s", repo_name)
+
+        # 4b. Seed the STANDARDIZED CI workflow onto the work branch so the
+        # required "ci" check runs identically for every student. The canonical
+        # ci_workflow wins; otherwise — only when no template repo already
+        # provides CI — generate a language-appropriate default (this also fixes
+        # the blank-repo case where the required "ci" check could never run).
+        # Best-effort: provisioning still succeeds if the seed commit fails.
+        workflow = (capstone.ci_workflow or "").strip()
+        if not workflow and not capstone.github_template_repo:
+            from .ci_templates import generate_ci_workflow
+            workflow = generate_ci_workflow(capstone.language, capstone.run_command)
+        if workflow:
+            try:
+                from .capstone_git import commit as git_commit
+                git_commit(
+                    repo_url=repo_url,
+                    branch=branch,
+                    changed_files=[{"path": ".github/workflows/ci.yml", "content": workflow}],
+                    message="ci: standardized course workflow",
+                    author_name=github_username,
+                )
+            except Exception:
+                logger.exception("Could not seed CI workflow for %s", repo_name)
 
         # 5. Persist a submission stub so the workspace can resolve the repo
         CapstoneSubmission.objects.update_or_create(
@@ -1060,14 +1163,21 @@ def run_files(request, capstone_id):
         return Response({"error": "Capstone not found."}, status=status.HTTP_404_NOT_FOUND)
 
     files = request.data.get("files", [])
-    entry = request.data.get("entry") or capstone.run_command or ""
+    # `entry` is a STUDENT hint (a file to run); the admin-trusted shell command
+    # and the course language come from the capstone, so any language is runnable.
+    entry = request.data.get("entry") or ""
     if not isinstance(files, list) or not files:
         return Response({"error": "files must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
         resp = requests.post(
             f"{AI_SERVICE_URL}/capstone/run",
-            json={"files": files, "entry": entry},
+            json={
+                "files": files,
+                "entry": entry,
+                "run_command": capstone.run_command or "",
+                "language": capstone.language or "",
+            },
             headers={"X-Service-Key": settings.INTERNAL_SERVICE_KEY},
             timeout=30,
         )

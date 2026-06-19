@@ -19,30 +19,38 @@ logger = logging.getLogger(__name__)
 DJANGO_API_URL = os.getenv("DJANGO_API_URL", "http://localhost:8000/api")
 
 
-async def post_lesson_complete(student_id: str, lesson_id: str) -> dict:
+async def post_lesson_complete(
+    student_id: str, course_id: str, session_number, *, time_spent_minutes=None
+) -> dict:
     """POST the completion trigger to the single Django writer.
 
-    Idempotent on the Django side (the gamified transition fires once per
-    lesson). Returns the response JSON on success, or ``{}`` on any failure —
-    completion is best-effort from here, but Django guarantees exactly-once.
+    A "lesson" is a pathway SESSION; Django records completion keyed by
+    ``(course_id, session_number)`` at ``/progress/complete-session/``
+    (see apps.progress.views.internal_complete_session). Idempotent on the Django
+    side (the gamified transition fires once per session). Returns the response
+    JSON on success, or ``{}`` on any failure — completion is best-effort from
+    here, but Django guarantees exactly-once.
     """
     service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
+    body: dict = {"course_id": course_id, "session_number": session_number}
+    if time_spent_minutes is not None:
+        body["time_spent_minutes"] = time_spent_minutes
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
-                f"{DJANGO_API_URL}/progress/complete-lesson/",
-                json={"lesson_id": lesson_id},
+                f"{DJANGO_API_URL}/progress/complete-session/",
+                json=body,
                 headers={"X-Student-ID": str(student_id), "X-Service-Key": service_key},
             )
             if resp.status_code in (200, 201):
                 return resp.json()
             logger.warning(
-                "complete-lesson returned %d for student=%s lesson=%s",
-                resp.status_code, student_id, lesson_id,
+                "complete-session returned %d for student=%s course=%s session=%s",
+                resp.status_code, student_id, course_id, session_number,
             )
     except Exception as e:
         logger.warning(
-            "Could not POST lesson completion for student=%s lesson=%s: %s",
-            student_id, lesson_id, e,
+            "Could not POST session completion for student=%s course=%s session=%s: %s",
+            student_id, course_id, session_number, e,
         )
     return {}

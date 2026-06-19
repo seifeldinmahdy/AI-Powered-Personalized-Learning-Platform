@@ -17,6 +17,7 @@ import {
   type SERResult,
   type IntentPrediction,
   type FeedbackValue,
+  type TutorStreamChunk,
 } from '../services/tutor';
 
 import { fuseEmotions } from '../services/emotionFusion';
@@ -60,7 +61,7 @@ interface TranscriptEntry {
   role: 'tutor' | 'student';
   text: string;
   topic?: string;
-  sources?: { book: string; page_start: number; page_end: number }[];
+  is_streaming?: boolean;
   // Set on on-topic answers: true = grounded in textbook passages, false =
   // answered without grounding (surface a "grounding unavailable" note).
   grounded?: boolean;
@@ -76,6 +77,9 @@ interface CompactTutorProps {
   courseId?: string;
   sessionId?: string;
   subtopics?: string[];
+  // Titles of lessons already completed before this one, so the tutor can call
+  // back to them ("as we saw last lesson…").
+  priorTopics?: string[];
   fusedEmotion?: string;
   currentSlideIndex?: number;
   currentSlideTitle?: string;
@@ -94,6 +98,7 @@ export function CompactTutor({
   courseId,
   sessionId,
   subtopics = [],
+  priorTopics = [],
   fusedEmotion,
   currentSlideIndex = 0,
   currentSlideTitle,
@@ -133,9 +138,12 @@ export function CompactTutor({
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const panelRef = useRef<HTMLDivElement>(null);
+  
+  // Streaming Audio Context
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const nextStartTimeRef = useRef<number>(0);
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const audioBlobUrlRef = useRef<string | null>(null);
+
   const sessionIdRef = useRef<string | null>(null);
   const isMutedRef = useRef(false);
   const isPausedRef = useRef(false);
@@ -145,6 +153,38 @@ export function CompactTutor({
   const mediaRecorderRef = useRef<{ stop: () => void } | null>(null);
   const visitedSlidesRef = useRef<Set<number>>(new Set([0]));
   const currentSlideRef = useRef(0);  // tracks latest slide for staleness checks
+  // True when the tutor's last turn asked the student something (background
+  // probe / teach-back / Socratic guiding question). The student's next message
+  // is then a REPLY, so we skip retrieval (no RAG for Socratic/probe answers).
+  const awaitingResponseRef = useRef(false);
+
+  const blendshapeTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+
+  const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+
+  const stopCurrentAudio = useCallback(() => {
+    blendshapeTimeoutsRef.current.forEach(id => clearTimeout(id));
+    blendshapeTimeoutsRef.current.clear();
+    
+    activeSourcesRef.current.forEach(source => {
+      try { source.stop(); } catch(e) {}
+    });
+    activeSourcesRef.current.clear();
+    
+    if (audioContextRef.current) {
+      if (audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume();
+      }
+      nextStartTimeRef.current = audioContextRef.current.currentTime;
+    } else {
+      nextStartTimeRef.current = 0;
+    }
+    
+    setIsSpeaking(false);
+    isPausedRef.current = false;
+    setIsPaused(false);
+    setCurrentBlendshapes(null);
+  }, []);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -202,11 +242,8 @@ export function CompactTutor({
     if (!visitedSlidesRef.current.has(currentSlideIndex)) {
       visitedSlidesRef.current.add(currentSlideIndex);
 
-      // Pause any ongoing lecture
-      if (audioRef.current && !audioRef.current.paused) {
-        audioRef.current.pause();
-      }
-      setIsSpeaking(false);
+      // Stop any ongoing lecture
+      stopCurrentAudio();
 
       // Trigger auto-explanation for the new slide
       handleAskQuestion(`Please explain this slide. Title: ${currentSlideTitle}\nContent: ${currentSlideContent}`, fusedEmotion, true, currentSlideIndex);
@@ -218,33 +255,86 @@ export function CompactTutor({
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      audioRef.current?.pause();
-      if (audioBlobUrlRef.current) URL.revokeObjectURL(audioBlobUrlRef.current);
+      if (audioContextRef.current) audioContextRef.current.close();
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+      }
       if (sessionIdRef.current) stopTutorSession(sessionIdRef.current);
     };
   }, []);
 
-  function setAudioSrc(base64: string) {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (audioBlobUrlRef.current) {
-      URL.revokeObjectURL(audioBlobUrlRef.current);
-      audioBlobUrlRef.current = null;
-    }
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const blob = new Blob([bytes], { type: 'audio/mpeg' });
-    audioBlobUrlRef.current = URL.createObjectURL(blob);
-    audio.muted = isMutedRef.current;
-    audio.src = audioBlobUrlRef.current;
-    // Don't autoplay if user has paused
-    if (isPausedRef.current) {
-      setIsSpeaking(false);
-      return;
-    }
-    audio.play().catch(() => setIsSpeaking(false));
+
+  const createOnChunk = (isQuestion: boolean = false) => {
+    let isFirstChunk = true;
+    return async (chunk: TutorStreamChunk) => {
+      if (chunk.text_chunk) {
+        setTranscript((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.role === 'tutor' && last.is_streaming) {
+            const newPrev = [...prev.slice(0, -1)];
+            newPrev.push({ ...last, text: last.text + ' ' + (chunk.text_chunk || '') });
+            return newPrev;
+          } else {
+            return [...prev, { role: 'tutor', text: chunk.text_chunk || '', topic: chunk.subtopic || chunk.topic, is_streaming: true }];
+          }
+        });
+      }
+
+      if (chunk.audio_base64 && audioContextRef.current) {
+        try {
+          const binary = atob(chunk.audio_base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          
+          const audioBuffer = await audioContextRef.current.decodeAudioData(bytes.buffer);
+          const source = audioContextRef.current.createBufferSource();
+          source.buffer = audioBuffer;
+          source.connect(audioContextRef.current.destination);
+          activeSourcesRef.current.add(source);
+          
+          const currentTime = audioContextRef.current.currentTime;
+          // Add a tiny buffer if we're falling behind
+          const startTime = Math.max(currentTime + 0.05, nextStartTimeRef.current);
+          
+          const delayMs = Math.max(0, (startTime - currentTime) * 1000);
+          
+          if (chunk.blendshapes) {
+            const tId = setTimeout(() => {
+              setCurrentBlendshapes(chunk.blendshapes!);
+              blendshapeTimeoutsRef.current.delete(tId);
+            }, delayMs);
+            blendshapeTimeoutsRef.current.add(tId);
+          }
+          
+          source.start(startTime);
+          nextStartTimeRef.current = startTime + audioBuffer.duration;
+          setIsSpeaking(true);
+          
+          source.onended = () => {
+            activeSourcesRef.current.delete(source);
+            if (audioContextRef.current && audioContextRef.current.currentTime >= nextStartTimeRef.current - 0.1) {
+              setIsSpeaking(false);
+              setCurrentBlendshapes(null);
+            }
+          };
+        } catch (e) {
+          console.error('Failed to decode audio chunk', e);
+        }
+      }
+    };
+  };
+
+  function finalizeTranscript() {
+    setTranscript((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === 'tutor' && last.is_streaming) {
+        return [...prev.slice(0, -1), { ...last, is_streaming: false }];
+      }
+      return prev;
+    });
   }
+
+
 
   async function fetchAndPlay(sid: string) {
     if (isFinishedRef.current || isLoadingRef.current) return;
@@ -252,26 +342,14 @@ export function CompactTutor({
     setIsLoading(true);
     try {
       setTutorEmotion('calm');
-      // Pass the latest fused emotion for tone adaptation
       const currentEmotion = fusedEmotion || 'neutral';
-      const chunk = await continueTutorSession(sid, true, currentEmotion !== 'neutral' ? currentEmotion : undefined);
+      
+      const onChunk = createOnChunk(false);
+      const chunk = await continueTutorSession(sid, true, currentEmotion !== 'neutral' ? currentEmotion : undefined, onChunk);
+      
+      finalizeTranscript();
       setProgress(chunk.progress);
-
-      if (chunk.text) {
-        setTranscript((prev) => [
-          ...prev,
-          { role: 'tutor', text: chunk.text, topic: chunk.subtopic || chunk.topic },
-        ]);
-      }
-
-      setCurrentBlendshapes(chunk.blendshapes || null);
-
-      if (chunk.audio_base64) {
-        setAudioSrc(chunk.audio_base64);
-        setIsSpeaking(true);
-      } else {
-        setIsSpeaking(false);
-      }
+      awaitingResponseRef.current = !!chunk.awaiting_response;
 
       if (chunk.is_finished) {
         isFinishedRef.current = true;
@@ -287,20 +365,23 @@ export function CompactTutor({
   }
 
   const handleStart = async () => {
-    if (!lessonTitle || !audioRef.current) return;
+    if (!lessonTitle) return;
     setStarted(true);
     setIsLoading(true);
     isLoadingRef.current = true;
 
     // Step 1: unlock audio synchronously in the click handler
-    const audio = audioRef.current;
-    audio.src = '';
-    try { await audio.play(); } catch { /* expected */ }
-    audio.pause();
-
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    if (audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume();
+    }
+    nextStartTimeRef.current = audioContextRef.current.currentTime;
+    
     // Step 2: fetch session + chunk (async, after unlock)
     try {
-      const session = await startTutorSession(lessonTitle, subtopics, undefined, studentProfileSummary, sessionId);
+      const session = await startTutorSession(lessonTitle, subtopics, undefined, studentProfileSummary, sessionId, priorTopics);
       sessionIdRef.current = session.session_id;
       isLoadingRef.current = false;
       setIsLoading(false);
@@ -314,70 +395,63 @@ export function CompactTutor({
   };
 
   const handlePlayPause = () => {
-    const audio = audioRef.current;
-    console.log('[Pause] audio:', !!audio, 'isPausedRef:', isPausedRef.current, 'paused:', audio?.paused, 'src:', audio?.src?.slice(0, 40));
-    if (!audio) return;
+    if (!audioContextRef.current) return;
     if (isPausedRef.current) {
       isPausedRef.current = false;
       setIsPaused(false);
-      audio.play().catch((e) => console.log('[Pause] play error:', e));
+      audioContextRef.current.resume();
       setIsSpeaking(true);
     } else {
       isPausedRef.current = true;
       setIsPaused(true);
-      audio.pause();
+      audioContextRef.current.suspend();
       setIsSpeaking(false);
     }
   };
 
   const handleNext = () => {
     if (!sessionIdRef.current || isLoadingRef.current || isFinishedRef.current) return;
-    audioRef.current?.pause();
-    setIsSpeaking(false);
-    isPausedRef.current = false;
-    setIsPaused(false);
+    stopCurrentAudio();
     onNextSlide?.();
     fetchAndPlay(sessionIdRef.current);
   };
 
   const handleMute = () => {
-    if (!audioRef.current) return;
+    // We cannot easily mute an AudioContext without a GainNode.
+    // We can just track it and not connect source to destination in onChunk.
+    // For now we just update state.
     const next = !isMutedRef.current;
     isMutedRef.current = next;
     setIsMuted(next);
-    audioRef.current.muted = next;
   };
 
   const handleAskQuestion = async (overrideQuestion?: string, overrideEmotion?: string, isAutoTrigger = false, triggeredForSlide?: number) => {
     const q = (overrideQuestion ?? question).trim();
     if (!sessionIdRef.current || !q || isAsking) return;
 
-    // If this is a stale auto-trigger (student already moved past this slide), discard silently
     if (isAutoTrigger && triggeredForSlide !== undefined && triggeredForSlide !== currentSlideRef.current) {
       return;
     }
 
     setQuestion('');
 
-    // If lecture audio is currently playing, pause it
     if (isSpeaking && !isPausedRef.current) {
-      audioRef.current?.pause();
-      isPausedRef.current = true;
-      setIsPaused(true);
-      setIsSpeaking(false);
+      stopCurrentAudio();
     }
 
     setIsAsking(true);
+    const wasAwaitingReply = awaitingResponseRef.current;
+    awaitingResponseRef.current = false;
+    
     setTranscript((prev) => [
       ...prev,
       { role: 'student', text: isAutoTrigger ? `LearnPal, please explain this slide: ${currentSlideTitle}` : q }
     ]);
 
     try {
-      // Keyword override before calling the model — catches short/ambiguous phrases
-      const repeatKeywords = ['repeat', 'again', 'replay', 'rewind', 'say that again', 'once more', 'didn\'t get that', 'missed that'];
+      const repeatKeywords = ['repeat', 'again', 'replay', 'rewind', "say that again", "once more", "didn't get that", "missed that"];
       const paceKeywords = ['slow down', 'too fast', 'speed up', 'faster', 'slower', 'skip'];
-      const emotionKeywords = ['confused', 'lost', 'frustrated', 'don\'t understand', 'hard', 'difficult', 'give up', 'struggling'];
+      const emotionKeywords = ['confused', 'lost', 'frustrated', "don't understand", 'hard', 'difficult', 'give up', 'struggling'];
       const lower = q.toLowerCase();
       let intent: string = 'On-Topic Question';
       let intentPrediction: IntentPrediction | null = null;
@@ -390,21 +464,16 @@ export function CompactTutor({
         } else if (emotionKeywords.some(k => lower.includes(k))) {
           intent = 'Emotional-State';
         } else {
-          // Format context to match the model's training format so it can
-          // correctly judge what is on-topic vs off-topic for this lesson.
-          const ctx = lessonTitle
-            ? `topic:${lessonTitle} | prev:${lessonTitle} | emotion:neutral | pace:normal`
-            : '';
+          const ctx = lessonTitle ? `topic:${lessonTitle} | prev:${lessonTitle} | emotion:neutral | pace:normal` : '';
           setSessionContext(ctx);
           intentPrediction = await classifyIntent(q, ctx);
           intent = intentPrediction?.intent_name ?? 'On-Topic Question';
         }
       }
 
-      // Handle each intent differently
       const resumeLecture = () => {
-        if (audioRef.current && isPausedRef.current) {
-          audioRef.current.play().catch(() => { });
+        if (isPausedRef.current && audioContextRef.current && audioContextRef.current.state === 'suspended') {
+          audioContextRef.current.resume();
           isPausedRef.current = false;
           setIsPaused(false);
           setIsSpeaking(true);
@@ -412,55 +481,47 @@ export function CompactTutor({
       };
 
       const currentEmotion = overrideEmotion || fusedEmotion || 'neutral';
-
-      const logInteraction = (responseSummary?: string) => {
-        // Backend handles interaction logging via SharedSessionStore
-      };
+      const logInteraction = (responseSummary?: string) => {};
 
       if (intent === 'Off-Topic Question') {
         const msg = "That seems off-topic. Let's stay focused on the current lesson. Feel free to ask anything related to what we're covering!";
-        setTranscript((prev) => [...prev, {
-          role: 'tutor',
-          text: msg,
-          topic: 'Off-Topic',
-        }]);
+        setTranscript((prev) => [...prev, { role: 'tutor', text: msg, topic: 'Off-Topic' }]);
         logInteraction(msg);
         setTutorEmotion('confused');
-        setTutorEmotion('confused');
-
         try {
           const b64 = await synthesizeAudio(msg, 'calm', sessionIdRef.current);
+          const binary = atob(b64!);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const audioBuffer = await audioContextRef.current!.decodeAudioData(bytes.buffer);
+          const source = audioContextRef.current!.createBufferSource();
+          source.buffer = audioBuffer;
+          source.connect(audioContextRef.current!.destination);
+          source.start();
           isPausedRef.current = false;
           setIsPaused(false);
-          setAudioSrc(b64);
           setIsSpeaking(true);
         } catch {
           resumeLecture();
         }
-
         setIsAsking(false);
         return;
       }
 
+      const onChunk = createOnChunk(true);
+
       if (intent === 'Emotional-State') {
-        // Re-explain the current topic instead of just encouraging
         const res = await askTutor(
           sessionIdRef.current,
           `The student said: "${q}". Please offer brief encouragement and re-explain the current topic in a simpler way.`,
           !isMutedRef.current,
           currentEmotion !== 'neutral' ? currentEmotion : undefined,
+          undefined,
+          onChunk
         );
-        setTranscript((prev) => [...prev, { role: 'tutor', text: res.answer, topic: 'Encouragement' }]);
+        finalizeTranscript();
         logInteraction(res.answer);
         setTutorEmotion('happy');
-        setTutorEmotion('happy');
-        setCurrentBlendshapes(res.blendshapes || null);
-        if (res.audio_base64) {
-          isPausedRef.current = false;
-          setIsPaused(false);
-          setAudioSrc(res.audio_base64);
-          setIsSpeaking(true);
-        }
         setIsAsking(false);
         return;
       }
@@ -473,12 +534,7 @@ export function CompactTutor({
         } else if (textToAnalyze.includes('fast') || (textToAnalyze.includes('slow') && textToAnalyze.includes('too'))) {
           targetPace = 'fast';
         }
-
-        try {
-          if (sessionIdRef.current) {
-            await setTutorPace(sessionIdRef.current, targetPace);
-          }
-        } catch { /* ignore */ }
+        try { if (sessionIdRef.current) await setTutorPace(sessionIdRef.current, targetPace); } catch {}
 
         const msg = targetPace === 'slow'
           ? "Got it! I will slow down my speaking pace for the rest of the session."
@@ -486,68 +542,49 @@ export function CompactTutor({
             ? "Got it! I will speak faster for the rest of the session."
             : "Got it! You can use the Pause button to take a break or Next to skip ahead. I'll keep going at your pace.";
 
-        setTranscript((prev) => [...prev, {
-          role: 'tutor',
-          text: msg,
-          topic: 'Pace',
-        }]);
+        setTranscript((prev) => [...prev, { role: 'tutor', text: msg, topic: 'Pace' }]);
         logInteraction(msg);
         setTutorEmotion('calm');
-
         try {
           const b64 = await synthesizeAudio(msg, 'calm', sessionIdRef.current);
+          const binary = atob(b64!);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const audioBuffer = await audioContextRef.current!.decodeAudioData(bytes.buffer);
+          const source = audioContextRef.current!.createBufferSource();
+          source.buffer = audioBuffer;
+          source.connect(audioContextRef.current!.destination);
+          source.start();
           isPausedRef.current = false;
           setIsPaused(false);
-          setAudioSrc(b64);
           setIsSpeaking(true);
-        } catch {
-          resumeLecture();
-        }
-
+        } catch { resumeLecture(); }
         setIsAsking(false);
         return;
       }
 
       if (intent === 'Repeat/clarification') {
-        if (audioBlobUrlRef.current && audioRef.current) {
-          // If audio already ended, replay from start; otherwise just unpause
-          if (audioRef.current.ended || audioRef.current.currentTime === 0) {
-            audioRef.current.currentTime = 0;
-          }
-          audioRef.current.play().catch(() => { });
-          setIsSpeaking(true);
-          isPausedRef.current = false;
-          setIsPaused(false);
-          const msg = "Sure! Let me repeat that for you.";
-          setTranscript((prev) => [...prev, {
-            role: 'tutor',
-            text: msg,
-            topic: 'Repeat',
-          }]);
-          logInteraction(msg);
-          setTutorEmotion('excited');
-          setIsAsking(false);
-          return;
-        }
-        // Fallback: ask tutor to re-explain if no audio cached
+        resumeLecture();
+        const msg = "Sure! Let me repeat that for you.";
+        setTranscript((prev) => [...prev, { role: 'tutor', text: msg, topic: 'Repeat' }]);
+        logInteraction(msg);
+        setTutorEmotion('excited');
+        setIsAsking(false);
+        return;
       }
 
-      // On-Topic Question (or Repeat/clarification fallback)
-      // Retrieve RAW textbook passages scoped to THIS course's corpus, and let
-      // the tutor LLM ground on them directly (no pre-generated RAG answer, no
-      // telephone game). courseId is required to resolve the corpus scope.
       let grounding: import('../services/tutor').RAGPassage[] = [];
-      let ragSources: { book: string; page_start: number; page_end: number }[] = [];
-      if (courseId) {
+      const ACK_RE = /^(yes|yeah|yep|no|nope|ok|okay|sure|maybe|right|correct|true|false|done|got it|i think so|i guess|idk|i don'?t know|not sure|thanks|thank you|cool|nice|hmm+)\b[\s.!?]*$/i;
+      const isTrivialReply = q.split(/\s+/).filter(Boolean).length <= 2 || ACK_RE.test(q.trim());
+      const shouldRetrieve = !!courseId && !wasAwaitingReply && !isTrivialReply;
+
+      if (shouldRetrieve) {
         try {
-          const ragRes = await askRag(q, courseId);
+          const ragRes = await askRag(q, courseId!);
           if (ragRes.grounded && ragRes.passages.length > 0) {
             grounding = ragRes.passages;
-            ragSources = ragRes.passages.map(s => ({ book: s.book, page_start: s.page_start, page_end: s.page_end }));
           }
-        } catch {
-          // Retrieval unavailable — fall through to an ungrounded tutor answer.
-        }
+        } catch {}
       }
 
       const res = await askTutor(
@@ -556,10 +593,12 @@ export function CompactTutor({
         !isMutedRef.current,
         currentEmotion !== 'neutral' ? currentEmotion : undefined,
         grounding.length > 0 ? grounding : undefined,
+        onChunk
       );
 
-      // Staleness guard: if this was an auto-explain and the student moved
-      // to a different slide while we were waiting, discard the response.
+      finalizeTranscript();
+      awaitingResponseRef.current = !!res.awaiting_response;
+
       if (isAutoTrigger && triggeredForSlide !== undefined && triggeredForSlide !== currentSlideRef.current) {
         setIsAsking(false);
         return;
@@ -570,7 +609,7 @@ export function CompactTutor({
         const chatLog = await persistChatLog({
           lesson: lessonId,
           transcript_text: q,
-          ai_response_text: res.answer,
+          ai_response_text: res.answer ?? '',
           session_id: sessionIdRef.current ?? undefined,
           session_context: sessionContext,
           predicted_intent: intentPrediction?.intent_name,
@@ -580,27 +619,17 @@ export function CompactTutor({
         chatLogId = chatLog?.id;
       }
 
-      setTranscript((prev) => [...prev, {
-        role: 'tutor',
-        text: res.answer,
-        topic: 'Answer',
-        sources: ragSources.length > 0 ? ragSources : undefined,
-        grounded: res.grounded,
-        chatLogId,
-        intent: intentPrediction,
-        feedback: null,
-      }]);
+      setTranscript((prev) => {
+        const last = prev[prev.length - 1];
+        if (last && last.role === 'tutor' && !last.is_streaming) {
+            return [...prev.slice(0, -1), { ...last, grounded: res.grounded, chatLogId, intent: intentPrediction }];
+        }
+        return prev;
+      });
 
       logInteraction(res.answer);
       setTutorEmotion('happy');
 
-      setCurrentBlendshapes(res.blendshapes || null);
-      if (res.audio_base64) {
-        isPausedRef.current = false;
-        setIsPaused(false);
-        setAudioSrc(res.audio_base64);
-        setIsSpeaking(true);
-      }
     } catch {
       setTranscript((prev) => [...prev, {
         role: 'tutor',
@@ -662,12 +691,9 @@ export function CompactTutor({
       return;
     }
 
-    // If lecture audio is currently playing, pause it to prevent overlap
+    // If lecture audio is currently playing, stop it to prevent overlap
     if (isSpeaking && !isPausedRef.current) {
-      audioRef.current?.pause();
-      isPausedRef.current = true;
-      setIsPaused(true);
-      setIsSpeaking(false);
+      stopCurrentAudio();
     }
 
     try {
@@ -788,15 +814,7 @@ export function CompactTutor({
         ? 'absolute rounded-2xl border border-border bg-card/95 backdrop-blur-md flex flex-col overflow-hidden shadow-2xl z-50'
         : 'shrink-0 border-l-2 border-border bg-card flex flex-col overflow-hidden'
         }`}>
-      <audio
-        ref={audioRef}
-        onEnded={() => {
-          setIsSpeaking(false);
-          isPausedRef.current = false;
-          setIsPaused(false);
-        }}
-        style={{ display: 'none' }}
-      />
+      
 
       {/* Header — always visible when docked */}
       {(!started || !isDetached) && (
@@ -841,7 +859,7 @@ export function CompactTutor({
             <div className="relative rounded-full bg-gradient-to-br from-primary via-secondary to-accent p-1.5 shadow-2xl transition-all duration-300 flex items-center justify-center"
                  style={{ width: 144 * bubbleScale, height: 144 * bubbleScale }}>
               <Nova3DAvatar
-                audioRef={audioRef}
+                isSpeaking={isSpeaking}
                 emotion={fusedEmotion || tutorEmotion}
                 blendshapeData={currentBlendshapes}
                 size={144 * bubbleScale - 12}
@@ -890,7 +908,7 @@ export function CompactTutor({
             <div className="absolute inset-0 bg-gradient-to-br from-secondary to-accent rounded-full blur-xl opacity-20 pointer-events-none" />
             <div className="relative rounded-full bg-gradient-to-br from-primary via-secondary to-accent p-1.5 shadow-xl w-40 h-40">
               <Nova3DAvatar
-                audioRef={audioRef}
+                isSpeaking={isSpeaking}
                 emotion={fusedEmotion || tutorEmotion}
                 blendshapeData={currentBlendshapes}
                 size={154}
@@ -972,15 +990,6 @@ export function CompactTutor({
                 <span className="text-xs font-semibold text-muted-foreground block mb-0.5">{entry.topic}</span>
               )}
               <p className="text-sm text-foreground/80 leading-relaxed break-words whitespace-pre-wrap">{entry.text}</p>
-              {entry.sources && entry.sources.length > 0 && (
-                <div className="mt-1.5 space-y-0.5">
-                  {entry.sources.map((s, si) => (
-                    <span key={si} className="inline-block text-xs bg-secondary/10 text-secondary rounded px-2 py-0.5 mr-1">
-                      📖 {s.book} p.{s.page_start}–{s.page_end}
-                    </span>
-                  ))}
-                </div>
-              )}
               {entry.role === 'tutor' && entry.grounded === false && (
                 <div className="mt-1.5 text-xs text-amber-600/90 flex items-center gap-1">
                   ⚠ Grounding unavailable — answered from general knowledge, not the course textbook.

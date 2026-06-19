@@ -128,7 +128,7 @@ export default function ProblemSet() {
         if (!courseId || !sessionNumber) return;
         (async () => {
             try {
-                const plan = await getCurrentPathway(studentId, courseId);
+                const plan = await getCurrentPathway(courseId);
                 setPlanVersion(plan.plan_version);
                 await refreshMeta(plan.plan_version);
             } catch {

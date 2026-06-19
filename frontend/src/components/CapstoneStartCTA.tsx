@@ -28,7 +28,13 @@ export function CapstoneStartCTA({ courseId, variant = 'card', locked = false }:
     useEffect(() => {
         let cancelled = false;
         getCapstoneForCourse(courseId)
-            .then(cap => { if (!cancelled) setCapstone(cap); })
+            .then(cap => {
+                if (cancelled) return;
+                setCapstone(cap);
+                // Pre-fill the GitHub handle the student used before, so they
+                // never retype it (empty on their very first capstone).
+                if (cap?.suggested_github_username) setGhUser(cap.suggested_github_username);
+            })
             .catch(() => { if (!cancelled) setCapstone(null); })
             .finally(() => { if (!cancelled) setChecking(false); });
         return () => { cancelled = true; };

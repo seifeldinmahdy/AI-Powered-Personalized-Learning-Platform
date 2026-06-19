@@ -11,6 +11,8 @@ import subprocess
 from typing import Dict, List, Optional
 import logging
 
+from services.tts_tags import strip_all_tags
+
 logger = logging.getLogger(__name__)
 
 # Best English neural voices
@@ -42,6 +44,7 @@ class TTSService:
         voice: str = DEFAULT_VOICE,
         rate: str = "+0%",
         pitch: str = "+0Hz",
+        delivery=None,  # accepted for interface parity with Chatterbox; Edge uses rate/pitch
     ) -> Dict:
         """
         Synthesize speech from text.
@@ -55,6 +58,9 @@ class TTSService:
         Returns:
             Dict with audio_bytes, content_type, and metadata.
         """
+        # Edge can't interpret spoken-cue tags — strip them so it never reads
+        # "[sigh]" aloud (Chatterbox keeps them; this is the fallback path).
+        text = strip_all_tags(text)
         for attempt in range(3):
             try:
                 logger.info(
@@ -102,6 +108,7 @@ class TTSService:
         voice: str = DEFAULT_VOICE,
         rate: str = "+0%",
         pitch: str = "+0Hz",
+        delivery=None,  # accepted for interface parity with Chatterbox; Edge uses rate/pitch
     ) -> str:
         """Synthesize speech and convert to 16 kHz mono 16-bit PCM WAV.
 
@@ -116,6 +123,7 @@ class TTSService:
         Returns:
             Path to the temporary WAV file. Caller MUST delete after use.
         """
+        text = strip_all_tags(text)  # Edge can't speak cue tags; strip them.
         for attempt in range(3):
             try:
                 import imageio_ffmpeg
@@ -201,13 +209,76 @@ class TTSService:
         return list(SUPPORTED_STYLES)
 
 
+class VoiceRouter:
+    """Dispatches TTS to the configured backend with graceful Edge fallback.
+
+    ``TTS_BACKEND=chatterbox`` uses Chatterbox Turbo; ``edge`` (default) uses
+    Edge. Any Chatterbox load/synthesis failure trips a process-wide circuit
+    breaker and serves Edge for the rest of the run, so the tutor never goes
+    silent. All call sites keep using ``get_tts_service().synthesize(...)``.
+    """
+
+    def __init__(self) -> None:
+        self._edge: Optional[TTSService] = None
+        self._chatterbox = None
+        self._chatterbox_dead = False
+
+    def _edge_backend(self) -> TTSService:
+        if self._edge is None:
+            self._edge = TTSService()
+        return self._edge
+
+    def _want_chatterbox(self) -> bool:
+        backend = os.getenv("TTS_BACKEND", "edge").strip().lower()
+        return backend in ("chatterbox", "turbo", "chatterbox-turbo") and not self._chatterbox_dead
+
+    def _chatterbox_backend(self):
+        if self._chatterbox is None:
+            from services.tts_chatterbox import get_chatterbox_service
+            self._chatterbox = get_chatterbox_service()
+        return self._chatterbox
+
+    async def synthesize(self, *args, **kwargs) -> Dict:
+        if self._want_chatterbox():
+            try:
+                return await self._chatterbox_backend().synthesize(*args, **kwargs)
+            except Exception as exc:
+                logger.warning("Chatterbox synthesize failed (%s) — falling back to Edge for the rest of this process", exc)
+                self._chatterbox_dead = True
+        return await self._edge_backend().synthesize(*args, **kwargs)
+
+    async def synthesize_wav(self, *args, **kwargs) -> str:
+        if self._want_chatterbox():
+            try:
+                return await self._chatterbox_backend().synthesize_wav(*args, **kwargs)
+            except Exception as exc:
+                logger.warning("Chatterbox synthesize_wav failed (%s) — falling back to Edge for the rest of this process", exc)
+                self._chatterbox_dead = True
+        return await self._edge_backend().synthesize_wav(*args, **kwargs)
+
+    async def list_voices(self, language: str = "en") -> List[Dict]:
+        backend = self._chatterbox_backend() if self._want_chatterbox() else self._edge_backend()
+        try:
+            return await backend.list_voices(language)
+        except Exception:
+            return await self._edge_backend().list_voices(language)
+
+    def get_preset_voices(self) -> Dict[str, str]:
+        backend = self._chatterbox_backend() if self._want_chatterbox() else self._edge_backend()
+        return backend.get_preset_voices()
+
+    def get_supported_styles(self) -> List[str]:
+        backend = self._chatterbox_backend() if self._want_chatterbox() else self._edge_backend()
+        return backend.get_supported_styles()
+
+
 # ── Singleton ──
-_tts_service: Optional[TTSService] = None
+_voice_router: Optional[VoiceRouter] = None
 
 
-def get_tts_service() -> TTSService:
-    """Get or create the global TTS service instance."""
-    global _tts_service
-    if _tts_service is None:
-        _tts_service = TTSService()
-    return _tts_service
+def get_tts_service() -> VoiceRouter:
+    """Return the global voice router (Chatterbox-or-Edge, with Edge fallback)."""
+    global _voice_router
+    if _voice_router is None:
+        _voice_router = VoiceRouter()
+    return _voice_router

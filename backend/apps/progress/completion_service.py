@@ -30,17 +30,17 @@ def _advance_current_session(enrollment, completed_session_number):
         enrollment=enrollment, status="Completed"
     ).count()
     
+    # The authoritative plan (with total_sessions) lives in the AI-service
+    # versioned store; Enrollment.current_pathway is no longer written, so read
+    # the current plan directly. Degrades to 0 (progress unchanged) on failure.
     total_sessions = 0
-    if enrollment.current_pathway and isinstance(enrollment.current_pathway, dict) and enrollment.current_pathway.get("total_sessions"):
-        total_sessions = enrollment.current_pathway.get("total_sessions")
-    else:
-        try:
-            from apps.courses.views import _fetch_current_plan
-            plan = _fetch_current_plan(enrollment.student_id, enrollment.course_id)
-            if plan and plan.get("total_sessions"):
-                total_sessions = int(plan.get("total_sessions"))
-        except Exception:
-            pass
+    try:
+        from apps.courses.views import _fetch_current_plan
+        plan = _fetch_current_plan(enrollment.student_id, enrollment.course_id)
+        if plan and plan.get("total_sessions"):
+            total_sessions = int(plan.get("total_sessions"))
+    except Exception:
+        pass
         
     if total_sessions > 0:
         new_pct = min(100.0, (completed_count / float(total_sessions)) * 100.0)
