@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, CheckCircle2, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle2, Loader2, ClipboardCheck } from 'lucide-react';
 
 interface SessionControlsProps {
   currentSlide: number;
@@ -13,6 +13,10 @@ interface SessionControlsProps {
   hasPrevLesson?: boolean;
   hasNextLesson?: boolean;
   isLastLesson?: boolean;
+  /** When set, overrides the NEXT button label (e.g. a pending knowledge check). */
+  nextLabelOverride?: string;
+  /** When set, overrides the COMPLETE button label (e.g. the END "Practice" check). */
+  completeLabelOverride?: string;
 }
 
 export function SessionControls({
@@ -26,14 +30,17 @@ export function SessionControls({
   hasPrevLesson,
   hasNextLesson,
   isLastLesson,
+  nextLabelOverride,
+  completeLabelOverride,
 }: SessionControlsProps) {
   const isFirstSlide = currentSlide === 0;
   const isLastSlide = currentSlide >= totalSlides - 1;
 
   // Prev is disabled only if it's the first slide AND there's no previous lesson
   const prevDisabled = isFirstSlide && !hasPrevLesson;
-  // Next is disabled only if it's the last slide AND there's no next lesson
-  const nextDisabled = isLastSlide && !hasNextLesson;
+  // A pending knowledge check overrides NEXT and re-enables it even on the last
+  // slide (so the student can reach the check before the lesson can advance).
+  const nextDisabled = !nextLabelOverride && isLastSlide && !hasNextLesson;
 
   // While the tutor speaks we keep the buttons hoverable (so the not-allowed
   // cursor shows) but no-op the click — a `disabled` attribute would force the
@@ -42,7 +49,9 @@ export function SessionControls({
   const lockTitle = navLocked ? 'Wait for the tutor to finish speaking' : undefined;
 
   const prevLabel = isFirstSlide && hasPrevLesson ? '← PREV LESSON' : 'PREVIOUS';
-  const nextLabel = isLastSlide && hasNextLesson ? 'NEXT LESSON →' : 'NEXT';
+  const nextLabel = nextLabelOverride
+    ? nextLabelOverride
+    : isLastSlide && hasNextLesson ? 'NEXT LESSON →' : 'NEXT';
 
   // Slide-strip indicator (mirrors the personifai SlideStrip): the active slide
   // is a wide accent bar, visited slides are steel, upcoming are faint.
@@ -102,6 +111,8 @@ export function SessionControls({
         <button onClick={onComplete} disabled={isCompleting} className="btn btn-red" style={{ padding: '12px 18px' }}>
           {isCompleting ? (
             <><Loader2 size={16} className="animate-spin" /> COMPLETING…</>
+          ) : completeLabelOverride ? (
+            <><ClipboardCheck size={16} /> {completeLabelOverride}</>
           ) : isLastLesson ? (
             <><CheckCircle2 size={16} /> FINISH COURSE</>
           ) : (

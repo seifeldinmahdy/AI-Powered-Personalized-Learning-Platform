@@ -27,4 +27,5 @@ urlpatterns = [
     path("complete-session/", views.internal_complete_session, name="complete-session"),
     path("concept-mastery/<str:concept_id>/history/", views.concept_mastery_history, name="concept-mastery-history"),
     path("trigger-retraining/", views.trigger_retraining, name="trigger_retraining"),
+    path("intent-choices/", views.intent_choices, name="intent-choices"),
 ]

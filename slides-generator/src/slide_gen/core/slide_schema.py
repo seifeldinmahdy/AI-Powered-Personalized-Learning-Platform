@@ -46,12 +46,26 @@ class HighlightType(str, Enum):
 
 class CodeBlock(BaseModel):
     """Code block for displaying programming examples."""
-    
+
     language: str = Field(
         description="Programming language (e.g., 'python', 'javascript', 'java')"
     )
     code: str = Field(
         description="The actual code content with proper indentation"
+    )
+    output: Optional[str] = Field(
+        default=None,
+        description="Demonstrative expected console output, shown when the user "
+                    "'runs' the snippet. LLM-generated, NOT executed (no sandbox)."
+    )
+    runnable: bool = Field(
+        default=False,
+        description="True when an output is available, so the frontend renders a Run button."
+    )
+    generated: bool = Field(
+        default=False,
+        description="True when the snippet was synthesized by the LLM (no literal "
+                    "code in the source), False when extracted and only validated/augmented."
     )
 
 

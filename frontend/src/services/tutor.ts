@@ -1,7 +1,10 @@
 import { aiFetch } from './aiClient';
+import type { IntentName } from '../lib/intents';
 
 const AI_URL = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001';
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+
+export type { IntentName };
 
 export interface TutorSession {
   session_id: string;
@@ -187,7 +190,7 @@ export async function askTutor(
 }
 
 export interface IntentPrediction {
-  intent_name: string;
+  intent_name: IntentName;
   label_id: number;
   confidence: number;
   probabilities: Record<string, number>;
@@ -255,6 +258,26 @@ export interface FeedbackResponse {
   retraining_recommended: boolean;
 }
 
+export interface IntentChoice {
+  value: string;
+  label: string;
+  description: string;
+}
+
+export async function fetchIntentChoices(): Promise<IntentChoice[]> {
+  const token = localStorage.getItem('access_token');
+  if (!token) return [];
+  try {
+    const res = await fetch(`${API_URL}/progress/intent-choices/`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return [];
+    return (await res.json()) as IntentChoice[];
+  } catch {
+    return [];
+  }
+}
+
 export async function submitFeedback(
   chatLogId: number,
   feedback: FeedbackValue,
@@ -281,6 +304,18 @@ export async function stopTutorSession(session_id: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id }),
   });
+}
+
+export async function abandonSocraticExchange(session_id: string): Promise<void> {
+  try {
+    await fetch(`${AI_URL}/tutor/abandon-socratic`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id }),
+    });
+  } catch {
+    // Non-blocking: the backend will still assess on the next turn.
+  }
 }
 
 export async function setTutorPace(session_id: string, pace: 'slow' | 'normal' | 'fast'): Promise<void> {
@@ -338,7 +373,6 @@ export async function askRag(question: string, courseId: string): Promise<RAGRes
   return res.json();
 }
 
-export type IntentName = 'On-Topic Question' | 'Off-Topic Question' | 'Emotional-State' | 'Pace-Related' | 'Repeat/clarification';
 
 export async function classifyIntent(text: string, sessionId = ''): Promise<IntentPrediction | null> {
   try {

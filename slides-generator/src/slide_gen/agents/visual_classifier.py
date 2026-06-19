@@ -79,10 +79,12 @@ def _load_level1(model_base: str | Path):
     else:
         _l1_labels = CATEGORY_LIST
 
-    from transformers import DistilBertForSequenceClassification, DistilBertTokenizer
+    # Auto* reads config.json's model_type, so this works for RoBERTa (current)
+    # and the older DistilBERT checkpoints alike.
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-    _l1_tokenizer = DistilBertTokenizer.from_pretrained(str(l1_path))
-    _l1_model = DistilBertForSequenceClassification.from_pretrained(
+    _l1_tokenizer = AutoTokenizer.from_pretrained(str(l1_path))
+    _l1_model = AutoModelForSequenceClassification.from_pretrained(
         str(l1_path), num_labels=len(_l1_labels)
     )
     _l1_model.to(_device)
@@ -117,10 +119,10 @@ def _load_level2(model_base: str | Path, category: str):
         _l2_models[category] = None
         return None
 
-    from transformers import DistilBertForSequenceClassification, DistilBertTokenizer
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-    tokenizer = DistilBertTokenizer.from_pretrained(str(l2_path))
-    model = DistilBertForSequenceClassification.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(str(l2_path))
+    model = AutoModelForSequenceClassification.from_pretrained(
         str(l2_path), num_labels=len(labels)
     )
     model.to(_device)

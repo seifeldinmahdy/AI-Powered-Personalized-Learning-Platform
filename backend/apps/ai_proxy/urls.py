@@ -33,7 +33,7 @@ urlpatterns = [
     path("slides/generate/", views.slides_generate, name="ai-slides-generate"),
     path("slides/persisted/<str:course_id>/", views.slides_persisted,
          name="ai-slides-persisted"),
-    # Group D: assessments
+    # Group D: assessments (placement) + in-session MCQ knowledge checkpoints
     path("assessments/submit-placement/", views.assessments_submit_placement,
          name="ai-assessments-submit-placement"),
     path("assessments/session/", views.assessments_session,

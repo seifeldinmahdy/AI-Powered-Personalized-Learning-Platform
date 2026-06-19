@@ -44,10 +44,15 @@ def _get_ollama_client(settings):
 
     from pathway.llm.naming import OllamaClient  # type: ignore
 
+    # When QG_OLLAMA_MODEL is set we serve the local fine-tuned GGUF model
+    # (e.g. "mcq-qg") from a local Ollama daemon; otherwise fall back to the
+    # configured cloud model. Mirrors the routing in streamlit_tester.
+    local_model = getattr(settings, "QG_OLLAMA_MODEL", "") or ""
+    is_local = bool(local_model)
     _ollama_client = OllamaClient(
-        host=settings.OLLAMA_HOST,
-        model=settings.OLLAMA_MODEL,
-        api_key=settings.OLLAMA_API_KEY,
+        host="http://localhost:11434" if is_local else settings.OLLAMA_HOST,
+        model=local_model or settings.OLLAMA_MODEL,
+        api_key="" if is_local else settings.OLLAMA_API_KEY,
         max_retries=3,
         timeout=120,
     )
@@ -191,12 +196,34 @@ def _generate_with_ollama(
     score_category: str,
     settings,
 ) -> dict | None:
-    """Generate question via Ollama LLM."""
+    """Generate question via Ollama LLM.
+
+    Local fine-tuned mode (QG_OLLAMA_MODEL set): use the SAME chat prompt the
+    model was trained on and parse its tagged QUESTION/ANSWER/EXPLANATION output
+    — NOT JSON. Cloud fallback uses the richer JSON prompt + chat_json.
+    """
+    client = _get_ollama_client(settings)
+
+    if getattr(settings, "QG_OLLAMA_MODEL", ""):
+        messages = build_qg_chat_prompt(
+            chunk_text, question_type, mastery_level, score_category,
+        )
+        raw = client.chat(
+            messages=messages,
+            temperature=0.0,
+            json_mode=False,
+            timeout_override=120,
+            num_predict=256,
+        )
+        parsed = extract_qg_output(raw)
+        if not parsed or "question" not in parsed or "correct_answer" not in parsed:
+            logger.warning("qg_ollama_local_parse_failed", raw=str(raw)[:160])
+            return None
+        return parsed
+
     prompt = build_qg_prompt(
         chunk_text, question_type, mastery_level, score_category,
     )
-
-    client = _get_ollama_client(settings)
     data = client.chat_json(
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,

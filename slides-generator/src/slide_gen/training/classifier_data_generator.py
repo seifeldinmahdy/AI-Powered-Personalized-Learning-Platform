@@ -378,10 +378,16 @@ class ClassifierDataGenerator:
         model: str | None = None,
         max_retries: int | None = None,
         api_key: str | None = None,
+        call_override=None,
     ):
         # Load .env for defaults
         from dotenv import load_dotenv
         load_dotenv()
+
+        # Optional transport override: a callable (system_prompt, user_prompt) ->
+        # str | None. When set, classification calls route through it instead of
+        # the Ollama /api/generate HTTP path (used to classify via NVIDIA NIM).
+        self.call_override = call_override
 
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -410,7 +416,14 @@ class ClassifierDataGenerator:
             return yaml.safe_load(f)
 
     def _call_ollama(self, prompt: str) -> str | None:
-        """Call Ollama API (local or cloud) and return response text."""
+        """Call the LLM and return response text.
+
+        If a transport override is set (e.g. NVIDIA NIM), route through it;
+        otherwise hit the Ollama /api/generate endpoint.
+        """
+        if self.call_override is not None:
+            return self.call_override(self.system_prompt, prompt)
+
         url = f"{self.ollama_host}/api/generate"
 
         headers = {}

@@ -25,6 +25,7 @@ from mcq.models import (
     SessionAssessmentRequest,
 )
 from mcq.qg import generate_question
+from mcq.refine import refine_mcq
 from mcq.selector import select_question_type
 
 logger = structlog.get_logger(__name__)
@@ -249,9 +250,54 @@ def _generate_single_mcq(
         )
         return None
 
+    # ── 4. In-session refinement ────────────────────────────────────
+    # Deterministic regex + embedding cleanup, plus an optional NVIDIA NIM
+    # (nemotron) judge+repair pass. Fixes paraphrase-of-answer distractors,
+    # fallback padding, low diversity, and leaked prefixes before serving.
+    misconception_context = _build_misconception_context(
+        context.incorrectly_answered, chunk_topic
+    )
+    mcq = refine_mcq(
+        mcq,
+        chunk_text=chunk_text,
+        embedder=embedder,
+        settings=settings,
+        misconception_context=misconception_context,
+    )
+
     # Carry the source chunk's concept so the checkpoint can write per-concept
     # mastery on submission (closing the difficulty loop without topic fuzzing).
     if chunk_concept_id:
         mcq.concept_id = str(chunk_concept_id)
 
     return mcq
+
+
+def _build_misconception_context(
+    incorrectly_answered: list[dict],
+    chunk_topic: str,
+) -> str | None:
+    """Summarise the student's prior wrong answers on this topic for refinement.
+
+    The fine-tuned QG model was never trained to consume a misconception signal,
+    so we inject it here (Tier 3) instead: the most recent wrong answer on the
+    current topic becomes a one-line context the judge uses to aim a distractor.
+    """
+    if not incorrectly_answered:
+        return None
+    topic_lower = (chunk_topic or "").lower()
+    for entry in reversed(incorrectly_answered):
+        if not isinstance(entry, dict):
+            continue
+        entry_topic = str(entry.get("topic", "")).lower()
+        if topic_lower and entry_topic and topic_lower not in entry_topic \
+                and entry_topic not in topic_lower:
+            continue
+        chosen = str(entry.get("chosen_answer") or entry.get("answer") or "").strip()
+        question = str(entry.get("question", "")).strip()
+        if chosen:
+            ctx = f"On this topic the student previously chose the wrong answer '{chosen[:120]}'"
+            if question:
+                ctx += f" to: '{question[:120]}'"
+            return ctx
+    return None

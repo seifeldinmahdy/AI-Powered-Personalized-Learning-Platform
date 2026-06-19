@@ -27,6 +27,8 @@ import { aiFetch } from '../../services/aiClient';
 import { fuseEmotions } from '../../services/emotionFusion';
 import { getEmotionConsent, grantEmotionConsent, withdrawEmotionConsent } from '../../services/emotionConsent';
 import type { SERResult } from '../../services/tutor';
+import { SessionCheckpoint } from '../../components/SessionCheckpoint';
+import { generateSessionCheckpoint, type MCQQuestionData } from '../../services/assessments';
 
 const AI_URL = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001';
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
@@ -84,6 +86,22 @@ export default function LiveSession() {
   // ─── Student profile for Dr. Nova personalization ─────────────
   const [studentProfileSummary, setStudentProfileSummary] = useState<string | undefined>();
 
+  // ─── In-session MCQ knowledge checkpoints ─────────────────────
+  // Two per session: a MID check (2 questions per topic covered so far) at the
+  // slide midpoint, and an END "Practice" check (1 question per session topic)
+  // at completion. Segmentation is by slide source_topic (always present), not
+  // admin concept_id — so the checkpoint always fires regardless of tagging.
+  const [checkpoint, setCheckpoint] = useState<{
+    kind: 'mid' | 'end';
+    index: number;
+    questions: MCQQuestionData[];
+  } | null>(null);
+  const [checkpointLoading, setCheckpointLoading] = useState(false);
+  const [midDone, setMidDone] = useState(false);
+  const [endDone, setEndDone] = useState(false);
+  // Cache the session's raw chunks (fetched once, reused for both checkpoints).
+  const sessionChunksRef = useRef<Array<{ raw_text: string; topic: string; concept_id?: string; page_start: number }> | null>(null);
+
   const lessonStartTimeRef = useRef<number>(Date.now());
 
   const webcamStreamRef = useRef<MediaStream | null>(null);
@@ -126,6 +144,12 @@ export default function LiveSession() {
     async function load() {
       try {
         setCurrentSlide(0);
+        // Reset checkpoint state for the newly loaded session.
+        setCheckpoint(null);
+        setCheckpointLoading(false);
+        setMidDone(false);
+        setEndDone(false);
+        sessionChunksRef.current = null;
         lessonStartTimeRef.current = Date.now();
 
         // ─── AI Slide Generation (with cache) ─────────────────
@@ -509,6 +533,149 @@ export default function LiveSession() {
     ? plan?.sessions[currentLessonIndex + 1]
     : null;
 
+  // ─── Knowledge-checkpoint segmentation (by slide source_topic) ────
+  // Ordered unique topics across the AI slides — the spine the pathway itself
+  // is built on, so it's always present even when admin concepts are sparse.
+  const sessionTopics = (() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const s of slides) {
+      const t = (s.source_topic || '').trim();
+      if (t && !seen.has(t)) { seen.add(t); out.push(t); }
+    }
+    return out;
+  })();
+
+  // Fire the MID check on the last slide of the first half — but only when the
+  // session is long enough and spans >1 topic (otherwise the END check alone).
+  const midTriggerIndex =
+    slides.length >= 4 && sessionTopics.length >= 2
+      ? Math.floor(slides.length / 2) - 1
+      : -1;
+
+  // Topics covered up to (and including) a slide index.
+  const topicsUpTo = (slideIdx: number): string[] => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (let i = 0; i <= slideIdx && i < slides.length; i++) {
+      const t = (slides[i].source_topic || '').trim();
+      if (t && !seen.has(t)) { seen.add(t); out.push(t); }
+    }
+    return out;
+  };
+
+  const midTopics = midTriggerIndex >= 0 ? topicsUpTo(midTriggerIndex) : [];
+  const endTopics = sessionTopics;
+
+  const currentSessionTitle =
+    plan?.sessions.find((s) => s.session_number === Number(sessionNumber))?.session_title
+    || courseTitle || 'Session';
+
+  // Advance one slide forward (mirrors handleNextSlideOrLesson's slide step),
+  // used to resume after a MID checkpoint closes.
+  const advanceSlide = () => {
+    const totalSlides = slides.length;
+    if (currentSlide < totalSlides - 1) {
+      const nextIdx = currentSlide + 1;
+      setCurrentSlide(nextIdx);
+      if (slides.length > 0) {
+        fetch(`${AI_URL}/session/${sessionIdRef.current}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            current_slide_index: nextIdx,
+            current_slide_title: slides[nextIdx].title,
+            current_slide_content: slides[nextIdx].body_content?.map((i) => i.text).join('\n') || '',
+            next_slide_title: slides[nextIdx + 1]?.title || '',
+            current_concept_id: slides[nextIdx].concept_id || '',
+            visited_slides_push: nextIdx,
+          }),
+        }).catch(console.error);
+      }
+    } else if (nextLesson) {
+      navigate(`/course/${courseId}/session/${nextLesson.session_number}`);
+    }
+  };
+
+  // Fetch (once) and cache this session's raw chunks for checkpoint generation.
+  const loadSessionChunks = async () => {
+    if (sessionChunksRef.current) return sessionChunksRef.current;
+    const res = await api.post('/ai/pathway/session-chunks', {
+      course_id: String(courseId),
+      session_number: Number(sessionNumber),
+    });
+    const chunks = Array.isArray(res.data) ? res.data : [];
+    sessionChunksRef.current = chunks;
+    return chunks;
+  };
+
+  // Pick ONE representative chunk per topic (earliest page) limited to topicSet.
+  const repChunksForTopics = (
+    chunks: Array<{ raw_text: string; topic: string; concept_id?: string; page_start: number }>,
+    topicSet: string[],
+  ) => {
+    const wanted = new Set(topicSet.map((t) => t.trim().toLowerCase()));
+    const best: Record<string, { raw_text: string; topic: string; concept_id?: string; page_start: number }> = {};
+    for (const c of chunks) {
+      const key = (c.topic || '').trim().toLowerCase();
+      if (!wanted.has(key) || !c.raw_text) continue;
+      if (!best[key] || c.page_start < best[key].page_start) best[key] = c;
+    }
+    // Preserve the topic order the student saw them in.
+    return topicSet
+      .map((t) => best[t.trim().toLowerCase()])
+      .filter((c): c is NonNullable<typeof c> => Boolean(c))
+      .map((c) => ({ text: c.raw_text, topic: c.topic, concept_id: c.concept_id || undefined }));
+  };
+
+  // Generate + open a knowledge checkpoint. On failure, mark it done and let the
+  // caller proceed — a generation hiccup must never trap the student.
+  const openCheckpoint = async (kind: 'mid' | 'end', onFailProceed: () => void) => {
+    if (checkpointLoading) return;
+    setCheckpointLoading(true);
+    try {
+      const chunks = await loadSessionChunks();
+      const topics = kind === 'mid' ? midTopics : endTopics;
+      const payloadChunks = repChunksForTopics(chunks, topics);
+      if (payloadChunks.length === 0) { // nothing to test — skip silently
+        if (kind === 'mid') setMidDone(true); else setEndDone(true);
+        onFailProceed();
+        return;
+      }
+
+      let mastery: 'Novice' | 'Intermediate' | 'Expert' = 'Intermediate';
+      try {
+        const ctx = await api.get(`/ai/student-context/${courseId}/`);
+        const m = ctx.data?.profile?.mastery_level;
+        if (m === 'Novice' || m === 'Intermediate' || m === 'Expert') mastery = m;
+      } catch { /* default Intermediate */ }
+
+      const studentId = String(plan?.student_id ?? '');
+      const resp = await generateSessionCheckpoint({
+        chunks: payloadChunks,
+        course_id: String(courseId),
+        student_id: studentId,
+        session_topic: currentSessionTitle,
+        session_number: Number(sessionNumber),
+        checkpoint_index: kind === 'mid' ? 0 : 1,
+        questions_per_chunk: kind === 'mid' ? 2 : 1, // 2 per topic mid, 1 per topic end
+        context: {
+          mastery_level: mastery,
+          student_id: studentId,
+          course_id: String(courseId),
+        },
+      });
+      setCheckpoint({ kind, index: kind === 'mid' ? 0 : 1, questions: resp.questions });
+    } catch (e) {
+      console.error('[LiveSession] checkpoint generation failed', e);
+      toast.error('Could not generate the knowledge check — continuing.');
+      if (kind === 'mid') setMidDone(true); else setEndDone(true);
+      onFailProceed();
+    } finally {
+      setCheckpointLoading(false);
+    }
+  };
+
   const handlePrevSlideOrLesson = () => {
     if (currentSlide > 0) {
       const nextIdx = currentSlide - 1;
@@ -534,6 +701,11 @@ export default function LiveSession() {
   };
 
   const handleNextSlideOrLesson = () => {
+    // MID knowledge checkpoint: about to leave the first-half boundary slide.
+    if (!midDone && midTriggerIndex >= 0 && currentSlide === midTriggerIndex && midTopics.length > 0) {
+      openCheckpoint('mid', advanceSlide);
+      return;
+    }
     const totalSlides = slides.length > 0 ? slides.length : 0;
     if (currentSlide < totalSlides - 1) {
       const nextIdx = currentSlide + 1;
@@ -558,7 +730,7 @@ export default function LiveSession() {
     }
   };
 
-  const handleComplete = useCallback(async () => {
+  const runComplete = useCallback(async () => {
     if (!courseId || !sessionNumber) return;
     setIsCompleting(true);
     stopFERPolling();
@@ -634,6 +806,24 @@ export default function LiveSession() {
       setIsCompleting(false);
     }
   }, [lesson, courseId, navigate, nextLesson, consolidateSessionProfile, stopFERPolling, slides, studentProfileSummary, sessionNumber, plan]);
+
+  // END "Practice" checkpoint intercepts completion: run it first, then finish.
+  const handleComplete = () => {
+    if (!endDone && endTopics.length > 0 && slides.length > 0) {
+      openCheckpoint('end', runComplete);
+      return;
+    }
+    void runComplete();
+  };
+
+  // Called when the checkpoint modal is dismissed (finished or skipped): mark it
+  // done and resume the flow it interrupted (advance for MID, complete for END).
+  const handleCheckpointClose = () => {
+    const kind = checkpoint?.kind;
+    setCheckpoint(null);
+    if (kind === 'mid') { setMidDone(true); advanceSlide(); }
+    else if (kind === 'end') { setEndDone(true); void runComplete(); }
+  };
 
   // ─── Callbacks for CompactTutor ───────────────────────────────
 
@@ -902,6 +1092,14 @@ export default function LiveSession() {
         hasPrevLesson={currentSlide === 0 && !!prevLesson}
         hasNextLesson={currentSlide === totalSlides - 1 && !!nextLesson}
         isLastLesson={isLastSlideOfLastLesson}
+        nextLabelOverride={
+          !midDone && midTriggerIndex >= 0 && currentSlide === midTriggerIndex && midTopics.length > 0
+            ? 'GO TO KNOWLEDGE CHECK'
+            : undefined
+        }
+        completeLabelOverride={
+          !endDone && endTopics.length > 0 && slides.length > 0 ? 'PRACTICE' : undefined
+        }
       />
 
       {/* Camera toggle button — small pill in bottom-right */}
@@ -922,6 +1120,35 @@ export default function LiveSession() {
         {cameraEnabled ? <Camera size={14} /> : <CameraOff size={14} />}
         <span>{cameraEnabled ? 'TRACKING ON' : 'TRACKING OFF'}</span>
       </button>
+
+      {/* Knowledge-checkpoint generation overlay — blurs the lesson while the
+          MCQs are being generated, before the modal itself opens. */}
+      {checkpointLoading && !checkpoint && (
+        <div
+          className="codex"
+          style={{
+            position: 'fixed', inset: 0, zIndex: 10000, display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center', gap: 16, padding: 20,
+            background: 'rgba(19,16,13,0.55)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+          }}
+        >
+          <Loader2 size={32} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
+          <div className="t-label" style={{ color: 'var(--bg-paper)' }}>BUILDING YOUR KNOWLEDGE CHECK…</div>
+        </div>
+      )}
+
+      {/* In-session MCQ knowledge checkpoint (pop-up, blurs + blocks the lesson). */}
+      {checkpoint && (
+        <SessionCheckpoint
+          questions={checkpoint.questions}
+          kind={checkpoint.kind}
+          checkpointIndex={checkpoint.index}
+          courseId={String(courseId)}
+          studentId={String(plan?.student_id ?? '')}
+          sessionNumber={Number(sessionNumber)}
+          onClose={handleCheckpointClose}
+        />
+      )}
 
       {/* Emotion-capture consent modal (Batch 11b) — informed opt-in before any
           webcam access. Off by default; revocable. (Styling intentionally minimal.) */}

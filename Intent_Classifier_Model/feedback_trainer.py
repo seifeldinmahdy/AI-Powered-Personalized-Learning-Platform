@@ -41,9 +41,14 @@ MIXED_SPLITS = {
     "test": DATA_DIR / "test_mixed.csv",
 }
 FEEDBACK_TEST_CSV = DATA_DIR / "feedback_test.csv"
+FEEDBACK_MANIFEST = BASE_DIR / "feedback_batch_manifest.json"
 MODEL_OUTPUT = BASE_DIR / "best_model_feedback.pt"
 RESULTS_OUTPUT = BASE_DIR / "training_results_feedback.json"
 PROD_MODEL = BASE_DIR / "best_model.pt"
+
+# Quality safeguard: no single student's utterances may dominate a retraining batch.
+MAX_STUDENT_FRACTION = 0.40
+SAMPLE_SIZE = 10
 
 INTENT_LABEL_MAP = {
     "On-Topic Question": 0,
@@ -76,11 +81,62 @@ def load_feedback(csv_path: Path) -> pd.DataFrame:
         df.loc[mask, "label"] = df.loc[mask, "corrected_intent"].map(corrected_map)
     df["intent_name"] = df["label"].map(lambda i: INTENT_NAMES[i])
 
-    return df[["student_input", "session_context", "label", "intent_name"]]
+    return df
+
+
+def cap_per_student(df: pd.DataFrame, max_fraction: float = MAX_STUDENT_FRACTION, random_state: int = 42) -> pd.DataFrame:
+    """Downsample any over-represented student so no one dominates the batch."""
+    if "student_id" not in df.columns or df.empty:
+        return df
+
+    total = len(df)
+    cap = max(1, int(total * max_fraction))
+    capped_rows = []
+    capped_students = []
+
+    for student_id, group in df.groupby("student_id", sort=False):
+        if len(group) > cap:
+            capped_rows.append(group.sample(n=cap, random_state=random_state))
+            capped_students.append((student_id, len(group), cap))
+        else:
+            capped_rows.append(group)
+
+    if capped_students:
+        print("[!] Per-student cap applied:")
+        for sid, original, new_cap in capped_students:
+            print(f"    student {sid}: {original} -> {new_cap} rows")
+
+    return pd.concat(capped_rows, ignore_index=True).sample(frac=1, random_state=random_state).reset_index(drop=True)
+
+
+def write_manifest(df: pd.DataFrame, output_path: Path = FEEDBACK_MANIFEST) -> dict:
+    """Write a lightweight manifest for admin visibility into the batch."""
+    sample_df = df.groupby("intent_name", sort=False).apply(
+        lambda g: g.head(max(1, SAMPLE_SIZE // df["intent_name"].nunique()))
+    ).reset_index(drop=True)
+    sample = sample_df[["student_id", "intent_name", "student_input", "corrected_intent"]].to_dict("records")
+
+    manifest = {
+        "total_rows": len(df),
+        "per_student": df.groupby("student_id").size().to_dict(),
+        "per_class": df.groupby("intent_name").size().to_dict(),
+        "max_student_fraction": MAX_STUDENT_FRACTION,
+        "capped": any(
+            count / len(df) > MAX_STUDENT_FRACTION
+            for count in df.groupby("student_id").size().values
+        ),
+        "sample": sample,
+    }
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    print(f"[+] Feedback batch manifest written to {output_path}")
+    return manifest
 
 
 def split_feedback(df: pd.DataFrame, train_size=0.70, val_size=0.15, random_state=42):
     """Split feedback rows into train/val/test with stratification."""
+    # Keep only the columns the training pipeline expects.
+    df = df[["student_input", "session_context", "label", "intent_name"]].copy()
     if len(df) < 6:
         raise ValueError("Need at least 6 feedback rows to create train/val/test splits.")
 
@@ -230,6 +286,9 @@ def main():
     feedback_df = load_feedback(args.feedback_csv)
     print(f"[+] Loaded {len(feedback_df)} feedback utterances.")
     print(feedback_df["label"].value_counts().sort_index().to_string())
+
+    feedback_df = cap_per_student(feedback_df)
+    write_manifest(feedback_df)
 
     if args.regenerate:
         generate_synthetic_dataset()

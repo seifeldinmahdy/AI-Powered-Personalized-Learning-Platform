@@ -15,6 +15,32 @@ INTENT_CHOICES = [
     ("Debugging/Code-Sharing", "Debugging/Code-Sharing"),
 ]
 
+INTENT_DEFINITIONS = {
+    "On-Topic Question": (
+        "Asking about the current material — explanations, examples, or conceptual "
+        "questions without a specific broken code artifact."
+    ),
+    "Off-Topic Question": (
+        "Completely unrelated to the lesson or programming."
+    ),
+    "Emotional-State": (
+        "Expressing a feeling or internal state such as frustration, confusion, "
+        "excitement, boredom, or anxiety."
+    ),
+    "Pace-Related": (
+        "Wants to change speed — slow down, speed up, skip, take a break, or ask "
+        "about timing."
+    ),
+    "Repeat/clarification": (
+        "Wants something repeated or explained again — signals like 'again', "
+        "'repeat', 'missed', or 'go back'."
+    ),
+    "Debugging/Code-Sharing": (
+        "Sharing a broken code artifact, error message, traceback, or asking for "
+        "debugging help."
+    ),
+}
+
 FEEDBACK_CHOICES = [
     ("thumbs_up", "👍 Thumbs Up"),
     ("thumbs_down", "👎 Thumbs Down"),
@@ -128,6 +154,13 @@ class AIChatLog(models.Model):
         db_index=True,
     )
     feedback_at = models.DateTimeField(null=True, blank=True)
+    corrected_intent = models.CharField(
+        max_length=30,
+        choices=INTENT_CHOICES,
+        null=True,
+        blank=True,
+        db_index=True,
+    )
     used_for_retraining = models.BooleanField(default=False, db_index=True)
 
     class Meta:

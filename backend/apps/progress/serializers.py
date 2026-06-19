@@ -4,6 +4,7 @@ from .models import (
     SessionCompletion, SystemActivityLog, AIChatLog,
     StudentLearningProfile, Bookmark,
     IntentFeedbackBuffer, IntentRetrainingCounter,
+    INTENT_CHOICES,
 )
 
 
@@ -35,20 +36,32 @@ class AIChatLogSerializer(serializers.ModelSerializer):
             "id", "user", "course", "course_title", "session_number",
             "user_audio_url", "transcript_text", "ai_response_text", "created_at",
             "session_id", "session_context", "predicted_intent", "confidence",
-            "intent_probabilities", "feedback", "feedback_at", "used_for_retraining",
+            "intent_probabilities", "feedback", "feedback_at", "corrected_intent",
+            "used_for_retraining",
         ]
         read_only_fields = [
             "id", "user", "created_at",
-            "feedback", "feedback_at", "used_for_retraining",
+            "feedback", "feedback_at", "corrected_intent", "used_for_retraining",
         ]
 
 
 class AIChatLogFeedbackSerializer(serializers.ModelSerializer):
     """Lightweight serializer for PATCH /chat-logs/<id>/feedback/."""
 
+    corrected_intent = serializers.ChoiceField(
+        choices=INTENT_CHOICES,
+        required=False,
+        allow_blank=True,
+    )
+
     class Meta:
         model = AIChatLog
-        fields = ["feedback"]
+        fields = ["feedback", "corrected_intent"]
+
+    def validate_corrected_intent(self, value: str | None) -> str | None:
+        if value == "":
+            return None
+        return value
 
 
 class IntentFeedbackBufferSerializer(serializers.ModelSerializer):

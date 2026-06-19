@@ -14,6 +14,7 @@ from .models import (
     SessionCompletion, SystemActivityLog, AIChatLog,
     StudentLearningProfile, Bookmark, ConceptMasteryEvent,
     IntentFeedbackBuffer, IntentRetrainingCounter,
+    INTENT_CHOICES, INTENT_DEFINITIONS,
 )
 from apps.core.permissions import IsVerifiedAdmin
 
@@ -123,8 +124,12 @@ class AIChatLogViewSet(viewsets.ModelViewSet):
 
         Body:
           {"feedback": "thumbs_up" | "thumbs_down"}
-          For thumbs_down optionally include:
           {"corrected_intent": "On-Topic Question" | ...}
+
+        Both thumbs directions are followed by an explicit intent confirmation.
+        If `corrected_intent` is provided it is treated as the ground-truth
+        label (even when it matches the predicted intent) and the buffer row is
+        marked `relabeled`.
 
         Adds the chat log to the IntentFeedbackBuffer and increments the
         retraining counter. If the counter threshold is reached, the response
@@ -143,22 +148,18 @@ class AIChatLogViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        corrected_intent = request.data.get("corrected_intent")
+        corrected_intent = serializer.validated_data.get("corrected_intent")
         valid_intents = {name for name, _ in INTENT_CHOICES}
         if corrected_intent and corrected_intent not in valid_intents:
             return Response(
                 {"detail": f"corrected_intent must be one of {sorted(valid_intents)}."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if corrected_intent and corrected_intent == chat_log.predicted_intent:
-            return Response(
-                {"detail": "corrected_intent must differ from the predicted intent."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         chat_log.feedback = feedback_value
         chat_log.feedback_at = timezone.now()
-        chat_log.save(update_fields=["feedback", "feedback_at"])
+        chat_log.corrected_intent = corrected_intent
+        update_fields = ["feedback", "feedback_at", "corrected_intent"]
+        chat_log.save(update_fields=update_fields)
 
         # Upsert into the dedicated feedback buffer
         buffer_defaults = {
@@ -743,3 +744,18 @@ def trigger_retraining(request):
             {"error": f"Retraining failed: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
+
+
+@api_view(["GET"])
+@permission_classes([permissions.IsAuthenticated])
+def intent_choices(request):
+    """Return the canonical 6 intent labels with descriptions.
+
+    The frontend uses this to populate the feedback correction dropdown.
+    """
+    return Response(
+        [
+            {"value": value, "label": label, "description": INTENT_DEFINITIONS.get(value, "")}
+            for value, label in INTENT_CHOICES
+        ]
+    )

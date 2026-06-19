@@ -1,0 +1,206 @@
+# Prompt configuration for TARGETED SYNTHETIC CHUNK generation.
+#
+# Goal: write short, self-contained, reference-free CS passages that are
+# *engineered* to be classified as a specific visual-template label, so we can
+# fill under-represented classes and balance the classifier dataset.
+#
+# CRITICAL DESIGN NOTE — the "conceptual sink":
+#   The visual classifier (config/prompts_classifier.yaml) labels dictionary-style
+#   definitions ("A queue is a data structure that follows FIFO…") as `conceptual`,
+#   NOT as `queue`. To trigger a STRUCTURAL label, the passage must describe the
+#   structure OPERATIONALLY — concrete operations, step-by-step mechanics, named
+#   components and how they connect/move — never a definition-first paragraph.
+#   Every structural prompt below enforces this.
+
+# System prompt shared by all classes — mirrors the MCQ synthetic-chunk hygiene.
+generation_system_prompt: |
+  You are an expert computer-science educator writing short, self-contained
+  passages for a slide-generation training corpus.
+
+  Hard rules for EVERY passage:
+  - 90-150 words. Computer-science content only.
+  - No figure references, no "as shown above", no "in this example", no "below".
+  - No reference to any book, lecture, author, course, or publication.
+  - No "we", no "you", no "the student", no "in this section".
+  - Output ONLY the passage text — no title, no preamble, no quotes, no markdown.
+
+# Per-class generation guidance.
+#   instruction : the class-specific writing brief appended to the system prompt
+#   subtopics   : cycled through for variety (one is injected per generation)
+classes:
+  linear_chain:
+    instruction: |
+      Write an OPERATIONAL passage about a LINKED LIST (a linear chain of nodes).
+      Describe concretely: each node holds a value and a pointer to the NEXT node;
+      the head points to the first node; the last node's next pointer is null;
+      traversal walks node-by-node following next pointers. Mention one concrete
+      operation step-by-step (e.g. inserting a node by relinking pointers, or
+      traversing from head to tail). Describe the chain MECHANICALLY — do NOT open
+      with "a linked list is …". Make the sequential node-to-node links the focus.
+    subtopics:
+      - singly linked list traversal
+      - inserting a node at the head of a linked list
+      - appending a node to the tail of a linked list
+      - deleting a node from a singly linked list
+      - doubly linked list with prev and next pointers
+      - building a linked list node by node
+
+  binary_tree:
+    instruction: |
+      Write an OPERATIONAL passage about a BINARY TREE or binary search tree.
+      Describe concretely: the root node, left child and right child, how values
+      are placed (smaller left, larger right for a BST), and walk through one
+      traversal (inorder / preorder / postorder) or one insertion, node by node.
+      Reference left/right children and parent/child links explicitly. Do NOT open
+      with "a binary tree is …" — show the tree being built or traversed.
+    subtopics:
+      - inserting values into a binary search tree
+      - inorder traversal of a binary tree
+      - preorder and postorder traversal
+      - searching for a key in a BST
+      - finding the height of a binary tree
+      - a binary heap stored as a tree
+
+  general_tree:
+    instruction: |
+      Write an OPERATIONAL passage about a GENERAL (n-ary) TREE data structure —
+      a trie, a B-tree, an n-ary tree, or a file-system directory tree — where a
+      node can have MANY children (arbitrary branching), studied as a CS data
+      structure. Describe concretely how nodes branch into multiple children, how
+      you descend from the root through children, and one operation (insert/search
+      a key, or walk the directory). Emphasize arbitrary branching. This is the
+      tree ITSELF as a data structure, NOT a system architecture.
+    subtopics:
+      - inserting a word into a trie character by character
+      - searching a prefix in a trie
+      - a B-tree node with multiple keys and children
+      - walking a file-system directory tree
+      - an n-ary tree with arbitrary children per node
+      - representing a parse tree
+
+  stack:
+    instruction: |
+      Write an OPERATIONAL passage about a STACK (LIFO). Describe concretely the
+      push, pop, and peek operations, that the most recently added item is removed
+      first, and the "top of stack". Use a concrete walk-through (e.g. pushing
+      three items then popping them, or the call stack pushing a frame per function
+      call and popping on return, or an undo history). Make push/pop/LIFO and the
+      top of the stack the focus. Do NOT open with "a stack is a data structure …".
+    subtopics:
+      - pushing and popping items on a stack
+      - the call stack during function calls
+      - using a stack for undo operations
+      - evaluating expressions with a stack
+      - depth-first traversal using an explicit stack
+      - reversing a sequence with a stack
+
+  queue:
+    instruction: |
+      Write an OPERATIONAL passage about a QUEUE (FIFO). Describe concretely the
+      enqueue and dequeue operations, the front and rear, and that the earliest
+      item added is removed first. Use a concrete walk-through (e.g. enqueueing
+      three jobs then dequeueing them in order, a print queue, or the queue driving
+      a breadth-first traversal). Make enqueue/dequeue, front/rear, and FIFO the
+      focus. Do NOT open with "a queue is a data structure …".
+    subtopics:
+      - enqueue and dequeue operations on a queue
+      - a print job queue
+      - breadth-first search using a queue
+      - a circular buffer queue
+      - a task scheduler queue
+      - a message queue processing items in order
+
+  graph:
+    instruction: |
+      Write an OPERATIONAL passage about a GRAPH data structure: vertices and
+      edges, an adjacency list or adjacency matrix, directed vs undirected edges,
+      and one traversal or algorithm (BFS, DFS, or shortest path) walking from
+      vertex to vertex along edges. Make vertices, edges, and the adjacency
+      representation the focus. Avoid decision-branch "if/else" framing (that reads
+      as a flowchart). Do NOT open with "a graph is a data structure …".
+    subtopics:
+      - representing a graph with an adjacency list
+      - breadth-first traversal of a graph
+      - depth-first traversal of a graph
+      - Dijkstra's shortest path over a weighted graph
+      - detecting a cycle in a directed graph
+      - topological sort of a DAG
+
+  flowchart:
+    instruction: |
+      Write a passage describing an ALGORITHM AS A PROCESS WITH DECISION
+      BRANCHING. Lay out the steps in order and include explicit conditional
+      branches: "if the condition holds do X, otherwise do Y", a yes/no decision,
+      or a loop that repeats while a condition is true. The branching decision
+      points are the focus (this is what separates a flowchart from a strictly
+      linear process). Describe the control flow step by step.
+    subtopics:
+      - input validation with branching
+      - the binary search decision at each step
+      - an if/else classification procedure
+      - a retry-with-conditions algorithm
+      - bubble sort's compare-and-swap decisions
+      - error-handling control flow
+
+  cycle:
+    instruction: |
+      Write a passage about a REPEATING / CIRCULAR process where the last step
+      leads back to the first, forming a loop that repeats. Describe the stages in
+      order and emphasize that the process CYCLES BACK to the beginning (a closed
+      loop), not a one-way sequence. Make the circular, repeating nature the focus.
+    subtopics:
+      - the CPU fetch-decode-execute cycle
+      - an event loop processing events repeatedly
+      - the request-response cycle
+      - a garbage-collection cycle
+      - the software development lifecycle (PDCA)
+      - a producer-consumer feedback loop
+
+  bar_chart:
+    instruction: |
+      Write a passage that COMPARES TWO OR MORE OPTIONS USING EXPLICIT NUMBERS.
+      Include at least three concrete numeric values across categories that beg to
+      be plotted as bars — e.g. runtimes in milliseconds, memory in MB, accuracy
+      percentages, or throughput. State the actual numbers (e.g. "approach A took
+      120 ms, approach B took 45 ms, approach C took 310 ms"). The explicit
+      quantitative comparison across categories is the focus.
+    subtopics:
+      - benchmark runtimes of three sorting algorithms in milliseconds
+      - memory usage of three data structures in megabytes
+      - accuracy percentages of three classifiers
+      - throughput of three databases in queries per second
+      - speedup factors of three optimization techniques
+      - latency percentiles across three services
+
+  architecture_diagram:
+    instruction: |
+      Write a passage describing the INTERNAL ARCHITECTURE of a model or system
+      with NAMED COMPONENTS and how they CONNECT or stack. Examples: a transformer
+      encoder/decoder with attention and feed-forward sublayers; a CNN's conv,
+      pooling, and fully connected layers; microservices connected by a message
+      bus; the OSI model's stacked layers; a compiler's pipeline stages. Name the
+      components and describe how data flows between them or how layers stack.
+    subtopics:
+      - the transformer encoder-decoder architecture
+      - a convolutional neural network's layers
+      - the OSI model's seven layers
+      - a microservices architecture with a message bus
+      - a compiler's front-end to back-end pipeline
+      - an LSTM cell's gates and connections
+
+  conceptual:
+    instruction: |
+      Write a passage that EXPLAINS, DEFINES, SUMMARIZES, or CONTRASTS a CS concept
+      WITHOUT describing a specific data structure's mechanics, a branching process,
+      or a system architecture. Define a term and its properties, explain a
+      trade-off, compare two ideas (pros/cons), or give an analogy. This is
+      explanatory conceptual content — abstract understanding, not operations.
+    subtopics:
+      - what abstraction means in programming
+      - the trade-off between time and space complexity
+      - mutability versus immutability
+      - the difference between compilation and interpretation
+      - what encapsulation provides
+      - strong versus weak typing
+      - the idea of referential transparency
+      - why modularity matters

@@ -172,7 +172,7 @@ def slides_persisted(request, course_id: str):
     return _forward(request, "GET", "/slides/persisted", params=params)
 
 
-# ── Group D: assessments ─────────────────────────────────────────
+# ── Group D: assessments (placement) + in-session MCQ checkpoints ─
 
 
 @api_view(["POST"])
@@ -186,15 +186,21 @@ def assessments_submit_placement(request):
 @api_view(["POST"])
 @permission_classes([permissions.IsAuthenticated])
 def assessments_session(request):
-    """POST: generate an in-session MCQ checkpoint for the authenticated student."""
+    """POST: generate an in-session MCQ knowledge checkpoint for the student.
+
+    Generation runs the local QG/DG models per question, so this can be slow —
+    a generous timeout keeps the request from being severed mid-generation. The
+    AI endpoint is header-gated (verified X-Student-ID), so the browser-supplied
+    student id is stripped from the body here.
+    """
     return _forward(request, "POST", "/assessments/session",
-                    json=_body_without_student_id(request), timeout=120)
+                    json=_body_without_student_id(request), timeout=300)
 
 
 @api_view(["POST"])
 @permission_classes([permissions.IsAuthenticated])
 def assessments_submit(request):
-    """POST: score an in-session MCQ checkpoint for the authenticated student."""
+    """POST: score an in-session MCQ checkpoint and record concept mastery."""
     return _forward(request, "POST", "/assessments/submit",
                     json=_body_without_student_id(request), timeout=120)
 

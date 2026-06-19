@@ -5,6 +5,12 @@ Applies the three-signal decision logic:
 2. Per-topic score category → force or bias from SCORE_CATEGORY_TYPE_OVERRIDE
 3. Incorrectly answered history → escalation on repeated topic failures
 
+Tier-0 pre-conditioning guards run first so the question type handed to QG is
+always safe:
+- Content gate: code types (1, 2, 3) are removed on prose-only chunks so the
+  generator cannot hallucinate ungrounded code.
+- Hard override: ``very_weak`` forces Type 4a regardless of the mastery ceiling.
+
 No randomness — the selection is deterministic and fully explainable.
 """
 
@@ -82,11 +88,32 @@ def select_question_type(
     # ── 2. Get mastery ceiling ──────────────────────────────────────
     eligible = list(MASTERY_TYPE_ELIGIBILITY.get(mastery_level, ["4a"]))
 
+    # ── 2b. Tier-0 content-eligibility gate ─────────────────────────
+    # Code question types (1, 2, 3) require actual code in the chunk; on a
+    # prose-only chunk the generator otherwise hallucinates code that isn't
+    # grounded in the source. Strip them when the chunk has no code, always
+    # keeping the conceptual types (answerable from any explanatory text).
+    has_code = _chunk_has_code(chunk_text)
+    if not has_code:
+        gated = [t for t in eligible if t not in CODE_QUESTION_TYPES]
+        if len(gated) != len(eligible):
+            logger.debug(
+                "selector_code_types_gated_out",
+                topic=chunk_topic,
+                removed=[t for t in eligible if t in CODE_QUESTION_TYPES],
+            )
+        eligible = gated or ["4a"]
+
     # ── 3. Apply score category override ────────────────────────────
     override = SCORE_CATEGORY_TYPE_OVERRIDE.get(score_category)
     if override is not None:
-        # Force to the override list (intersected with mastery ceiling)
-        forced = [t for t in override if t in eligible]
+        # Force to the override list. The override (e.g. very_weak → 4a) is a
+        # HARD rule that wins regardless of the mastery ceiling: 4a is the
+        # universal floor, so a struggling Intermediate/Expert student still
+        # gets a definition question even though 4a sits outside their ceiling.
+        # Prefer an override type that is also content-eligible; fall back to
+        # the override as written if the gate removed all of them.
+        forced = [t for t in override if t in eligible] or list(override)
         if forced:
             selected = forced[0]
             logger.info(
@@ -142,7 +169,7 @@ def select_question_type(
             return selected, score_category, topic_score
 
     # ── 6. Content-based hint ───────────────────────────────────────
-    has_code = _chunk_has_code(chunk_text)
+    # ``has_code`` was resolved in step 2b (the content gate).
     if has_code:
         code_eligible = [t for t in eligible if t in CODE_QUESTION_TYPES]
         if code_eligible:

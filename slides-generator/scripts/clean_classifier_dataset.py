@@ -282,8 +282,10 @@ VALID_LABELS = {
     "comparison",
     "bar_chart",
     "concept_box",
+    "conceptual",
     "architecture_diagram",  # layered_stack merged into architecture_diagram
-    "none",
+    # "none" intentionally excluded — it was a sink class that hurt precision;
+    # "render no visual" is a confidence-threshold decision at inference.
 }
 
 
