@@ -1,4 +1,5 @@
-import { Mic, MicOff, Volume2, VolumeX, MessageCircle, Pause, Play, Send, Loader2, Code2, GripHorizontal, Maximize2, Minimize2, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { Mic, MicOff, Volume2, VolumeX, MessageCircle, Pause, Play, Send, Loader2, Code2, GripHorizontal, Maximize2, Minimize2, ThumbsUp, ThumbsDown, Flag } from 'lucide-react';
+import type { CSSProperties } from 'react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import {
@@ -14,6 +15,7 @@ import {
   synthesizeAudio,
   setTutorPace,
   persistChatLog,
+  getChatHistory,
   submitFeedback,
   fetchIntentChoices,
   type SERResult,
@@ -29,10 +31,33 @@ import type { BlendshapeData } from '../services/tutor';
 import { INTENT_OPTIONS as FALLBACK_INTENT_OPTIONS } from '../lib/intents';
 import type { IntentName } from '../services/tutor';
 
+// Auto-explain chat logs are persisted with a compact, parseable marker so they
+// can be rebuilt as labelled slide checkpoints when the session is reopened.
+const SLIDE_EXPLAIN_RE = /^Please explain slide (\d+): ([\s\S]*)$/;
+const slideExplainMarker = (slideNumber: number, title: string) =>
+  `Please explain slide ${slideNumber}: ${title}`;
+
+// Shared control-button styling (codex). Round pills for the floating bubble,
+// rounded squares for the docked panel — both neutral with a blue active state.
+const ctrlDotStyle: CSSProperties = {
+  padding: 8, borderRadius: 999, border: '1px solid var(--hairline)', background: 'var(--bg-surface)',
+  color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+};
+const ctrlDotActive: CSSProperties = { border: '1px solid var(--accent-primary)', background: 'var(--accent-primary)', color: '#fff' };
+const ctrlBtnStyle: CSSProperties = {
+  padding: 8, borderRadius: 8, border: '1px solid var(--steel)', background: 'var(--bg-surface)',
+  color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+};
+const ctrlBtnActive: CSSProperties = { border: '1px solid var(--accent-primary)', background: 'var(--accent-primary)', color: '#fff' };
+
 interface TranscriptEntry {
-  role: 'tutor' | 'student';
+  role: 'tutor' | 'student' | 'checkpoint';
   text: string;
   topic?: string;
+  // Checkpoint markers (auto-explain): which slide this explanation belongs to,
+  // so the saved chat log reads as a sequence of clearly-labelled slide stops.
+  slideNumber?: number;
+  slideTitle?: string;
   is_streaming?: boolean;
   // Set on on-topic answers: true = grounded in textbook passages, false =
   // answered without grounding (surface a "grounding unavailable" note).
@@ -185,6 +210,38 @@ export function CompactTutor({
       mounted = false;
     };
   }, []);
+
+  // ── Restore the durable chat log for this (course, session) ──────────────
+  // The conversation survives session end, so revisiting an old session shows
+  // the previous tutor chatlog. Auto-explain rows are rebuilt as labelled slide
+  // checkpoints; everything else as plain student/tutor turns.
+  useEffect(() => {
+    if (!courseId || !lessonId) return;
+    let cancelled = false;
+    getChatHistory(courseId, lessonId).then((history) => {
+      if (cancelled || history.length === 0) return;
+      const restored: TranscriptEntry[] = [];
+      for (const log of history) {
+        const m = log.transcript_text.match(SLIDE_EXPLAIN_RE);
+        if (m) {
+          restored.push({ role: 'checkpoint', text: m[2], slideNumber: Number(m[1]), slideTitle: m[2] });
+        } else {
+          restored.push({ role: 'student', text: log.transcript_text });
+        }
+        restored.push({
+          role: 'tutor',
+          text: log.ai_response_text,
+          chatLogId: log.id,
+          feedback: log.feedback ?? null,
+          correctedIntent: log.corrected_intent ?? null,
+          intent: log.predicted_intent ? ({ intent_name: log.predicted_intent } as IntentPrediction) : null,
+        });
+      }
+      // Seed the transcript with the restored history (before any new turns).
+      setTranscript((prev) => (prev.length === 0 ? restored : prev));
+    });
+    return () => { cancelled = true; };
+  }, [courseId, lessonId]);
 
   // ── Drag: starts inline, becomes floating when dragged away, snaps back when dropped on panel ──
   const onDragStart = useCallback((e: React.MouseEvent) => {
@@ -446,9 +503,13 @@ export function CompactTutor({
     const wasAwaitingReply = awaitingResponseRef.current;
     awaitingResponseRef.current = false;
     
+    // Slide number this turn is anchored to (auto-explain → labelled checkpoint).
+    const slideNo = (triggeredForSlide ?? currentSlideRef.current) + 1;
     setTranscript((prev) => [
       ...prev,
-      { role: 'student', text: isAutoTrigger ? `LearnPal, please explain this slide: ${currentSlideTitle}` : q }
+      isAutoTrigger
+        ? { role: 'checkpoint', text: currentSlideTitle ?? '', slideNumber: slideNo, slideTitle: currentSlideTitle ?? '' }
+        : { role: 'student', text: q },
     ]);
 
     try {
@@ -608,10 +669,14 @@ export function CompactTutor({
       }
 
       let chatLogId: number | undefined;
-      if (lessonId) {
+      if (lessonId && courseId) {
+        // Auto-explain turns are stored under a parseable marker (rebuilt as a
+        // slide checkpoint on reload); real questions store the raw text.
+        const loggedText = isAutoTrigger ? slideExplainMarker(slideNo, currentSlideTitle ?? '') : q;
         const chatLog = await persistChatLog({
-          lesson: lessonId,
-          transcript_text: q,
+          course: Number(courseId),
+          session_number: lessonId,
+          transcript_text: loggedText,
           ai_response_text: res.answer ?? '',
           session_id: sessionIdRef.current ?? undefined,
           session_context: sessionContext,
@@ -807,27 +872,35 @@ export function CompactTutor({
     }
   };
 
+  // Status-dot colour in codex tokens.
+  const statusDotColor = error
+    ? 'var(--error-red)'
+    : isFinished
+      ? 'var(--steel)'
+      : started
+        ? 'var(--accent-success)'
+        : 'var(--accent-warm)';
+
   return (
     <div
       ref={panelRef}
-      style={isFloating ? { width: 320, maxWidth: '90vw', top: 16, left: 16, maxHeight: '80vh' } : { width: 320, minWidth: 320 }}
-      className={`relative ${isFloating
-        ? 'absolute rounded-2xl border border-border bg-card/95 backdrop-blur-md flex flex-col overflow-hidden shadow-2xl z-50'
-        : 'shrink-0 border-l-2 border-border bg-card flex flex-col overflow-hidden'
-        }`}>
-      
+      className="codex"
+      style={isFloating
+        ? { position: 'absolute', width: 320, maxWidth: '90vw', top: 16, left: 16, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 16, border: '1px solid var(--hairline)', background: 'var(--bg-surface)', boxShadow: '0 12px 40px rgba(0,0,0,0.18)', zIndex: 50 }
+        : { width: 320, minWidth: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderLeft: '1px solid var(--hairline)', background: 'var(--bg-surface)' }}>
+
 
       {/* Header — always visible when docked */}
       {(!started || !isDetached) && (
-        <div className="px-4 py-3 border-b border-border bg-gradient-to-br from-primary/5 to-accent/5">
-          <div className="flex items-center gap-3 mb-1">
-            <div className={`w-2 h-2 rounded-full shrink-0 ${error ? 'bg-red-500' : isFinished ? 'bg-muted-foreground' : started ? 'bg-green-500 animate-pulse' : 'bg-yellow-400'}`} />
-            <h4 className="mb-0 text-sm font-bold bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent">LearnPal</h4>
+        <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--hairline)', background: 'var(--bg-primary)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: statusDotColor }} className={started && !error && !isFinished ? 'animate-pulse' : undefined} />
+            <span className="t-label" style={{ color: 'var(--accent-primary)' }}>LEARNPAL</span>
             {progress > 0 && (
-              <span className="ml-auto text-xs text-muted-foreground font-medium">{progress}%</span>
+              <span className="t-mono steel" style={{ marginLeft: 'auto' }}>{progress}%</span>
             )}
           </div>
-          <p className="text-xs text-muted-foreground">AI Teaching Assistant</p>
+          <p className="t-mono steel" style={{ margin: 0 }}>AI TEACHING ASSISTANT</p>
         </div>
       )}
 
@@ -848,17 +921,17 @@ export function CompactTutor({
           className="flex flex-col items-center gap-2"
         >
           {/* Floating name pill */}
-          <div className="flex items-center gap-2 bg-card/95 backdrop-blur-md px-3 py-1.5 border border-border shadow-lg mb-0.5 transition-all duration-300"
-               style={{ borderRadius: 16 * bubbleScale, transform: `scale(${bubbleScale})`, transformOrigin: 'bottom center' }}>
-            <div className={`w-2 h-2 rounded-full shrink-0 ${error ? 'bg-red-500' : isFinished ? 'bg-muted-foreground' : 'bg-green-500 animate-pulse'}`} />
-            <span className="text-xs font-bold bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent">LearnPal</span>
-            {progress > 0 && <span className="text-[10px] text-muted-foreground ml-1">{progress}%</span>}
-            <GripHorizontal size={12} className="text-muted-foreground/40 ml-1" />
+          <div className="codex"
+               style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-surface)', padding: '6px 12px', border: '1px solid var(--hairline)', borderRadius: 16 * bubbleScale, boxShadow: '0 6px 18px rgba(0,0,0,0.14)', marginBottom: 2, transform: `scale(${bubbleScale})`, transformOrigin: 'bottom center', transition: 'all 300ms' }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: statusDotColor }} className={!error && !isFinished ? 'animate-pulse' : undefined} />
+            <span className="t-label" style={{ color: 'var(--accent-primary)' }}>LEARNPAL</span>
+            {progress > 0 && <span className="t-mono steel" style={{ marginLeft: 4 }}>{progress}%</span>}
+            <GripHorizontal size={12} style={{ color: 'var(--steel)', marginLeft: 4 }} />
           </div>
           <div className="relative transition-all duration-300">
-            <div className="absolute inset-0 bg-gradient-to-br from-secondary to-accent rounded-full blur-xl opacity-30 pointer-events-none transition-all duration-300" />
-            <div className="relative rounded-full bg-gradient-to-br from-primary via-secondary to-accent p-1.5 shadow-2xl transition-all duration-300 flex items-center justify-center"
-                 style={{ width: 144 * bubbleScale, height: 144 * bubbleScale }}>
+            <div className="absolute inset-0 rounded-full blur-xl opacity-40 pointer-events-none transition-all duration-300" style={{ background: 'var(--accent-primary)' }} />
+            <div className="relative rounded-full shadow-2xl transition-all duration-300 flex items-center justify-center"
+                 style={{ width: 144 * bubbleScale, height: 144 * bubbleScale, background: 'var(--accent-primary)', padding: 6 }}>
               <Nova3DAvatar
                 isSpeaking={isSpeaking}
                 emotion={fusedEmotion || tutorEmotion}
@@ -869,45 +942,37 @@ export function CompactTutor({
             </div>
           </div>
           {/* Controls */}
-          <div onMouseDown={(e) => e.stopPropagation()} 
-               style={{ transform: `scale(${bubbleScale})`, transformOrigin: 'top center' }}
-               className="flex items-center gap-2.5 bg-card/95 backdrop-blur-md rounded-full px-4 py-2 border border-border shadow-lg mt-1 transition-all duration-300">
-            <button onClick={handlePlayPause} disabled={isFinished}
-              className={`p-2 rounded-full border transition-all disabled:opacity-40 flex items-center justify-center ${!isPaused ? 'border-secondary bg-secondary text-white shadow-md' : 'border-border bg-card hover:border-secondary'}`}
-              title={isPaused ? 'Resume' : 'Pause'}>
+          <div onMouseDown={(e) => e.stopPropagation()}
+               style={{ transform: `scale(${bubbleScale})`, transformOrigin: 'top center', display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-surface)', borderRadius: 999, padding: '8px 16px', border: '1px solid var(--hairline)', boxShadow: '0 6px 18px rgba(0,0,0,0.14)', marginTop: 4, transition: 'all 300ms' }}>
+            <button onClick={handlePlayPause} disabled={isFinished} title={isPaused ? 'Resume' : 'Pause'}
+              style={{ ...ctrlDotStyle, ...(!isPaused ? ctrlDotActive : {}), opacity: isFinished ? 0.4 : 1 }}>
               {isPaused ? <Play size={14} /> : <Pause size={14} />}
             </button>
-            <button onClick={handleNext} disabled={isLoading || isFinished}
-              className="p-2 rounded-full border border-border bg-card hover:border-secondary transition-colors disabled:opacity-40 text-xs font-semibold w-[64px] flex justify-center items-center">
-              {isLoading ? <Loader2 size={14} className="animate-spin" /> : 'Next'}
+            <button onClick={handleNext} disabled={isLoading || isFinished} title="Next slide"
+              style={{ ...ctrlDotStyle, width: 64, borderRadius: 999, fontSize: 11, fontWeight: 600, opacity: (isLoading || isFinished) ? 0.4 : 1 }}>
+              {isLoading ? <Loader2 size={14} className="animate-spin" /> : 'NEXT'}
             </button>
-            <button onClick={handleMute}
-              className="p-2 rounded-full border border-border bg-card hover:border-secondary transition-colors flex items-center justify-center"
-              title={isMuted ? 'Unmute' : 'Mute'}>
+            <button onClick={handleMute} title={isMuted ? 'Unmute' : 'Mute'} style={ctrlDotStyle}>
               {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
             </button>
-            <button onClick={() => setBubbleScale(s => s === 1 ? 1.5 : 1)}
-              className="p-2 rounded-full border border-border bg-card hover:border-secondary transition-colors flex items-center justify-center"
-              title={bubbleScale === 1 ? 'Enlarge' : 'Shrink'}>
+            <button onClick={() => setBubbleScale(s => s === 1 ? 1.5 : 1)} title={bubbleScale === 1 ? 'Enlarge' : 'Shrink'} style={ctrlDotStyle}>
               {bubbleScale === 1 ? <Maximize2 size={14} /> : <Minimize2 size={14} />}
             </button>
           </div>
           {isFinished && (
-            <div className="flex flex-col items-center gap-1 mt-1">
-              <p className="text-xs text-muted-foreground">Lecture complete</p>
-            </div>
+            <p className="t-mono steel" style={{ marginTop: 6 }}>LECTURE COMPLETE</p>
           )}
         </div>
       ) : (
         /* ── DOCKED: inline avatar with controls ── */
-        <div className={`px-4 flex flex-col items-center border-b border-border bg-gradient-to-br from-primary/5 via-secondary/5 to-accent/5 ${started ? 'py-3' : 'py-4'}`}>
+        <div style={{ padding: started ? '12px 16px' : '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', borderBottom: '1px solid var(--hairline)', background: 'var(--bg-primary)' }}>
           <div
-            className={`relative ${started ? 'mb-2 cursor-grab' : 'mb-3'}`}
+            className="relative"
             onMouseDown={started ? onDragStart : undefined}
-            style={started ? { userSelect: 'none' } : undefined}
+            style={{ marginBottom: started ? 8 : 12, cursor: started ? 'grab' : 'default', userSelect: started ? 'none' : undefined }}
           >
-            <div className="absolute inset-0 bg-gradient-to-br from-secondary to-accent rounded-full blur-xl opacity-20 pointer-events-none" />
-            <div className="relative rounded-full bg-gradient-to-br from-primary via-secondary to-accent p-1.5 shadow-xl w-40 h-40">
+            <div className="absolute inset-0 rounded-full blur-xl opacity-30 pointer-events-none" style={{ background: 'var(--accent-primary)' }} />
+            <div className="relative rounded-full shadow-xl" style={{ width: 160, height: 160, background: 'var(--accent-primary)', padding: 6 }}>
               <Nova3DAvatar
                 isSpeaking={isSpeaking}
                 emotion={fusedEmotion || tutorEmotion}
@@ -921,89 +986,118 @@ export function CompactTutor({
             <button
               onClick={handleStart}
               disabled={isLoading}
-              className="px-6 py-2 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold hover:shadow-lg transition-all flex items-center gap-2 text-sm disabled:opacity-60">
+              className="btn btn-red"
+              style={{ padding: '12px 22px', fontSize: 12 }}>
               {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-              <span>{isLoading ? 'Preparing...' : 'Start Lecture'}</span>
+              <span>{isLoading ? 'PREPARING…' : 'START LECTURE'}</span>
             </button>
           ) : (
-            <div className="flex items-center gap-2">
-              <button onClick={handlePlayPause} disabled={isFinished}
-                className={`p-2 rounded-lg border-2 transition-all disabled:opacity-40 ${!isPaused ? 'border-secondary bg-secondary text-white shadow-md' : 'border-border bg-card hover:border-secondary'}`}
-                title={isPaused ? 'Resume' : 'Pause'}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button onClick={handlePlayPause} disabled={isFinished} title={isPaused ? 'Resume' : 'Pause'}
+                style={{ ...ctrlBtnStyle, ...(!isPaused ? ctrlBtnActive : {}), opacity: isFinished ? 0.4 : 1 }}>
                 {isPaused ? <Play size={16} /> : <Pause size={16} />}
               </button>
-              <button onClick={handleNext} disabled={isLoading || isFinished}
-                className="p-2 rounded-lg border-2 border-border bg-card hover:border-secondary transition-colors disabled:opacity-40 text-xs font-semibold px-3 w-16 flex justify-center items-center">
-                {isLoading ? <Loader2 size={16} className="animate-spin" /> : 'Next'}
+              <button onClick={handleNext} disabled={isLoading || isFinished} title="Next slide"
+                style={{ ...ctrlBtnStyle, width: 64, fontSize: 11, fontWeight: 600, opacity: (isLoading || isFinished) ? 0.4 : 1 }}>
+                {isLoading ? <Loader2 size={16} className="animate-spin" /> : 'NEXT'}
               </button>
-              <button onClick={handleMute}
-                className="p-2 rounded-lg border-2 border-border bg-card hover:border-secondary transition-colors"
-                title={isMuted ? 'Unmute' : 'Mute'}>
+              <button onClick={handleMute} title={isMuted ? 'Unmute' : 'Mute'} style={ctrlBtnStyle}>
                 {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
               </button>
             </div>
           )}
           {isFinished && (
-            <div className="flex flex-col items-center gap-1 mt-1">
-              <p className="text-xs text-muted-foreground">Lecture complete</p>
-            </div>
+            <p className="t-mono steel" style={{ marginTop: 6 }}>LECTURE COMPLETE</p>
           )}
         </div>
       )}
 
       {/* Current Topic */}
-      <div className="px-4 py-2 border-b border-border bg-muted/20">
-        <div className="text-xs text-muted-foreground mb-0.5">Currently Explaining:</div>
-        <p className="text-sm font-semibold text-foreground leading-snug">
+      <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--hairline)', background: 'var(--bg-surface)', flexShrink: 0 }}>
+        <div className="t-mono steel" style={{ marginBottom: 2 }}>CURRENTLY EXPLAINING</div>
+        <p className="t-body" style={{ margin: 0, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.35 }}>
           {lessonTitle || 'Lesson Content'}
         </p>
       </div>
 
       {/* Transcript */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
         {error && (
-          <div className="bg-destructive/10 rounded-lg p-3 border-l-2 border-destructive">
-            <p className="text-xs text-destructive">{error}</p>
+          <div style={{ background: 'rgba(220,38,38,0.06)', borderRadius: 8, padding: 12, borderLeft: '2px solid var(--error-red)' }}>
+            <p className="t-body" style={{ margin: 0, fontSize: 12, color: 'var(--error-red)' }}>{error}</p>
           </div>
         )}
-        {!started && !error && (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-            <p className="text-sm text-muted-foreground">Click "Start Lecture" to hear LearnPal explain this lesson.</p>
+        {!started && transcript.length === 0 && !error && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12, textAlign: 'center' }}>
+            <p className="t-body" style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Press <strong style={{ color: 'var(--text-primary)' }}>Start Lecture</strong> to hear LearnPal explain this lesson.</p>
           </div>
         )}
         {started && transcript.length === 0 && !error && (
-          <div className="flex items-center justify-center h-full">
-            <Loader2 size={24} className="animate-spin text-secondary" />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+            <Loader2 size={24} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
           </div>
         )}
-        {transcript.map((entry, i) => (
+        {transcript.map((entry, i) => {
+          // ── Slide checkpoint marker (auto-explain) — a gradient "stop" on the
+          //    path so the saved chatlog reads slide-by-slide. While the tutor is
+          //    still generating (this is the last entry), show a loader beneath it.
+          if (entry.role === 'checkpoint') {
+            const generating = i === transcript.length - 1 && (isAsking || isLoading);
+            return (
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div
+                  style={{
+                    position: 'relative', borderRadius: 12, padding: '12px 16px', overflow: 'hidden',
+                    background: 'linear-gradient(120deg, var(--accent-primary) 0%, var(--accent-soft) 100%)',
+                    boxShadow: '0 6px 16px rgba(37,99,235,0.28)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Flag size={13} style={{ color: '#fff', flexShrink: 0 }} />
+                    <span className="t-label" style={{ color: 'rgba(255,255,255,0.85)' }}>
+                      SLIDE {String(entry.slideNumber ?? 0).padStart(2, '0')}
+                    </span>
+                  </div>
+                  <p className="t-heading" style={{ margin: '6px 0 0', fontSize: 15, color: '#fff', lineHeight: 1.25 }}>
+                    {entry.slideTitle || entry.text || 'This slide'}
+                  </p>
+                </div>
+                {generating && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 4 }}>
+                    <Loader2 size={13} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
+                    <span className="t-mono steel">LEARNPAL IS EXPLAINING…</span>
+                  </div>
+                )}
+              </div>
+            );
+          }
+          return (
             <div
               key={i}
-              className={`rounded-lg p-3 ${entry.role === 'tutor'
-                ? 'bg-primary/5 border-l-2 border-primary'
-                : 'bg-secondary/10 border-l-2 border-secondary ml-4'
-                }`}
+              style={entry.role === 'tutor'
+                ? { borderRadius: 8, padding: 12, background: 'rgba(37,99,235,0.05)', borderLeft: '2px solid var(--accent-primary)' }
+                : { borderRadius: 8, padding: 12, background: 'var(--bg-surface)', borderLeft: '2px solid var(--steel)', marginLeft: 16 }}
             >
               {entry.role === 'student' && (
-                <span className="text-xs font-semibold text-secondary block mb-0.5">You</span>
+                <span className="t-mono" style={{ display: 'block', marginBottom: 2, color: 'var(--steel-light)' }}>YOU</span>
               )}
               {entry.topic && entry.role === 'tutor' && (
-                <span className="text-xs font-semibold text-muted-foreground block mb-0.5">{entry.topic}</span>
+                <span className="t-mono" style={{ display: 'block', marginBottom: 2, color: 'var(--steel-light)' }}>{entry.topic}</span>
               )}
-              <p className="text-sm text-foreground/80 leading-relaxed break-words whitespace-pre-wrap">{entry.text}</p>
+              <p className="t-body" style={{ margin: 0, fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.55, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{entry.text}</p>
               {entry.role === 'tutor' && entry.grounded === false && (
-                <div className="mt-1.5 text-xs text-amber-600/90 flex items-center gap-1">
+                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--accent-warm)', display: 'flex', alignItems: 'center', gap: 4 }}>
                   ⚠ Grounding unavailable — answered from general knowledge, not the course textbook.
                 </div>
               )}
               {entry.role === 'tutor' && entry.chatLogId && (
-                <div className="mt-2 flex flex-col gap-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-muted-foreground">Was this helpful?</span>
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span className="t-mono steel">WAS THIS HELPFUL?</span>
                     <button
                       onClick={() => handleFeedback(i, 'thumbs_up')}
                       disabled={!!entry.feedback}
-                      className={`p-1 rounded transition-colors ${entry.feedback === 'thumbs_up' ? 'bg-green-100 text-green-600' : 'hover:bg-muted text-muted-foreground'}`}
+                      style={{ padding: 4, borderRadius: 6, border: 'none', cursor: entry.feedback ? 'default' : 'pointer', background: entry.feedback === 'thumbs_up' ? 'rgba(22,163,74,0.12)' : 'transparent', color: entry.feedback === 'thumbs_up' ? 'var(--accent-success)' : 'var(--steel-light)', display: 'flex' }}
                       title="Helpful"
                     >
                       <ThumbsUp size={12} />
@@ -1011,7 +1105,7 @@ export function CompactTutor({
                     <button
                       onClick={() => handleFeedback(i, 'thumbs_down')}
                       disabled={!!entry.feedback}
-                      className={`p-1 rounded transition-colors ${entry.feedback === 'thumbs_down' ? 'bg-red-100 text-red-600' : 'hover:bg-muted text-muted-foreground'}`}
+                      style={{ padding: 4, borderRadius: 6, border: 'none', cursor: entry.feedback ? 'default' : 'pointer', background: entry.feedback === 'thumbs_down' ? 'rgba(220,38,38,0.12)' : 'transparent', color: entry.feedback === 'thumbs_down' ? 'var(--error-red)' : 'var(--steel-light)', display: 'flex' }}
                       title="Not helpful"
                     >
                       <ThumbsDown size={12} />
@@ -1019,29 +1113,31 @@ export function CompactTutor({
                   </div>
 
                   {correctingIndex === i && !entry.feedback && (
-                    <div className="rounded-lg border border-border bg-card p-2 space-y-2">
-                      <p className="text-[10px] text-muted-foreground">
-                        Which intent best matches this?
+                    <div style={{ borderRadius: 8, border: '1px solid var(--hairline)', background: 'var(--bg-primary)', padding: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <p className="t-mono steel" style={{ margin: 0 }}>
+                        WHICH INTENT BEST MATCHES THIS?
                       </p>
-                      <div className="space-y-1">
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                         {intentOptions.map((option) => {
                           const isSelected = selectedCorrectedIntent === option.value;
                           const showingDescription = showingDescriptionFor === option.value;
                           return (
-                            <div key={option.value} className="space-y-1">
+                            <div key={option.value} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                               <button
                                 type="button"
                                 onClick={() => setSelectedCorrectedIntent(option.value)}
-                                className={`w-full flex items-center justify-between rounded-md border px-2 py-1.5 text-left text-xs transition-colors ${
-                                  isSelected
-                                    ? 'border-secondary bg-secondary/10 text-secondary'
-                                    : 'border-border hover:bg-muted'
-                                }`}
+                                style={{
+                                  width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                  borderRadius: 6, padding: '6px 8px', textAlign: 'left', fontSize: 12, cursor: 'pointer',
+                                  border: `1px solid ${isSelected ? 'var(--accent-primary)' : 'var(--hairline)'}`,
+                                  background: isSelected ? 'rgba(37,99,235,0.08)' : 'transparent',
+                                  color: isSelected ? 'var(--accent-primary)' : 'var(--text-primary)',
+                                }}
                               >
-                                <span className="font-medium">{option.label}</span>
-                                <span className="flex items-center gap-1">
+                                <span style={{ fontWeight: 500 }}>{option.label}</span>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                                   <span
-                                    className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-current text-[9px]"
+                                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', border: '1px solid currentColor', fontSize: 9 }}
                                     title={option.description}
                                     tabIndex={0}
                                     onMouseEnter={() => setShowingDescriptionFor(option.value)}
@@ -1059,14 +1155,12 @@ export function CompactTutor({
                                     i
                                   </span>
                                   <span
-                                    className={`w-3 h-3 rounded-full border ${
-                                      isSelected ? 'bg-secondary border-secondary' : 'border-muted-foreground'
-                                    }`}
+                                    style={{ width: 12, height: 12, borderRadius: '50%', border: `1px solid ${isSelected ? 'var(--accent-primary)' : 'var(--steel)'}`, background: isSelected ? 'var(--accent-primary)' : 'transparent' }}
                                   />
                                 </span>
                               </button>
                               {showingDescription && (
-                                <p className="text-[10px] text-muted-foreground leading-snug px-1">
+                                <p className="t-body" style={{ margin: 0, fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.4, padding: '0 4px' }}>
                                   {option.description}
                                 </p>
                               )}
@@ -1074,53 +1168,58 @@ export function CompactTutor({
                           );
                         })}
                       </div>
-                      <div className="flex gap-2">
+                      <div style={{ display: 'flex', gap: 8 }}>
                         <button
                           onClick={handleCorrectIntent}
-                          className="flex-1 px-2 py-1 text-[10px] font-medium rounded-md bg-secondary text-white"
+                          className="btn btn-red"
+                          style={{ flex: 1, padding: '6px 8px', fontSize: 10 }}
                         >
-                          Submit
+                          SUBMIT
                         </button>
                         <button
                           onClick={closeCorrection}
-                          className="px-2 py-1 text-[10px] rounded-md border border-border hover:bg-muted"
+                          className="btn btn-ghost-dark"
+                          style={{ padding: '6px 8px', fontSize: 10 }}
                         >
-                          Cancel
+                          CANCEL
                         </button>
                       </div>
                     </div>
                   )}
 
                   {entry.feedback && entry.correctedIntent && (
-                    <span className="text-[10px] text-muted-foreground">
-                      Marked as: {intentOptions.find(o => o.value === entry.correctedIntent)?.label ?? entry.correctedIntent}
+                    <span className="t-mono steel">
+                      MARKED AS: {(intentOptions.find(o => o.value === entry.correctedIntent)?.label ?? entry.correctedIntent).toUpperCase()}
                     </span>
                   )}
                 </div>
               )}
             </div>
-        ))}
+          );
+        })}
         <div ref={transcriptEndRef} />
       </div>
 
       {/* Ask Question */}
       {started && (
-        <div className="p-4 border-t border-border space-y-2">
+        <div style={{ padding: 16, borderTop: '1px solid var(--hairline)', background: 'var(--bg-surface)', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
           {showChat ? (
-            <div className="flex gap-2">
+            <div style={{ display: 'flex', gap: 8 }}>
               <input
                 type="text"
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleAskQuestion(question)}
-                placeholder="Ask LearnPal..."
-                className="flex-1 text-sm px-3 py-2 rounded-xl border border-border bg-background focus:outline-none focus:border-secondary"
+                placeholder="Ask LearnPal…"
+                className="input"
+                style={{ flex: 1, padding: '8px 12px', fontSize: 13, borderRadius: 8 }}
                 disabled={isAsking}
               />
               <button
                 onClick={() => handleAskQuestion()}
                 disabled={!question.trim() || isAsking}
-                className="p-2 bg-gradient-to-r from-secondary to-accent text-white rounded-xl disabled:opacity-50"
+                className="btn btn-red"
+                style={{ padding: '8px 12px', opacity: (!question.trim() || isAsking) ? 0.5 : 1 }}
               >
                 {isAsking ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
               </button>
@@ -1128,19 +1227,25 @@ export function CompactTutor({
           ) : (
             <button
               onClick={() => setShowChat(true)}
-              className="w-full py-3 bg-gradient-to-r from-secondary to-accent text-white rounded-xl font-semibold hover:shadow-lg transition-all flex items-center justify-center gap-2 text-sm"
+              className="btn btn-red"
+              style={{ width: '100%', justifyContent: 'center', padding: '12px' }}
             >
               <MessageCircle size={16} />
-              <span>Ask Question</span>
+              <span>ASK QUESTION</span>
             </button>
           )}
           <button
             onClick={handleVoiceInput}
             disabled={isTranscribing}
-            className={`w-full py-2 border-2 rounded-xl transition-colors flex items-center justify-center gap-2 text-sm font-medium disabled:opacity-50 ${isRecording
-              ? 'border-red-500 bg-red-50 text-red-600 animate-pulse'
-              : 'border-border hover:border-secondary'
-              }`}
+            className={isRecording ? 'animate-pulse' : undefined}
+            style={{
+              width: '100%', padding: '10px', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              fontSize: 12, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', cursor: isTranscribing ? 'default' : 'pointer',
+              border: `1px solid ${isRecording ? 'var(--error-red)' : 'var(--steel)'}`,
+              background: isRecording ? 'rgba(220,38,38,0.06)' : 'transparent',
+              color: isRecording ? 'var(--error-red)' : 'var(--text-primary)',
+              opacity: isTranscribing ? 0.5 : 1,
+            }}
           >
             {isTranscribing ? (
               <><Loader2 size={16} className="animate-spin" /><span>Transcribing…</span></>

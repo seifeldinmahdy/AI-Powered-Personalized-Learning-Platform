@@ -28,16 +28,20 @@ export function GeneratedSlidesViewer({
   const currentSlide = slides[currentIndex];
   const totalSlides = slides.length;
 
+  // No wrap-around: the first slide can't go back (would circle to the last) and
+  // the last slide can't go forward (would circle to the first). The deck stays
+  // a linear path within the session.
+  const atFirst = currentIndex <= 0;
+  const atLast = currentIndex >= totalSlides - 1;
+
   const handlePrev = () => {
-    if (navLocked) return;
-    if (currentIndex > 0) onSlideChange?.(currentIndex - 1);
-    else onSlideChange?.(totalSlides - 1); // wrap to last
+    if (navLocked || atFirst) return;
+    onSlideChange?.(currentIndex - 1);
   };
 
   const handleNext = () => {
-    if (navLocked) return;
-    if (currentIndex < totalSlides - 1) onSlideChange?.(currentIndex + 1);
-    else onSlideChange?.(0); // wrap to first
+    if (navLocked || atLast) return;
+    onSlideChange?.(currentIndex + 1);
   };
 
   // Hoverable-but-inert styling while locked (a `disabled` attribute would hide
@@ -50,21 +54,23 @@ export function GeneratedSlidesViewer({
       <div
         style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', minHeight: 0, padding: '24px 56px', ...(isFullscreen ? { paddingLeft: 360 } : {}) }}
       >
-        {/* Left arrow */}
+        {/* Left arrow — hidden on the first slide (no wrap to last) */}
         <button
           onClick={handlePrev}
-          aria-disabled={navLocked}
-          style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 20, padding: 8, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--hairline)', color: 'var(--text-primary)', cursor: navCursor, opacity: navLocked ? 0.45 : 1, display: 'flex' }}
+          aria-disabled={navLocked || atFirst}
+          disabled={atFirst}
+          style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 20, padding: 8, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--hairline)', color: 'var(--text-primary)', cursor: atFirst ? 'default' : navCursor, opacity: atFirst ? 0 : navLocked ? 0.45 : 1, pointerEvents: atFirst ? 'none' : 'auto', display: 'flex' }}
           title={lockTitle ?? 'Previous slide'}
         >
           <ChevronLeft size={20} />
         </button>
 
-        {/* Right arrow */}
+        {/* Right arrow — hidden on the last slide (no wrap to first) */}
         <button
           onClick={handleNext}
-          aria-disabled={navLocked}
-          style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 20, padding: 8, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--hairline)', color: 'var(--text-primary)', cursor: navCursor, opacity: navLocked ? 0.45 : 1, display: 'flex' }}
+          aria-disabled={navLocked || atLast}
+          disabled={atLast}
+          style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 20, padding: 8, borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--hairline)', color: 'var(--text-primary)', cursor: atLast ? 'default' : navCursor, opacity: atLast ? 0 : navLocked ? 0.45 : 1, pointerEvents: atLast ? 'none' : 'auto', display: 'flex' }}
           title={lockTitle ?? 'Next slide'}
         >
           <ChevronRight size={20} />

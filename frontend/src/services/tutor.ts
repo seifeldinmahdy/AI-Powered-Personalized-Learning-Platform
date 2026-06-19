@@ -207,10 +207,12 @@ export interface ChatLogEntry {
   confidence?: number;
   intent_probabilities?: Record<string, number>;
   feedback?: 'thumbs_up' | 'thumbs_down' | null;
+  corrected_intent?: string | null;
 }
 
 export interface PersistChatLogPayload {
-  lesson: number;
+  course: number;
+  session_number: number;
   transcript_text: string;
   ai_response_text: string;
   session_id?: string;
@@ -220,13 +222,16 @@ export interface PersistChatLogPayload {
   intent_probabilities?: Record<string, number>;
 }
 
-export async function getChatHistory(lessonId: number): Promise<ChatLogEntry[]> {
+/** Durable chat log for one (course, session) — survives session end so the
+ *  student can review the tutor conversation when revisiting an old session. */
+export async function getChatHistory(courseId: number | string, sessionNumber: number): Promise<ChatLogEntry[]> {
   const token = localStorage.getItem('access_token');
   if (!token) return [];
   try {
-    const res = await fetch(`${API_URL}/progress/chat-logs/?lesson_id=${lessonId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await fetch(
+      `${API_URL}/progress/chat-logs/?course=${courseId}&session_number=${sessionNumber}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data) ? data : data.results ?? [];
@@ -237,7 +242,7 @@ export async function getChatHistory(lessonId: number): Promise<ChatLogEntry[]> 
 
 export async function persistChatLog(payload: PersistChatLogPayload): Promise<ChatLogEntry | null> {
   const token = localStorage.getItem('access_token');
-  if (!token || !payload.lesson) return null;
+  if (!token || !payload.course) return null;
   const res = await fetch(`${API_URL}/progress/chat-logs/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
