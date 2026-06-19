@@ -98,3 +98,11 @@ Obsidian_vault/
 docs/
 .playwright-mcp/
 *.whl
+
+# Generated data / reports (kept local, not versioned)
+frontend-gap.md
+ai_service/data/student_contexts/
+mcq_service/data/mcq_training/
+mcq_service/evaluation/evaluation_report.md
+slides-generator/data/classifier_v2/
+slides-generator/data/classifier_v3/

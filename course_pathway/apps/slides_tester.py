@@ -66,7 +66,7 @@ from slide_gen.agents.content_specialist import (  # type: ignore
     format_input as _cs_format_input,
     parse_output as _cs_parse_output,
 )
-from slide_gen.agents.code_extractor import extract_code  # type: ignore
+from slide_gen.agents.code_extractor import build_code_block  # type: ignore
 from slide_gen.agents.visual_classifier import classify_visual, should_render_visual  # type: ignore
 from slide_gen.agents.accessibility import generate_alt_text  # type: ignore
 from slide_gen.agents.visual_param_generator import generate_visual_params  # type: ignore
@@ -408,11 +408,16 @@ def _process_chunk_full_pipeline(
                 visual = VisualTemplate(template=template_id, params=visual_params)
                 break
 
-    # Agent 4: Code Extractor
-    code_data = extract_code(cleaned)
+    # Agent 4: Code Extractor (deterministic regex → LLM validate/generate)
+    code_data = build_code_block(cleaned, title=title, bullets=bullet_texts)
     code_block = None
     if code_data:
-        code_block = CodeBlock(language=code_data["language"], code=code_data["code"])
+        code_block = CodeBlock(
+            language=code_data["language"], code=code_data["code"],
+            output=code_data.get("output"),
+            runnable=code_data.get("runnable", False),
+            generated=code_data.get("generated", False),
+        )
 
     # Agent 5: Accessibility
     alt_text = generate_alt_text(
@@ -772,11 +777,27 @@ def _render_slide_html(slide: SlideInstruction, slide_num: int, total: int) -> s
 
     # Code block
     if slide.code_block:
+        cb = slide.code_block
+        badge = (
+            '<span style="color:#a78bfa; font-size:8px; border:1px solid #6d4ed8; '
+            'border-radius:3px; padding:0 4px; margin-left:6px;">EXAMPLE</span>'
+            if getattr(cb, "generated", False) else ""
+        )
         slide_html += (
             f'<div style="background:#1e293b; border-radius:6px; padding:8px 10px; margin-top:6px;">'
+            f'<div style="color:#9ca3af; font-size:8px; margin-bottom:4px;">{_esc(cb.language)}{badge}</div>'
             f'<pre style="color:#e2e8f0; font-family:monospace; font-size:10px; '
-            f'margin:0; white-space:pre-wrap; overflow-x:auto;">{_esc(slide.code_block.code)}</pre></div>'
+            f'margin:0; white-space:pre-wrap; overflow-x:auto;">{_esc(cb.code)}</pre>'
         )
+        # Demonstrative output (LLM-written, not executed) — shown as a "Run" result.
+        if getattr(cb, "runnable", False) and cb.output:
+            slide_html += (
+                f'<div style="margin-top:6px; border-top:1px solid #334155; padding-top:4px;">'
+                f'<div style="color:#6b7280; font-size:8px;">&#9654; OUTPUT</div>'
+                f'<pre style="color:#86efac; font-family:monospace; font-size:10px; '
+                f'margin:0; white-space:pre-wrap; overflow-x:auto;">{_esc(cb.output)}</pre></div>'
+            )
+        slide_html += '</div>'
 
     # Slide number (bottom-left to avoid overlap with visual badge)
     slide_html += (

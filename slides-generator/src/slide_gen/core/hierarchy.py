@@ -3,8 +3,13 @@ Hierarchical Visual Template Classification — Category Definitions.
 
 Two-level hierarchy:
   Level 1 (Category): data_structure, flow_diagram, chart,
-                       architectural, conceptual, none
+                       architectural, conceptual
   Level 2 (Template): specific template_id within each category
+
+Note: "none" is NOT a trained category. It was a sink class that absorbed
+uncertain predictions (hurting precision of conceptual/chart). "Render no
+visual" is now a confidence-threshold decision at inference time
+(see should_render_visual), not a learned class.
 
 Used by both training (train_classifier.py) and inference (visual_classifier.py).
 """
@@ -33,7 +38,6 @@ CATEGORY_HIERARCHY: dict[str, list[str]] = {
     "conceptual": [
         "conceptual",
     ],
-    "none": [],
 }
 
 # Ordered category list (Level 1 labels)
@@ -47,8 +51,7 @@ for _cat, _templates in CATEGORY_HIERARCHY.items():
     for _tmpl in _templates:
         if _tmpl not in TEMPLATE_TO_CATEGORY:
             TEMPLATE_TO_CATEGORY[_tmpl] = _cat
-# "none" and "conceptual" map to themselves
-TEMPLATE_TO_CATEGORY["none"] = "none"
+# "conceptual" maps to itself
 TEMPLATE_TO_CATEGORY["conceptual"] = "conceptual"
 
 # Per-category Level 2 label lists

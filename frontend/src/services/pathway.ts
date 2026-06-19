@@ -62,6 +62,9 @@ export interface SlideContentItem {
 export interface SlideCodeBlock {
   language: string;
   code: string;
+  output?: string | null;   // demonstrative expected stdout (LLM-written, not executed)
+  runnable?: boolean;       // when true, show a Run button that reveals `output`
+  generated?: boolean;      // true when the snippet was synthesized (no literal code in source)
 }
 
 export interface SlideVisual {

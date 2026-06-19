@@ -170,3 +170,38 @@ def slides_persisted(request, course_id: str):
         if v is not None:
             params[k] = v
     return _forward(request, "GET", "/slides/persisted", params=params)
+
+
+# ── In-session MCQ knowledge checkpoints ─────────────────────────
+
+
+def _body_with_verified_student_id(request) -> dict:
+    """Body with the verified student id injected at top level AND inside any
+    nested ``context`` block — the MCQ session endpoint requires the two to match
+    and reads identity from the body (it is not header-gated)."""
+    sid = str(request.user.id)
+    body = {**_body_without_student_id(request), "student_id": sid}
+    ctx = body.get("context")
+    if isinstance(ctx, dict):
+        body["context"] = {**ctx, "student_id": sid}
+    return body
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def assessments_session(request):
+    """POST: generate an in-session MCQ knowledge checkpoint for the student.
+
+    Generation runs the local QG/DG models per question, so this can be slow —
+    a generous timeout keeps the request from being severed mid-generation.
+    """
+    return _forward(request, "POST", "/assessments/session",
+                    json=_body_with_verified_student_id(request), timeout=300)
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def assessments_submit(request):
+    """POST: score an in-session MCQ checkpoint and record concept mastery."""
+    return _forward(request, "POST", "/assessments/submit",
+                    json=_body_with_verified_student_id(request), timeout=60)

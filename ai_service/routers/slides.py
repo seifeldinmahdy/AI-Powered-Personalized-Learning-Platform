@@ -105,6 +105,9 @@ class ContentItemOut(BaseModel):
 class CodeBlockOut(BaseModel):
     language: str
     code: str
+    output: Optional[str] = None
+    runnable: bool = False
+    generated: bool = False
 
 
 class EquationItemOut(BaseModel):
@@ -316,7 +319,7 @@ def _generate_session_slides(
     """
     from slide_gen.agents.content_specialist import generate_content  # type: ignore
     from slide_gen.agents.visual_classifier import classify_visual, should_render_visual  # type: ignore
-    from slide_gen.agents.code_extractor import extract_code  # type: ignore
+    from slide_gen.agents.code_extractor import build_code_block  # type: ignore
     from slide_gen.core.slide_schema import SlideType, Layout, HighlightType  # type: ignore
 
     _ensure_models()
@@ -531,11 +534,16 @@ def _generate_session_slides(
         # 3. Code Extractor
         code_out = None
         try:
-            code_data = extract_code(cleaned)
+            code_data = build_code_block(
+                cleaned, title=title, bullets=[it.get("text", "") for it in items]
+            )
             if code_data:
                 code_out = CodeBlockOut(
                     language=code_data["language"],
                     code=code_data["code"],
+                    output=code_data.get("output"),
+                    runnable=code_data.get("runnable", False),
+                    generated=code_data.get("generated", False),
                 )
         except Exception as e:
             logger.warning("code_extractor_failed: %s", str(e))

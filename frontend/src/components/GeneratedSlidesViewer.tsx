@@ -1,4 +1,5 @@
-import { Maximize2, Minimize2, ChevronLeft, ChevronRight, Eye, Copy } from 'lucide-react';
+import { useState } from 'react';
+import { Maximize2, Minimize2, ChevronLeft, ChevronRight, Eye, Copy, Play, Terminal, Sparkles } from 'lucide-react';
 import type { GeneratedSlide, SlideContentItem, SlideCodeBlock } from '../services/pathway';
 import { VisualRenderer } from './VisualRenderer';
 import { EquationRenderer } from './EquationRenderer';
@@ -355,22 +356,56 @@ function ContentItemRenderer({ item }: { item: SlideContentItem }) {
 // ── Code block rendering ───────────────────────────────────────
 
 function CodeBlockRenderer({ code }: { code: SlideCodeBlock }) {
+  const [ran, setRan] = useState(false);
+  // Output is demonstrative (LLM-written, not executed). Only offer Run when present.
+  const hasOutput = !!code.runnable && typeof code.output === 'string';
+
   return (
     <div style={{ marginBottom: 32 }}>
       <div style={{ background: 'var(--code-bg)', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--hairline)' }}>
-        <div style={{ padding: '10px 18px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span className="t-mono" style={{ color: '#9CA3AF' }}>{code.language}</span>
-          <button
-            onClick={() => navigator.clipboard.writeText(code.code)}
-            className="t-label"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6, color: '#9CA3AF', padding: '4px 8px', cursor: 'pointer' }}
-          >
-            <Copy size={11} /> COPY
-          </button>
+        <div style={{ padding: '10px 18px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <span className="t-mono" style={{ color: '#9CA3AF', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            {code.language}
+            {code.generated && (
+              <span className="t-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#A78BFA', border: '1px solid rgba(167,139,250,0.3)', borderRadius: 5, padding: '1px 6px' }}>
+                <Sparkles size={10} /> EXAMPLE
+              </span>
+            )}
+          </span>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            {hasOutput && (
+              <button
+                onClick={() => setRan((v) => !v)}
+                className="t-label"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: ran ? 'rgba(34,197,94,0.12)' : 'transparent', border: `1px solid ${ran ? 'rgba(34,197,94,0.4)' : 'rgba(255,255,255,0.15)'}`, borderRadius: 6, color: ran ? '#4ADE80' : '#9CA3AF', padding: '4px 8px', cursor: 'pointer' }}
+              >
+                <Play size={11} /> {ran ? 'HIDE OUTPUT' : 'RUN'}
+              </button>
+            )}
+            <button
+              onClick={() => navigator.clipboard.writeText(code.code)}
+              className="t-label"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6, color: '#9CA3AF', padding: '4px 8px', cursor: 'pointer' }}
+            >
+              <Copy size={11} /> COPY
+            </button>
+          </div>
         </div>
-        <pre className="codeblock" style={{ margin: 0, borderRadius: 0, overflowX: 'auto' }}>
+        {/* maxHeight keeps the block from overflowing the slide / pushing layout */}
+        <pre className="codeblock" style={{ margin: 0, borderRadius: 0, overflowX: 'auto', maxHeight: 320, overflowY: 'auto' }}>
           <code>{code.code}</code>
         </pre>
+        {hasOutput && ran && (
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.25)' }}>
+            <div style={{ padding: '6px 18px', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Terminal size={11} style={{ color: '#6B7280' }} />
+              <span className="t-label" style={{ color: '#6B7280' }}>OUTPUT</span>
+            </div>
+            <pre className="codeblock" style={{ margin: 0, borderRadius: 0, overflowX: 'auto', maxHeight: 160, overflowY: 'auto', background: 'transparent' }}>
+              <code style={{ color: '#D1FAE5' }}>{code.output || '(no output)'}</code>
+            </pre>
+          </div>
+        )}
       </div>
     </div>
   );

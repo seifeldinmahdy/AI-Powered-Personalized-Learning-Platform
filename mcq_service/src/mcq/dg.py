@@ -44,10 +44,14 @@ def _get_ollama_client(settings):
 
     from pathway.llm.naming import OllamaClient  # type: ignore
 
+    # When DG_OLLAMA_MODEL is set we serve the local fine-tuned GGUF model
+    # (e.g. "mcq-dg") from a local Ollama daemon; otherwise fall back to cloud.
+    local_model = getattr(settings, "DG_OLLAMA_MODEL", "") or ""
+    is_local = bool(local_model)
     _ollama_client = OllamaClient(
-        host=settings.OLLAMA_HOST,
-        model=settings.OLLAMA_MODEL,
-        api_key=settings.OLLAMA_API_KEY,
+        host="http://localhost:11434" if is_local else settings.OLLAMA_HOST,
+        model=local_model or settings.OLLAMA_MODEL,
+        api_key="" if is_local else settings.OLLAMA_API_KEY,
         max_retries=3,
         timeout=120,
     )
@@ -190,7 +194,47 @@ def _generate_with_ollama(
     num_distractors: int,
     chunk_text: str = "",
 ) -> list[str]:
-    """Generate distractors via Ollama LLM."""
+    """Generate distractors via Ollama LLM.
+
+    Local fine-tuned mode (DG_OLLAMA_MODEL set): the model emits ONE distractor
+    per call ("DISTRACTOR: …"), so we call it repeatedly and dedupe — mirroring
+    how it was trained. Cloud fallback asks for all distractors as JSON at once.
+    """
+    client = _get_ollama_client(settings)
+    correct_lower = generated_q.correct_answer.strip().lower()
+
+    if getattr(settings, "DG_OLLAMA_MODEL", ""):
+        distractors: list[str] = []
+        # A couple of extra attempts to absorb dupes / answer-equal rejections.
+        for _ in range(num_distractors + 2):
+            if len(distractors) >= num_distractors:
+                break
+            messages = build_dg_chat_prompt(
+                question=generated_q.question,
+                correct_answer=generated_q.correct_answer,
+                question_type=generated_q.question_type,
+                mastery_level=generated_q.mastery_used,
+                score_category=generated_q.score_category_used,
+                chunk_text=chunk_text,
+            )
+            raw = client.chat(
+                messages=messages,
+                temperature=0.8,
+                json_mode=False,
+                timeout_override=120,
+                num_predict=80,
+            )
+            parsed = extract_dg_output(raw)
+            if not parsed:
+                continue
+            d = parsed.strip()
+            if d.lower() == correct_lower:
+                continue
+            if any(d.lower() == x.strip().lower() for x in distractors):
+                continue
+            distractors.append(d)
+        return distractors
+
     prompt = build_dg_prompt(
         question=generated_q.question,
         correct_answer=generated_q.correct_answer,
@@ -200,8 +244,6 @@ def _generate_with_ollama(
         num_distractors=num_distractors,
         chunk_text=chunk_text,
     )
-
-    client = _get_ollama_client(settings)
     data = client.chat_json(
         messages=[{"role": "user", "content": prompt}],
         temperature=0.8,
@@ -216,7 +258,6 @@ def _generate_with_ollama(
         return []
 
     # Filter: no distractor should match the correct answer
-    correct_lower = generated_q.correct_answer.strip().lower()
     cleaned = [
         str(d).strip()
         for d in raw

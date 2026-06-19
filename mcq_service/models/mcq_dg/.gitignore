@@ -1,0 +1,4 @@
+# Keep this folder present on clone, but version none of its contents
+# (model adapters / GGUF live here locally only).
+*
+!.gitignore

@@ -203,7 +203,7 @@ class HierarchicalDataset(Dataset):
                     # Map template → category
                     cat = get_category(template_id)
                     if cat not in self.label_to_id:
-                        cat = "none"
+                        continue  # skip 'none'/unknown — not a trained category
                     self.texts.append(example["text"])
                     self.labels.append(self.label_to_id[cat])
                 else:

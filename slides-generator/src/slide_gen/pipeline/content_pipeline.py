@@ -13,7 +13,7 @@ from pathlib import Path
 
 from slide_gen.agents.content_specialist import generate_content
 from slide_gen.agents.visual_classifier import classify_visual, should_render_visual
-from slide_gen.agents.code_extractor import extract_code
+from slide_gen.agents.code_extractor import build_code_block
 from slide_gen.agents.accessibility import generate_alt_text
 from slide_gen.agents.visual_param_generator import generate_visual_params
 from slide_gen.agents.judge import judge_template, judge_params
@@ -213,13 +213,16 @@ def process_chunk(
                 visual = VisualTemplate(template=template_id, params=visual_params)
                 break
 
-    # ---- Agent 4: Code Extractor ----
-    code_data = extract_code(chunk)
+    # ---- Agent 4: Code Extractor (deterministic regex → LLM validate/generate) ----
+    code_data = build_code_block(chunk, title=title, bullets=bullet_texts)
     code_block = None
     if code_data:
         code_block = CodeBlock(
             language=code_data["language"],
             code=code_data["code"],
+            output=code_data.get("output"),
+            runnable=code_data.get("runnable", False),
+            generated=code_data.get("generated", False),
         )
 
     # ---- Agent 5: Accessibility Worker ----

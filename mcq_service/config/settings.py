@@ -86,6 +86,30 @@ class MCQSettings(BaseSettings):
     MAX_SEQ_LENGTH_DG: int = 1024    # DG-specific
     LOAD_IN_4BIT: bool = True        # QLoRA — 4-bit quantization
 
+    # ── In-session MCQ refinement ────────────────────────────────────
+    # Post-generation cleanup applied to every served MCQ. Deterministic
+    # tiers (regex + embedding) always run when enabled; the LLM tier is
+    # an NVIDIA NIM (nemotron) judge+repair pass gated by *_USE_LLM.
+    MCQ_REFINE_ENABLED: bool = True
+    MCQ_REFINE_USE_LLM: bool = True
+    # A distractor with cosine >= this to the correct answer is treated as a
+    # paraphrase of the answer (creates a two-correct item) and dropped.
+    MCQ_REFINE_ANSWER_DUP_THRESHOLD: float = 0.88
+    # Two distractors with cosine >= this are near-duplicates; the less
+    # diverse one is dropped.
+    MCQ_REFINE_DIVERSITY_THRESHOLD: float = 0.85
+    # A prose distractor with cosine < this to the answer is unrelated/
+    # implausible and dropped (skipped for short symbolic/code answers).
+    MCQ_REFINE_PLAUSIBILITY_FLOOR: float = 0.20
+
+    # ── NVIDIA NIM (refinement judge backend) ────────────────────────
+    NVIDIA_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
+    NVIDIA_API_KEY_REFINE: str = ""   # nvapi-... key for the judge/repair pass
+    NVIDIA_REFINE_MODEL: str = "nvidia/nemotron-3-nano-30b-a3b"
+    NVIDIA_RPM: int = 38              # account-wide requests/min cap
+    NVIDIA_REASONING_BUDGET: int = 1024
+    NVIDIA_MAX_TOKENS: int = 2048
+
 
 _settings: MCQSettings | None = None
 

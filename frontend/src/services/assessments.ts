@@ -153,3 +153,117 @@ export async function updatePlacementScore(
 ): Promise<void> {
     await api.patch(`/courses/enrollments/${enrollmentId}/`, { placement_score: score });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IN-SESSION MCQ KNOWLEDGE CHECKPOINTS
+//
+// These go through Django's authenticated /ai/* proxy (NOT the AI service
+// directly): Django injects the verified X-Student-ID, so the browser never
+// chooses an identity. Generation runs the local QG/DG models per question and
+// can take a while — callers should show a loading state.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One answer option, mirroring mcq_service MCQOption. */
+export interface MCQOptionData {
+    text: string;
+    is_correct: boolean;
+}
+
+/** A full generated MCQ, mirroring mcq_service MCQQuestion. The whole object is
+ *  sent back on submit so the server can score it (it carries is_correct). */
+export interface MCQQuestionData {
+    question: string;
+    options: MCQOptionData[];
+    correct_answer: string;
+    explanation: string;
+    question_type: string;
+    topic: string;
+    concept_id?: string;
+    mastery_used: string;
+    score_category_used: string;
+    distractor_scores?: number[] | null;
+    generation_mode: string;
+}
+
+export interface AssessmentResponseData {
+    questions: MCQQuestionData[];
+    total_questions: number;
+    generation_mode: string;
+    session_topic?: string | null;
+    checkpoint_index?: number | null;
+}
+
+/** Per-question scoring detail returned by the submit endpoint. */
+export interface QuestionResult {
+    correct: boolean;
+    chosen_answer: string;
+    correct_answer: string;
+    explanation: string;
+    question_type?: string;
+    topic?: string;
+    concept_id?: string | null;
+}
+
+export interface CheckpointResultData {
+    score: number; // 0..1
+    per_topic_scores: Record<string, number>;
+    per_concept_scores: Record<string, number>;
+    correct_count: number;
+    total_count: number;
+    question_results: QuestionResult[];
+}
+
+/** A source chunk fed to the generator: one representative chunk per topic. */
+export interface CheckpointChunk {
+    text: string;
+    topic: string;
+    concept_id?: string;
+}
+
+export interface GenerateCheckpointPayload {
+    chunks: CheckpointChunk[];
+    course_id: string;
+    student_id: string; // overwritten server-side by the verified identity
+    session_topic: string;
+    session_number: number;
+    checkpoint_index: number;
+    questions_per_chunk: number;
+    context: {
+        mastery_level: 'Novice' | 'Intermediate' | 'Expert';
+        student_id: string;
+        course_id: string;
+        topic_performance?: Record<string, number>;
+        concept_mastery?: Record<string, number>;
+        incorrectly_answered?: Array<Record<string, unknown>>;
+    };
+}
+
+/** Generate the MCQs for one knowledge checkpoint. Throws on failure or if the
+ *  generator returned nothing (callers surface a clear error, never a blank quiz). */
+export async function generateSessionCheckpoint(
+    payload: GenerateCheckpointPayload,
+): Promise<AssessmentResponseData> {
+    const res = await api.post('/ai/assessments/session', payload);
+    const data = res.data as AssessmentResponseData;
+    if (!data || !Array.isArray(data.questions) || data.questions.length === 0) {
+        throw new Error('The checkpoint generator returned no questions.');
+    }
+    return data;
+}
+
+export interface SubmitCheckpointPayload {
+    questions: MCQQuestionData[];
+    answers: Record<number, string>; // question index → chosen option text
+    course_id: string;
+    student_id: string; // overwritten server-side by the verified identity
+    session_number: number;
+    checkpoint_index: number;
+}
+
+/** Submit checkpoint answers; the server scores and records concept mastery. */
+export async function submitCheckpoint(
+    payload: SubmitCheckpointPayload,
+): Promise<CheckpointResultData> {
+    const res = await api.post('/ai/assessments/submit', payload);
+    return res.data as CheckpointResultData;
+}

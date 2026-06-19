@@ -20,13 +20,35 @@ export function renderCodeBlock(codeBlock) {
     languageLabel.textContent = codeBlock.language || 'code';
     header.appendChild(languageLabel);
 
+    // "Generated example" badge — synthesized snippet, not literal source code
+    if (codeBlock.generated) {
+        const badge = document.createElement('span');
+        badge.className = 'code-generated-badge';
+        badge.textContent = 'EXAMPLE';
+        header.appendChild(badge);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'code-actions';
+
+    // Run button — reveals the demonstrative output (LLM-written, NOT executed)
+    const hasOutput = codeBlock.runnable && typeof codeBlock.output === 'string';
+    let runBtn = null;
+    if (hasOutput) {
+        runBtn = document.createElement('button');
+        runBtn.className = 'code-run-btn';
+        runBtn.textContent = 'Run';
+        actions.appendChild(runBtn);
+    }
+
     // Copy button
     const copyBtn = document.createElement('button');
     copyBtn.className = 'code-copy-btn';
     copyBtn.textContent = 'Copy';
     copyBtn.addEventListener('click', () => copyCode(codeBlock.code, copyBtn));
-    header.appendChild(copyBtn);
+    actions.appendChild(copyBtn);
 
+    header.appendChild(actions);
     container.appendChild(header);
 
     // Code content
@@ -44,6 +66,31 @@ export function renderCodeBlock(codeBlock) {
     pre.appendChild(code);
     content.appendChild(pre);
     container.appendChild(content);
+
+    // Demonstrative output panel (hidden until "Run" is clicked)
+    if (hasOutput && runBtn) {
+        const outputPanel = document.createElement('div');
+        outputPanel.className = 'code-output';
+        outputPanel.style.display = 'none';
+
+        const outputLabel = document.createElement('div');
+        outputLabel.className = 'code-output-label';
+        outputLabel.textContent = '▶ OUTPUT';
+        outputPanel.appendChild(outputLabel);
+
+        const outputPre = document.createElement('pre');
+        const outputCode = document.createElement('code');
+        outputCode.textContent = codeBlock.output || '(no output)';
+        outputPre.appendChild(outputCode);
+        outputPanel.appendChild(outputPre);
+        container.appendChild(outputPanel);
+
+        runBtn.addEventListener('click', () => {
+            const showing = outputPanel.style.display !== 'none';
+            outputPanel.style.display = showing ? 'none' : 'block';
+            runBtn.textContent = showing ? 'Run' : 'Hide';
+        });
+    }
 
     // Trigger Prism.js highlighting after render
     requestAnimationFrame(() => {
