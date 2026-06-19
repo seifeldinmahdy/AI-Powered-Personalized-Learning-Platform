@@ -354,7 +354,6 @@ def _generate_session_slides(
         body_content=[
             ContentItemOut(text=f"Session {request.session_number}", highlight_type="none"),
             ContentItemOut(text=f"Topics: {', '.join(request.topics_covered)}", highlight_type="none"),
-            ContentItemOut(text=f"Source: {request.book}", highlight_type="none") if request.book else ContentItemOut(text="", highlight_type="none"),
         ],
     ))
     slide_num += 1
