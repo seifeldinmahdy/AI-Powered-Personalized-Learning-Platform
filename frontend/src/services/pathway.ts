@@ -162,7 +162,7 @@ export async function generateSlides(
   request: SlideGenerateRequest,
 ): Promise<SlideGenerateResponse> {
   // Through Django (JWT) — identity is set server-side from the authenticated user.
-  const res = await api.post<SlideGenerateResponse>('/ai/slides/generate', request);
+  const res = await api.post<SlideGenerateResponse>('/ai/slides/generate/', request);
   return res.data;
 }
 

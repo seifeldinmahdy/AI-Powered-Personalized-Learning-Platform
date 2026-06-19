@@ -230,7 +230,7 @@ export default function LiveSession() {
             // Only generate if we loaded from neither cache nor persisted store
             if (!cachedSlides && !loadedFromPersisted) {
               try {
-                const chunksRes = await api.post('/ai/pathway/session-chunks', {
+                const chunksRes = await api.post('/ai/pathway/session-chunks/', {
                   course_id: pathwayPlan.course_id,
                   session_number: sessionNum,
                 });
@@ -514,7 +514,7 @@ export default function LiveSession() {
       // sends a student_id. It just asks the server (through Django, which sets the
       // verified identity) to consolidate this session's DURABLE event log. The
       // single server-side writer applies the resulting claims additively.
-      await api.post('/ai/profiler/run-session', {
+      await api.post('/ai/profiler/run-session/', {
         session_id: sessionIdRef.current,
         lesson_title: lesson?.title || plan?.sessions.find(s => s.session_number === 1)?.session_title || '',
       });
@@ -600,7 +600,7 @@ export default function LiveSession() {
   // Fetch (once) and cache this session's raw chunks for checkpoint generation.
   const loadSessionChunks = async () => {
     if (sessionChunksRef.current) return sessionChunksRef.current;
-    const res = await api.post('/ai/pathway/session-chunks', {
+    const res = await api.post('/ai/pathway/session-chunks/', {
       course_id: String(courseId),
       session_number: Number(sessionNumber),
     });

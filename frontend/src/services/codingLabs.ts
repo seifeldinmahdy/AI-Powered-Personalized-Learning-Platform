@@ -90,7 +90,7 @@ export async function generateCodingLab(
 ): Promise<CodingLabGenerateResponse> {
   // Drop student_id — Django sets the verified identity server-side.
   const { student_id: _omit, ...body } = request;
-  const res = await api.post<CodingLabGenerateResponse>('/ai/coding/labs/generate', body);
+  const res = await api.post<CodingLabGenerateResponse>('/ai/coding/labs/generate/', body);
   return res.data;
 }
 
@@ -131,26 +131,26 @@ export async function runLabCode(code: string): Promise<LabRunResponse> {
 export async function saveCellNote(
   labId: string, cellId: string, content: string, _studentId?: string,
 ): Promise<void> {
-  await api.post(`/ai/coding/labs/${labId}/note/cell`, { cell_id: cellId, content });
+  await api.post(`/ai/coding/labs/${labId}/note/cell/`, { cell_id: cellId, content });
 }
 
 export async function saveGeneralNote(
   labId: string, content: string, _studentId?: string,
 ): Promise<void> {
-  await api.post(`/ai/coding/labs/${labId}/note/general`, { content });
+  await api.post(`/ai/coding/labs/${labId}/note/general/`, { content });
 }
 
 export async function markQuestionAsked(
   labId: string, cellId: string, questionText: string, _studentId?: string,
 ): Promise<void> {
-  await api.post(`/ai/coding/labs/${labId}/question/asked`,
+  await api.post(`/ai/coding/labs/${labId}/question/asked/`,
     { cell_id: cellId, question_text: questionText });
 }
 
 export async function completeLab(params: {
   labId: string; studentId?: string; courseId: string; sessionNumber: string;
 }): Promise<void> {
-  await api.post('/ai/coding/labs/complete', {
+  await api.post('/ai/coding/labs/complete/', {
     lab_id: params.labId,
     course_id: params.courseId,
     lesson_id: params.sessionNumber,

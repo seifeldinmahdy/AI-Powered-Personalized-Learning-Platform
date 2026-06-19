@@ -55,7 +55,7 @@ export async function fuseEmotions(
     // If they agree, we still want to log it if session_id is present
     if (context.session_id) {
       try {
-        api.post('/ai/profiler/fuse-emotions', {
+        api.post('/ai/profiler/fuse-emotions/', {
           fer_emotion,
           fer_confidence: fer_confidence ?? 0,
           ser_emotion,
@@ -73,7 +73,7 @@ export async function fuseEmotions(
 
   // Conflict — ask the AI service (through Django) with a 3 s timeout
   try {
-    const res = await api.post('/ai/profiler/fuse-emotions', {
+    const res = await api.post('/ai/profiler/fuse-emotions/', {
       fer_emotion,
       fer_confidence: fer_confidence ?? 0,
       ser_emotion,

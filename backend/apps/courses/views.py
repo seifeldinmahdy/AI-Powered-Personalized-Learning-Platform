@@ -176,9 +176,14 @@ def _fetch_current_plan(student_id, course_id):
     import os
     ai_url = os.getenv("AI_SERVICE_URL", "http://localhost:8001").rstrip("/")
     try:
+        headers = {
+            "X-Service-Key": os.getenv("INTERNAL_SERVICE_KEY", ""),
+            "X-Student-ID": str(student_id),
+        }
         resp = requests.get(
             f"{ai_url}/pathway/current",
-            params={"student_id": str(student_id), "course_id": str(course_id)},
+            params={"course_id": str(course_id)},
+            headers=headers,
             timeout=8,
         )
         if resp.status_code == 200:

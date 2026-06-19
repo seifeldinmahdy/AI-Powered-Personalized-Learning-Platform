@@ -92,7 +92,7 @@ export interface GenerateProblemSetOptions {
 }
 
 export async function generateProblemSet(opts: GenerateProblemSetOptions): Promise<ProblemSetData> {
-    const res = await api.post<ProblemSetData>('/ai/problem-set/generate', {
+    const res = await api.post<ProblemSetData>('/ai/problem-set/generate/', {
         session_id: opts.sessionId,
         course_id: opts.courseId,
         lesson_id: String(opts.sessionNumber),
@@ -113,7 +113,7 @@ export async function getProblemSet(problemSetId: string, _studentId: string = '
  *  server-side). Throws with the server message on 409 (limit reached). */
 export async function regenerateProblemSet(opts: GenerateProblemSetOptions): Promise<ProblemSetData> {
     try {
-        const res = await api.post<ProblemSetData>('/ai/problem-set/regenerate', {
+        const res = await api.post<ProblemSetData>('/ai/problem-set/regenerate/', {
             session_id: opts.sessionId,
             course_id: opts.courseId,
             lesson_id: String(opts.sessionNumber),
@@ -168,7 +168,7 @@ export async function submitAnswer(
     language: string,
     hintsUsed: number,
 ): Promise<EvaluationResult> {
-    const res = await api.post<EvaluationResult>('/ai/problem-set/submit', {
+    const res = await api.post<EvaluationResult>('/ai/problem-set/submit/', {
         problem_set_id: problemSetId,
         question_id: questionId,
         code,
@@ -193,7 +193,7 @@ export async function getDynamicHint(params: {
     penalty_applied: number;
     hint_deductions: Record<string, number>;
 }> {
-    const res = await api.post('/ai/problem-set/hint', {
+    const res = await api.post('/ai/problem-set/hint/', {
         problem_set_id: params.problemSetId,
         question_id: params.questionId,
         lesson_id: String(params.sessionNumber),
@@ -219,7 +219,7 @@ export async function notifySummaryViewed(params: {
     newly_earned_achievements?: NewlyEarnedAchievement[];
     already_completed?: boolean;
 }> {
-    const res = await api.post('/ai/problem-set/summary-viewed', {
+    const res = await api.post('/ai/problem-set/summary-viewed/', {
         problem_set_id: params.problemSetId,
         lesson_id: String(params.sessionNumber),
     });
