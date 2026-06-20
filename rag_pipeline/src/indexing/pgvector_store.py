@@ -158,7 +158,10 @@ class PgVectorStore:
         self.table = _safe_table(collection_name)
         self._dsn = resolve_dsn()
         self._ensure_schema()
-        logger.info("pgvector_store_ready", table=self.table, count=self.count)
+        # Don't run a COUNT here: it would open another connection on every
+        # construction and, when the pooler is flaky, hang/fail and break store
+        # creation. Construction stays cheap; callers query counts on demand.
+        logger.info("pgvector_store_ready", table=self.table)
 
     # ── Connection / schema ──────────────────────────────────────────
 

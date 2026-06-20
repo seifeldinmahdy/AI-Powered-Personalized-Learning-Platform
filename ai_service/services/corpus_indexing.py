@@ -46,11 +46,29 @@ def _ensure_rag_path() -> None:
         sys.path.insert(0, p)
 
 
+_store_singleton = None
+_store_lock = threading.Lock()
+
+
 def _store():
-    """Lazy VectorStore (ChromaDB) — used for listing/counting; no models needed."""
-    _ensure_rag_path()
-    from src.indexing.store import VectorStore  # type: ignore
-    return VectorStore(persist_dir=str(_CHROMA_DIR), collection_name=_COLLECTION)
+    """Cached VectorStore (Chroma or pgvector per VECTOR_BACKEND).
+
+    Cached per process so we don't re-run schema-ensure and a COUNT, and re-open
+    the pooler, on EVERY request — that connection churn is what overwhelms
+    Supabase's pooler ("server closed the connection unexpectedly"). Each
+    operation still opens its own short-lived connection via the store, so the
+    shared singleton is safe across the threadpool.
+    """
+    global _store_singleton
+    if _store_singleton is None:
+        with _store_lock:
+            if _store_singleton is None:
+                _ensure_rag_path()
+                from src.indexing.store import VectorStore  # type: ignore
+                _store_singleton = VectorStore(
+                    persist_dir=str(_CHROMA_DIR), collection_name=_COLLECTION,
+                )
+    return _store_singleton
 
 
 def _status_key(corpus_id: str, book_stem: str) -> str:
