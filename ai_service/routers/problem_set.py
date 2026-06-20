@@ -335,6 +335,13 @@ async def get_problem_set(
         }
     raw_ps["submissions"] = submissions
 
+    # The id the client must round-trip on submit is the authoritative ps_uid
+    # from the URL (the artifact key) — not a stale uuid baked into content_json,
+    # which may be absent. Without this the frontend posts a missing/mismatched
+    # problem_set_id → 422 ("field required") on /problem-set/submit. Mirrors the
+    # same normalization done in /problem-set/lesson/{lesson_id}.
+    raw_ps["problem_set_id"] = problem_set_id
+
     return raw_ps
 
 

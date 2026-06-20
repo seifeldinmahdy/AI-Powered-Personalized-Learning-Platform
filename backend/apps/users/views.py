@@ -458,13 +458,13 @@ class UserViewSet(viewsets.ModelViewSet):
         from apps.progress.models import AIChatLog
         recent_chats = (
             AIChatLog.objects.filter(user=student)
-            .select_related('lesson')
+            .select_related('course')
             .order_by('-created_at')[:20]
         )
         chat_data = [
             {
                 'id': c.id,
-                'lesson_title': c.lesson.title,
+                'lesson_title': f"Session {c.session_number}" + (f" — {c.course.title}" if c.course_id else ""),
                 'transcript_text': c.transcript_text,
                 'ai_response_text': c.ai_response_text,
                 'predicted_intent': c.predicted_intent,
