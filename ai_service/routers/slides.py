@@ -782,7 +782,10 @@ async def persisted_slides(
     if pv is None:
         raise HTTPException(status_code=404, detail="No plan version for this student/course")
 
-    deck = await get_slides_artifact(str(student_id), session_number=session_number, plan_version=pv)
+    deck = await get_slides_artifact(
+        str(student_id), course_id=str(course_id),
+        session_number=session_number, plan_version=pv,
+    )
     if not deck:
         raise HTTPException(status_code=404, detail="No persisted slides")
     return deck

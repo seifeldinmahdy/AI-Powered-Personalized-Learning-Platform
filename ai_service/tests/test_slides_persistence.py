@@ -87,7 +87,7 @@ async def test_persist_deck_skips_when_no_plan_version(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_persisted_endpoint_returns_saved_deck(monkeypatch):
-    async def fake_get(student_id, *, session_number, plan_version):
+    async def fake_get(student_id, *, course_id, session_number, plan_version):
         assert session_number == 1 and plan_version == 2
         return {"total_slides": 3}
 
@@ -100,7 +100,7 @@ async def test_persisted_endpoint_returns_saved_deck(monkeypatch):
 async def test_persisted_endpoint_404_when_missing(monkeypatch):
     from fastapi import HTTPException
 
-    async def fake_get(student_id, *, session_number, plan_version):
+    async def fake_get(student_id, *, course_id, session_number, plan_version):
         return None
 
     monkeypatch.setattr("services.artifact_client.get_slides_artifact", fake_get)

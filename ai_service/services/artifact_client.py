@@ -128,14 +128,19 @@ async def get_artifact_content(student_id: str, artifact_id: int) -> Optional[di
     return data if ok else None
 
 
-async def get_slides_artifact(student_id: str, *, session_number: int,
+async def get_slides_artifact(student_id: str, *, course_id: str, session_number: int,
                               plan_version: int) -> Optional[dict]:
     """Resolve a persisted slides deck for resume (index lookup → content fetch).
 
     Returns the stored content_json (the SlideGenerateResponse dump), or None.
+
+    ``course_id`` is REQUIRED: a student in two courses can have decks with the
+    same (session_number, plan_version), so without it the index could return
+    another course's deck (cross-course leak).
     """
     index = await get_artifact_index(
-        student_id, type="slides", session=session_number, plan_version=plan_version,
+        student_id, type="slides", course=course_id,
+        session=session_number, plan_version=plan_version,
     )
     if not index:
         return None

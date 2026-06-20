@@ -127,7 +127,7 @@ def artifact_index(request):
     plan_version. Content is fetched per-row via artifact_content."""
     qs = StudentArtifact.objects.filter(student=request.user)
     for param, field in (("type", "artifact_type"), ("session", "session_number"),
-                         ("plan_version", "plan_version")):
+                         ("plan_version", "plan_version"), ("course", "course_id")):
         val = request.query_params.get(param)
         if val not in (None, ""):
             qs = qs.filter(**{field: val})

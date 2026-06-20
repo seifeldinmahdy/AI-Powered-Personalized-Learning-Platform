@@ -206,6 +206,11 @@ def attach_book_to_corpus(
             return {"attached": 0, "indexed": False}
         store.update_metadata(ids, [{f"corpus__{corpus_id}": "1"} for _ in ids])
         logger.info("corpus book attached", book=book_stem, corpus_id=corpus_id, chunks=len(ids))
+        # Record status so the frontend's index-status poll sees "indexed". When
+        # a book is REUSED (already indexed), this is the only place status gets
+        # set — without it the poll returns "unknown" forever.
+        _set_status(corpus_id, book_stem, status="indexed", chunks=len(ids),
+                    detail="attached (already indexed)")
         if course_id:
             _extract_concepts_from_attached_book(book_stem, corpus_id, course_id)
         return {"attached": len(ids), "indexed": True}
