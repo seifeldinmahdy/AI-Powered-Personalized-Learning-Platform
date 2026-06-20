@@ -183,6 +183,7 @@ def main():
     parser.add_argument('--results-path', default=os.getenv('INTENT_RESULTS_PATH', 'training_results.json'))
     parser.add_argument('--feedback-test-csv', default=os.getenv('INTENT_FEEDBACK_TEST_CSV', ''))
     parser.add_argument('--real-utterance-csv', default=os.getenv('INTENT_REAL_UTTERANCE_CSV', DEFAULT_REAL_UTTERANCE_PATH))
+    parser.add_argument('--held-out-domain-test-csv', default=os.getenv('INTENT_HELD_OUT_DOMAIN_TEST_CSV', str(BASE_DIR / 'data' / 'test_held_out_domain.csv')))
     args = parser.parse_args()
 
     # ── Hyperparameters ─────────────────────────────────────────────
@@ -655,6 +656,51 @@ def main():
         except Exception as e:
             print(f"[!] Feedback test eval failed: {e}")
 
+    # ── Held-out-domain evaluation ──────────────────────────────────
+    held_out_domain_metrics = None
+    if os.path.exists(args.held_out_domain_test_csv):
+        print(f"\n{'='*60}")
+        print("HELD-OUT-DOMAIN EVALUATION")
+        print(f"{'='*60}")
+        try:
+            hod_test_df = pd.read_csv(args.held_out_domain_test_csv)
+            hod_test_df['session_context'] = hod_test_df['session_context'].apply(normalize_context)
+            hod_dataset = IntentDataset(hod_test_df.to_dict('records'), classifier.tokenizer, max_length=MAX_LENGTH)
+            hod_loader = DataLoader(hod_dataset, batch_size=BATCH_SIZE, shuffle=False)
+            hod_loss, hod_acc, hod_prec, hod_rec, hod_f1, hod_preds, hod_labels = evaluate_model_full(classifier, hod_loader)
+
+            hod_per_class_p, hod_per_class_r, hod_per_class_f1, hod_support = precision_recall_fscore_support(
+                hod_labels, hod_preds, average=None, zero_division=0
+            )
+            hod_per_class = {}
+            for i, name in enumerate(INTENT_NAMES):
+                if i < len(hod_per_class_f1):
+                    hod_per_class[name] = {
+                        'precision': round(float(hod_per_class_p[i]), 4),
+                        'recall': round(float(hod_per_class_r[i]), 4),
+                        'f1_score': round(float(hod_per_class_f1[i]), 4),
+                        'support': int(hod_support[i]),
+                    }
+
+            held_out_domain_metrics = {
+                'accuracy': round(hod_acc, 4),
+                'f1_score': round(hod_f1, 4),
+                'precision': round(hod_prec, 4),
+                'recall': round(hod_rec, 4),
+                'test_loss': round(hod_loss, 4),
+                'per_class': hod_per_class,
+            }
+            results['held_out_domain_metrics'] = held_out_domain_metrics
+            print(f"Held-Out-Domain Acc: {hod_acc:.4f} | F1: {hod_f1:.4f}")
+        except Exception as e:
+            print(f"[!] Held-out-domain eval failed: {e}")
+            results['held_out_domain_metrics'] = {'error': str(e)}
+    else:
+        print(f"\n[!] No held-out-domain test file at {args.held_out_domain_test_csv} — skipping.")
+        results['held_out_domain_metrics'] = {
+            'error': f'No held-out-domain test file at {args.held_out_domain_test_csv}',
+        }
+
     # ── Verify checkpoint exists and record path ────────────────────
     if os.path.exists(best_model_path):
         results['model_checkpoint_path'] = str(Path(best_model_path).resolve())
@@ -666,13 +712,18 @@ def main():
     real_f1 = None
     if isinstance(results.get('real_utterance_metrics'), dict):
         real_f1 = results['real_utterance_metrics'].get('f1_score')
+    hod_acc_val = None
+    if isinstance(results.get('held_out_domain_metrics'), dict):
+        hod_acc_val = results['held_out_domain_metrics'].get('accuracy')
+
     results['promotion_ready'] = (
         isinstance(real_f1, (int, float)) and real_f1 >= 0.75
+        and isinstance(hod_acc_val, (int, float)) and hod_acc_val >= 0.70
     )
     if results['promotion_ready']:
-        print(f"\n[READY] Real-utterance F1 {real_f1:.4f} >= 0.75 — model is eligible for promotion.")
+        print(f"\n[READY] Real-utterance F1 {real_f1:.4f} >= 0.75 and held-out-domain acc {hod_acc_val:.4f} >= 0.70 — model is eligible for promotion.")
     else:
-        print(f"\n[NOT READY] Real-utterance F1 {real_f1} below 0.75 — do not promote yet.")
+        print(f"\n[NOT READY] real_f1={real_f1}, held_out_domain_acc={hod_acc_val} — do not promote yet.")
 
     with open(args.results_path, 'w') as f:
         json.dump(results, f, indent=4)

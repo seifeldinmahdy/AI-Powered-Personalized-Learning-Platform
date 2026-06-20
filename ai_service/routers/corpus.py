@@ -65,6 +65,7 @@ async def index_status(corpus_id: str, book_stem: str, x_service_key: str | None
 class CorpusBookRequest(BaseModel):
     book_stem: str
     corpus_id: str
+    course_id: str | None = None
 
 
 @router.post("/attach")
@@ -73,13 +74,16 @@ async def attach_book(req: CorpusBookRequest, x_service_key: str | None = Header
 
     If the book isn't indexed yet, this kicks off indexing and attaches on
     completion (same as /index) — so a 2nd course reusing the book is instant.
+    When ``course_id`` is supplied and the book is already indexed, concepts are
+    extracted in the background and persisted to Django.
     """
     _require_service_key(x_service_key)
     from services.corpus_indexing import attach_book_to_corpus, start_indexing
-    res = attach_book_to_corpus(req.book_stem, req.corpus_id)
+    course_id = req.course_id or ""
+    res = attach_book_to_corpus(req.book_stem, req.corpus_id, course_id)
     if not res.get("indexed"):
         # Not in the library yet — index it (background) and attach when done.
-        return start_indexing(req.book_stem, req.corpus_id)
+        return start_indexing(req.book_stem, req.corpus_id, course_id)
     return res
 
 

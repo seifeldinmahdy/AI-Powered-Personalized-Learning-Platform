@@ -149,6 +149,11 @@ class CourseRating(models.Model):
 # Concept — atomic learning unit within a course (shallow tree)
 # ------------------------------------------------------------------
 class Concept(models.Model):
+    CONCEPT_SOURCES = [
+        ("manual", "Manual"),
+        ("auto", "Auto-extracted"),
+    ]
+
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="concepts")
     label = models.CharField(max_length=200)
     slug = models.SlugField(max_length=60)
@@ -156,6 +161,12 @@ class Concept(models.Model):
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="children"
     )
     order = models.PositiveIntegerField(default=0)
+    source = models.CharField(
+        max_length=20,
+        choices=CONCEPT_SOURCES,
+        default="manual",
+        help_text="How this concept was created (manual admin entry vs. auto-extracted from a book).",
+    )
 
     class Meta:
         db_table = "concepts"

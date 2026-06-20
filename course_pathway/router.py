@@ -15,18 +15,50 @@ authenticated user); they are service-key gated and not reachable from a browser
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
 from pathlib import Path
-
-from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
 from typing import Optional
+
+import requests
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/pathway", tags=["Pathway"])
+
+_DJANGO_API_URL = os.getenv("DJANGO_API_URL", "http://localhost:8000/api").rstrip("/")
+_INTERNAL_SERVICE_KEY = os.getenv("INTERNAL_SERVICE_KEY", "")
+
+
+
+def _is_admin(caller_id: str) -> bool:
+    """Verify the caller is a Django admin by asking the backend /users/me/."""
+    if not _INTERNAL_SERVICE_KEY:
+        return False
+    try:
+        resp = requests.get(
+            f"{_DJANGO_API_URL}/users/me/",
+            headers={
+                "X-Service-Key": _INTERNAL_SERVICE_KEY,
+                "X-Student-ID": str(caller_id),
+            },
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("role") == "admin"
+        logger.warning(
+            "admin check failed: status=%s body=%s",
+            resp.status_code,
+            resp.text[:200],
+        )
+    except Exception:
+        logger.exception("admin check failed")
+    return False
 
 
 def _require_service_key(x_service_key: Optional[str]) -> None:
@@ -309,14 +341,26 @@ async def pathway_versions(
 @router.get("/current", response_model=PlanSummary)
 async def current_pathway(
     course_id: str,
-    student_id: str = Depends(_verified_student_id),
+    target_student_id: Optional[str] = Query(default=None, alias="student_id"),
+    caller_student_id: str = Depends(_verified_student_id),
 ):
     """Read-only: return the CURRENT authoritative plan (no generation).
 
     The pathway page and live session read this — opening the page never
-    triggers regeneration. Identity comes only from the verified X-Student-ID
-    header (Django sets it from the authenticated user).
+    triggers regeneration. Identity comes from the verified X-Student-ID header
+    (Django sets it from the authenticated user). An admin may pass
+    ``?student_id=<target>`` to view another student's plan.
     """
+    student_id = caller_student_id
+    if target_student_id and str(target_student_id) != str(caller_student_id):
+        is_admin = await asyncio.to_thread(_is_admin, caller_student_id)
+        if not is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Only admins can view another student's pathway.",
+            )
+        student_id = str(target_student_id)
+
     try:
         gen = _get_generator()
         plan = gen._store.load_current(student_id, course_id)

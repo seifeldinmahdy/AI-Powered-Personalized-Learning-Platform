@@ -55,8 +55,8 @@ class ConceptSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Concept
-        fields = ["id", "course", "label", "slug", "parent", "order", "children"]
-        read_only_fields = ["id", "course", "slug"]
+        fields = ["id", "course", "label", "slug", "parent", "order", "source", "children"]
+        read_only_fields = ["id", "course", "slug", "source"]
 
 
 class CorpusSourceSerializer(serializers.ModelSerializer):

@@ -33,3 +33,39 @@ class IsVerifiedAdmin(BasePermission):
             and request.user.is_active
             and getattr(request.user, "role", None) == "admin"
         )
+
+
+class IsAdminRole(BasePermission):
+    """
+    Alias-friendly permission that checks the custom ``role='admin'`` field.
+
+    This is the same logic as ``IsVerifiedAdmin`` minus the ``is_active``
+    check. Prefer ``IsVerifiedAdmin`` for admin-only ViewSets; use this class
+    when the requirement explicitly asks for an ``IsAdminRole`` permission.
+    """
+
+    message = "Admin access required."
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and getattr(request.user, "role", None) == "admin"
+        )
+
+
+class IsInternalService(BasePermission):
+    """
+    Allow only requests authenticated via ``InternalServiceAuthentication``.
+
+    Used for service-to-service endpoints that the AI service calls on Django.
+    The shared ``INTERNAL_SERVICE_KEY`` is what actually gates access; this
+    permission ensures the resolved user is the trusted internal-service user.
+    """
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and getattr(request, "auth", None) == "internal-service"
+        )

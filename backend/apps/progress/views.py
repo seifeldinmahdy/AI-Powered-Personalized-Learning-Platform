@@ -16,7 +16,7 @@ from .models import (
     IntentFeedbackBuffer, IntentRetrainingCounter,
     INTENT_CHOICES, INTENT_DEFINITIONS,
 )
-from apps.core.permissions import IsVerifiedAdmin
+from apps.core.permissions import IsVerifiedAdmin, IsAdminRole
 
 logger = logging.getLogger(__name__)
 
@@ -231,8 +231,12 @@ class IntentFeedbackBufferViewSet(viewsets.ModelViewSet):
 class IntentRetrainingCounterViewSet(viewsets.ReadOnlyModelViewSet):
     """Read-only view of the retraining counter. Admins may PATCH threshold."""
     serializer_class = IntentRetrainingCounterSerializer
-    permission_classes = [permissions.IsAuthenticated]
     http_method_names = ["get", "patch", "head", "options"]
+
+    def get_permissions(self):
+        if self.action == "partial_update":
+            return [IsAdminRole()]
+        return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
         # Only the singleton row exists
@@ -244,11 +248,6 @@ class IntentRetrainingCounterViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(serializer.data)
 
     def partial_update(self, request, *args, **kwargs):
-        if not request.user.is_staff:
-            return Response(
-                {"detail": "Only staff can update the threshold."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
         counter = IntentRetrainingCounter.get()
         threshold = request.data.get("threshold")
         if threshold is not None:

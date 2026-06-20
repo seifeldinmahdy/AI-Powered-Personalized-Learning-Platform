@@ -15,6 +15,20 @@ import pandas as pd
 import os
 import re
 import time
+from pathlib import Path
+
+
+try:
+    from dotenv import load_dotenv
+    _DOTENV_AVAILABLE = True
+except ImportError:
+    _DOTENV_AVAILABLE = False
+
+try:
+    import httpx
+    _HTTPX_AVAILABLE = True
+except ImportError:
+    _HTTPX_AVAILABLE = False
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -73,6 +87,154 @@ EMOTION_CONTEXT_MAP = {
     "cooked":     "overwhelmed","ngl":       "neutral",
 }
 
+
+# ─────────────────────────────────────────────────────────────────────
+# REAL COURSE CONTEXT SOURCE (replaces static PYTHON_TOPICS)
+# ─────────────────────────────────────────────────────────────────────
+
+COURSE_CONTEXT_CACHE_FILE = Path("data") / "course_context_cache.json"
+
+
+def _load_env() -> None:
+    """Load environment variables from project .env files.
+
+    Service-specific .env files (ai_service, backend) are preferred over the
+    root .env because the root file may contain a different INTERNAL_SERVICE_KEY.
+    load_dotenv does not override existing variables, so order matters.
+    """
+    if not _DOTENV_AVAILABLE:
+        return
+    candidates = [
+        Path(__file__).resolve().parent / ".env",
+        Path(__file__).resolve().parent.parent / "ai_service" / ".env",
+        Path(__file__).resolve().parent.parent / "backend" / ".env",
+        Path(__file__).resolve().parent.parent / ".env",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            load_dotenv(candidate)
+
+
+def _rows(payload):
+    """Unwrap DRF paginated responses."""
+    return payload.get("results", payload) if isinstance(payload, dict) else payload
+
+
+def fetch_course_contexts() -> list[dict]:
+    """Fetch all authored courses with their concepts and CLOs from Django.
+
+    Returns a list of domain records, one per course:
+        {
+            "domain_name": course title,
+            "course_id": course id,
+            "concepts": [ordered concept labels],
+            "clos": [CLO texts],
+        }
+
+    Falls back to a local cache if Django is unreachable, and finally to a
+    minimal static fallback so generation does not crash in offline mode.
+    """
+    _load_env()
+    django_url = os.getenv("DJANGO_API_URL", "http://localhost:8000/api").rstrip("/")
+    service_key = os.getenv("INTERNAL_SERVICE_KEY", "")
+    headers = {"X-Service-Key": service_key} if service_key else {}
+
+    domains: list[dict] = []
+
+    if _HTTPX_AVAILABLE:
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                courses_resp = client.get(f"{django_url}/courses/courses/", headers=headers)
+                courses_resp.raise_for_status()
+                courses = _rows(courses_resp.json())
+
+                for course in courses:
+                    cid = course.get("id")
+                    if not cid:
+                        continue
+                    title = course.get("title") or f"course_{cid}"
+
+                    concepts_resp = client.get(
+                        f"{django_url}/courses/courses/{cid}/concepts/", headers=headers
+                    )
+                    clos_resp = client.get(
+                        f"{django_url}/courses/courses/{cid}/clos/", headers=headers
+                    )
+
+                    concepts = []
+                    if concepts_resp.status_code == 200:
+                        concepts = sorted(
+                            _rows(concepts_resp.json()),
+                            key=lambda x: x.get("order", 0),
+                        )
+
+                    clos = []
+                    if clos_resp.status_code == 200:
+                        clos = _rows(clos_resp.json())
+
+                    concept_labels = [c.get("label", "") for c in concepts if c.get("label")]
+
+                    # If concepts are empty, derive pseudo-concepts from CLO text so the
+                    # domain still contributes training context.
+                    if not concept_labels and clos:
+                        concept_labels = [
+                            clo.get("text", "")[:80].strip()
+                            for clo in clos
+                            if clo.get("text")
+                        ]
+
+                    if concept_labels:
+                        domains.append({
+                            "domain_name": title,
+                            "course_id": cid,
+                            "concepts": concept_labels,
+                            "clos": [clo.get("text", "") for clo in clos if clo.get("text")],
+                        })
+
+                if domains:
+                    COURSE_CONTEXT_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    with open(COURSE_CONTEXT_CACHE_FILE, "w", encoding="utf-8") as f:
+                        json.dump(domains, f, indent=2, ensure_ascii=False)
+                    print(f"[+] Fetched {len(domains)} course domain(s) from Django.")
+                    return domains
+        except Exception as exc:
+            print(f"[!] Failed to fetch course contexts from Django: {exc}")
+
+    # Fallback 1: cached contexts from a previous successful fetch
+    if COURSE_CONTEXT_CACHE_FILE.exists():
+        print(f"[+] Falling back to cached course contexts: {COURSE_CONTEXT_CACHE_FILE}")
+        with open(COURSE_CONTEXT_CACHE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    # Fallback 2: minimal static list so the generator remains runnable offline.
+    print("[!] WARNING: Django unreachable and no cache found. Using static CS1 fallback.")
+    print("    Regenerate with Django running to pick up real course concepts.")
+    return [{
+        "domain_name": "Introductory Python",
+        "course_id": None,
+        "concepts": PYTHON_TOPICS,
+        "clos": [],
+    }]
+
+
+# Lazy singleton so import-time is fast and fetch only happens when needed.
+_COURSE_DOMAINS: list[dict] | None = None
+
+
+def get_course_domains() -> list[dict]:
+    """Return cached or freshly-fetched course domain records."""
+    global _COURSE_DOMAINS
+    if _COURSE_DOMAINS is None:
+        _COURSE_DOMAINS = fetch_course_contexts()
+    return _COURSE_DOMAINS
+
+
+def clear_course_domain_cache() -> None:
+    """Clear the in-memory domain cache (useful for tests)."""
+    global _COURSE_DOMAINS
+    _COURSE_DOMAINS = None
+
+
 def _infer_emotion(utterance: str) -> str | None:
     lower = utterance.lower()
     for signal, emotion in EMOTION_CONTEXT_MAP.items():
@@ -84,25 +246,49 @@ def generate_context(
     emotion_override: str | None = None,
     pace_override:    str | None = None,
     repeats_override: int | None = None,
-) -> str:
-    """Generate a session context string.
+) -> tuple[str, str, list[str], str]:
+    """Generate a session context string from real authored course concepts.
+
     Overrides correlate context fields with the utterance content so the
     model learns that emotion/pace/repeats fields are reliable signals.
+
+    Returns
+    -------
+    (context_str, current_topic, prev_topics, domain_name)
+        context_str matches the compact key-value format used at inference.
+        current_topic and prev_topics are used to fill phrasing templates.
     """
-    topic_idx = random.randint(0, len(PYTHON_TOPICS) - 1)
-    topic     = PYTHON_TOPICS[topic_idx]
-    prev      = PYTHON_TOPICS[topic_idx - 1] if topic_idx > 0 else "None"
-    emotion   = emotion_override  if emotion_override  else random.choice(EMOTIONS)
-    pace      = pace_override     if pace_override     else random.choice(PACES)
-    repeats   = repeats_override  if repeats_override is not None else random.randint(0, 2)
-    time_min  = random.randint(1, 15)
-    slide     = random.randint(3, 50)
-    return (
+    domains = get_course_domains()
+    domain = random.choice(domains)
+    concepts = domain.get("concepts") or ["General"]
+
+    topic_idx = random.randint(0, len(concepts) - 1)
+    topic = concepts[topic_idx]
+    prev = concepts[topic_idx - 1] if topic_idx > 0 else "None"
+    prev_topics = concepts[:topic_idx][-3:]
+
+    emotion = emotion_override if emotion_override else random.choice(EMOTIONS)
+    pace = pace_override if pace_override else random.choice(PACES)
+    repeats = repeats_override if repeats_override is not None else random.randint(0, 2)
+    time_min = random.randint(1, 15)
+    slide = random.randint(3, 50)
+
+    # Optional CLO enrichment: gives the model a richer signal of what the
+    # session is actually about without changing the utterance phrasing.
+    clo_frag = ""
+    clos = domain.get("clos", [])
+    if clos:
+        clo_text = random.choice(clos)
+        if clo_text:
+            clo_frag = f" | clo:{clo_text[:80]}"
+
+    context = (
         f"topic:{topic} | prev:{prev} | "
         f"emotion:{emotion} | pace:{pace} | "
         f"slides:{slide},{slide+1},{slide+2} | "
-        f"repeats:{repeats} | time_on_topic:{time_min}min"
+        f"repeats:{repeats} | time_on_topic:{time_min}min{clo_frag}"
     )
+    return context, topic, prev_topics, domain["domain_name"]
 
 
 # ── Template authoring rule ──────────────────────────────────────────
@@ -837,7 +1023,7 @@ def get_on_topic_question(current_topic, prev_topics, split_name='train'):
     template = random.choice(bank)
     return template.replace("{topic}", current_topic)
 
-def get_off_topic_question(current_topic_idx, split_name='train'):
+def get_off_topic_question(current_topic, future_topics, split_name='train'):
     if split_name == 'test' and random.random() < 0.5:
         return random.choice(HELD_OUT_OFF_TOPIC)
 
@@ -851,8 +1037,8 @@ def get_off_topic_question(current_topic_idx, split_name='train'):
         fut_bank = OFF_TOPIC_FUT_TRAIN
         gen_bank = OFF_TOPIC_GEN_TRAIN
 
-    if current_topic_idx < len(PYTHON_TOPICS) - 1 and random.random() < 0.5 and len(fut_bank) > 0:
-        future_topic = random.choice(PYTHON_TOPICS[current_topic_idx + 1:])
+    if future_topics and random.random() < 0.5 and len(fut_bank) > 0:
+        future_topic = random.choice(future_topics)
         template = random.choice(fut_bank)
         return template.replace("{topic}", future_topic)
     return random.choice(gen_bank)
@@ -928,79 +1114,122 @@ def get_debugging_question(split_name='train', current_topic=None):
 # PIPELINE GENERATION (3-way split: train/val/test)
 # ─────────────────────────────────────────────────────────────────────
 
-def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, test_ratio=0.15):
+def build_dataset(
+    num_samples_per_class=2000,
+    train_ratio=0.70,
+    val_ratio=0.15,
+    test_ratio=0.15,
+    held_out_domains=None,
+):
+    """Generate domain-balanced train/val/test splits.
+
+    Context is sampled from real course concepts/CLOs rather than a static
+    CS1 topic list. Each intent class is balanced across all active course
+    domains, and a held-out-domain test set can be materialised for
+    generalisation evaluation.
+    """
     random.seed(42)
+    held_out_domains = set(held_out_domains or [])
+
+    domains = get_course_domains()
+    active_domains = [d for d in domains if d["domain_name"] not in held_out_domains]
+    held_out_domain_objs = [d for d in domains if d["domain_name"] in held_out_domains]
+
+    if not active_domains:
+        available = sorted({d["domain_name"] for d in domains})
+        raise ValueError(
+            f"No active domains after holding out {sorted(held_out_domains)}. "
+            f"Available: {available}"
+        )
+
     print(f"Starting Dataset Generation ({num_samples_per_class} per class)...")
+    print(f"  Active domains: {len(active_domains)} | Held-out domains: {len(held_out_domain_objs)}")
 
     train_samples = int(num_samples_per_class * train_ratio)
     val_samples = int(num_samples_per_class * val_ratio)
     test_samples = num_samples_per_class - train_samples - val_samples
 
+    def _make_example(intent, label_id, domain, split_name):
+        """Generate one labelled example from a specific course domain."""
+        concepts = domain.get("concepts") or ["General"]
+        topic_idx = random.randint(0, len(concepts) - 1)
+        current_topic = concepts[topic_idx]
+        prev_topics = concepts[:topic_idx][-3:]
+        future_topics = concepts[topic_idx + 1:]
+
+        if intent == 'On-Topic Question':
+            student_input = get_on_topic_question(current_topic, prev_topics, split_name=split_name)
+        elif intent == 'Off-Topic Question':
+            student_input = get_off_topic_question(current_topic, future_topics, split_name=split_name)
+        elif intent == 'Emotional-State':
+            student_input = get_emotional_state(split_name=split_name, current_topic=current_topic)
+        elif intent == 'Pace-Related':
+            student_input = get_pace_related(split_name=split_name)
+        elif intent == 'Repeat/clarification':
+            student_input = get_repeat_clarification(split_name=split_name, current_topic=current_topic)
+        elif intent == 'Debugging/Code-Sharing':
+            student_input = get_debugging_question(split_name=split_name, current_topic=current_topic)
+        else:
+            student_input = get_off_topic_question(current_topic, future_topics, split_name=split_name)
+
+        emotion_override = None
+        pace_override = None
+        repeats_override = None
+
+        if intent == 'Emotional-State':
+            emotion_override = _infer_emotion(student_input)
+        elif intent == 'Pace-Related':
+            lower = student_input.lower()
+            if any(w in lower for w in ['too fast', 'slow down', 'slow', 'wait', 'hold on']):
+                pace_override = 'fast'
+            elif any(w in lower for w in ['speed up', 'faster', 'move on', 'skip', 'next']):
+                pace_override = 'slow'
+        elif intent == 'Repeat/clarification':
+            repeats_override = random.randint(1, 4)
+
+        dropout_rate = CONTEXT_DROPOUT_BY_CLASS.get(intent, 0.15)
+        if random.random() < dropout_rate:
+            context_str = ""
+        else:
+            context_str, _, _, _ = generate_context(
+                emotion_override=emotion_override,
+                pace_override=pace_override,
+                repeats_override=repeats_override,
+            )
+
+        if split_name == 'train':
+            student_input = augment_text(student_input, intent=intent)
+
+        return {
+            'student_input': student_input,
+            'session_context': context_str,
+            'label': label_id,
+            'intent_name': intent,
+            'domain': domain["domain_name"],
+        }
+
+    def _split_counts(total, n_domains, rotation=0):
+        """Distribute `total` samples across `n_domains` as evenly as possible.
+
+        `rotation` shifts which domains receive the +1 remainder, so remainders
+        are spread across different domains for each intent class and domain
+        totals stay balanced overall.
+        """
+        base = total // n_domains
+        rem = total % n_domains
+        counts = [base] * n_domains
+        for i in range(rem):
+            counts[(rotation + i) % n_domains] += 1
+        return counts
+
     def generate_split(samples_per_class, split_name):
         dataset = []
-        apply_augmentation = split_name == 'train'
-        for intent, label_id in LABEL_MAP.items():
-            for _ in range(samples_per_class):
-                topic_idx = random.randint(0, len(PYTHON_TOPICS) - 1)
-                current_topic = PYTHON_TOPICS[topic_idx]
-                if topic_idx > 0:
-                    prev_count = min(3, topic_idx)
-                    prev_topics = PYTHON_TOPICS[topic_idx - prev_count : topic_idx]
-                else:
-                    prev_topics = []
-
-                if intent == 'On-Topic Question':
-                    student_input = get_on_topic_question(current_topic, prev_topics, split_name=split_name)
-                elif intent == 'Off-Topic Question':
-                    student_input = get_off_topic_question(topic_idx, split_name=split_name)
-                elif intent == 'Emotional-State':
-                    student_input = get_emotional_state(split_name=split_name, current_topic=current_topic)
-                elif intent == 'Pace-Related':
-                    student_input = get_pace_related(split_name=split_name)
-                elif intent == 'Repeat/clarification':
-                    student_input = get_repeat_clarification(split_name=split_name, current_topic=current_topic)
-                elif intent == 'Debugging/Code-Sharing':
-                    student_input = get_debugging_question(split_name=split_name, current_topic=current_topic)
-                else:
-                    student_input = get_off_topic_question(topic_idx, split_name=split_name)
-
-                emotion_override = None
-                pace_override    = None
-                repeats_override = None
-
-                if intent == 'Emotional-State':
-                    emotion_override = _infer_emotion(student_input)
-
-                elif intent == 'Pace-Related':
-                    lower = student_input.lower()
-                    if any(w in lower for w in ['too fast', 'slow down', 'slow', 'wait', 'hold on']):
-                        pace_override = 'fast'     # student perceives pace as fast
-                    elif any(w in lower for w in ['speed up', 'faster', 'move on', 'skip', 'next']):
-                        pace_override = 'slow'     # student perceives pace as slow
-
-                elif intent == 'Repeat/clarification':
-                    repeats_override = random.randint(1, 4)  # repeats > 0 = prior coverage exists
-
-                # Apply class-aware dropout
-                dropout_rate = CONTEXT_DROPOUT_BY_CLASS.get(intent, 0.15)
-                if random.random() < dropout_rate:
-                    context_str = ""
-                else:
-                    context_str = generate_context(
-                        emotion_override=emotion_override,
-                        pace_override=pace_override,
-                        repeats_override=repeats_override,
-                    )
-
-                if apply_augmentation:
-                    student_input = augment_text(student_input, intent=intent)
-
-                dataset.append({
-                    'student_input': student_input,
-                    'session_context': context_str,
-                    'label': label_id,
-                    'intent_name': intent
-                })
+        n_active = len(active_domains)
+        for class_idx, (intent, label_id) in enumerate(LABEL_MAP.items()):
+            per_domain = _split_counts(samples_per_class, n_active, rotation=class_idx)
+            for domain_idx, domain in enumerate(active_domains):
+                for _ in range(per_domain[domain_idx]):
+                    dataset.append(_make_example(intent, label_id, domain, split_name))
         df = pd.DataFrame(dataset)
         return df.sample(frac=1, random_state=42).reset_index(drop=True)
 
@@ -1015,10 +1244,27 @@ def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, 
     val_df.to_csv(os.path.join(output_dir, 'val.csv'), index=False)
     test_df.to_csv(os.path.join(output_dir, 'test.csv'), index=False)
 
+    # Held-out-domain test set: never seen during training/validation.
+    held_out_df = None
+    if held_out_domain_objs:
+        held_out_dataset = []
+        n_held = len(held_out_domain_objs)
+        for class_idx, (intent, label_id) in enumerate(LABEL_MAP.items()):
+            per_domain = _split_counts(test_samples, n_held, rotation=class_idx)
+            for domain_idx, domain in enumerate(held_out_domain_objs):
+                for _ in range(per_domain[domain_idx]):
+                    held_out_dataset.append(_make_example(intent, label_id, domain, 'test'))
+        held_out_df = pd.DataFrame(held_out_dataset)
+        held_out_df = held_out_df.sample(frac=1, random_state=42).reset_index(drop=True)
+        held_out_df.to_csv(os.path.join(output_dir, 'test_held_out_domain.csv'), index=False)
+
     df = pd.concat([train_df, val_df, test_df])
     print("[+] Data Generation Complete!")
     print(f"Total: {len(df)} | Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)}")
-    print(f"Train distribution:\n{train_df['label'].value_counts().sort_index().to_string()}")
+    if held_out_df is not None:
+        print(f"Held-out-domain test: {len(held_out_df)}")
+    print(f"Train class distribution:\n{train_df['label'].value_counts().sort_index().to_string()}")
+    print(f"Train domain distribution:\n{train_df['domain'].value_counts().to_string()}")
 
     return train_df, val_df, test_df
 
@@ -1027,10 +1273,17 @@ def build_dataset(num_samples_per_class=2000, train_ratio=0.70, val_ratio=0.15, 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate intent classifier training data')
     parser.add_argument('--samples', type=int, default=2000, help='Samples per class')
+    parser.add_argument(
+        '--held-out-domains',
+        type=str,
+        default='',
+        help='Comma-separated course titles to hold out as a separate test set',
+    )
     args = parser.parse_args()
 
-    train_df, val_df, test_df = build_dataset(num_samples_per_class=args.samples)
-    train_df.to_csv(os.path.join('data', 'train.csv'), index=False)
-    val_df.to_csv(os.path.join('data', 'val.csv'), index=False)
-    test_df.to_csv(os.path.join('data', 'test.csv'), index=False)
+    held_out = [d.strip() for d in args.held_out_domains.split(',') if d.strip()]
+    train_df, val_df, test_df = build_dataset(
+        num_samples_per_class=args.samples,
+        held_out_domains=held_out or None,
+    )
     print(f'[+] Saved train/val/test CSVs to data/')

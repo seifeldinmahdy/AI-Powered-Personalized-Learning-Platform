@@ -39,6 +39,11 @@ urlpatterns = [
         views.ConceptViewSet.as_view({"get": "retrieve"}),
         name="concept-detail",
     ),
+    path(
+        "courses/<int:course_pk>/concepts/bulk-extract/",
+        views.ConceptViewSet.as_view({"post": "bulk_extract"}),
+        name="concept-bulk-extract",
+    ),
     # CLOs (nested under course)
     path(
         "courses/<int:course_pk>/clos/",

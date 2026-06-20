@@ -1,5 +1,7 @@
+import logging
 import requests
 from django.db.models import Avg
+from django.db.models.functions import Lower
 from django.core.cache import cache
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action, api_view, permission_classes
@@ -8,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.core.authentication import InternalServiceAuthentication
+from apps.core.permissions import IsInternalService
 from .models import (
     Course, Enrollment, CourseRating,
     Concept, CourseLearningOutcome, CourseCorpus, CorpusSource,
@@ -22,6 +25,8 @@ from .serializers import (
 from django.conf import settings
 
 CACHE_TTL = 60 * 15  # 15 minutes
+logger = logging.getLogger(__name__)
+
 
 
 def _is_admin(user):
@@ -514,7 +519,11 @@ def get_coding_hint(request):
 class ConceptViewSet(viewsets.ModelViewSet):
     serializer_class = ConceptSerializer
     authentication_classes = [JWTAuthentication, InternalServiceAuthentication]
-    permission_classes = [IsAdminOrReadOnly]
+
+    def get_permissions(self):
+        if self.action == "bulk_extract":
+            return [IsInternalService()]
+        return [IsAdminOrReadOnly()]
 
     def perform_create(self, serializer):
         course_pk = self.kwargs.get("course_pk")
@@ -529,6 +538,74 @@ class ConceptViewSet(viewsets.ModelViewSet):
         if course_pk:
             qs = qs.filter(course_id=course_pk)
         return qs
+
+    @action(detail=False, methods=["post"], url_path="bulk-extract")
+    def bulk_extract(self, request, course_pk=None):
+        """Service-only: create Concept records from auto-extracted labels.
+
+        Idempotent per course: labels that already match a Concept label
+        case-insensitively are skipped. New concepts are tagged with
+        ``source='auto'`` so the admin UI can distinguish them from manually
+        created ones.
+        """
+        labels = request.data.get("labels", [])
+        if not isinstance(labels, list):
+            return Response(
+                {"detail": "labels must be a list."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not course_pk:
+            return Response(
+                {"detail": "course_pk is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from django.utils.text import slugify
+
+        existing_lower = set(
+            Concept.objects.filter(course_id=course_pk)
+            .annotate(lower_label=Lower("label"))
+            .values_list("lower_label", flat=True)
+        )
+
+        created = 0
+        skipped = 0
+        next_order = (
+            Concept.objects.filter(course_id=course_pk)
+            .order_by("-order")
+            .values_list("order", flat=True)
+            .first()
+            or 0
+        )
+
+        for raw_label in labels:
+            label = str(raw_label).strip()
+            if not label:
+                continue
+            if label.lower() in existing_lower:
+                skipped += 1
+                continue
+            slug = slugify(label)[:60]
+            try:
+                next_order += 1
+                Concept.objects.create(
+                    course_id=course_pk,
+                    label=label,
+                    slug=slug,
+                    order=next_order,
+                    source="auto",
+                )
+                existing_lower.add(label.lower())
+                created += 1
+            except Exception:
+                # A slug collision or DB error should not abort the whole batch.
+                logger.exception("bulk_extract concept create failed", label=label)
+                skipped += 1
+
+        return Response(
+            {"created": created, "skipped": skipped, "total": len(labels)},
+            status=status.HTTP_200_OK,
+        )
 
 
 # ------------------------------------------------------------------
@@ -761,11 +838,16 @@ class CourseCorpusViewSet(viewsets.ViewSet):
         If the book is already in the shared library this is instant (a metadata
         flag, no re-index) — that is how the SAME book is reused across courses.
         If it isn't indexed yet, the AI service indexes it once, then attaches.
+        ``course_pk`` is passed so the AI service can auto-extract concepts.
         """
         try:
             resp = requests.post(
                 f"{_ai_url().rstrip('/')}/corpus/attach",
-                json={"book_stem": source.book_stem, "corpus_id": corpus.corpus_id},
+                json={
+                    "book_stem": source.book_stem,
+                    "corpus_id": corpus.corpus_id,
+                    "course_id": str(course_pk),
+                },
                 headers=_svc_headers(), timeout=30,
             )
             if resp.status_code == 200:

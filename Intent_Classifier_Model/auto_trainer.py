@@ -57,9 +57,13 @@ def run_training_pipeline() -> bool:
         print("[+] Real utterances up to date.")
 
     # Step 1 — data generation
+    held_out_domains = os.getenv("INTENT_HELD_OUT_DOMAINS", "").strip()
+    held_out_arg = ["--held-out-domains", held_out_domains] if held_out_domains else []
     print("\n[Step 1] Running dataset_generator.py ...")
+    if held_out_domains:
+        print(f"  Holding out domain(s): {held_out_domains}")
     result = subprocess.run(
-        ["python", "dataset_generator.py"],
+        ["python", "dataset_generator.py"] + held_out_arg,
         capture_output=True, text=True, encoding="utf-8",
     )
     if result.returncode != 0:
@@ -94,15 +98,22 @@ def run_training_pipeline() -> bool:
     emo_f1      = per_class.get("Emotional-State",        {}).get("f1_score", 0.0)
     ontopic_f1  = per_class.get("On-Topic Question",       {}).get("f1_score", 0.0)
     debug_f1    = per_class.get("Debugging/Code-Sharing",  {}).get("f1_score", 0.0)
+    hod_metrics = results.get("held_out_domain_metrics", {})
+    hod_acc     = hod_metrics.get("accuracy", 0.0) if isinstance(hod_metrics, dict) else 0.0
 
     print(f"  acc={acc:.3f}  f1={f1:.3f}  "
-          f"emotional={emo_f1:.3f}  ontopic={ontopic_f1:.3f}  debug={debug_f1:.3f}")
+          f"emotional={emo_f1:.3f}  ontopic={ontopic_f1:.3f}  debug={debug_f1:.3f}"
+          f"  held_out_domain_acc={hod_acc:.3f}")
+
+    base_ok = acc >= 0.88 and f1 >= 0.88 and emo_f1 >= 0.88 and ontopic_f1 >= 0.82 and debug_f1 >= 0.90
+    # Gate on held-out-domain accuracy only when the dataset generator produced one.
+    hod_available = isinstance(hod_metrics, dict) and "accuracy" in hod_metrics
+    hod_ok = (not hod_available) or hod_acc >= 0.70
 
     if acc >= 1.0:
         print("[!] Perfect accuracy — likely memorisation. Rejecting.")
         return False
-    elif (acc >= 0.88 and f1 >= 0.88
-          and emo_f1 >= 0.88 and ontopic_f1 >= 0.82 and debug_f1 >= 0.90):
+    elif base_ok and hod_ok:
         print("[+] Quality bar met. Promoting model to production.")
         if os.path.exists(MODEL_NEW_STAGE_PATH):
             shutil.copy(MODEL_NEW_STAGE_PATH, MODEL_PROD_PATH)

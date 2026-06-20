@@ -65,9 +65,10 @@ class CorpusAuthoringTests(Base):
         self.assertEqual(r.json()["index_status"], "indexing")
         src = CorpusSource.objects.get(book_stem="intro")
         self.assertEqual(src.index_status, "indexing")
-        # The AI corpus indexer was called with this corpus + book.
-        self.assertIn("/corpus/index", m.post.call_args.args[0])
+        # The AI corpus attach endpoint was called with this corpus + book + course.
+        self.assertIn("/corpus/attach", m.post.call_args.args[0])
         self.assertEqual(m.post.call_args.kwargs["json"]["book_stem"], "intro")
+        self.assertEqual(m.post.call_args.kwargs["json"]["course_id"], str(self.course.id))
 
     def test_index_status_syncs_onto_source(self):
         corpus = CourseCorpus.objects.get_or_create(course=self.course, defaults={"name": "Py"})[0]

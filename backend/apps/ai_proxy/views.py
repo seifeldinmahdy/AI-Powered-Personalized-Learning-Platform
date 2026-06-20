@@ -125,9 +125,19 @@ def profiler_audit_log(request):
 @api_view(["GET"])
 @permission_classes([permissions.IsAuthenticated])
 def pathway_current(request, course_id: str):
-    """GET the authenticated student's current pathway plan for a course."""
-    return _forward(request, "GET", "/pathway/current",
-                    params={"course_id": course_id})
+    """GET the authenticated student's current pathway plan for a course.
+
+    Admins may pass ``?student_id=<target_id>`` to retrieve another student's
+    current plan. The proxy forwards the admin's own identity in
+    ``X-Student-ID`` so the AI service can verify admin status before serving
+    the target student's data.
+    """
+    params = {"course_id": course_id}
+    if getattr(request.user, "role", None) == "admin":
+        target_id = request.query_params.get("student_id")
+        if target_id:
+            params["student_id"] = str(target_id)
+    return _forward(request, "GET", "/pathway/current", params=params)
 
 
 @api_view(["GET"])

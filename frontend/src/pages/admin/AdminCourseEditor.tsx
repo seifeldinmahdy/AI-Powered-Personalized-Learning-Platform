@@ -459,7 +459,7 @@ export default function AdminCourseEditor() {
     return () => clearInterval(interval);
   }, [id, pollingStems]);
 
-  // Refetch available books whenever a corpus source transitions to indexed
+  // Refetch available books and concepts whenever a corpus source transitions to indexed
   useEffect(() => {
     const currentIndexed = new Set(
       corpus?.sources.filter((s) => s.index_status === 'indexed').map((s) => s.book_stem) ?? [],
@@ -469,9 +469,12 @@ export default function AdminCourseEditor() {
     );
     if (newlyIndexed.length > 0) {
       loadAvailableBooks();
+      getConcepts(id)
+        .then(setConcepts)
+        .catch(() => toast.error('Failed to refresh concepts'));
     }
     indexedStemsRef.current = currentIndexed;
-  }, [corpus?.sources, loadAvailableBooks]);
+  }, [corpus?.sources, loadAvailableBooks, id, setConcepts]);
 
   // ---- Module helpers ----
 
