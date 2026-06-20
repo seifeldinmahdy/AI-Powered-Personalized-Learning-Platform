@@ -91,6 +91,48 @@ def attach_book(req: CorpusBookRequest, x_service_key: str | None = Header(defau
     return res
 
 
+class ExtractConceptsRequest(BaseModel):
+    book_stem: str
+    corpus_id: str
+    course_id: str
+
+
+@router.post("/extract-concepts")
+def extract_concepts_endpoint(req: ExtractConceptsRequest, x_service_key: str | None = Header(default=None)):
+    """Run concept extraction for an already-indexed book (manual, on-demand).
+
+    Separate from indexing: reads the book's chunk topics, consolidates them via
+    the LLM, and persists the deduplicated concepts to Django. Sync ``def`` so
+    FastAPI runs it in a threadpool (it does a blocking LLM call + DB write)."""
+    _require_service_key(x_service_key)
+    from services.corpus_indexing import extract_concepts
+    return extract_concepts(req.book_stem, req.corpus_id, req.course_id)
+
+
+class MergeConceptTagsRequest(BaseModel):
+    corpus_id: str
+    survivor_id: str
+    merge_ids: list[str]
+
+
+@router.post("/merge-concept-tags")
+def merge_concept_tags_endpoint(req: MergeConceptTagsRequest, x_service_key: str | None = Header(default=None)):
+    """Repoint chunk concept tags from merged concepts to the survivor."""
+    _require_service_key(x_service_key)
+    from services.corpus_indexing import merge_concept_tags
+    return merge_concept_tags(req.corpus_id, req.survivor_id, req.merge_ids)
+
+
+@router.get("/concept-topics")
+def concept_topics(corpus_id: str, concept_id: str, x_service_key: str | None = Header(default=None)):
+    """Distinct chunk topics (+ counts) under one concept in a corpus.
+
+    Sync ``def`` so the blocking vector-store read runs in FastAPI's threadpool."""
+    _require_service_key(x_service_key)
+    from services.corpus_indexing import list_concept_topics
+    return list_concept_topics(corpus_id, concept_id)
+
+
 @router.post("/detach")
 def detach_book(req: CorpusBookRequest, x_service_key: str | None = Header(default=None)):
     """Remove a book from a corpus (membership only). Chunks stay in the DB."""

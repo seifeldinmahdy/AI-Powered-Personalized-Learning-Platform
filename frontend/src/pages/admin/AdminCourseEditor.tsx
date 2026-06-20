@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import {
   ChevronDown, ChevronRight, Plus, Trash2, Edit, Check, X, Loader2, BookOpen,
   Sparkles, RefreshCw, GraduationCap, MessageSquare, Hammer,
-  Upload, FileText,
+  Upload, FileText, GitMerge,
 } from 'lucide-react';
 import {
   getAdminCourses, getModulesByCourse, getLessonsByModule,
@@ -16,6 +16,7 @@ import {
 import { AIDraftReviewTable, type Column } from '../../components/AIDraftReviewTable';
 import {
   getCLOs, suggestCLOs, createCLO, updateCLO, deleteCLO, getCLOAttainment,
+  setCloConceptTopics,
   type CLO, type CLODraft, type CLOAttainment,
 } from '../../services/clos';
 import { getSurveySummary, refreshSurveySummary, type SurveySummary } from '../../services/surveys';
@@ -30,10 +31,14 @@ import {
   getCourse, draftCourseDescription, getPathwayVersions, regeneratePathway,
   type Course, type PathwayVersion,
 } from '../../services/courses';
-import { getConcepts, createConcept, type Concept } from '../../services/concepts';
+import {
+  getConcepts, createConcept, getConceptTopics, mergeConcepts,
+  type Concept, type ConceptTopic,
+} from '../../services/concepts';
 import {
   getCourseCorpus, uploadBook, addCorpusSource,
-  removeCorpusSource, getIndexStatus, type CourseCorpus, type CorpusSource,
+  removeCorpusSource, getIndexStatus, extractConcepts,
+  type CourseCorpus, type CorpusSource,
   type CorpusSourceType, type AvailableBook,
 } from '../../services/corpus';
 import {
@@ -184,6 +189,144 @@ const ConceptMultiSelect = ({
   );
 };
 
+// Per-CLO topic refiner: for each concept linked to a CLO, expand to pick which
+// of the concept's topics (its underlying chunks) this CLO should use. By default
+// every topic applies; unchecking some narrows the concept for THIS CLO only.
+const ConceptTopicRefiner = ({
+  courseId,
+  clo,
+  concepts,
+  onCloUpdate,
+}: {
+  courseId: number;
+  clo: CLO;
+  concepts: Concept[];
+  onCloUpdate: (updated: CLO) => void;
+}) => {
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const [topicsByConcept, setTopicsByConcept] = useState<Record<number, ConceptTopic[]>>({});
+  const [loadingConcept, setLoadingConcept] = useState<number | null>(null);
+  const [savingConcept, setSavingConcept] = useState<number | null>(null);
+
+  // null => no refinement saved => all topics apply.
+  const savedSelection = (conceptId: number): string[] | null => {
+    const entry = clo.concept_topics?.find((ct) => ct.concept_id === conceptId);
+    return entry ? entry.selected_topics : null;
+  };
+
+  const toggleExpand = async (conceptId: number) => {
+    if (expanded === conceptId) { setExpanded(null); return; }
+    setExpanded(conceptId);
+    if (!topicsByConcept[conceptId]) {
+      setLoadingConcept(conceptId);
+      try {
+        const res = await getConceptTopics(courseId, conceptId);
+        setTopicsByConcept((prev) => ({ ...prev, [conceptId]: res.topics }));
+      } catch {
+        toast.error('Failed to load topics for this concept');
+      } finally {
+        setLoadingConcept(null);
+      }
+    }
+  };
+
+  const toggleTopic = async (conceptId: number, topic: string) => {
+    const all = (topicsByConcept[conceptId] ?? []).map((t) => t.topic);
+    const current = savedSelection(conceptId) ?? all; // null => everything selected
+    const next = current.includes(topic)
+      ? current.filter((t) => t !== topic)
+      : [...current, topic];
+    if (next.length === 0) {
+      toast.error('Keep at least one topic, or remove the concept from this CLO.');
+      return;
+    }
+    // All selected == no refinement: send [] to clear the row.
+    const payload = next.length === all.length ? [] : next;
+    setSavingConcept(conceptId);
+    try {
+      const updated = await setCloConceptTopics(courseId, clo.id, conceptId, payload);
+      onCloUpdate(updated);
+    } catch {
+      toast.error('Failed to save topic selection');
+    } finally {
+      setSavingConcept(null);
+    }
+  };
+
+  if (clo.concepts.length === 0) {
+    return <span className="text-xs" style={{ color: 'var(--admin-ink-tertiary)' }}>—</span>;
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      {clo.concepts.map((conceptId) => {
+        const concept = concepts.find((c) => c.id === conceptId);
+        const sel = savedSelection(conceptId);
+        const topics = topicsByConcept[conceptId];
+        const isOpen = expanded === conceptId;
+        const refinedCount = sel?.length ?? null;
+        return (
+          <div key={conceptId} className="rounded-md border" style={{ borderColor: 'var(--admin-hairline)' }}>
+            <button
+              type="button"
+              onClick={() => toggleExpand(conceptId)}
+              className="w-full flex items-center justify-between gap-2 px-2 py-1 text-left"
+              style={{ fontSize: '12px' }}
+            >
+              <span className="flex items-center gap-1.5">
+                {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                <span className="admin-badge text-xs px-2 py-0.5" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}>
+                  {concept?.label ?? conceptId}
+                </span>
+              </span>
+              <span style={{ color: 'var(--admin-ink-tertiary)', fontSize: '11px' }}>
+                {savingConcept === conceptId
+                  ? 'saving…'
+                  : refinedCount !== null
+                  ? `${refinedCount} topic${refinedCount === 1 ? '' : 's'}`
+                  : 'all topics'}
+              </span>
+            </button>
+            {isOpen && (
+              <div className="px-2 pb-2 pt-1 border-t" style={{ borderColor: 'var(--admin-hairline)' }}>
+                {loadingConcept === conceptId ? (
+                  <div className="flex items-center gap-2 py-1" style={{ color: 'var(--admin-ink-tertiary)', fontSize: '12px' }}>
+                    <Loader2 size={12} className="animate-spin" /> Loading topics…
+                  </div>
+                ) : !topics || topics.length === 0 ? (
+                  <div className="py-1" style={{ color: 'var(--admin-ink-tertiary)', fontSize: '12px' }}>
+                    No topics indexed for this concept yet.
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-0.5 max-h-44 overflow-y-auto">
+                    {topics.map((t) => {
+                      const effective = sel ?? topics.map((x) => x.topic); // null => all on
+                      const checked = effective.includes(t.topic);
+                      return (
+                        <label key={t.topic} className="flex items-center gap-2 cursor-pointer" style={{ fontSize: '12px', color: 'var(--admin-ink)' }}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={savingConcept === conceptId}
+                            onChange={() => toggleTopic(conceptId, t.topic)}
+                            className="rounded"
+                          />
+                          <span className="flex-1">{t.topic}</span>
+                          <span style={{ color: 'var(--admin-ink-tertiary)', fontSize: '11px' }}>{t.chunks}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 export default function AdminCourseEditor() {
   const { courseId } = useParams<{ courseId: string }>();
   const id = Number(courseId);
@@ -206,6 +349,12 @@ export default function AdminCourseEditor() {
   const [selectedBookStem, setSelectedBookStem] = useState('');
   const [uploading, setUploading] = useState(false);
   const [pollingStems, setPollingStems] = useState<Set<string>>(new Set());
+  const [extractingStem, setExtractingStem] = useState<string | null>(null);
+  // Concept merge (fold duplicates into a survivor)
+  const [mergeSelectedIds, setMergeSelectedIds] = useState<Set<number>>(new Set());
+  const [mergeSurvivorId, setMergeSurvivorId] = useState<number | null>(null);
+  const [merging, setMerging] = useState(false);
+  const [conceptPanelOpen, setConceptPanelOpen] = useState(false);
   const [addingModule, setAddingModule] = useState(false);
   const [newModuleTitle, setNewModuleTitle] = useState('');
   const [newModuleOrder, setNewModuleOrder] = useState('');
@@ -1032,6 +1181,76 @@ export default function AdminCourseEditor() {
     }
   };
 
+  const handleExtractConcepts = async (bookStem: string) => {
+    setExtractingStem(bookStem);
+    try {
+      const result = await extractConcepts(id, bookStem);
+      if (result.ok === false) {
+        toast.error(result.detail || 'Concept extraction failed');
+        return;
+      }
+      if (result.created > 0) {
+        toast.success(
+          `Extracted ${result.extracted} concepts — ${result.created} new` +
+          (result.skipped ? `, ${result.skipped} duplicates skipped` : ''),
+        );
+      } else {
+        toast.success(
+          result.extracted > 0
+            ? `No new concepts — all ${result.extracted} already exist`
+            : 'No concepts found to extract',
+        );
+      }
+      // New concepts may have been created — refresh the concept list/selectors.
+      getConcepts(id).then(setConcepts).catch(() => undefined);
+    } catch {
+      toast.error('Failed to extract concepts');
+    } finally {
+      setExtractingStem(null);
+    }
+  };
+
+  const toggleMergeSelect = (conceptId: number) => {
+    setMergeSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(conceptId)) {
+        next.delete(conceptId);
+        if (mergeSurvivorId === conceptId) setMergeSurvivorId(null);
+      } else {
+        next.add(conceptId);
+      }
+      return next;
+    });
+  };
+
+  const handleMergeConcepts = async () => {
+    const ids = Array.from(mergeSelectedIds);
+    if (ids.length < 2 || mergeSurvivorId == null) return;
+    const mergeIds = ids.filter((cid) => cid !== mergeSurvivorId);
+    setMerging(true);
+    try {
+      const res = await mergeConcepts(id, mergeSurvivorId, mergeIds);
+      const survivorLabel = concepts.find((c) => c.id === mergeSurvivorId)?.label ?? 'survivor';
+      toast.success(
+        `Merged ${res.merged.length} concept${res.merged.length === 1 ? '' : 's'} into "${survivorLabel}"` +
+        (res.retagged != null ? ` — ${res.retagged} chunks repointed` : ''),
+      );
+      setMergeSelectedIds(new Set());
+      setMergeSurvivorId(null);
+      // Refresh concepts (deleted ones gone) and CLOs (links repointed).
+      const [freshConcepts, freshClos] = await Promise.all([
+        getConcepts(id).catch(() => concepts),
+        getCLOs(id).catch(() => clos),
+      ]);
+      setConcepts(freshConcepts);
+      setClos(freshClos);
+    } catch {
+      toast.error('Failed to merge concepts');
+    } finally {
+      setMerging(false);
+    }
+  };
+
   // ---- CLO edit helpers ----
 
   const startEditCLO = (clo: CLO) => {
@@ -1558,12 +1777,31 @@ export default function AdminCourseEditor() {
                     </td>
                     <td className="text-sm" style={{ color: 'var(--admin-ink-secondary)' }}>{source.chunk_count}</td>
                     <td>
-                      <button
-                        onClick={() => handleRemoveSource(source.id, source.book_stem)}
-                        className="admin-btn admin-btn-ghost-danger admin-btn-icon"
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      <div className="flex items-center gap-1 justify-end">
+                        <button
+                          onClick={() => handleExtractConcepts(source.book_stem)}
+                          disabled={source.index_status !== 'indexed' || extractingStem === source.book_stem}
+                          className="admin-btn admin-btn-ghost admin-btn-sm flex items-center gap-1.5"
+                          title={
+                            source.index_status === 'indexed'
+                              ? 'Extract concepts from this book and add the unique ones to the course'
+                              : 'Book must be indexed before concepts can be extracted'
+                          }
+                        >
+                          {extractingStem === source.book_stem ? (
+                            <Loader2 size={13} className="animate-spin" />
+                          ) : (
+                            <Sparkles size={13} />
+                          )}
+                          {extractingStem === source.book_stem ? 'Extracting…' : 'Extract concepts'}
+                        </button>
+                        <button
+                          onClick={() => handleRemoveSource(source.id, source.book_stem)}
+                          className="admin-btn admin-btn-ghost-danger admin-btn-icon"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1574,6 +1812,90 @@ export default function AdminCourseEditor() {
       </section>
 
 
+
+      {/* ── Manage Concepts (merge duplicates) ── */}
+      <section>
+        <div className="flex items-center gap-2 mb-4">
+          <GitMerge size={20} style={{ color: 'var(--admin-accent)' }} />
+          <h2 className="admin-heading-xs">Concepts</h2>
+          <span className="text-xs" style={{ color: 'var(--admin-ink-tertiary)' }}>
+            {concepts.length} total
+          </span>
+          <button
+            onClick={() => setConceptPanelOpen((v) => !v)}
+            className="admin-btn admin-btn-ghost admin-btn-sm ml-auto flex items-center gap-1.5"
+          >
+            {conceptPanelOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            {conceptPanelOpen ? 'Hide' : 'Manage / merge duplicates'}
+          </button>
+        </div>
+        {conceptPanelOpen && (
+          <div className="admin-card p-5 space-y-3">
+            <p className="text-xs" style={{ color: 'var(--admin-ink-secondary)' }}>
+              Select two or more concepts, choose which one to keep, then merge. CLO
+              links, topic selections and source chunks all move onto the kept concept.
+            </p>
+            {concepts.length === 0 ? (
+              <p className="text-sm text-center py-4" style={{ color: 'var(--admin-ink-secondary)' }}>
+                No concepts yet. Extract concepts from a corpus book first.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-0.5 max-h-72 overflow-y-auto">
+                {concepts.map((c) => {
+                  const selected = mergeSelectedIds.has(c.id);
+                  const isSurvivor = mergeSurvivorId === c.id;
+                  return (
+                    <div
+                      key={c.id}
+                      className="flex items-center gap-2 px-2 py-1.5 rounded-md"
+                      style={{ background: selected ? 'var(--admin-accent-subtle)' : 'transparent' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => toggleMergeSelect(c.id)}
+                        className="rounded"
+                      />
+                      <span className="flex-1 text-sm" style={{ color: 'var(--admin-ink)' }}>{c.label}</span>
+                      {c.source === 'auto' && (
+                        <span className="admin-badge text-xs px-1.5 py-0.5" style={{ background: 'var(--admin-paper-muted)', color: 'var(--admin-ink-tertiary)' }}>auto</span>
+                      )}
+                      {selected && (
+                        <label className="flex items-center gap-1 text-xs cursor-pointer" style={{ color: isSurvivor ? 'var(--admin-accent)' : 'var(--admin-ink-tertiary)' }}>
+                          <input
+                            type="radio"
+                            name="merge-survivor"
+                            checked={isSurvivor}
+                            onChange={() => setMergeSurvivorId(c.id)}
+                          />
+                          keep
+                        </label>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {mergeSelectedIds.size >= 2 && (
+              <div className="flex items-center justify-between gap-3 pt-2 border-t" style={{ borderColor: 'var(--admin-hairline)' }}>
+                <span className="text-xs" style={{ color: 'var(--admin-ink-secondary)' }}>
+                  {mergeSurvivorId == null
+                    ? 'Pick which concept to keep ("keep").'
+                    : `Merge ${mergeSelectedIds.size - 1} into "${concepts.find((c) => c.id === mergeSurvivorId)?.label}".`}
+                </span>
+                <button
+                  onClick={handleMergeConcepts}
+                  disabled={mergeSurvivorId == null || merging}
+                  className="admin-btn admin-btn-primary admin-btn-sm flex items-center gap-1.5"
+                >
+                  {merging ? <Loader2 size={13} className="animate-spin" /> : <GitMerge size={13} />}
+                  {merging ? 'Merging…' : 'Merge'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
 
       {/* ── Course Learning Outcomes ── */}
       <section>
@@ -1704,18 +2026,15 @@ export default function AdminCourseEditor() {
                                 {clo.bloom_level}
                               </span>
                             </td>
-                            <td>
-                              <div className="flex flex-wrap gap-1">
-                                {clo.concepts.map((conceptId) => {
-                                  const concept = concepts.find((c) => c.id === conceptId);
-                                  return (
-                                    <span key={conceptId} className="admin-badge text-xs px-2 py-0.5" style={{ background: 'var(--admin-accent-subtle)', color: 'var(--admin-accent)' }}>
-                                      {concept?.label ?? conceptId}
-                                    </span>
-                                  );
-                                })}
-                                {clo.concepts.length === 0 && <span className="text-xs" style={{ color: 'var(--admin-ink-tertiary)' }}>—</span>}
-                              </div>
+                            <td style={{ minWidth: 220 }}>
+                              <ConceptTopicRefiner
+                                courseId={id}
+                                clo={clo}
+                                concepts={concepts}
+                                onCloUpdate={(updated) =>
+                                  setClos((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
+                                }
+                              />
                             </td>
                             <td className="text-sm" style={{ color: 'var(--admin-ink-secondary)' }}>{clo.order}</td>
                             <td>

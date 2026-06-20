@@ -80,6 +80,28 @@ export async function removeCorpusSource(courseId: number, sourceId: number): Pr
     await api.delete(`/courses/courses/${courseId}/corpus/sources/${sourceId}/`);
 }
 
+export interface ExtractConceptsResult {
+    ok?: boolean;
+    extracted: number;
+    created: number;
+    skipped: number;
+    detail?: string;
+}
+
+/** Run concept extraction for one indexed book (separate from indexing).
+ *  Consolidates the book's chunk topics into deduplicated concepts and persists
+ *  the new ones to the course (existing labels are skipped). */
+export async function extractConcepts(
+    courseId: number,
+    bookStem: string,
+): Promise<ExtractConceptsResult> {
+    const res = await api.post<ExtractConceptsResult>(
+        `/courses/courses/${courseId}/corpus/extract-concepts/`,
+        { book_stem: bookStem },
+    );
+    return res.data;
+}
+
 export async function getIndexStatus(
     courseId: number,
     bookStem: string,

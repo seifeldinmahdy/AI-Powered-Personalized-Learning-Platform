@@ -151,51 +151,15 @@ def _book_chunk_ids(store, book_stem: str) -> list[str]:
     return got.get("ids", []) if isinstance(got, dict) else []
 
 
-def _extract_concepts_from_attached_book(book_stem: str, corpus_id: str, course_id: str) -> None:
-    """Background concept extraction for a book that is already indexed/attached.
-
-    Builds the LLM client lazily in a thread so the attach response is instant.
-    """
-    def run() -> None:
-        try:
-            _ensure_rag_path()
-            from src.config.settings import Settings  # type: ignore
-            from src.llm.client import build_client_from_settings  # type: ignore
-            from src.indexing.pipeline import IndexingPipeline  # type: ignore
-
-            settings = Settings()
-            settings.chroma_db_path = str(_CHROMA_DIR)
-            settings.raw_books_dir = str(_RAW_BOOKS_DIR)
-            pipeline = IndexingPipeline(
-                settings=settings, llm_client=build_client_from_settings(settings)
-            )
-            store = pipeline.store
-            llm_client = getattr(pipeline.analyzer, "llm", None)
-            counts = _extract_and_create_concepts(
-                store, book_stem, corpus_id, course_id, llm_client
-            )
-            logger.info(
-                "auto concept extraction completed (attach)",
-                book=book_stem,
-                corpus_id=corpus_id,
-                course_id=course_id,
-                **counts,
-            )
-        except Exception:
-            logger.exception("auto concept extraction failed (attach)", book=book_stem)
-
-    threading.Thread(target=run, daemon=True).start()
-
-
 def attach_book_to_corpus(
     book_stem: str, corpus_id: str, course_id: str = ""
 ) -> dict:
     """Add an already-indexed book to a corpus (fast membership patch).
 
     Returns ``indexed=False`` when the book has no chunks yet (caller should
-    index it first); otherwise stamps the per-corpus membership flag. If
-    ``course_id`` is provided and the attach succeeds, concept extraction is
-    kicked off in the background.
+    index it first); otherwise stamps the per-corpus membership flag. Concept
+    extraction is NOT triggered here — it is a separate, admin-initiated step
+    (see :func:`extract_concepts`) so it can never affect indexing status.
     """
     if not book_stem or not corpus_id:
         return {"attached": 0, "indexed": False, "detail": "book_stem and corpus_id required"}
@@ -206,17 +170,89 @@ def attach_book_to_corpus(
             return {"attached": 0, "indexed": False}
         store.update_metadata(ids, [{f"corpus__{corpus_id}": "1"} for _ in ids])
         logger.info("corpus book attached", book=book_stem, corpus_id=corpus_id, chunks=len(ids))
-        # Record status so the frontend's index-status poll sees "indexed". When
-        # a book is REUSED (already indexed), this is the only place status gets
-        # set — without it the poll returns "unknown" forever.
-        _set_status(corpus_id, book_stem, status="indexed", chunks=len(ids),
-                    detail="attached (already indexed)")
-        if course_id:
-            _extract_concepts_from_attached_book(book_stem, corpus_id, course_id)
-        return {"attached": len(ids), "indexed": True}
+        # Record status so the index-status poll reports "indexed" (this fast path
+        # bypasses _run_index/_try_attach_existing, which are the other places that
+        # stamp status). Concept extraction is intentionally NOT triggered here —
+        # it is a separate, admin-initiated step (see :func:`extract_concepts`) so
+        # it can never affect indexing status.
+        _set_status(corpus_id, book_stem, status="indexed",
+                    chunks=len(ids), detail="attached (already indexed)")
+        return {"attached": len(ids), "indexed": True, "status": "indexed"}
     except BaseException as exc:  # noqa: BLE001
         logger.warning("corpus attach failed", book=book_stem, error=str(exc))
         return {"attached": 0, "indexed": False, "detail": f"store error: {exc}"[:300]}
+
+
+def merge_concept_tags(corpus_id: str, survivor_id: str, merge_ids: list[str]) -> dict:
+    """Repoint chunk concept tags from *merge_ids* to *survivor_id*.
+
+    When the admin merges duplicate concepts, the chunks tagged
+    ``concept__<corpus_id> = <merged id>`` must move to the survivor so the
+    concept→topics, CLO coverage and slide grounding follow the merge.
+    """
+    if not corpus_id or not survivor_id or not merge_ids:
+        return {"retagged": 0}
+    key = f"concept__{corpus_id}"
+    try:
+        store = _store()
+    except BaseException as exc:  # noqa: BLE001
+        logger.warning("merge tags: store unavailable", error=str(exc))
+        return {"retagged": 0, "detail": f"store error: {exc}"[:200]}
+
+    total = 0
+    for mid in {str(m) for m in merge_ids if str(m) != str(survivor_id)}:
+        try:
+            res = store.get_where(
+                where={"$and": [{f"corpus__{corpus_id}": "1"}, {key: str(mid)}]},
+                include=[],
+            )
+        except BaseException as exc:  # noqa: BLE001
+            logger.warning("merge tags: fetch failed", merged=mid, error=str(exc))
+            continue
+        ids = res.get("ids", []) or [] if isinstance(res, dict) else []
+        if ids:
+            store.update_metadata(ids, [{key: str(survivor_id)} for _ in ids])
+            total += len(ids)
+    logger.info("concept tags merged", corpus_id=corpus_id, survivor=survivor_id,
+                merged=list(merge_ids), retagged=total)
+    return {"retagged": total}
+
+
+def list_concept_topics(corpus_id: str, concept_id: str) -> dict:
+    """Distinct chunk topics under one concept, with chunk counts.
+
+    A "big" concept (e.g. OOP) groups many fine-grained chunk topics (classes,
+    encapsulation, …) — those are the chunks tagged ``concept__<corpus_id> =
+    <concept_id>`` and still in the corpus (``corpus__<corpus_id> = "1"``). This
+    surfaces them so an admin can pick a subset per CLO.
+
+    Returns ``{"topics": [{"topic", "chunks"}], "total_chunks"}`` sorted by count.
+    """
+    if not corpus_id or not concept_id:
+        return {"topics": [], "total_chunks": 0, "detail": "corpus_id and concept_id required"}
+    try:
+        store = _store()
+        result = store.get_where(
+            where={"$and": [
+                {f"corpus__{corpus_id}": "1"},
+                {f"concept__{corpus_id}": str(concept_id)},
+            ]},
+            include=["metadatas"],
+        )
+    except BaseException as exc:  # noqa: BLE001
+        logger.warning("concept topics fetch failed", concept_id=concept_id, error=str(exc))
+        return {"topics": [], "total_chunks": 0, "detail": f"store error: {exc}"[:200]}
+
+    metadatas = result.get("metadatas") or [] if isinstance(result, dict) else []
+    counts: Counter = Counter()
+    for meta in metadatas:
+        if not isinstance(meta, dict):
+            continue
+        topic = str(meta.get("topic") or "").strip()
+        if topic and topic.lower() != "unknown":
+            counts[topic] += 1
+    topics = [{"topic": t, "chunks": n} for t, n in counts.most_common()]
+    return {"topics": topics, "total_chunks": sum(counts.values())}
 
 
 def detach_book_from_corpus(book_stem: str, corpus_id: str) -> dict:
@@ -392,29 +428,163 @@ def _extract_and_create_concepts(
     return {"extracted": len(concepts), "created": 0, "skipped": 0}
 
 
-def _extract_concepts_async(
-    store,
-    book_stem: str,
-    corpus_id: str,
-    course_id: str,
-    llm_client,
-) -> None:
-    """Kick off concept extraction in a background thread after indexing."""
-    def run() -> None:
-        try:
-            counts = _extract_and_create_concepts(
-                store, book_stem, corpus_id, course_id, llm_client
-            )
-            logger.info(
-                "auto concept extraction completed",
-                book=book_stem,
-                course_id=course_id,
-                **counts,
-            )
-        except Exception:
-            logger.exception("auto concept extraction failed", book=book_stem)
+def _build_llm_client():
+    """Build the rag_pipeline LLM client WITHOUT importing the indexing pipeline.
 
-    threading.Thread(target=run, daemon=True).start()
+    Concept extraction only needs the LLM (to consolidate topics) plus the vector
+    store (already cached in :func:`_store`). Keeping it independent of
+    ``IndexingPipeline`` means extraction does not pull in the PDF/``fitz`` stack,
+    so it works even when indexing can't, and can never fail for the same reason.
+    """
+    _ensure_rag_path()
+    from src.config.settings import Settings  # type: ignore
+    from src.llm.client import build_client_from_settings  # type: ignore
+
+    settings = Settings()
+    settings.chroma_db_path = str(_CHROMA_DIR)
+    settings.raw_books_dir = str(_RAW_BOOKS_DIR)
+    return build_client_from_settings(settings)
+
+
+_concept_embedder = None
+_concept_embedder_lock = threading.Lock()
+_MIN_TAG_CONFIDENCE = 0.4
+
+
+def _get_concept_embedder():
+    """Lazy MiniLM embedder for topic→concept matching (same model as elsewhere)."""
+    global _concept_embedder
+    if _concept_embedder is None:
+        with _concept_embedder_lock:
+            if _concept_embedder is None:
+                from sentence_transformers import SentenceTransformer  # type: ignore
+                _concept_embedder = SentenceTransformer(
+                    "sentence-transformers/all-MiniLM-L6-v2"
+                )
+    return _concept_embedder
+
+
+def _fetch_course_concepts(course_id: str) -> list[dict]:
+    """Fetch the course's concepts (id + label) from Django for tagging."""
+    if not course_id:
+        return []
+    try:
+        resp = requests.get(
+            f"{_DJANGO_API_URL}/courses/courses/{int(course_id)}/concepts/",
+            headers={"X-Service-Key": _INTERNAL_SERVICE_KEY} if _INTERNAL_SERVICE_KEY else {},
+            timeout=20,
+        )
+        if resp.status_code != 200:
+            logger.warning("concept fetch for tagging failed", status=resp.status_code)
+            return []
+        data = resp.json()
+        rows = data.get("results", data) if isinstance(data, dict) else data
+        return [{"id": str(c["id"]), "label": c["label"]}
+                for c in rows if isinstance(c, dict) and c.get("label")]
+    except Exception:
+        logger.exception("concept fetch for tagging errored")
+        return []
+
+
+def _norm_label(s: str) -> str:
+    return re.sub(r"[^a-z0-9 ]", " ", (s or "").lower()).strip()
+
+
+def _tag_corpus_chunks(store, corpus_id: str, course_id: str) -> dict:
+    """Semantically tag each corpus chunk with its best-matching concept.
+
+    Writes ``concept__<corpus_id> = <concept_id>`` onto chunks so concept-keyed
+    reads (CLO coverage, slide grounding, the concept→topics picker) work. This
+    is the grounding step that turns a "big" concept into its set of topic-chunks.
+    Runs HERE (ai_service) because the embedder + pgvector store live here; the
+    Django venv lacks those deps, so its auto_tag path cannot do it.
+    """
+    concepts = _fetch_course_concepts(course_id)
+    if not concepts:
+        return {"tagged": 0, "concepts": 0}
+    try:
+        res = store.get_where({f"corpus__{corpus_id}": "1"}, include=["metadatas"])
+    except BaseException as exc:  # noqa: BLE001
+        logger.warning("tag: corpus chunk fetch failed", error=str(exc))
+        return {"tagged": 0, "concepts": len(concepts)}
+
+    ids = res.get("ids", []) or []
+    metas = res.get("metadatas", []) or []
+    if not ids:
+        return {"tagged": 0, "concepts": len(concepts)}
+
+    import numpy as np  # local: heavy, only needed when tagging
+    from sklearn.metrics.pairwise import cosine_similarity
+
+    embedder = _get_concept_embedder()
+    labels = [c["label"] for c in concepts]
+    norm_labels = [_norm_label(c["label"]) for c in concepts]
+    label_emb = embedder.encode(labels, convert_to_numpy=True, show_progress_bar=False)
+
+    topics = [str((m or {}).get("topic") or "").strip() for m in metas]
+    uniq = sorted({t for t in topics if t and t.lower() != "unknown"})
+
+    match_for: dict[str, str] = {}
+    if uniq:
+        q = embedder.encode(uniq, convert_to_numpy=True, show_progress_bar=False)
+        sims = cosine_similarity(q, label_emb)
+        for i, t in enumerate(uniq):
+            nt = _norm_label(t)
+            exact = next((concepts[j]["id"] for j, nl in enumerate(norm_labels) if nl and nl == nt), None)
+            if exact:
+                match_for[t] = exact
+                continue
+            j = int(np.argmax(sims[i]))
+            if float(sims[i][j]) >= _MIN_TAG_CONFIDENCE:
+                match_for[t] = concepts[j]["id"]
+
+    key = f"concept__{corpus_id}"
+    upd_ids: list[str] = []
+    upd_metas: list[dict] = []
+    for chunk_id, t in zip(ids, topics):
+        concept_id = match_for.get(t)
+        if concept_id:
+            upd_ids.append(chunk_id)
+            upd_metas.append({key: concept_id})
+    if upd_ids:
+        store.update_metadata(upd_ids, upd_metas)
+    logger.info("corpus chunks tagged with concepts", corpus_id=corpus_id,
+                tagged=len(upd_ids), concepts=len(concepts), topics=len(uniq))
+    return {"tagged": len(upd_ids), "concepts": len(concepts)}
+
+
+def extract_concepts(book_stem: str, corpus_id: str, course_id: str = "") -> dict:
+    """Run concept extraction for an already-indexed book (manual, on-demand).
+
+    Reads the book's chunk topics from the vector store, asks the LLM to
+    consolidate near-duplicate topics into a deduplicated concept list, and
+    persists the new concepts to Django (existing labels are skipped). This is
+    fully separate from indexing — it never touches the vectors and does not need
+    the PDF pipeline — so it can be re-run any time without re-embedding.
+    """
+    if not book_stem or not corpus_id:
+        return {"ok": False, "detail": "book_stem and corpus_id required",
+                "extracted": 0, "created": 0, "skipped": 0}
+    try:
+        store = _store()
+        llm_client = _build_llm_client()
+    except BaseException as exc:  # noqa: BLE001
+        logger.exception("concept extraction setup failed", book=book_stem)
+        return {"ok": False, "detail": f"setup error: {exc}"[:300],
+                "extracted": 0, "created": 0, "skipped": 0}
+
+    counts = _extract_and_create_concepts(store, book_stem, corpus_id, course_id, llm_client)
+    # Ground the chunks: tag each with its best-matching concept so the
+    # concept→topics picker, CLO coverage and slide grounding all have data.
+    tagged = 0
+    try:
+        tag_result = _tag_corpus_chunks(store, corpus_id, course_id)
+        tagged = tag_result.get("tagged", 0)
+    except BaseException:  # noqa: BLE001 — tagging must not fail the extraction
+        logger.exception("concept tagging failed", book=book_stem, corpus_id=corpus_id)
+    logger.info("manual concept extraction completed", book=book_stem,
+                corpus_id=corpus_id, course_id=course_id, tagged=tagged, **counts)
+    return {"ok": True, "tagged": tagged, **counts}
 
 
 # ── Index a book into a corpus (background) ──────────────────────────────────
@@ -504,10 +674,8 @@ def _run_index(
         _set_status(corpus_id, book_stem, status="indexed",
                     chunks=len(ids), detail=f"new={result.get('new', 0)}")
         logger.info("corpus indexed", book=book_stem, corpus_id=corpus_id, chunks=len(ids))
-        # Fire-and-forget concept extraction; it must not delay the indexed response.
-        _extract_concepts_async(
-            store, book_stem, corpus_id, course_id, getattr(pipeline.analyzer, "llm", None)
-        )
+        # Concept extraction is a separate, admin-initiated step (extract_concepts);
+        # it is intentionally NOT fired here so it can never affect indexing status.
     except BaseException as exc:  # noqa: BLE001
         logger.exception("corpus index failed book=%s", book_stem)
         _set_status(corpus_id, book_stem, status="failed", detail=str(exc)[:300])

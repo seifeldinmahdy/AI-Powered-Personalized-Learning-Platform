@@ -44,6 +44,16 @@ urlpatterns = [
         views.ConceptViewSet.as_view({"post": "bulk_extract"}),
         name="concept-bulk-extract",
     ),
+    path(
+        "courses/<int:course_pk>/concepts/<int:pk>/topics/",
+        views.ConceptViewSet.as_view({"get": "topics"}),
+        name="concept-topics",
+    ),
+    path(
+        "courses/<int:course_pk>/concepts/merge/",
+        views.ConceptViewSet.as_view({"post": "merge"}),
+        name="concept-merge",
+    ),
     # CLOs (nested under course)
     path(
         "courses/<int:course_pk>/clos/",
@@ -56,6 +66,11 @@ urlpatterns = [
             "get": "retrieve", "put": "update", "patch": "partial_update", "delete": "destroy"
         }),
         name="clo-detail",
+    ),
+    path(
+        "courses/<int:course_pk>/clos/<int:pk>/concept-topics/",
+        views.CourseLearningOutcomeViewSet.as_view({"post": "set_concept_topics"}),
+        name="clo-concept-topics",
     ),
     path(
         "courses/<int:course_pk>/clos/suggest/",
@@ -88,6 +103,11 @@ urlpatterns = [
         "courses/<int:course_pk>/corpus/index-status/",
         views.CourseCorpusViewSet.as_view({"get": "index_status"}),
         name="corpus-index-status",
+    ),
+    path(
+        "courses/<int:course_pk>/corpus/extract-concepts/",
+        views.CourseCorpusViewSet.as_view({"post": "extract_concepts"}),
+        name="corpus-extract-concepts",
     ),
     path(
         "courses/<int:course_pk>/corpus/sources/",

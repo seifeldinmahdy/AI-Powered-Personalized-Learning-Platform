@@ -243,11 +243,19 @@ class RetrievalService:
 
     def get_chunks_for_concept(
         self, scope: RetrievalScope, concept_id: str,
+        allowed_topics: list[str] | None = None,
     ) -> list[RetrievedChunk]:
         """Every chunk in *scope* tagged with *concept_id*, ordered by index.
 
         Used by backward-designed assessment generation (probe the CLO concept
         set) and concept-keyed slide grounding. Corpus scope is still enforced.
+
+        ``allowed_topics`` optionally restricts the result to chunks whose topic
+        is in the set — this is how a per-CLO topic refinement EXCLUDES the
+        unwanted topics of a concept from generation. ``None`` (the default) means
+        no refinement: all of the concept's chunks are returned. Matching is
+        case/whitespace-insensitive so it lines up with the topic strings the
+        admin picked in the UI.
         """
         scope.validate()
         res = self._store.get_where(
@@ -255,6 +263,10 @@ class RetrievalService:
             include=["documents", "metadatas"],
         )
         chunks = self._rows_to_chunks(res, scope.corpus_id)
+        if allowed_topics:
+            wanted = {t.strip().lower() for t in allowed_topics if t and t.strip()}
+            if wanted:
+                chunks = [c for c in chunks if (c.topic or "").strip().lower() in wanted]
         chunks.sort(key=lambda c: c.chunk_index)
         return chunks
 

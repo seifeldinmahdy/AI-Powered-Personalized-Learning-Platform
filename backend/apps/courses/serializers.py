@@ -80,10 +80,22 @@ class CourseLearningOutcomeSerializer(serializers.ModelSerializer):
     concepts = serializers.PrimaryKeyRelatedField(
         many=True, queryset=Concept.objects.all(), required=False
     )
+    # Per-concept topic refinement for THIS clo: one entry per concept the admin
+    # has narrowed. ``selected_topics`` lists the kept topics; concepts without an
+    # entry use ALL their topics (the default). Read-only here — edited via the
+    # clos/<pk>/concept-topics/ endpoint.
+    concept_topics = serializers.SerializerMethodField()
+
+    def get_concept_topics(self, obj):
+        return [
+            {"concept_id": ct.concept_id, "selected_topics": ct.selected_topics or []}
+            for ct in obj.concept_topics.all()
+        ]
 
     class Meta:
         model = CourseLearningOutcome
-        fields = ["id", "course", "code", "text", "bloom_level", "concepts", "order"]
+        fields = ["id", "course", "code", "text", "bloom_level", "concepts",
+                  "concept_topics", "order"]
         read_only_fields = ["id", "course"]
 
 

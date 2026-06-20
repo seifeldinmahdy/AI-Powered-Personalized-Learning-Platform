@@ -1,12 +1,35 @@
 import api from './api';
 
+/** Per-concept topic refinement for a CLO. ``selected_topics`` is the subset of
+ *  the concept's topics this CLO uses; absence of an entry == all topics. */
+export interface CLOConceptTopics {
+    concept_id: number;
+    selected_topics: string[];
+}
+
 export interface CLO {
     id: number;
     code: string;
     text: string;
     bloom_level: string;
     concepts: number[];
+    concept_topics?: CLOConceptTopics[];
     order: number;
+}
+
+/** Set (or clear) the topic subset for one of a CLO's concepts. Passing an empty
+ *  array clears the refinement so the concept's full topic set applies again. */
+export async function setCloConceptTopics(
+    courseId: number,
+    cloId: number,
+    conceptId: number,
+    selectedTopics: string[],
+): Promise<CLO> {
+    const response = await api.post<CLO>(
+        `/courses/courses/${courseId}/clos/${cloId}/concept-topics/`,
+        { concept_id: conceptId, selected_topics: selectedTopics },
+    );
+    return response.data;
 }
 
 export interface CLODraft {

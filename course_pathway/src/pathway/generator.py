@@ -203,6 +203,33 @@ class PathwayGenerator:
                 f"Add sources to this course's corpus and index them."
             )
 
+        # 2b. Per-CLO topic refinement → drop deselected topics from the pool.
+        #     The whole plan (topic index, curriculum, sessions, coverage) derives
+        #     from `chunks`, so filtering here is the single enforcement point. A
+        #     (concept, topic) chunk is dropped only when EVERY CLO that uses the
+        #     concept refined it and none kept that topic — so one CLO that uses
+        #     the full concept keeps all its topics in play.
+        allowed_by_concept = self._allowed_topics_by_concept(clo_concepts or [])
+        if allowed_by_concept:
+            before = len(chunks)
+            chunks = [
+                c for c in chunks
+                if str(getattr(c, "concept_id", "") or "") not in allowed_by_concept
+                or (c.topic or "").strip().lower()
+                in allowed_by_concept[str(c.concept_id)]
+            ]
+            dropped = before - len(chunks)
+            if dropped:
+                logger.info("pathway_topic_refinement_applied",
+                            course_id=context.course_id, dropped=dropped,
+                            refined_concepts=len(allowed_by_concept))
+            if not chunks:
+                # A misconfigured refinement must not produce an empty course.
+                logger.warning("pathway_topic_refinement_emptied_pool_reverting",
+                               course_id=context.course_id)
+                chunks = self._reader.get_all_chunks(scope)
+                allowed_by_concept = {}
+
         # 3. Synthetic context (testing only).
         if context.use_synthetic_context:
             unique_topics = list(dict.fromkeys(c.topic for c in chunks))
@@ -278,7 +305,8 @@ class PathwayGenerator:
             concept_label[cid] = c.get("label", cid)
         required = set(concept_to_clos.keys())
         if required:
-            self._ensure_clo_coverage(sessions, scope, required, concept_label, concept_to_clos)
+            self._ensure_clo_coverage(sessions, scope, required, concept_label,
+                                      concept_to_clos, allowed_by_concept)
 
         # 9.5. Bound each session's chunk set so the slide deck never becomes
         #      abnormally long. Done AFTER coverage injection so it bounds both
@@ -312,6 +340,35 @@ class PathwayGenerator:
 
     # ── CLO coverage ─────────────────────────────────────────────
 
+    @staticmethod
+    def _allowed_topics_by_concept(clo_concepts: list[dict]) -> dict[str, set[str]]:
+        """concept_id -> set of lowercased allowed topics, per CLO refinement.
+
+        A concept appears here ONLY if every CLO that links it supplied a
+        non-empty ``selected_topics`` (so the concept is genuinely narrowed); the
+        value is the UNION of those selections. If any linking CLO uses the full
+        concept (``selected_topics`` absent/empty), the concept is omitted — it is
+        not restricted at all. Returns ``{}`` when nothing is refined.
+        """
+        from collections import defaultdict
+        per_concept: dict[str, list] = defaultdict(list)
+        for c in clo_concepts:
+            cid = str(c.get("concept_id"))
+            sel = c.get("selected_topics")
+            per_concept[cid].append(
+                [str(t).strip().lower() for t in sel if str(t).strip()] if sel else None
+            )
+        allowed: dict[str, set[str]] = {}
+        for cid, sels in per_concept.items():
+            if any(s is None for s in sels):
+                continue  # at least one CLO uses every topic → no restriction
+            union: set[str] = set()
+            for s in sels:
+                union.update(s)
+            if union:
+                allowed[cid] = union
+        return allowed
+
     def _ensure_clo_coverage(
         self,
         sessions: list[Session],
@@ -319,12 +376,16 @@ class PathwayGenerator:
         required: set[str],
         concept_label: dict[str, str],
         concept_to_clos: dict[str, set[str]],
+        allowed_by_concept: dict[str, set[str]] | None = None,
     ) -> None:
         """Guarantee every required CLO concept is covered; raise if impossible.
 
         Uncovered concepts are injected into the deterministic best-fit session.
         A concept with NO corpus chunks can never be covered → CoverageError.
+        Injected chunks respect the same per-CLO topic refinement as the pool.
         """
+        allowed_by_concept = allowed_by_concept or {}
+
         def covered_set() -> set[str]:
             out: set[str] = set()
             for s in sessions:
@@ -333,7 +394,10 @@ class PathwayGenerator:
 
         missing = sorted(required - covered_set())  # deterministic order
         for cid in missing:
-            cchunks = self._reader.get_chunks_for_concept(scope, cid)
+            topics = allowed_by_concept.get(cid)
+            cchunks = self._reader.get_chunks_for_concept(
+                scope, cid, allowed_topics=sorted(topics) if topics else None,
+            )
             if not cchunks:
                 continue  # caught by the final hard check below
             target = self._best_fit_session(sessions, concept_label.get(cid, cid))

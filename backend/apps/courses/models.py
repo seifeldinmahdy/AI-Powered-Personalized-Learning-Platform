@@ -291,6 +291,38 @@ class CourseLearningOutcome(models.Model):
         return f"{self.course.title} — {self.code}"
 
 
+class CLOConceptTopics(models.Model):
+    """Per-CLO refinement of which of a linked concept's topics actually apply.
+
+    A CLO links to a Concept via the M2M above. By default that means ALL of the
+    concept's topics (every chunk tagged to it) are in scope for that CLO. This
+    row narrows that to a chosen subset: ``selected_topics`` is the list of topic
+    strings to KEEP for this (CLO, concept) pair.
+
+    Semantics — an EMPTY list means "no refinement": every topic applies (the
+    default). A non-empty list restricts generation/retrieval for this CLO's use
+    of the concept to exactly those topics. The row only exists once an admin has
+    deselected at least one topic; absence == all topics.
+    """
+
+    clo = models.ForeignKey(
+        CourseLearningOutcome, on_delete=models.CASCADE, related_name="concept_topics",
+    )
+    concept = models.ForeignKey(
+        Concept, on_delete=models.CASCADE, related_name="clo_topic_selections",
+    )
+    selected_topics = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        db_table = "clo_concept_topics"
+        unique_together = [["clo", "concept"]]
+        verbose_name = "CLO Concept Topic Selection"
+        verbose_name_plural = "CLO Concept Topic Selections"
+
+    def __str__(self):
+        return f"{self.clo.code} · {self.concept.label}: {len(self.selected_topics)} topic(s)"
+
+
 class PlacementQuestion(models.Model):
     """A pre-authored MCQ for a course's placement test.
 

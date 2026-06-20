@@ -13,7 +13,7 @@ from apps.core.authentication import InternalServiceAuthentication
 from apps.core.permissions import IsInternalService
 from .models import (
     Course, Enrollment, CourseRating,
-    Concept, CourseLearningOutcome, CourseCorpus, CorpusSource,
+    Concept, CourseLearningOutcome, CLOConceptTopics, CourseCorpus, CorpusSource,
     PlacementQuestion,
 )
 from .serializers import (
@@ -580,6 +580,113 @@ class ConceptViewSet(viewsets.ModelViewSet):
             qs = qs.filter(course_id=course_pk)
         return qs
 
+    def topics(self, request, course_pk=None, pk=None):
+        """GET .../concepts/<pk>/topics/ — distinct chunk topics under a concept.
+
+        Proxies the AI service, which reads the topics of the chunks tagged to
+        this concept in the course's corpus. Used by the CLO editor to let an
+        admin pick a subset of a concept's topics.
+        """
+        concept = Concept.objects.filter(pk=pk, course_id=course_pk).first()
+        if concept is None:
+            return Response({"error": "Concept not found"}, status=status.HTTP_404_NOT_FOUND)
+        corpus = CourseCorpus.objects.filter(course_id=course_pk).first()
+        if corpus is None:
+            return Response({"topics": [], "total_chunks": 0})
+        try:
+            resp = requests.get(
+                f"{_ai_url().rstrip('/')}/corpus/concept-topics",
+                params={"corpus_id": corpus.corpus_id, "concept_id": str(pk)},
+                headers=_svc_headers(), timeout=30,
+            )
+            return Response(resp.json(), status=resp.status_code)
+        except requests.exceptions.ConnectionError:
+            return Response({"error": "AI service offline"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    @action(detail=False, methods=["post"], url_path="merge")
+    def merge(self, request, course_pk=None):
+        """POST .../concepts/merge/ — fold duplicate concepts into a survivor.
+
+        Body: ``{"survivor_id": <id>, "merge_ids": [<id>, ...]}``. CLO links and
+        per-CLO topic selections are repointed onto the survivor (selections are
+        unioned; an unrestricted side wins → survivor stays unrestricted), the
+        merged concepts are deleted, and their chunk tags are repointed to the
+        survivor in the vector store. Admin only.
+        """
+        if not _is_admin(request.user):
+            return Response({"error": "Admin only."}, status=status.HTTP_403_FORBIDDEN)
+        survivor = Concept.objects.filter(pk=request.data.get("survivor_id"),
+                                          course_id=course_pk).first()
+        if survivor is None:
+            return Response({"error": "survivor concept not found for this course"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        raw_ids = request.data.get("merge_ids", [])
+        if not isinstance(raw_ids, list) or not raw_ids:
+            return Response({"error": "merge_ids must be a non-empty list"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        merges = list(
+            Concept.objects.filter(pk__in=raw_ids, course_id=course_pk).exclude(pk=survivor.pk)
+        )
+        if not merges:
+            return Response({"error": "no valid concepts to merge"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Aggregate, per affected CLO, what each source concept contributes:
+        # a restricted side contributes its topic list; an unrestricted side
+        # (no CLOConceptTopics row) contributes "all" and wins.
+        affected: dict[int, dict] = {}
+
+        def contribute(clo, restricted, topics):
+            a = affected.setdefault(clo.id, {"all": False, "topics": set(), "clo": clo})
+            if restricted:
+                a["topics"].update(topics)
+            else:
+                a["all"] = True
+
+        for src in [survivor, *merges]:
+            sel_by_clo = {ct.clo_id: ct.selected_topics for ct in src.clo_topic_selections.all()}
+            for clo in src.clos.all():
+                sel = sel_by_clo.get(clo.id)
+                contribute(clo, restricted=bool(sel), topics=sel or [])
+
+        with transaction.atomic():
+            for m in merges:
+                for clo in m.clos.all():
+                    clo.concepts.add(survivor)
+                m.delete()  # cascades its CLO M2M + CLOConceptTopics rows
+
+            for clo_id, a in affected.items():
+                a["clo"].concepts.add(survivor)
+                CLOConceptTopics.objects.filter(clo_id=clo_id, concept=survivor).delete()
+                if not a["all"] and a["topics"]:
+                    CLOConceptTopics.objects.create(
+                        clo_id=clo_id, concept=survivor,
+                        selected_topics=sorted(a["topics"]),
+                    )
+
+        # Repoint chunk tags in the vector store (best-effort).
+        retagged = None
+        corpus = CourseCorpus.objects.filter(course_id=course_pk).first()
+        if corpus:
+            try:
+                resp = requests.post(
+                    f"{_ai_url().rstrip('/')}/corpus/merge-concept-tags",
+                    json={"corpus_id": corpus.corpus_id, "survivor_id": str(survivor.pk),
+                          "merge_ids": [str(m.pk) for m in merges]},
+                    headers=_svc_headers(), timeout=60,
+                )
+                if resp.status_code == 200:
+                    retagged = resp.json().get("retagged")
+            except Exception as exc:
+                logger.warning("merge concept-tag repoint failed: %s", exc)
+
+        return Response(
+            {"survivor_id": survivor.pk, "merged": [m.pk for m in merges], "retagged": retagged},
+            status=status.HTTP_200_OK,
+        )
+
     @action(detail=False, methods=["post"], url_path="bulk-extract")
     def bulk_extract(self, request, course_pk=None):
         """Service-only: create Concept records from auto-extracted labels.
@@ -659,10 +766,51 @@ class CourseLearningOutcomeViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         course_pk = self.kwargs.get("course_pk")
-        qs = CourseLearningOutcome.objects.prefetch_related("concepts")
+        qs = CourseLearningOutcome.objects.prefetch_related("concepts", "concept_topics")
         if course_pk:
             qs = qs.filter(course_id=course_pk)
         return qs
+
+    @action(detail=True, methods=["post"], url_path="concept-topics")
+    def set_concept_topics(self, request, course_pk=None, pk=None):
+        """POST .../clos/<pk>/concept-topics/ — set the topic subset for one of
+        this CLO's concepts.
+
+        Body: ``{"concept_id": <id>, "selected_topics": ["Classes", ...]}``.
+        An empty/absent ``selected_topics`` clears any refinement (the concept's
+        ALL topics apply again) by deleting the row. Admin only.
+        """
+        if not _is_admin(request.user):
+            return Response({"error": "Admin only."}, status=status.HTTP_403_FORBIDDEN)
+        clo = CourseLearningOutcome.objects.filter(pk=pk, course_id=course_pk).first()
+        if clo is None:
+            return Response({"error": "CLO not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        concept_id = request.data.get("concept_id")
+        concept = Concept.objects.filter(pk=concept_id, course_id=course_pk).first()
+        if concept is None:
+            return Response({"error": "Concept not found for this course"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if not clo.concepts.filter(pk=concept.pk).exists():
+            return Response({"error": "Concept is not linked to this CLO"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        topics = request.data.get("selected_topics", [])
+        if not isinstance(topics, list):
+            return Response({"error": "selected_topics must be a list"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        # Normalize to clean, de-duplicated strings.
+        topics = list(dict.fromkeys(str(t).strip() for t in topics if str(t).strip()))
+
+        if topics:
+            CLOConceptTopics.objects.update_or_create(
+                clo=clo, concept=concept, defaults={"selected_topics": topics},
+            )
+        else:
+            # Empty selection == no refinement: remove any existing row.
+            CLOConceptTopics.objects.filter(clo=clo, concept=concept).delete()
+
+        return Response(CourseLearningOutcomeSerializer(clo).data, status=status.HTTP_200_OK)
 
     def perform_create(self, serializer):
         course_pk = self.kwargs.get("course_pk")
@@ -678,6 +826,8 @@ class CourseLearningOutcomeViewSet(viewsets.ModelViewSet):
         )
         if concepts is not None:
             obj.concepts.set(concepts)
+            # Drop topic refinements for concepts no longer linked to this CLO.
+            obj.concept_topics.exclude(concept__in=concepts).delete()
         serializer.instance = obj
 
     @action(detail=False, methods=["post"], url_path="suggest",
@@ -965,6 +1115,40 @@ class CourseCorpusViewSet(viewsets.ViewSet):
                 src.chunk_count = int(data.get("chunks", src.chunk_count) or src.chunk_count)
                 src.save(update_fields=["index_status", "chunk_count"])
             return Response(data, status=resp.status_code)
+        except requests.exceptions.ConnectionError:
+            return Response({"error": "AI service offline"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    def extract_concepts(self, request, course_pk=None):
+        """POST .../corpus/extract-concepts/ — ADMIN. Run concept extraction for
+        one indexed book in this course's corpus.
+
+        This is a separate, on-demand step from indexing: it reads the book's
+        already-indexed chunk topics, consolidates near-duplicate topics into
+        concepts via the LLM, and persists the deduplicated set (existing labels
+        are skipped). It never re-indexes or touches the vectors.
+        """
+        if not _is_admin(request.user):
+            return Response({"error": "Admin only."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            corpus = self._get_or_create_corpus(course_pk)
+        except Course.DoesNotExist:
+            return Response({"error": "Course not found"}, status=status.HTTP_404_NOT_FOUND)
+        book_stem = request.data.get("book_stem", "")
+        if not book_stem:
+            return Response({"error": "book_stem is required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            resp = requests.post(
+                f"{_ai_url().rstrip('/')}/corpus/extract-concepts",
+                json={
+                    "book_stem": book_stem,
+                    "corpus_id": corpus.corpus_id,
+                    "course_id": str(course_pk),
+                },
+                headers=_svc_headers(), timeout=120,
+            )
+            return Response(resp.json(), status=resp.status_code)
         except requests.exceptions.ConnectionError:
             return Response({"error": "AI service offline"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except Exception as exc:

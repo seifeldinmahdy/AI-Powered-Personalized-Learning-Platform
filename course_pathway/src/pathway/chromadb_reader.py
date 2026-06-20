@@ -168,11 +168,19 @@ class ChromaDBReader:
         )
         return best_match
 
-    def get_chunks_for_concept(self, scope, concept_id: str) -> list[CourseChunk]:
-        """Chunks in *scope* tagged with *concept_id*, as CourseChunk."""
+    def get_chunks_for_concept(
+        self, scope, concept_id: str, allowed_topics: list[str] | None = None,
+    ) -> list[CourseChunk]:
+        """Chunks in *scope* tagged with *concept_id*, as CourseChunk.
+
+        ``allowed_topics`` optionally restricts to a per-CLO topic subset (see
+        :meth:`RetrievalService.get_chunks_for_concept`).
+        """
         return [
             self._to_course_chunk(c)
-            for c in self._service.get_chunks_for_concept(scope, concept_id)
+            for c in self._service.get_chunks_for_concept(
+                scope, concept_id, allowed_topics=allowed_topics
+            )
         ]
 
     def get_topics_by_difficulty(self, scope, difficulty: str) -> list[str]:

@@ -1,7 +1,10 @@
 """Fetch a course's CLO concept set from Django (for coverage-guaranteed gen).
 
-Returns one row per (CLO, concept): ``[{concept_id, label, clo_code}]``. This is
-the set the pathway generator must guarantee coverage of. Lives under
+Returns one row per (CLO, concept): ``[{concept_id, label, clo_code,
+selected_topics}]``. ``selected_topics`` is the per-CLO topic refinement for that
+concept (a subset of its topics), or ``None`` when the CLO uses ALL the concept's
+topics. This is the set the pathway generator must guarantee coverage of and the
+basis for excluding deselected topics from generation. Lives under
 ``pathway/`` (like ``corpus_resolver``) so both the in-process placement trigger
 and the pathway router share one implementation without a course_pathway →
 ai_service import.
@@ -44,8 +47,16 @@ def fetch_clo_concepts(course_id: str) -> list[dict]:
     label_map = {str(c["id"]): c["label"] for c in _rows(con_resp.json())}
     rows: list[dict] = []
     for clo in _rows(clo_resp.json()):
+        # Per-concept topic refinement for THIS clo: concept_id -> [topics].
+        refine = {
+            str(ct.get("concept_id")): (ct.get("selected_topics") or [])
+            for ct in clo.get("concept_topics", []) or []
+        }
         for cid in clo.get("concepts", []):
             cid = str(cid)
+            # A non-empty list restricts to those topics; absence/empty == all.
+            selected = refine.get(cid) or None
             rows.append({"concept_id": cid, "label": label_map.get(cid, cid),
-                         "clo_code": clo.get("code", "")})
+                         "clo_code": clo.get("code", ""),
+                         "selected_topics": selected})
     return rows
