@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
-import { Loader2, Send, Star } from 'lucide-react';
-import { Header } from '../../components/Header';
+import { Loader2, Send, Star, ClipboardCheck } from 'lucide-react';
 import { getEnrollments } from '../../services/api';
 import {
   getSurveyStatus, getSurveyQuestions, submitSurveyResponse,
@@ -14,6 +13,8 @@ interface EnrollmentData {
   course: number;
   progress_percentage: string;
 }
+
+const LIKERT_LABELS = ['', 'Strongly Disagree', 'Disagree', 'Neutral', 'Agree', 'Strongly Agree'];
 
 export default function SurveyPage() {
   const { courseId } = useParams<{ courseId: string }>();
@@ -79,10 +80,10 @@ export default function SurveyPage() {
 
   const toggleMulti = (questionId: number, option: string) => {
     const current = (answers[questionId] as string[] | undefined) ?? [];
-    const next = current.includes(option)
+    const updated = current.includes(option)
       ? current.filter((o) => o !== option)
       : [...current, option];
-    setAnswer(questionId, next);
+    setAnswer(questionId, updated);
   };
 
   const handleSubmit = async () => {
@@ -119,31 +120,22 @@ export default function SurveyPage() {
 
   if (loading) {
     return (
-      <>
-        <Header title="Course Survey" subtitle="Loading..." />
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 size={36} className="animate-spin text-secondary" />
-        </div>
-      </>
+      <div className="codex" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)' }}>
+        <Loader2 size={36} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
+      </div>
     );
   }
 
   if (alreadySubmitted) {
     return (
-      <>
-        <Header title="Course Survey" subtitle="Already submitted" />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center space-y-4">
-            <p className="text-muted-foreground">You have already submitted feedback for this course.</p>
-            <button
-              onClick={() => navigate(next)}
-              className="px-6 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors"
-            >
-              Continue
-            </button>
-          </div>
+      <div className="codex" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: 'var(--bg-primary)', textAlign: 'center', padding: 24 }}>
+        <div style={{ width: 48, height: 48, borderRadius: 12, background: 'rgba(22,163,74,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <ClipboardCheck size={24} style={{ color: 'var(--accent-success)' }} />
         </div>
-      </>
+        <div className="t-label" style={{ color: 'var(--accent-success)' }}>FEEDBACK RECEIVED</div>
+        <p className="t-body" style={{ fontSize: 15, color: 'var(--text-secondary)', maxWidth: 360 }}>You have already submitted feedback for this course.</p>
+        <button onClick={() => navigate(next)} className="btn btn-paper" style={{ padding: '12px 22px' }}>CONTINUE →</button>
+      </div>
     );
   }
 
@@ -153,150 +145,135 @@ export default function SurveyPage() {
     if (q.kind === 'text') return typeof a === 'string' && a.trim() !== '';
     return a !== undefined && a !== '' && !(Array.isArray(a) && a.length === 0);
   }).length;
+  const progressPct = total ? (answeredCount / total) * 100 : 0;
 
   return (
-    <>
-      <Header title="Course Feedback" subtitle="Help us improve this course for future students" />
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-8 max-w-2xl mx-auto space-y-6">
-          {/* Progress indicator */}
-          {total > 0 && (
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>Takes under a minute</span>
-                <span>{answeredCount} / {total} answered</span>
-              </div>
-              <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary rounded-full transition-all duration-300"
-                  style={{ width: `${total ? (answeredCount / total) * 100 : 0}%` }}
-                />
-              </div>
+    <div className="codex" style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-primary)' }}>
+      <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 24px 64px', display: 'flex', flexDirection: 'column', gap: 24 }}>
+        {/* Page header */}
+        <div>
+          <div className="t-label" style={{ color: 'var(--accent-primary)', marginBottom: 8 }}>COURSE FEEDBACK</div>
+          <h1 className="t-display" style={{ fontSize: 'clamp(28px,4vw,38px)', color: 'var(--text-primary)', marginBottom: 8 }}>Help us improve this course</h1>
+          <p className="t-body" style={{ fontSize: 15, color: 'var(--text-secondary)' }}>Your feedback shapes this course for future students. Takes under a minute.</p>
+        </div>
+
+        {/* Progress indicator */}
+        {total > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span className="t-mono steel">{answeredCount} OF {total} ANSWERED</span>
+              <span className="t-mono" style={{ color: 'var(--accent-primary)' }}>{Math.round(progressPct)}%</span>
             </div>
-          )}
+            <div className="progress"><i style={{ width: `${progressPct}%` }} /></div>
+          </div>
+        )}
 
-          {questions.map((q) => (
-            <div key={q.id} className="bg-card rounded-2xl border border-border shadow-sm p-6">
-              <p className="font-semibold text-foreground mb-4">{q.prompt}</p>
+        {questions.map((q, qi) => (
+          <div key={q.id} style={{ background: 'var(--bg-surface)', borderRadius: 12, border: '1px solid var(--hairline)', padding: 24 }}>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+              <span className="t-mono steel" style={{ marginTop: 2 }}>{String(qi + 1).padStart(2, '0')}</span>
+              <p className="t-body" style={{ margin: 0, fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.4 }}>{q.prompt}</p>
+            </div>
 
-              {/* Likert: 1-5 star-style radio */}
-              {q.kind === 'likert' && (
-                <div className="flex items-center gap-3">
-                  {[1, 2, 3, 4, 5].map((n) => (
+            {/* Likert: 1-5 star-style radio */}
+            {q.kind === 'likert' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                {[1, 2, 3, 4, 5].map((n) => {
+                  const selected = Number(answers[q.id]) >= n;
+                  return (
                     <button
                       key={n}
                       onClick={() => setAnswer(q.id, n)}
-                      className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-colors ${
-                        answers[q.id] === n
-                          ? 'bg-primary/10 text-primary'
-                          : 'text-muted-foreground hover:bg-muted/50'
-                      }`}
+                      style={{
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: 8, borderRadius: 8,
+                        border: 'none', cursor: 'pointer', background: answers[q.id] === n ? 'rgba(37,99,235,0.08)' : 'transparent',
+                      }}
                     >
-                      <Star
-                        size={22}
-                        fill={Number(answers[q.id]) >= n ? 'currentColor' : 'none'}
-                        className={Number(answers[q.id]) >= n ? 'text-primary' : 'text-muted-foreground'}
-                      />
-                      <span className="text-xs font-medium">{n}</span>
+                      <Star size={22} fill={selected ? 'currentColor' : 'none'} style={{ color: selected ? 'var(--accent-primary)' : 'var(--steel)' }} />
+                      <span className="t-mono" style={{ color: answers[q.id] === n ? 'var(--accent-primary)' : 'var(--steel-light)' }}>{n}</span>
                     </button>
-                  ))}
-                  <span className="text-xs text-muted-foreground ml-2">
-                    {answers[q.id] !== undefined
-                      ? ['', 'Strongly Disagree', 'Disagree', 'Neutral', 'Agree', 'Strongly Agree'][Number(answers[q.id])]
-                      : ''}
-                  </span>
-                </div>
-              )}
+                  );
+                })}
+                <span className="t-body" style={{ fontSize: 13, color: 'var(--text-secondary)', marginLeft: 8 }}>
+                  {answers[q.id] !== undefined ? LIKERT_LABELS[Number(answers[q.id])] : ''}
+                </span>
+              </div>
+            )}
 
-              {/* Free text */}
-              {q.kind === 'text' && (
-                <textarea
-                  className="w-full border border-border rounded-xl px-4 py-3 text-sm bg-input-background focus:outline-none focus:ring-1 focus:ring-ring resize-none"
-                  rows={4}
-                  placeholder="Your response..."
-                  value={(answers[q.id] as string) ?? ''}
-                  onChange={(e) => setAnswer(q.id, e.target.value)}
-                />
-              )}
+            {/* Free text */}
+            {q.kind === 'text' && (
+              <textarea
+                className="input"
+                style={{ minHeight: 96, resize: 'vertical', fontSize: 14 }}
+                rows={4}
+                placeholder="Your response… (optional)"
+                value={(answers[q.id] as string) ?? ''}
+                onChange={(e) => setAnswer(q.id, e.target.value)}
+              />
+            )}
 
-              {/* Single choice */}
-              {q.kind === 'single' && (
-                <div className="space-y-2">
-                  {q.options.map((opt) => (
+            {/* Single choice */}
+            {q.kind === 'single' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {q.options.map((opt) => {
+                  const selected = answers[q.id] === opt;
+                  return (
                     <label
                       key={opt}
-                      className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
-                        answers[q.id] === opt
-                          ? 'border-primary bg-primary/5'
-                          : 'border-border hover:bg-muted/30'
-                      }`}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 8, cursor: 'pointer',
+                        border: `1px solid ${selected ? 'var(--accent-primary)' : 'var(--hairline)'}`,
+                        background: selected ? 'rgba(37,99,235,0.05)' : 'var(--bg-primary)',
+                      }}
                     >
-                      <input
-                        type="radio"
-                        name={`q-${q.id}`}
-                        checked={answers[q.id] === opt}
-                        onChange={() => setAnswer(q.id, opt)}
-                        className="accent-primary"
-                      />
-                      <span className="text-sm">{opt}</span>
+                      <input type="radio" name={`q-${q.id}`} checked={selected} onChange={() => setAnswer(q.id, opt)} style={{ accentColor: 'var(--accent-primary)' }} />
+                      <span className="t-body" style={{ fontSize: 14, color: 'var(--text-primary)' }}>{opt}</span>
                     </label>
-                  ))}
-                </div>
-              )}
+                  );
+                })}
+              </div>
+            )}
 
-              {/* Multi choice */}
-              {q.kind === 'multi' && (
-                <div className="space-y-2">
-                  {q.options.map((opt) => {
-                    const selected = ((answers[q.id] as string[]) ?? []).includes(opt);
-                    return (
-                      <label
-                        key={opt}
-                        className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
-                          selected ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/30'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selected}
-                          onChange={() => toggleMulti(q.id, opt)}
-                          className="accent-primary"
-                        />
-                        <span className="text-sm">{opt}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          ))}
+            {/* Multi choice */}
+            {q.kind === 'multi' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {q.options.map((opt) => {
+                  const selected = ((answers[q.id] as string[]) ?? []).includes(opt);
+                  return (
+                    <label
+                      key={opt}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 8, cursor: 'pointer',
+                        border: `1px solid ${selected ? 'var(--accent-primary)' : 'var(--hairline)'}`,
+                        background: selected ? 'rgba(37,99,235,0.05)' : 'var(--bg-primary)',
+                      }}
+                    >
+                      <input type="checkbox" checked={selected} onChange={() => toggleMulti(q.id, opt)} style={{ accentColor: 'var(--accent-primary)' }} />
+                      <span className="t-body" style={{ fontSize: 14, color: 'var(--text-primary)' }}>{opt}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ))}
 
-          {questions.length > 0 && (
-            <div className="flex items-center justify-between pt-2">
-              <button
-                onClick={() => navigate('/dashboard')}
-                className="px-4 py-2.5 rounded-xl text-sm text-muted-foreground hover:bg-muted/60 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSubmit}
-                disabled={submitting}
-                className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-60 transition-colors"
-              >
-                {submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                Submit Feedback
-              </button>
-            </div>
-          )}
+        {questions.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4 }}>
+            <button onClick={() => navigate('/dashboard')} className="btn btn-ghost-dark" style={{ padding: '12px 18px' }}>CANCEL</button>
+            <button onClick={handleSubmit} disabled={submitting} className="btn btn-red" style={{ padding: '12px 22px' }}>
+              {submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+              SUBMIT FEEDBACK
+            </button>
+          </div>
+        )}
 
-          {questions.length === 0 && (
-            <div className="text-center py-10 text-muted-foreground text-sm">
-              No survey questions found for this course.
-            </div>
-          )}
-        </div>
+        {questions.length === 0 && (
+          <div className="t-body" style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-secondary)', fontSize: 14 }}>
+            No survey questions found for this course.
+          </div>
+        )}
       </div>
-    </>
+    </div>
   );
 }

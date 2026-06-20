@@ -12,7 +12,7 @@ librosa>=0.10
 edge-tts>=6.1
 # Optional: Chatterbox Turbo TTS backend (set TTS_BACKEND=chatterbox). Needs a
 # CUDA GPU for real-time latency; the service falls back to Edge if unavailable.
-chatterbox-tts
+git+https://github.com/resemble-ai/chatterbox.git
 tensorflow>=2.15
 opencv-python>=4.8
 pygame>=2.5

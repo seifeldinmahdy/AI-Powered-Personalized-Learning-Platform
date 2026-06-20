@@ -756,15 +756,21 @@ class CourseCorpusViewSet(viewsets.ViewSet):
 
     @staticmethod
     def _trigger_index(corpus, course_pk, source):
-        """Fire the AI corpus indexer for a source; record the initial status."""
+        """Attach this book to the course's corpus.
+
+        If the book is already in the shared library this is instant (a metadata
+        flag, no re-index) — that is how the SAME book is reused across courses.
+        If it isn't indexed yet, the AI service indexes it once, then attaches.
+        """
         try:
             resp = requests.post(
-                f"{_ai_url().rstrip('/')}/corpus/index",
-                json={"book_stem": source.book_stem,
-                      "corpus_id": corpus.corpus_id, "course_id": str(course_pk)},
+                f"{_ai_url().rstrip('/')}/corpus/attach",
+                json={"book_stem": source.book_stem, "corpus_id": corpus.corpus_id},
                 headers=_svc_headers(), timeout=30,
             )
             if resp.status_code == 200:
+                # "indexed" when an already-indexed book was attached instantly;
+                # "indexing" when it kicked off a first-time index.
                 source.index_status = resp.json().get("status", "indexing")
             else:
                 source.index_status = "failed"
@@ -842,13 +848,62 @@ class CourseCorpusViewSet(viewsets.ViewSet):
             return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
     def remove_source(self, request, course_pk=None, pk=None):
-        """DELETE /api/courses/courses/<course_pk>/corpus/sources/<pk>/ — admin."""
-        deleted, _ = CorpusSource.objects.filter(
+        """DELETE /api/courses/courses/<course_pk>/corpus/sources/<pk>/ — admin.
+
+        Detaches the book from THIS course's corpus (removes the per-corpus
+        membership flag). The book's chunks stay in the shared vector library so
+        other courses using the same book are unaffected — this is "remove from
+        the course", not "delete the book". (To retire a book from the library
+        entirely, use delete_book.)
+        """
+        source = CorpusSource.objects.filter(
             corpus__course_id=course_pk, pk=pk,
-        ).delete()
-        if not deleted:
+        ).select_related("corpus").first()
+        if source is None:
             return Response({"error": "Source not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Detach the book from this corpus (best-effort). A failure here must not
+        # block removing the source row, but is surfaced in logs.
+        try:
+            requests.post(
+                f"{_ai_url().rstrip('/')}/corpus/detach",
+                json={"book_stem": source.book_stem, "corpus_id": source.corpus.corpus_id},
+                headers=_svc_headers(), timeout=60,
+            )
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("corpus source detach failed: %s", exc)
+
+        source.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def delete_book(self, request, course_pk=None, book_stem=None):
+        """DELETE …/corpus/library/<book_stem>/ — admin: retire a book entirely.
+
+        Deletes the book's chunks from the shared vector library (ALL corpora)
+        and removes any CorpusSource rows that referenced it. Use this only to
+        retire a book from the library; to remove a book from a single course use
+        remove_source (which detaches but keeps the vectors).
+        """
+        if not _is_admin(request.user):
+            return Response({"error": "Admin only."}, status=status.HTTP_403_FORBIDDEN)
+        if not book_stem:
+            return Response({"error": "book_stem is required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            resp = requests.post(
+                f"{_ai_url().rstrip('/')}/corpus/delete-book",
+                json={"book_stem": book_stem},
+                headers=_svc_headers(), timeout=120,
+            )
+            data = resp.json() if resp.content else {}
+            code = resp.status_code
+        except requests.exceptions.ConnectionError:
+            return Response({"error": "AI service offline"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        # Drop any CorpusSource rows pointing at this book (across courses).
+        CorpusSource.objects.filter(book_stem=book_stem).delete()
+        return Response(data, status=code)
 
 from rest_framework import generics
 from django.db import transaction

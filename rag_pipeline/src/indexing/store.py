@@ -199,6 +199,26 @@ class VectorStore:
         res = self.collection.get(where=where, include=[])
         return len(res.get("ids", []))
 
+    def delete_where(self, where: dict[str, Any]) -> int:
+        """Delete every chunk matching *where*. Returns the number deleted.
+
+        A non-empty filter is REQUIRED so a caller can never clear the whole
+        collection by accident. Used to purge a book's chunks when a source is
+        removed from a corpus or re-indexed (mirrors the pgvector backend).
+        """
+        if not where:
+            raise ValueError(
+                "delete_where requires a non-empty filter; refusing to delete "
+                "the entire collection."
+            )
+        # Count first (Chroma's delete returns None) so we can report it.
+        existing = self.collection.get(where=where, include=[])
+        ids = existing.get("ids", []) if isinstance(existing, dict) else []
+        if ids:
+            self.collection.delete(where=where)
+        logger.info("chunks_deleted", count=len(ids), where=where)
+        return len(ids)
+
     def update_metadata(
         self,
         ids: list[str],

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { useParams, Link } from 'react-router';
 import { toast } from 'sonner';
 import {
@@ -16,16 +17,22 @@ import {
 import { getCertificate, downloadCertificatePdf, type Certificate as CertificateData } from '../../services/certificate';
 import { Certificate } from '../../components/Certificate';
 
+// Shared codex card surface.
+const cardStyle: CSSProperties = {
+    background: 'var(--bg-surface)', borderRadius: 12, border: '1px solid var(--hairline)', padding: 20,
+    display: 'flex', flexDirection: 'column', gap: 12,
+};
+
 function StatusBadge({ status }: { status: CapstoneSubmission['status'] }) {
     const map = {
-        pending: { icon: <Clock className="w-4 h-4" />, colour: 'text-muted-foreground', label: 'Pending' },
-        evaluating: { icon: <Loader2 className="w-4 h-4 animate-spin" />, colour: 'text-blue-600', label: 'Evaluating…' },
-        completed: { icon: <CheckCircle className="w-4 h-4" />, colour: 'text-green-600', label: 'Completed' },
-        failed: { icon: <XCircle className="w-4 h-4" />, colour: 'text-red-600', label: 'Failed' },
+        pending: { icon: <Clock size={16} />, colour: 'var(--steel-light)', label: 'Pending' },
+        evaluating: { icon: <Loader2 size={16} className="animate-spin" />, colour: 'var(--accent-primary)', label: 'Evaluating…' },
+        completed: { icon: <CheckCircle size={16} />, colour: 'var(--accent-success)', label: 'Completed' },
+        failed: { icon: <XCircle size={16} />, colour: 'var(--error-red)', label: 'Failed' },
     };
     const { icon, colour, label } = map[status] ?? map.pending;
     return (
-        <span className={`flex items-center gap-1 font-medium ${colour}`}>
+        <span className="t-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: colour }}>
             {icon} {label}
         </span>
     );
@@ -33,18 +40,15 @@ function StatusBadge({ status }: { status: CapstoneSubmission['status'] }) {
 
 function ScoreMeter({ score }: { score: number | null }) {
     if (score === null) return null;
-    const colour = score >= 70 ? '#16a34a' : score >= 40 ? '#d97706' : '#dc2626';
+    const colour = score >= 70 ? 'var(--accent-success)' : score >= 40 ? '#B45309' : 'var(--error-red)';
     return (
-        <div className="space-y-1">
-            <div className="flex justify-between text-sm font-medium">
-                <span>Score</span>
-                <span style={{ color: colour }}>{score.toFixed(1)}%</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span className="t-mono steel">SCORE</span>
+                <span className="t-mono" style={{ color: colour }}>{score.toFixed(1)}%</span>
             </div>
-            <div className="h-3 w-full bg-muted rounded-full overflow-hidden">
-                <div
-                    className="h-full rounded-full transition-all duration-700"
-                    style={{ width: `${score}%`, backgroundColor: colour }}
-                />
+            <div style={{ height: 8, width: '100%', background: 'var(--hairline)', borderRadius: 4, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${score}%`, background: colour, borderRadius: 4, transition: 'width 700ms' }} />
             </div>
         </div>
     );
@@ -289,18 +293,18 @@ export default function CapstonePage() {
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-64">
-                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            <div className="codex" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)' }}>
+                <Loader2 size={32} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
             </div>
         );
     }
 
     if (!capstone) {
         return (
-            <div className="max-w-2xl mx-auto px-4 py-16 text-center">
-                <AlertCircle className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                <p className="text-lg font-medium">No active capstone for this course yet.</p>
-                <p className="text-muted-foreground text-sm mt-1">Check back when your instructor activates it.</p>
+            <div className="codex" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, background: 'var(--bg-primary)', textAlign: 'center', padding: 24 }}>
+                <AlertCircle size={44} style={{ color: 'var(--steel-light)' }} />
+                <p className="t-heading" style={{ fontSize: 20, color: 'var(--text-primary)' }}>No active capstone for this course yet.</p>
+                <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>Check back when your instructor activates it.</p>
             </div>
         );
     }
@@ -314,502 +318,428 @@ export default function CapstonePage() {
     ];
 
     return (
-        <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
-            <div>
-                <h1 className="text-2xl font-bold">{capstone.title}</h1>
-                <p className="text-muted-foreground text-sm mt-1">{capstone.brief_text}</p>
-                {capstone.deadline && (
-                    <p className="text-sm mt-1">
-                        Deadline: <strong>{new Date(capstone.deadline).toLocaleDateString()}</strong>
-                    </p>
+        <div className="codex" style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-primary)' }}>
+            <div style={{ maxWidth: 860, margin: '0 auto', padding: '32px 24px 64px', display: 'flex', flexDirection: 'column', gap: 24 }}>
+                <div>
+                    <div className="t-label" style={{ color: 'var(--accent-primary)', marginBottom: 8 }}>CAPSTONE PROJECT</div>
+                    <h1 className="t-display" style={{ fontSize: 'clamp(28px,4vw,40px)', color: 'var(--text-primary)', marginBottom: 8 }}>{capstone.title}</h1>
+                    <p className="t-body" style={{ fontSize: 15, color: 'var(--text-secondary)', margin: 0 }}>{capstone.brief_text}</p>
+                    {capstone.deadline && (
+                        <p className="t-mono steel" style={{ marginTop: 8 }}>
+                            DEADLINE · {new Date(capstone.deadline).toLocaleDateString()}
+                        </p>
+                    )}
+                </div>
+
+                {/* Tab bar */}
+                <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--hairline)' }}>
+                    {tabs.map(t => (
+                        <button
+                            key={t.id}
+                            onClick={() => setTab(t.id)}
+                            className="t-label"
+                            style={{
+                                padding: '10px 16px', marginBottom: -1, background: 'transparent', cursor: 'pointer',
+                                borderTop: 'none', borderLeft: 'none', borderRight: 'none',
+                                borderBottom: `2px solid ${tab === t.id ? 'var(--accent-primary)' : 'transparent'}`,
+                                color: tab === t.id ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                            }}
+                        >
+                            {t.label}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Overview */}
+                {tab === 'overview' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        {/* In-platform editor entry */}
+                        <Link to={`/course/${id}/capstone/workspace`} className="btn btn-red" style={{ padding: '12px 18px', width: 'fit-content', textDecoration: 'none' }}>
+                            <Code2 size={16} /> OPEN IN-PLATFORM EDITOR
+                        </Link>
+
+                        {/* Proposal form for student_proposed capstones */}
+                        {capstone.spec_mode === 'student_proposed' && (
+                            <div style={cardStyle}>
+                                <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)' }}>Submit Your Proposal</h2>
+                                <input className="input" placeholder="Project title" value={proposalTitle} onChange={e => setProposalTitle(e.target.value)} />
+                                <textarea className="input" style={{ minHeight: 80, resize: 'vertical' }} placeholder="Description" value={proposalDesc} onChange={e => setProposalDesc(e.target.value)} />
+                                <textarea className="input" style={{ minHeight: 60, resize: 'vertical' }} placeholder="Planned features (one per line)" value={proposalFeatures} onChange={e => setProposalFeatures(e.target.value)} />
+                                <button onClick={handleSubmitProposal} disabled={submittingProposal || !proposalTitle || !proposalDesc} className="btn btn-red" style={{ padding: '10px 16px', width: 'fit-content' }}>
+                                    {submittingProposal ? <Loader2 size={16} className="animate-spin" /> : null}
+                                    SUBMIT PROPOSAL
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Rubric overview */}
+                        <div style={cardStyle}>
+                            <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)' }}>Rubric Criteria</h2>
+                            {capstone.rubric_items.length === 0 ? (
+                                <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>No criteria published yet.</p>
+                            ) : (
+                                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    {capstone.rubric_items
+                                        .filter(i => i.min_team_size <= 1)
+                                        .map(item => (
+                                            <li key={item.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                                                <span style={{ marginTop: 2, color: item.category === 'core' ? 'var(--accent-primary)' : 'var(--steel-light)' }}>
+                                                    {item.category === 'core' ? '●' : '◌'}
+                                                </span>
+                                                <span className="t-body" style={{ fontSize: 14, color: 'var(--text-primary)' }}>{item.text}</span>
+                                                {item.weight > 1 && (
+                                                    <span className="t-mono steel" style={{ marginLeft: 'auto', flexShrink: 0 }}>×{item.weight}</span>
+                                                )}
+                                            </li>
+                                        ))}
+                                </ul>
+                            )}
+                        </div>
+
+                        {/* Current submission status */}
+                        {submission && (
+                            <div style={cardStyle}>
+                                <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)' }}>Your Submission</h2>
+                                <StatusBadge status={submission.status} />
+                                <ScoreMeter score={submission.score} />
+                            </div>
+                        )}
+                    </div>
                 )}
-            </div>
 
-            {/* Tab bar */}
-            <div className="flex gap-1 border-b">
-                {tabs.map(t => (
-                    <button
-                        key={t.id}
-                        onClick={() => setTab(t.id)}
-                        className={`px-4 py-2 text-sm font-medium border-b-2 transition -mb-px ${
-                            tab === t.id
-                                ? 'border-primary text-primary'
-                                : 'border-transparent text-muted-foreground hover:text-foreground'
-                        }`}
-                    >
-                        {t.label}
-                    </button>
-                ))}
-            </div>
+                {/* Submit code (archive) */}
+                {tab === 'submit' && (
+                    <div style={cardStyle}>
+                        <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)' }}>Paste Your Code</h2>
+                        <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>
+                            Paste your complete code (all files concatenated, or a ZIP as base64) for AI evaluation.
+                        </p>
+                        <textarea
+                            className="input"
+                            style={{ minHeight: 300, resize: 'vertical', fontFamily: 'var(--ff-mono)', fontSize: 13 }}
+                            placeholder="# Paste your code here..."
+                            value={codeBundle}
+                            onChange={e => setCodeBundle(e.target.value)}
+                        />
+                        <button onClick={handleSubmitArchive} disabled={submitting || !codeBundle.trim()} className="btn btn-red" style={{ padding: '10px 18px', width: 'fit-content' }}>
+                            {submitting ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                            {submitting ? 'EVALUATING…' : 'SUBMIT & EVALUATE'}
+                        </button>
+                    </div>
+                )}
 
-            {/* Overview */}
-            {tab === 'overview' && (
-                <div className="space-y-4">
-                    {/* In-platform editor entry */}
-                    <Link
-                        to={`/course/${id}/capstone/workspace`}
-                        className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2.5 rounded-xl text-sm font-medium hover:opacity-90 w-fit"
-                    >
-                        <Code2 className="w-4 h-4" />
-                        Open in-platform editor
-                    </Link>
+                {/* GitHub repo flow */}
+                {tab === 'repo' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        <div style={cardStyle}>
+                            <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <Github size={20} /> Provision Your Repo
+                            </h2>
+                            <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>
+                                We'll create a public GitHub repo from the course template under the course org and invite you as a collaborator.
+                            </p>
+                            <input className="input" placeholder="Your GitHub username" value={githubUsername} onChange={e => setGithubUsername(e.target.value)} />
+                            <button onClick={handleProvisionRepo} disabled={provisioning || !githubUsername.trim()} className="btn btn-red" style={{ padding: '10px 16px', width: 'fit-content' }}>
+                                {provisioning ? <Loader2 size={16} className="animate-spin" /> : <Github size={16} />}
+                                {provisioning ? 'CREATING…' : 'GET MY REPO'}
+                            </button>
+                            {provisionedUrl && (
+                                <a href={provisionedUrl} target="_blank" rel="noopener noreferrer" className="t-body" style={{ fontSize: 13, color: 'var(--accent-primary)', textDecoration: 'underline' }}>
+                                    {provisionedUrl}
+                                </a>
+                            )}
+                        </div>
 
-                    {/* Proposal form for student_proposed capstones */}
-                    {capstone.spec_mode === 'student_proposed' && (
-                        <div className="bg-card rounded-2xl border-2 border-border p-5 space-y-3">
-                            <h2 className="font-semibold">Submit Your Proposal</h2>
-                            <input
-                                className="w-full border rounded-lg px-3 py-2 text-sm"
-                                placeholder="Project title"
-                                value={proposalTitle}
-                                onChange={e => setProposalTitle(e.target.value)}
-                            />
-                            <textarea
-                                className="w-full border rounded-lg px-3 py-2 text-sm min-h-[80px]"
-                                placeholder="Description"
-                                value={proposalDesc}
-                                onChange={e => setProposalDesc(e.target.value)}
-                            />
-                            <textarea
-                                className="w-full border rounded-lg px-3 py-2 text-sm min-h-[60px]"
-                                placeholder="Planned features (one per line)"
-                                value={proposalFeatures}
-                                onChange={e => setProposalFeatures(e.target.value)}
-                            />
-                            <button
-                                onClick={handleSubmitProposal}
-                                disabled={submittingProposal || !proposalTitle || !proposalDesc}
-                                className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-sm hover:opacity-90 disabled:opacity-50"
-                            >
-                                {submittingProposal ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                                Submit Proposal
+                        <div style={cardStyle}>
+                            <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)' }}>Record a Commit</h2>
+                            <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>
+                                After pushing to your repo, paste the repo URL and commit SHA to record your submission.
+                                CI will run automatically and results will appear in the Results tab.
+                            </p>
+                            <input className="input" placeholder="https://github.com/org/repo-name" value={repoUrl} onChange={e => setRepoUrl(e.target.value)} />
+                            <input className="input" style={{ fontFamily: 'var(--ff-mono)' }} placeholder="Commit SHA (40 characters)" value={commitSha} onChange={e => setCommitSha(e.target.value)} />
+                            <button onClick={handleSubmitFromRepo} disabled={submitting || !repoUrl || !commitSha} className="btn btn-red" style={{ padding: '10px 16px', width: 'fit-content' }}>
+                                {submitting ? <Loader2 size={16} className="animate-spin" /> : <Github size={16} />}
+                                RECORD SUBMISSION
                             </button>
                         </div>
-                    )}
-
-                    {/* Rubric overview */}
-                    <div className="bg-card rounded-2xl border-2 border-border p-5 space-y-3">
-                        <h2 className="font-semibold">Rubric Criteria</h2>
-                        {capstone.rubric_items.length === 0 ? (
-                            <p className="text-sm text-muted-foreground">No criteria published yet.</p>
-                        ) : (
-                            <ul className="space-y-2">
-                                {capstone.rubric_items
-                                    .filter(i => i.min_team_size <= 1)
-                                    .map(item => (
-                                        <li key={item.id} className="flex items-start gap-2 text-sm">
-                                            <span className={item.category === 'core' ? 'text-blue-600 mt-0.5' : 'text-purple-500 mt-0.5'}>
-                                                {item.category === 'core' ? '●' : '◌'}
-                                            </span>
-                                            <span>{item.text}</span>
-                                            {item.weight > 1 && (
-                                                <span className="ml-auto text-xs text-muted-foreground shrink-0">
-                                                    ×{item.weight}
-                                                </span>
-                                            )}
-                                        </li>
-                                    ))}
-                            </ul>
-                        )}
                     </div>
+                )}
 
-                    {/* Current submission status */}
-                    {submission && (
-                        <div className="bg-card rounded-2xl border-2 border-border p-5 space-y-3">
-                            <h2 className="font-semibold">Your Submission</h2>
-                            <StatusBadge status={submission.status} />
-                            <ScoreMeter score={submission.score} />
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* Submit code (archive) */}
-            {tab === 'submit' && (
-                <div className="bg-card rounded-2xl border-2 border-border p-5 space-y-4">
-                    <h2 className="font-semibold">Paste Your Code</h2>
-                    <p className="text-sm text-muted-foreground">
-                        Paste your complete code (all files concatenated, or a ZIP as base64) for AI evaluation.
-                    </p>
-                    <textarea
-                        className="w-full border rounded-lg px-3 py-2 text-sm font-mono min-h-[300px]"
-                        placeholder="# Paste your code here..."
-                        value={codeBundle}
-                        onChange={e => setCodeBundle(e.target.value)}
-                    />
-                    <button
-                        onClick={handleSubmitArchive}
-                        disabled={submitting || !codeBundle.trim()}
-                        className="flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2 rounded-lg text-sm hover:opacity-90 disabled:opacity-50"
-                    >
-                        {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                        {submitting ? 'Evaluating…' : 'Submit & Evaluate'}
-                    </button>
-                </div>
-            )}
-
-            {/* GitHub repo flow */}
-            {tab === 'repo' && (
-                <div className="space-y-4">
-                    <div className="bg-card rounded-2xl border-2 border-border p-5 space-y-3">
-                        <h2 className="flex items-center gap-2 font-semibold">
-                            <Github className="w-5 h-5" /> Provision Your Repo
-                        </h2>
-                        <p className="text-sm text-muted-foreground">
-                            We'll create a public GitHub repo from the course template under the course org and invite you as a collaborator.
-                        </p>
-                        <input
-                            className="w-full border rounded-lg px-3 py-2 text-sm"
-                            placeholder="Your GitHub username"
-                            value={githubUsername}
-                            onChange={e => setGithubUsername(e.target.value)}
-                        />
-                        <button
-                            onClick={handleProvisionRepo}
-                            disabled={provisioning || !githubUsername.trim()}
-                            className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-sm hover:opacity-90 disabled:opacity-50"
-                        >
-                            {provisioning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Github className="w-4 h-4" />}
-                            {provisioning ? 'Creating…' : 'Get My Repo'}
-                        </button>
-                        {provisionedUrl && (
-                            <a
-                                href={provisionedUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="block text-primary underline text-sm"
-                            >
-                                {provisionedUrl}
-                            </a>
-                        )}
-                    </div>
-
-                    <div className="bg-card rounded-2xl border-2 border-border p-5 space-y-3">
-                        <h2 className="font-semibold">Record a Commit</h2>
-                        <p className="text-sm text-muted-foreground">
-                            After pushing to your repo, paste the repo URL and commit SHA to record your submission.
-                            CI will run automatically and results will appear in the Results tab.
-                        </p>
-                        <input
-                            className="w-full border rounded-lg px-3 py-2 text-sm"
-                            placeholder="https://github.com/org/repo-name"
-                            value={repoUrl}
-                            onChange={e => setRepoUrl(e.target.value)}
-                        />
-                        <input
-                            className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
-                            placeholder="Commit SHA (40 characters)"
-                            value={commitSha}
-                            onChange={e => setCommitSha(e.target.value)}
-                        />
-                        <button
-                            onClick={handleSubmitFromRepo}
-                            disabled={submitting || !repoUrl || !commitSha}
-                            className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-sm hover:opacity-90 disabled:opacity-50"
-                        >
-                            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Github className="w-4 h-4" />}
-                            Record Submission
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* Team / matchmaking */}
-            {tab === 'team' && (
-                <div className="space-y-4">
-                    {team ? (
-                        <>
-                            <div className="bg-card rounded-2xl border-2 border-border p-5 space-y-3">
-                                <h2 className="flex items-center gap-2 font-semibold">
-                                    <Users className="w-5 h-5" /> {team.name || `Team ${team.id}`}
-                                </h2>
-                                <p className="text-sm text-muted-foreground">Status: {team.status}</p>
-                                <div className="flex flex-wrap gap-2">
-                                    {team.member_usernames.map(u => (
-                                        <span key={u} className="px-3 py-1 rounded-full bg-muted text-sm">{u}</span>
-                                    ))}
-                                </div>
-                                <p className="text-xs text-muted-foreground">
-                                    Team evaluation uses the size-scaled rubric (core + stretch). Each member's
-                                    contribution is checked from commit authorship.
-                                </p>
-                            </div>
-
-                            {/* Advisory suggested division of labor */}
-                            {team.member_usernames.length < 2 ? (
-                                <div className="bg-card rounded-2xl border-2 border-border p-5">
-                                    <p className="text-sm text-muted-foreground">Solo project — no division of labor.</p>
-                                </div>
-                            ) : (
-                                <div className="bg-card rounded-2xl border-2 border-border p-5 space-y-4">
-                                    <div className="flex items-center gap-2">
-                                        <Sparkles className="w-5 h-5 text-primary" />
-                                        <h2 className="font-semibold">Suggested division of labor</h2>
-                                        <button
-                                            onClick={handleRefreshRoles}
-                                            disabled={refreshingRoles}
-                                            className="ml-auto flex items-center gap-1.5 text-xs border px-2.5 py-1 rounded-lg hover:bg-muted disabled:opacity-50"
-                                        >
-                                            {refreshingRoles ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                                            Refresh suggestions
-                                        </button>
+                {/* Team / matchmaking */}
+                {tab === 'team' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        {team ? (
+                            <>
+                                <div style={cardStyle}>
+                                    <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                        <Users size={20} /> {team.name || `Team ${team.id}`}
+                                    </h2>
+                                    <p className="t-mono steel">STATUS · {team.status.toUpperCase()}</p>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                        {team.member_usernames.map(u => (
+                                            <span key={u} className="tag-steel">{u}</span>
+                                        ))}
                                     </div>
-                                    <p className="text-xs text-muted-foreground">
-                                        This is a <strong>suggestion</strong> your team can follow or ignore. Everyone is
-                                        expected to touch everything — “lead” drives an area; “support” contributes and
-                                        learns from the lead.
+                                    <p className="t-body" style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0 }}>
+                                        Team evaluation uses the size-scaled rubric (core + stretch). Each member's
+                                        contribution is checked from commit authorship.
                                     </p>
+                                </div>
 
-                                    {roleAdviceLoading ? (
-                                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                            <Loader2 className="w-4 h-4 animate-spin" /> Generating suggestions…
+                                {/* Advisory suggested division of labor */}
+                                {team.member_usernames.length < 2 ? (
+                                    <div style={cardStyle}>
+                                        <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>Solo project — no division of labor.</p>
+                                    </div>
+                                ) : (
+                                    <div style={cardStyle}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                            <Sparkles size={18} style={{ color: 'var(--accent-primary)' }} />
+                                            <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)' }}>Suggested division of labor</h2>
+                                            <button onClick={handleRefreshRoles} disabled={refreshingRoles} className="btn btn-ghost-dark" style={{ marginLeft: 'auto', padding: '6px 12px', fontSize: 10 }}>
+                                                {refreshingRoles ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                                                REFRESH
+                                            </button>
                                         </div>
-                                    ) : !roleAdvice ? (
-                                        <p className="text-sm text-muted-foreground">
-                                            No suggestions yet — click “Refresh suggestions”.
+                                        <p className="t-body" style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0 }}>
+                                            This is a <strong style={{ color: 'var(--text-primary)' }}>suggestion</strong> your team can follow or ignore. Everyone is
+                                            expected to touch everything — “lead” drives an area; “support” contributes and
+                                            learns from the lead.
                                         </p>
-                                    ) : (
-                                        <>
-                                            {roleAdvice.limited_data && (
-                                                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">
-                                                    Based on limited data so far — these are starter suggestions. Revisit as you make progress.
-                                                </div>
-                                            )}
-                                            {roleAdvice.team_note && (
-                                                <p className="text-sm bg-muted/40 rounded-xl p-3">{roleAdvice.team_note}</p>
-                                            )}
-                                            <div className="space-y-2">
-                                                {roleAdvice.areas.map((a, i) => (
-                                                    <div key={i} className="rounded-xl border border-border p-3 text-sm space-y-1.5">
-                                                        <p className="font-medium">{a.area}</p>
-                                                        <div className="flex flex-wrap items-center gap-2 text-xs">
-                                                            <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary">Lead: {a.lead}</span>
-                                                            {a.support.length > 0 && (
-                                                                <span className="px-2 py-0.5 rounded-full bg-muted">Support: {a.support.join(', ')}</span>
-                                                            )}
-                                                        </div>
-                                                        {a.rationale && <p className="text-xs text-muted-foreground">{a.rationale}</p>}
-                                                    </div>
-                                                ))}
+
+                                        {roleAdviceLoading ? (
+                                            <div className="t-body" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: 'var(--text-secondary)' }}>
+                                                <Loader2 size={16} className="animate-spin" /> Generating suggestions…
                                             </div>
-                                            {roleAdvice.per_member_growth.length > 0 && (
-                                                <div className="space-y-1 pt-1">
-                                                    <p className="text-sm font-medium">Your growth focus</p>
-                                                    {roleAdvice.per_member_growth.map((g, i) => (
-                                                        <p key={i} className="text-xs text-muted-foreground">
-                                                            <span className="font-medium text-foreground">{g.member}</span>: grow on {g.grow_on} — {g.why}
-                                                        </p>
+                                        ) : !roleAdvice ? (
+                                            <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>
+                                                No suggestions yet — click “Refresh”.
+                                            </p>
+                                        ) : (
+                                            <>
+                                                {roleAdvice.limited_data && (
+                                                    <div style={{ borderRadius: 8, border: '1px solid rgba(180,83,9,0.3)', background: 'rgba(180,83,9,0.06)', padding: 12 }}>
+                                                        <p className="t-body" style={{ margin: 0, fontSize: 12, color: '#B45309' }}>Based on limited data so far — these are starter suggestions. Revisit as you make progress.</p>
+                                                    </div>
+                                                )}
+                                                {roleAdvice.team_note && (
+                                                    <p className="t-body" style={{ fontSize: 14, color: 'var(--text-primary)', background: 'var(--bg-primary)', borderRadius: 8, padding: 12, margin: 0 }}>{roleAdvice.team_note}</p>
+                                                )}
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                                    {roleAdvice.areas.map((a, i) => (
+                                                        <div key={i} style={{ borderRadius: 8, border: '1px solid var(--hairline)', padding: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                                            <p className="t-body" style={{ margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{a.area}</p>
+                                                            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+                                                                <span className="t-mono" style={{ padding: '2px 8px', borderRadius: 999, background: 'rgba(37,99,235,0.1)', color: 'var(--accent-primary)' }}>LEAD: {a.lead}</span>
+                                                                {a.support.length > 0 && (
+                                                                    <span className="t-mono steel" style={{ padding: '2px 8px', borderRadius: 999, background: 'var(--bg-primary)' }}>SUPPORT: {a.support.join(', ')}</span>
+                                                                )}
+                                                            </div>
+                                                            {a.rationale && <p className="t-body" style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>{a.rationale}</p>}
+                                                        </div>
                                                     ))}
                                                 </div>
-                                            )}
-                                        </>
+                                                {roleAdvice.per_member_growth.length > 0 && (
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 4 }}>
+                                                        <p className="t-label" style={{ color: 'var(--text-primary)' }}>YOUR GROWTH FOCUS</p>
+                                                        {roleAdvice.per_member_growth.map((g, i) => (
+                                                            <p key={i} className="t-body" style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>
+                                                                <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{g.member}</span>: grow on {g.grow_on} — {g.why}
+                                                            </p>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </>
+                                        )}
+                                    </div>
+                                )}
+                            </>
+                        ) : (
+                            <div style={cardStyle}>
+                                <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <Users size={20} /> Find a Team
+                                </h2>
+                                <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>
+                                    Join the matchmaking queue. We'll suggest teammates whose strengths complement
+                                    yours. You'll never be force-assigned — you confirm your team. If no one else is
+                                    available, you can still proceed solo with the core-only rubric.
+                                </p>
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    {!inQueue ? (
+                                        <button onClick={handleJoinQueue} disabled={queueBusy} className="btn btn-red" style={{ padding: '10px 16px' }}>
+                                            {queueBusy ? <Loader2 size={16} className="animate-spin" /> : <UserPlus size={16} />}
+                                            JOIN QUEUE
+                                        </button>
+                                    ) : (
+                                        <button onClick={handleLeaveQueue} disabled={queueBusy} className="btn btn-ghost-dark" style={{ padding: '10px 16px' }}>
+                                            {queueBusy ? <Loader2 size={16} className="animate-spin" /> : <UserMinus size={16} />}
+                                            LEAVE QUEUE
+                                        </button>
                                     )}
                                 </div>
-                            )}
-                        </>
-                    ) : (
-                        <div className="bg-card rounded-2xl border-2 border-border p-5 space-y-3">
-                            <h2 className="flex items-center gap-2 font-semibold">
-                                <Users className="w-5 h-5" /> Find a Team
-                            </h2>
-                            <p className="text-sm text-muted-foreground">
-                                Join the matchmaking queue. We'll suggest teammates whose strengths complement
-                                yours. You'll never be force-assigned — you confirm your team. If no one else is
-                                available, you can still proceed solo with the core-only rubric.
-                            </p>
-                            <div className="flex gap-2">
-                                {!inQueue ? (
-                                    <button
-                                        onClick={handleJoinQueue}
-                                        disabled={queueBusy}
-                                        className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-sm hover:opacity-90 disabled:opacity-50"
-                                    >
-                                        {queueBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
-                                        Join Queue
-                                    </button>
-                                ) : (
-                                    <button
-                                        onClick={handleLeaveQueue}
-                                        disabled={queueBusy}
-                                        className="flex items-center gap-2 border px-4 py-2 rounded-lg text-sm hover:bg-muted disabled:opacity-50"
-                                    >
-                                        {queueBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserMinus className="w-4 h-4" />}
-                                        Leave Queue
-                                    </button>
+
+                                {recs.length > 0 && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 4 }}>
+                                        <p className="t-label" style={{ color: 'var(--text-primary)' }}>SUGGESTED TEAMMATES</p>
+                                        {recs.map(r => (
+                                            <div key={r.student_id} style={{ display: 'flex', alignItems: 'center', gap: 12, border: '1px solid var(--hairline)', borderRadius: 8, padding: 12 }}>
+                                                <span className="tag-steel">{r.username}</span>
+                                                <span className="t-body" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{r.why}</span>
+                                                <span className="t-mono steel" style={{ marginLeft: 'auto' }}>MATCH {(r.score * 100).toFixed(0)}%</span>
+                                            </div>
+                                        ))}
+                                    </div>
                                 )}
                             </div>
+                        )}
+                    </div>
+                )}
 
-                            {recs.length > 0 && (
-                                <div className="space-y-2 pt-2">
-                                    <p className="text-sm font-medium">Suggested teammates</p>
-                                    {recs.map(r => (
-                                        <div key={r.student_id} className="flex items-center gap-3 border rounded-xl p-3 text-sm">
-                                            <span className="px-2.5 py-1 rounded-full bg-muted">{r.username}</span>
-                                            <span className="text-muted-foreground text-xs">{r.why}</span>
-                                            <span className="ml-auto text-xs text-muted-foreground">match {(r.score * 100).toFixed(0)}%</span>
+                {/* Results */}
+                {tab === 'results' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        {!submission ? (
+                            <div style={cardStyle}>
+                                <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>
+                                    No submission yet. Open the editor, commit CI-green work, then “Submit for grading”.
+                                </p>
+                            </div>
+                        ) : submission.status === 'evaluating' ? (
+                            <div style={{ ...cardStyle, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                                <Loader2 size={20} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
+                                <p className="t-body" style={{ fontSize: 14, color: 'var(--text-primary)', margin: 0 }}>Grading your submission against the rubric…</p>
+                            </div>
+                        ) : (
+                            <>
+                                {/* PASS banner */}
+                                {submission.verdict === 'pass' && (
+                                    <div style={{ borderRadius: 12, border: '1px solid rgba(22,163,74,0.4)', background: 'rgba(22,163,74,0.06)', padding: 20, display: 'flex', alignItems: 'center', gap: 16 }}>
+                                        <PartyPopper size={28} style={{ color: 'var(--accent-success)', flexShrink: 0 }} />
+                                        <div style={{ flex: 1 }}>
+                                            <p className="t-body" style={{ margin: 0, fontSize: 15, fontWeight: 600, color: 'var(--accent-success)' }}>You passed the capstone!</p>
+                                            <p className="t-body" style={{ margin: '2px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>All core criteria met — the course is complete.</p>
                                         </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* Results */}
-            {tab === 'results' && (
-                <div className="space-y-4">
-                    {!submission ? (
-                        <div className="bg-card rounded-2xl border-2 border-border p-5">
-                            <p className="text-sm text-muted-foreground">
-                                No submission yet. Open the editor, commit CI-green work, then “Submit for grading”.
-                            </p>
-                        </div>
-                    ) : submission.status === 'evaluating' ? (
-                        <div className="bg-card rounded-2xl border-2 border-border p-5 flex items-center gap-3">
-                            <Loader2 className="w-5 h-5 animate-spin text-primary" />
-                            <p className="text-sm">Grading your submission against the rubric…</p>
-                        </div>
-                    ) : (
-                        <>
-                            {/* PASS banner */}
-                            {submission.verdict === 'pass' && (
-                                <div className="rounded-2xl border-2 border-green-300 bg-green-50 p-5 flex items-center gap-4">
-                                    <PartyPopper className="w-7 h-7 text-green-600 shrink-0" />
-                                    <div className="flex-1">
-                                        <p className="font-semibold text-green-800">You passed the capstone!</p>
-                                        <p className="text-sm text-green-700">All core criteria met — the course is complete.</p>
+                                        <div style={{ width: 160, flexShrink: 0 }}><ScoreMeter score={submission.score} /></div>
                                     </div>
-                                    <div className="w-40 shrink-0"><ScoreMeter score={submission.score} /></div>
-                                </div>
-                            )}
+                                )}
 
-                            {/* FAIL banner + exactly which criteria failed */}
-                            {submission.verdict === 'fail' && (
-                                <div className="rounded-2xl border-2 border-red-300 bg-red-50 p-5 space-y-3">
-                                    <div className="flex items-center gap-3">
-                                        <XCircle className="w-6 h-6 text-red-600 shrink-0" />
-                                        <div>
-                                            <p className="font-semibold text-red-800">Not passed yet</p>
-                                            <p className="text-sm text-red-700">
-                                                Every <strong>core</strong> criterion must pass. Fix the items below, commit
-                                                (CI runs on <span className="font-mono">work</span>), then re-submit.
-                                            </p>
+                                {/* FAIL banner + exactly which criteria failed */}
+                                {submission.verdict === 'fail' && (
+                                    <div style={{ borderRadius: 12, border: '1px solid rgba(220,38,38,0.4)', background: 'rgba(220,38,38,0.05)', padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                            <XCircle size={24} style={{ color: 'var(--error-red)', flexShrink: 0 }} />
+                                            <div>
+                                                <p className="t-body" style={{ margin: 0, fontSize: 15, fontWeight: 600, color: 'var(--error-red)' }}>Not passed yet</p>
+                                                <p className="t-body" style={{ margin: '2px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>
+                                                    Every <strong style={{ color: 'var(--text-primary)' }}>core</strong> criterion must pass. Fix the items below, commit
+                                                    (CI runs on <span style={{ fontFamily: 'var(--ff-mono)' }}>work</span>), then re-submit.
+                                                </p>
+                                            </div>
                                         </div>
+                                        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                            {capstone.rubric_items
+                                                .filter(item => {
+                                                    const r = submission.results[String(item.id)];
+                                                    return r && !r.passed;
+                                                })
+                                                .map(item => {
+                                                    const r = submission.results[String(item.id)];
+                                                    return (
+                                                        <li key={item.id} style={{ borderRadius: 8, border: '1px solid rgba(220,38,38,0.25)', background: 'var(--bg-surface)', padding: 12 }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                                <XCircle size={16} style={{ color: 'var(--error-red)', flexShrink: 0 }} />
+                                                                <span className="t-body" style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{item.text}</span>
+                                                                <span className="t-mono" style={{ marginLeft: 'auto', padding: '2px 6px', borderRadius: 4, background: item.category === 'core' ? 'rgba(220,38,38,0.12)' : 'var(--bg-primary)', color: item.category === 'core' ? 'var(--error-red)' : 'var(--steel-light)' }}>
+                                                                    {item.category}
+                                                                </span>
+                                                            </div>
+                                                            {r?.evidence && (
+                                                                <p className="t-body" style={{ margin: '4px 0 0 24px', fontSize: 12, color: 'var(--text-secondary)' }}>{r.evidence}</p>
+                                                            )}
+                                                        </li>
+                                                    );
+                                                })}
+                                        </ul>
+                                        <Link to={`/course/${id}/capstone/workspace`} className="btn btn-red" style={{ padding: '10px 16px', width: 'fit-content', textDecoration: 'none' }}>
+                                            <Code2 size={16} /> RE-EDIT IN THE EDITOR
+                                        </Link>
                                     </div>
-                                    <ul className="space-y-2">
-                                        {capstone.rubric_items
-                                            .filter(item => {
-                                                const r = submission.results[String(item.id)];
-                                                return r && !r.passed;
-                                            })
-                                            .map(item => {
-                                                const r = submission.results[String(item.id)];
-                                                return (
-                                                    <li key={item.id} className="rounded-xl border border-red-200 bg-card p-3 text-sm">
-                                                        <div className="flex items-center gap-2">
-                                                            <XCircle className="w-4 h-4 text-red-500 shrink-0" />
-                                                            <span className="font-medium">{item.text}</span>
-                                                            <span className={`ml-auto text-[11px] px-1.5 py-0.5 rounded ${
-                                                                item.category === 'core'
-                                                                    ? 'bg-red-100 text-red-700'
-                                                                    : 'bg-muted text-muted-foreground'
-                                                            }`}>
-                                                                {item.category}
-                                                            </span>
-                                                        </div>
-                                                        {r?.evidence && (
-                                                            <p className="text-xs text-muted-foreground mt-1 ml-6">{r.evidence}</p>
-                                                        )}
-                                                    </li>
-                                                );
-                                            })}
-                                    </ul>
-                                    <Link
-                                        to={`/course/${id}/capstone/workspace`}
-                                        className="inline-flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-sm hover:opacity-90 w-fit"
-                                    >
-                                        <Code2 className="w-4 h-4" /> Re-edit in the editor
-                                    </Link>
-                                </div>
-                            )}
+                                )}
 
-                            {/* PASS → survey → certificate sequence */}
-                            {submission.verdict === 'pass' && (
-                                <>
-                                    {surveyDone === false && (
-                                        <div className="bg-card rounded-2xl border-2 border-primary/30 p-5 flex items-center gap-4">
-                                            <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                                                <MessageSquare className="w-5 h-5 text-primary" />
-                                            </div>
-                                            <div className="flex-1">
-                                                <p className="font-semibold">One quick step: tell us about the course</p>
-                                                <p className="text-sm text-muted-foreground">Complete a short survey to unlock your certificate.</p>
-                                            </div>
-                                            <Link
-                                                to={`/survey/${id}?next=/course/${id}/capstone`}
-                                                className="bg-primary text-primary-foreground px-4 py-2 rounded-lg text-sm font-medium hover:opacity-90 shrink-0"
-                                            >
-                                                Take survey
-                                            </Link>
-                                        </div>
-                                    )}
-                                    {certificate && (
-                                        <Certificate data={certificate} onDownload={handleDownloadCert} downloading={downloadingCert} />
-                                    )}
-                                    {surveyDone === null && !certificate && (
-                                        <div className="bg-card rounded-2xl border-2 border-border p-5 flex items-center gap-3">
-                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                            <p className="text-sm text-muted-foreground">Preparing your certificate…</p>
-                                        </div>
-                                    )}
-                                </>
-                            )}
-
-                            {/* Feedback */}
-                            {submission.feedback && (
-                                <div className="bg-card rounded-2xl border-2 border-border p-5">
-                                    <p className="font-medium text-sm mb-1">Feedback</p>
-                                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">{submission.feedback}</p>
-                                </div>
-                            )}
-
-                            {/* Full per-criterion breakdown */}
-                            {Object.keys(submission.results).length > 0 && (
-                                <div className="bg-card rounded-2xl border-2 border-border p-5 space-y-2">
-                                    <p className="text-sm font-medium">Per-criterion breakdown</p>
-                                    {capstone.rubric_items.map(item => {
-                                        const r = submission.results[String(item.id)];
-                                        if (!r) return null;
-                                        return (
-                                            <div
-                                                key={item.id}
-                                                className={`flex items-start gap-3 rounded-xl p-3 text-sm border ${
-                                                    r.passed ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'
-                                                }`}
-                                            >
-                                                {r.passed
-                                                    ? <CheckCircle className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
-                                                    : <XCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
-                                                }
-                                                <div>
-                                                    <p className="font-medium">{item.text}</p>
-                                                    {r.evidence && (
-                                                        <p className="text-xs text-muted-foreground mt-0.5">{r.evidence}</p>
-                                                    )}
+                                {/* PASS → survey → certificate sequence */}
+                                {submission.verdict === 'pass' && (
+                                    <>
+                                        {surveyDone === false && (
+                                            <div style={{ ...cardStyle, flexDirection: 'row', alignItems: 'center', gap: 16, border: '1px solid var(--accent-primary)' }}>
+                                                <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(37,99,235,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                    <MessageSquare size={20} style={{ color: 'var(--accent-primary)' }} />
                                                 </div>
-                                                <span className="ml-auto text-xs text-muted-foreground shrink-0">
-                                                    ×{item.weight}
-                                                </span>
+                                                <div style={{ flex: 1 }}>
+                                                    <p className="t-body" style={{ margin: 0, fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>One quick step: tell us about the course</p>
+                                                    <p className="t-body" style={{ margin: '2px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>Complete a short survey to unlock your certificate.</p>
+                                                </div>
+                                                <Link to={`/survey/${id}?next=/course/${id}/capstone`} className="btn btn-red" style={{ padding: '10px 16px', flexShrink: 0, textDecoration: 'none' }}>
+                                                    TAKE SURVEY
+                                                </Link>
                                             </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </>
-                    )}
-                </div>
-            )}
+                                        )}
+                                        {certificate && (
+                                            <Certificate data={certificate} onDownload={handleDownloadCert} downloading={downloadingCert} />
+                                        )}
+                                        {surveyDone === null && !certificate && (
+                                            <div style={{ ...cardStyle, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                                                <Loader2 size={16} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
+                                                <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>Preparing your certificate…</p>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+
+                                {/* Feedback */}
+                                {submission.feedback && (
+                                    <div style={cardStyle}>
+                                        <p className="t-label" style={{ color: 'var(--text-primary)' }}>FEEDBACK</p>
+                                        <p className="t-body" style={{ margin: 0, fontSize: 14, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>{submission.feedback}</p>
+                                    </div>
+                                )}
+
+                                {/* Full per-criterion breakdown */}
+                                {Object.keys(submission.results).length > 0 && (
+                                    <div style={cardStyle}>
+                                        <p className="t-label" style={{ color: 'var(--text-primary)' }}>PER-CRITERION BREAKDOWN</p>
+                                        {capstone.rubric_items.map(item => {
+                                            const r = submission.results[String(item.id)];
+                                            if (!r) return null;
+                                            return (
+                                                <div
+                                                    key={item.id}
+                                                    style={{
+                                                        display: 'flex', alignItems: 'flex-start', gap: 12, borderRadius: 8, padding: 12,
+                                                        border: `1px solid ${r.passed ? 'rgba(22,163,74,0.3)' : 'rgba(220,38,38,0.3)'}`,
+                                                        background: r.passed ? 'rgba(22,163,74,0.05)' : 'rgba(220,38,38,0.05)',
+                                                    }}
+                                                >
+                                                    {r.passed
+                                                        ? <CheckCircle size={16} style={{ color: 'var(--accent-success)', flexShrink: 0, marginTop: 2 }} />
+                                                        : <XCircle size={16} style={{ color: 'var(--error-red)', flexShrink: 0, marginTop: 2 }} />}
+                                                    <div>
+                                                        <p className="t-body" style={{ margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{item.text}</p>
+                                                        {r.evidence && (
+                                                            <p className="t-body" style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-secondary)' }}>{r.evidence}</p>
+                                                        )}
+                                                    </div>
+                                                    <span className="t-mono steel" style={{ marginLeft: 'auto', flexShrink: 0 }}>×{item.weight}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+                )}
+            </div>
         </div>
     );
 }

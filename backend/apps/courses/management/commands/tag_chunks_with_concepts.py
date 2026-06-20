@@ -73,12 +73,16 @@ class Command(BaseCommand):
             raise CommandError(f"Course {course_pk} has no concepts to tag against.")
 
         store = _load_vector_store()
-        res = store.get_where({"corpus_id": corpus.corpus_id}, include=["metadatas"])
+        # Scope to this corpus's chunks via the per-corpus membership flag
+        # (corpus__<id> = "1"), so a shared book is tagged only where it's selected.
+        membership_key = f"corpus__{corpus.corpus_id}"
+        res = store.get_where({membership_key: "1"}, include=["metadatas"])
         ids = res.get("ids", []) or []
         metas = res.get("metadatas", []) or []
         if not ids:
             raise CommandError(
-                f"Corpus {corpus.corpus_id} has no chunks. Index + backfill first."
+                f"Corpus {corpus.corpus_id} has no chunks. Index + attach the "
+                f"book(s) for this course first."
             )
 
         matcher = build_matcher(concepts)
@@ -101,10 +105,11 @@ class Command(BaseCommand):
             key = str(concept.id)
             tagged[key] += 1
             confidence_sum[key] += conf
-            m = dict(meta or {})
-            m["concept_id"] = key
+            # Per-corpus concept tag (concept__<corpus_id>), so the SAME shared
+            # book can carry different concept tags in different courses. Merged
+            # in place via update_metadata, preserving other corpora's tags.
             upd_ids.append(cid)
-            upd_metas.append(m)
+            upd_metas.append({f"concept__{corpus.corpus_id}": key})
 
         if not dry and upd_ids:
             store.update_metadata(upd_ids, upd_metas)

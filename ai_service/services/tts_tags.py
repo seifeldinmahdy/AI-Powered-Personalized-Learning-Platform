@@ -58,9 +58,9 @@ def keep_valid_tags(text: str) -> str:
 # Prompt fragment listing the allowed cues — imported by the tutor prompts so the
 # instruction and the interpreter can never disagree on the tag set.
 TAG_PROMPT_GUIDANCE = (
-    "SPOKEN CUES: You may VERY OCCASIONALLY include ONE of these exact non-verbal "
+    "SPOKEN CUES: You HAVE TO OFTEN include ONE of these exact non-verbal "
     "cues, written in square brackets, ONLY where it genuinely fits the moment "
-    "(often you will use none or clear throat in the beginning): "
+    "(often you will use cough in the beginning after saying hello): "
     + " ".join(f"[{t}]" for t in VALID_PARALINGUISTIC_TAGS) + ". "
     "They are spoken sounds, not text — at most one per turn. Do NOT invent any "
     "other bracketed tag, and do NOT use asterisks or written stage directions "

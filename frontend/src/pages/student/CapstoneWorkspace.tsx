@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
+import type { CSSProperties } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import Editor from '@monaco-editor/react';
 import { toast } from 'sonner';
@@ -32,6 +33,21 @@ function langForPath(path: string): string {
     const ext = path.split('.').pop()?.toLowerCase() ?? '';
     return LANG_BY_EXT[ext] ?? 'plaintext';
 }
+
+// Shared toolbar-button base.
+const toolBtn: CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 8,
+    border: '1px solid var(--hairline)', background: 'var(--bg-surface)', color: 'var(--text-primary)',
+    cursor: 'pointer', fontSize: 12, fontWeight: 500, letterSpacing: '0.06em', textTransform: 'uppercase',
+};
+const modalBackdrop: CSSProperties = {
+    position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    background: 'rgba(0,0,0,0.45)', padding: 16,
+};
+const modalCard: CSSProperties = {
+    width: '100%', maxWidth: 440, background: 'var(--bg-surface)', borderRadius: 12,
+    border: '1px solid var(--hairline)', padding: 20, display: 'flex', flexDirection: 'column', gap: 14,
+};
 
 export default function CapstoneWorkspace() {
     const { courseId } = useParams<{ courseId: string }>();
@@ -251,68 +267,52 @@ export default function CapstoneWorkspace() {
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-screen">
-                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            <div className="codex" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)' }}>
+                <Loader2 size={32} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
             </div>
         );
     }
 
     const activeFile = active ? openFiles[active] : null;
+    const noCredits = quota?.remaining === 0;
 
     return (
-        <div className="flex flex-col h-screen bg-background">
+        <div className="codex" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)' }}>
             {/* Top bar */}
-            <div className="flex items-center gap-3 px-4 py-2 border-b bg-card">
-                <button onClick={() => navigate(`/course/${cid}/capstone`)} className="p-1.5 rounded hover:bg-muted">
-                    <ArrowLeft className="w-4 h-4" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: '1px solid var(--hairline)', background: 'var(--bg-surface)', flexShrink: 0 }}>
+                <button onClick={() => navigate(`/course/${cid}/capstone`)} style={{ padding: 6, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex' }} title="Back to capstone">
+                    <ArrowLeft size={16} />
                 </button>
-                <span className="font-semibold text-sm">{capstone?.title ?? 'Capstone Workspace'}</span>
-                <span className="text-xs text-muted-foreground px-2 py-0.5 rounded bg-muted">branch: {branch}</span>
-                <div className="ml-auto flex items-center gap-2">
-                    <button
-                        onClick={doRun}
-                        disabled={running}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border hover:bg-muted disabled:opacity-50"
-                        title="Run locally (not the official verdict)"
-                    >
-                        {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                <span className="t-body" style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{capstone?.title ?? 'Capstone Workspace'}</span>
+                <span className="t-mono steel" style={{ padding: '3px 8px', borderRadius: 6, background: 'var(--bg-primary)', border: '1px solid var(--hairline)' }}>BRANCH: {branch}</span>
+                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <button onClick={doRun} disabled={running} style={{ ...toolBtn, opacity: running ? 0.5 : 1 }} title="Run locally (not the official verdict)">
+                        {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
                         Run
                     </button>
-                    <button
-                        onClick={() => setShowCommitModal(true)}
-                        disabled={dirtyPaths.length === 0}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                    >
-                        <GitCommit className="w-4 h-4" />
+                    <button onClick={() => setShowCommitModal(true)} disabled={dirtyPaths.length === 0} className="btn btn-red" style={{ padding: '8px 12px', opacity: dirtyPaths.length === 0 ? 0.5 : 1 }}>
+                        <GitCommit size={14} />
                         Commit{dirtyPaths.length > 0 ? ` (${dirtyPaths.length})` : ''}
                     </button>
-                    <button
-                        onClick={() => setShowSubmitConfirm(true)}
-                        disabled={submittingGrade || dirtyPaths.length > 0}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border border-green-600/40 text-green-700 hover:bg-green-50 disabled:opacity-50"
-                        title="Promote your CI-passed commit to main and grade it"
-                    >
-                        {submittingGrade ? <Loader2 className="w-4 h-4 animate-spin" /> : <GraduationCap className="w-4 h-4" />}
+                    <button onClick={() => setShowSubmitConfirm(true)} disabled={submittingGrade || dirtyPaths.length > 0} style={{ ...toolBtn, borderColor: 'rgba(22,163,74,0.4)', color: 'var(--accent-success)', opacity: (submittingGrade || dirtyPaths.length > 0) ? 0.5 : 1 }} title="Promote your CI-passed commit to main and grade it">
+                        {submittingGrade ? <Loader2 size={14} className="animate-spin" /> : <GraduationCap size={14} />}
                         Submit for grading
                     </button>
-                    <button
-                        onClick={() => setAssistOpen(v => !v)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border hover:bg-muted"
-                    >
-                        <Sparkles className="w-4 h-4" />
+                    <button onClick={() => setAssistOpen(v => !v)} style={toolBtn}>
+                        <Sparkles size={14} />
                         Assist{quota ? ` (${quota.remaining})` : ''}
                     </button>
                 </div>
             </div>
 
-            <div className="flex flex-1 min-h-0">
+            <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
                 {/* File tree */}
-                <aside className="w-60 border-r bg-card overflow-y-auto shrink-0">
-                    <div className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase">Files</div>
+                <aside style={{ width: 240, borderRight: '1px solid var(--hairline)', background: 'var(--bg-surface)', overflowY: 'auto', flexShrink: 0 }}>
+                    <div className="t-label" style={{ padding: '10px 12px', color: 'var(--steel-light)' }}>Files</div>
                     {treeError ? (
-                        <p className="px-3 text-xs text-muted-foreground">{treeError}</p>
+                        <p className="t-body" style={{ padding: '0 12px', fontSize: 12, color: 'var(--text-secondary)' }}>{treeError}</p>
                     ) : (
-                        <ul>
+                        <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
                             {tree.map(node => {
                                 const depth = node.path.split('/').length - 1;
                                 const name = node.path.split('/').pop();
@@ -321,12 +321,17 @@ export default function CapstoneWorkspace() {
                                     <li key={node.path}>
                                         <button
                                             onClick={() => openFile(node.path)}
-                                            className={`flex items-center gap-1.5 w-full text-left px-3 py-1 text-sm hover:bg-muted/60 ${active === node.path ? 'bg-muted' : ''}`}
-                                            style={{ paddingLeft: 12 + depth * 12 }}
+                                            className="t-body"
+                                            style={{
+                                                display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left',
+                                                padding: '4px 12px', paddingLeft: 12 + depth * 12, fontSize: 13, cursor: 'pointer',
+                                                border: 'none', color: 'var(--text-primary)',
+                                                background: active === node.path ? 'rgba(37,99,235,0.08)' : 'transparent',
+                                            }}
                                         >
-                                            <FileCode className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                                            <span className="truncate">{name}</span>
-                                            {isDirty && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />}
+                                            <FileCode size={14} style={{ color: 'var(--steel-light)', flexShrink: 0 }} />
+                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                                            {isDirty && <span style={{ marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%', background: '#B45309', flexShrink: 0 }} />}
                                         </button>
                                     </li>
                                 );
@@ -336,21 +341,27 @@ export default function CapstoneWorkspace() {
                 </aside>
 
                 {/* Editor + tabs */}
-                <main className="flex flex-col flex-1 min-w-0">
+                <main style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
                     {/* Tabs */}
-                    <div className="flex items-center border-b bg-card overflow-x-auto">
+                    <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--hairline)', background: 'var(--bg-surface)', overflowX: 'auto', flexShrink: 0 }}>
                         {tabs.map(path => {
                             const isDirty = openFiles[path]?.loaded && openFiles[path].content !== openFiles[path].original;
+                            const isActive = active === path;
                             return (
                                 <div
                                     key={path}
-                                    className={`flex items-center gap-1.5 px-3 py-1.5 text-sm border-r cursor-pointer ${active === path ? 'bg-background' : 'bg-card hover:bg-muted/40'}`}
                                     onClick={() => setActive(path)}
+                                    className="t-body"
+                                    style={{
+                                        display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', fontSize: 13, cursor: 'pointer',
+                                        borderRight: '1px solid var(--hairline)', color: 'var(--text-primary)',
+                                        background: isActive ? 'var(--bg-primary)' : 'transparent',
+                                    }}
                                 >
-                                    <span className="truncate max-w-[160px]">{path.split('/').pop()}</span>
-                                    {isDirty && <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />}
-                                    <button onClick={(e) => { e.stopPropagation(); closeTab(path); }} className="hover:text-destructive">
-                                        <X className="w-3 h-3" />
+                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{path.split('/').pop()}</span>
+                                    {isDirty && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#B45309' }} />}
+                                    <button onClick={(e) => { e.stopPropagation(); closeTab(path); }} style={{ border: 'none', background: 'transparent', color: 'var(--steel-light)', cursor: 'pointer', display: 'flex' }}>
+                                        <X size={12} />
                                     </button>
                                 </div>
                             );
@@ -358,7 +369,7 @@ export default function CapstoneWorkspace() {
                     </div>
 
                     {/* Editor */}
-                    <div className="flex-1 min-h-0">
+                    <div style={{ flex: 1, minHeight: 0 }}>
                         {activeFile?.loaded ? (
                             <Editor
                                 height="100%"
@@ -375,49 +386,49 @@ export default function CapstoneWorkspace() {
                                 }}
                             />
                         ) : (
-                            <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                                {active ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Select a file to edit.'}
+                            <div className="t-body" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-secondary)', fontSize: 14 }}>
+                                {active ? <Loader2 size={20} className="animate-spin" /> : 'Select a file to edit.'}
                             </div>
                         )}
                     </div>
 
                     {/* Output / verdict panel */}
                     {(runOutput || verdict) && (
-                        <div className="border-t bg-card max-h-56 overflow-y-auto p-3 text-sm space-y-3">
+                        <div style={{ borderTop: '1px solid var(--hairline)', background: 'var(--bg-surface)', maxHeight: 224, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0 }}>
                             {verdict && (
-                                <div className="space-y-1">
-                                    <div className="flex items-center gap-2 font-medium">
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    <div className="t-body" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
                                         {verdict.status !== 'completed'
-                                            ? <Clock className="w-4 h-4 text-blue-500" />
+                                            ? <Clock size={16} style={{ color: 'var(--accent-primary)' }} />
                                             : verdict.conclusion === 'success'
-                                                ? <CheckCircle className="w-4 h-4 text-green-600" />
-                                                : <XCircle className="w-4 h-4 text-red-600" />}
+                                                ? <CheckCircle size={16} style={{ color: 'var(--accent-success)' }} />
+                                                : <XCircle size={16} style={{ color: 'var(--error-red)' }} />}
                                         <span>
                                             {verdict.status !== 'completed'
                                                 ? 'CI running…'
                                                 : verdict.conclusion === 'success' ? 'Approved' : 'Rejected'}
                                         </span>
-                                        {polling && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
-                                        {lastSha && <span className="text-xs text-muted-foreground ml-auto font-mono">{lastSha.slice(0, 7)}</span>}
+                                        {polling && <Loader2 size={14} className="animate-spin" style={{ color: 'var(--steel-light)' }} />}
+                                        {lastSha && <span className="t-mono steel" style={{ marginLeft: 'auto' }}>{lastSha.slice(0, 7)}</span>}
                                         {!polling && lastSha && (
-                                            <button onClick={() => pollVerdict(lastSha)} className="text-muted-foreground hover:text-foreground">
-                                                <RefreshCw className="w-3.5 h-3.5" />
+                                            <button onClick={() => pollVerdict(lastSha)} style={{ border: 'none', background: 'transparent', color: 'var(--steel-light)', cursor: 'pointer', display: 'flex' }}>
+                                                <RefreshCw size={14} />
                                             </button>
                                         )}
                                     </div>
-                                    <pre className="whitespace-pre-wrap text-xs text-muted-foreground">{verdict.reason}</pre>
-                                    <p className="text-[11px] text-muted-foreground italic">
+                                    <pre className="t-mono" style={{ whiteSpace: 'pre-wrap', color: 'var(--text-secondary)', margin: 0 }}>{verdict.reason}</pre>
+                                    <p className="t-body" style={{ fontSize: 11, fontStyle: 'italic', color: 'var(--text-secondary)', margin: 0 }}>
                                         Per-commit CI is continuous feedback. The PR-to-main merge is final acceptance.
                                     </p>
                                 </div>
                             )}
                             {runOutput && (
-                                <div className="space-y-1">
-                                    <div className={`font-medium ${runOutput.success ? 'text-green-600' : 'text-red-600'}`}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    <div className="t-label" style={{ color: runOutput.success ? 'var(--accent-success)' : 'var(--error-red)' }}>
                                         Run {runOutput.success ? 'succeeded' : 'failed'} (local only)
                                     </div>
-                                    {runOutput.stdout && <pre className="whitespace-pre-wrap text-xs bg-muted/40 p-2 rounded">{runOutput.stdout}</pre>}
-                                    {runOutput.stderr && <pre className="whitespace-pre-wrap text-xs text-red-500 bg-red-50 p-2 rounded">{runOutput.stderr}</pre>}
+                                    {runOutput.stdout && <pre className="codeblock" style={{ whiteSpace: 'pre-wrap', fontSize: 12, margin: 0 }}>{runOutput.stdout}</pre>}
+                                    {runOutput.stderr && <pre className="codeblock" style={{ whiteSpace: 'pre-wrap', fontSize: 12, margin: 0, color: '#FCA5A5' }}>{runOutput.stderr}</pre>}
                                 </div>
                             )}
                         </div>
@@ -426,37 +437,32 @@ export default function CapstoneWorkspace() {
 
                 {/* Assist panel */}
                 {assistOpen && (
-                    <aside className="w-80 border-l bg-card flex flex-col shrink-0">
-                        <div className="px-3 py-2 border-b flex items-center gap-2">
-                            <Sparkles className="w-4 h-4 text-primary" />
-                            <span className="font-semibold text-sm">AI Assist</span>
-                            <span className="ml-auto text-xs text-muted-foreground">
-                                {quota ? `${quota.remaining}/${quota.limit} left` : ''}
-                            </span>
+                    <aside style={{ width: 320, borderLeft: '1px solid var(--hairline)', background: 'var(--bg-surface)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+                        <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--hairline)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <Sparkles size={16} style={{ color: 'var(--accent-primary)' }} />
+                            <span className="t-body" style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>AI Assist</span>
+                            <span className="t-mono steel" style={{ marginLeft: 'auto' }}>{quota ? `${quota.remaining}/${quota.limit} LEFT` : ''}</span>
                         </div>
-                        <div className="p-3 text-xs text-muted-foreground border-b">
+                        <div className="t-body" style={{ padding: 12, fontSize: 12, color: 'var(--text-secondary)', borderBottom: '1px solid var(--hairline)' }}>
                             I explain concepts, find bugs, and ask leading questions — but I won't write graded features for you.
                         </div>
-                        <div className="flex-1 overflow-y-auto p-3">
+                        <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
                             {assistA
-                                ? <div className="text-sm whitespace-pre-wrap">{assistA}</div>
-                                : <p className="text-xs text-muted-foreground">Ask a question about your code or the concepts involved.</p>}
+                                ? <div className="t-body" style={{ fontSize: 14, color: 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>{assistA}</div>
+                                : <p className="t-body" style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0 }}>Ask a question about your code or the concepts involved.</p>}
                         </div>
-                        <div className="p-3 border-t space-y-2">
+                        <div style={{ padding: 12, borderTop: '1px solid var(--hairline)', display: 'flex', flexDirection: 'column', gap: 8 }}>
                             <textarea
-                                className="w-full border rounded-lg px-2 py-1.5 text-sm min-h-[70px]"
+                                className="input"
+                                style={{ minHeight: 70, resize: 'vertical', fontSize: 13 }}
                                 placeholder="e.g. Why does my recursion never terminate?"
                                 value={assistQ}
                                 onChange={e => setAssistQ(e.target.value)}
-                                disabled={quota?.remaining === 0}
+                                disabled={noCredits}
                             />
-                            <button
-                                onClick={doAsk}
-                                disabled={asking || !assistQ.trim() || quota?.remaining === 0}
-                                className="flex items-center justify-center gap-1.5 w-full bg-primary text-primary-foreground px-3 py-1.5 rounded-lg text-sm hover:opacity-90 disabled:opacity-50"
-                            >
-                                {asking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                                {quota?.remaining === 0 ? 'No credits left' : 'Ask'}
+                            <button onClick={doAsk} disabled={asking || !assistQ.trim() || noCredits} className="btn btn-red" style={{ justifyContent: 'center', padding: '8px 12px', opacity: (asking || !assistQ.trim() || noCredits) ? 0.5 : 1 }}>
+                                {asking ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                                {noCredits ? 'NO CREDITS LEFT' : 'ASK'}
                             </button>
                         </div>
                     </aside>
@@ -465,30 +471,21 @@ export default function CapstoneWorkspace() {
 
             {/* Submit-for-grading confirm */}
             {showSubmitConfirm && (
-                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-                    <div className="bg-card rounded-2xl border-2 border-border p-5 w-full max-w-md space-y-3">
-                        <h2 className="flex items-center gap-2 font-semibold">
-                            <GraduationCap className="w-5 h-5 text-green-700" />
+                <div className="codex" style={modalBackdrop}>
+                    <div style={modalCard}>
+                        <h2 className="t-heading" style={{ fontSize: 18, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <GraduationCap size={20} style={{ color: 'var(--accent-success)' }} />
                             Are you sure you're done?
                         </h2>
-                        <p className="text-sm text-muted-foreground">
-                            This will promote your latest CI-passed commit to <span className="font-mono">main</span> and
+                        <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>
+                            This will promote your latest CI-passed commit to <span style={{ fontFamily: 'var(--ff-mono)' }}>main</span> and
                             evaluate your repo against the rubric. You can still re-edit and re-submit afterward if needed.
                         </p>
-                        <div className="flex gap-2 justify-end">
-                            <button
-                                onClick={() => setShowSubmitConfirm(false)}
-                                className="px-4 py-1.5 rounded-lg text-sm border hover:bg-muted"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={doSubmitForGrading}
-                                disabled={submittingGrade}
-                                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
-                            >
-                                {submittingGrade ? <Loader2 className="w-4 h-4 animate-spin" /> : <GraduationCap className="w-4 h-4" />}
-                                Yes, submit
+                        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                            <button onClick={() => setShowSubmitConfirm(false)} className="btn btn-ghost-dark" style={{ padding: '10px 16px' }}>CANCEL</button>
+                            <button onClick={doSubmitForGrading} disabled={submittingGrade} className="btn" style={{ padding: '10px 16px', background: 'var(--accent-success)', color: '#fff' }}>
+                                {submittingGrade ? <Loader2 size={16} className="animate-spin" /> : <GraduationCap size={16} />}
+                                YES, SUBMIT
                             </button>
                         </div>
                     </div>
@@ -497,29 +494,24 @@ export default function CapstoneWorkspace() {
 
             {/* Commit modal */}
             {showCommitModal && (
-                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-                    <div className="bg-card rounded-2xl border-2 border-border p-5 w-full max-w-md space-y-3">
-                        <h2 className="font-semibold">Commit {dirtyPaths.length} file(s)</h2>
-                        <ul className="text-xs text-muted-foreground max-h-24 overflow-y-auto">
+                <div className="codex" style={modalBackdrop}>
+                    <div style={modalCard}>
+                        <h2 className="t-heading" style={{ fontSize: 18, color: 'var(--text-primary)' }}>Commit {dirtyPaths.length} file(s)</h2>
+                        <ul className="t-mono steel" style={{ listStyle: 'none', margin: 0, padding: 0, maxHeight: 96, overflowY: 'auto' }}>
                             {dirtyPaths.map(p => <li key={p}>• {p}</li>)}
                         </ul>
                         <textarea
-                            className="w-full border rounded-lg px-3 py-2 text-sm min-h-[80px]"
+                            className="input"
+                            style={{ minHeight: 80, resize: 'vertical' }}
                             placeholder="Commit message"
                             value={commitMessage}
                             onChange={e => setCommitMessage(e.target.value)}
                         />
-                        <div className="flex gap-2 justify-end">
-                            <button onClick={() => setShowCommitModal(false)} className="px-4 py-1.5 rounded-lg text-sm border hover:bg-muted">
-                                Cancel
-                            </button>
-                            <button
-                                onClick={doCommit}
-                                disabled={committing || !commitMessage.trim()}
-                                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                            >
-                                {committing ? <Loader2 className="w-4 h-4 animate-spin" /> : <GitCommit className="w-4 h-4" />}
-                                Commit & Push
+                        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                            <button onClick={() => setShowCommitModal(false)} className="btn btn-ghost-dark" style={{ padding: '10px 16px' }}>CANCEL</button>
+                            <button onClick={doCommit} disabled={committing || !commitMessage.trim()} className="btn btn-red" style={{ padding: '10px 16px' }}>
+                                {committing ? <Loader2 size={16} className="animate-spin" /> : <GitCommit size={16} />}
+                                COMMIT & PUSH
                             </button>
                         </div>
                     </div>

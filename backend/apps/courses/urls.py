@@ -94,6 +94,12 @@ urlpatterns = [
         views.CourseCorpusViewSet.as_view({"delete": "remove_source"}),
         name="corpus-source-remove",
     ),
+    # Admin: delete a book from the shared vector library ENTIRELY (all corpora).
+    path(
+        "courses/<int:course_pk>/corpus/library/<str:book_stem>/",
+        views.CourseCorpusViewSet.as_view({"delete": "delete_book"}),
+        name="corpus-library-delete",
+    ),
     # Completion certificate (gated on course complete + survey submitted)
     path(
         "courses/<int:course_id>/certificate/",

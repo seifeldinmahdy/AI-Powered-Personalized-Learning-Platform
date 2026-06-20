@@ -211,6 +211,7 @@ valuable learning targets.
 - Include an analogy_explanation per question that explains the core concept in a way that matches the student's profile.
 - Include an example_solution: ONE possible correct implementation. This is for student reference only — evaluation is rubric-based, not diffing against this solution.
 - DO NOT rely on the example_solution for grading. The rubric is the sole basis for evaluation.
+- The starter_code is HANDED TO THE STUDENT, so the rubric must NEVER reward anything the starter_code already contains. Every check must test ONLY work the student must add themselves (the parts replacing the TODOs). A check that the student's submission would satisfy just by keeping the starter_code unchanged is forbidden — it gives free points. Concretely: do NOT write checks about the presence of the given function signature, given imports, given class/skeleton, given docstrings, or given comments. Write checks about the LOGIC the student must implement inside them.
 
 Output ONLY a valid JSON array of question objects. No markdown fences, no preamble, no explanation. Do NOT use emojis anywhere in the output.
 Each question object must have these exact fields:
@@ -689,7 +690,7 @@ async def evaluate_submission(
     question = ProblemSetQuestion.model_validate(question_data)
 
     # Build binary-check evaluation prompts
-    eval_system = """You are a code reviewer. You will be given a coding problem, the student's submitted code, and a rubric containing criteria with binary checks.
+    eval_system = """You are a code reviewer. You will be given a coding problem, the STARTER CODE the student began from, the student's submitted code, and a rubric containing criteria with binary checks.
 
 For each check in every criterion, you must fill in:
 - result: true if the student's code satisfies this check when read as source text, false if it does not. You cannot execute the code — answer only from reading the source.
@@ -698,12 +699,16 @@ For each check in every criterion, you must fill in:
 Hard rules:
 - Answer EVERY check in EVERY criterion without exception
 - result must be exactly the boolean true or false — not a string, not null
+- A check is satisfied ONLY by the student's OWN work. If the ONLY thing satisfying a check is code that was already present in the STARTER CODE (unchanged), the result is false — the student earns nothing for scaffolding handed to them. Credit a check only when the student added/changed the logic it tests.
 - evidence must always be specific to this submission
 - Do not add an overall score, grade, or any commentary outside the schema
 - Return only the criteria array as JSON with result and evidence filled in on every check"""
 
     eval_user = f"""PROBLEM:
 {question.problem_statement}
+
+STARTER CODE (given to the student — does NOT count as their work):
+{question.starter_code}
 
 STUDENT CODE:
 {code}
@@ -1029,7 +1034,25 @@ RUBRIC — fill in result and evidence for every check:
         target_criterion = tc if isinstance(tc, dict) else tc.model_dump()
         target_check = tk if isinstance(tk, dict) else tk.model_dump() if hasattr(tk, "model_dump") else tk
     else:
-        # No failing check found — return static hint
+        # No failing check found — fall back to the static nudge. STILL record the
+        # reveal so the hint-3 gate (which requires hint 2 to have been revealed)
+        # stays correct even when hint 2 degrades to the static hint. Without this,
+        # a student who saw a static hint-2 is wrongly blocked from hint 3 after
+        # submitting. No penalty is applied (no specific check was targeted).
+        if question_id not in hint_tracking:
+            hint_tracking[question_id] = {"hint_deductions": {}, "dynamic_hints_revealed": []}
+        revealed = hint_tracking[question_id]["dynamic_hints_revealed"]
+        if not any(h.get("hint_number") == hint_number for h in revealed):
+            revealed.append({
+                "hint_number": hint_number,
+                "content": question.static_hint,
+                "targets_check_id": None,
+                "penalty_applied": 0.0,
+            })
+            try:
+                await artifact_client.patch_hint_tracking(student_id, problem_set_id, hint_tracking)
+            except Exception as _he:
+                logger.warning("Could not persist static-fallback hint reveal: %s", _he)
         return {
             "hint_content": question.static_hint,
             "targets_criterion_id": None,
@@ -1042,16 +1065,19 @@ RUBRIC — fill in result and evidence for every check:
     gen_client = _get_ollama_client()
 
     if hint_number == 2:
-        # Hint 2 — indirect, temperature=0.3
+        # Hint 2 — indirect, temperature=0.3. Tied to the SPECIFIC failing check
+        # (not just its category) so the nudge is relevant, but still conceptual.
+        evidence_line = f"\nWhat's currently missing/wrong: {target_check['evidence']}" if target_check.get("evidence") else ""
         hint_prompt = f"""The student is working on this problem:
 {question.problem_statement}
 
 Their current code:
 {current_code if current_code.strip() else "[No code written yet]"}
 
-They are struggling with the {target_criterion["category"]} aspect of the solution.
+They have not yet satisfied this requirement (the {target_criterion["category"]} aspect):
+{target_check["question"]}{evidence_line}
 
-Write a maximum 2-sentence hint that steers them toward fixing it without naming the solution, showing code, or quoting the rubric.
+Write a maximum 2-sentence hint that points them at WHAT to reconsider and WHY it matters, steering them toward this requirement. Do NOT name the solution, show code, give exact variable/function names, or quote the rubric. Stay conceptual.
 Return only the hint text."""
 
         try:
@@ -1063,19 +1089,22 @@ Return only the hint text."""
         except Exception:
             hint_content = question.static_hint
     else:
-        # Hint 3 — direct, temperature=0.0
-        evidence_line = f"\nEvidence: {target_check['evidence']}" if target_check.get("evidence") else ""
+        # Hint 3 — direct, temperature=0.0. Concrete and actionable, grounded in
+        # the student's actual code and the failing check's evidence.
+        evidence_line = f"\nEvidence from their code: {target_check['evidence']}" if target_check.get("evidence") else ""
         hint_prompt = f"""The student is working on this problem:
 {question.problem_statement}
 
 Their current code:
 {current_code if current_code.strip() else "[No code written yet]"}
 
-They are failing this specific check:
-{target_check["question"]}
-{evidence_line}
+They are failing this specific check ({target_criterion["category"]}):
+{target_check["question"]}{evidence_line}
 
-Write a direct 2-3 sentence hint naming exactly what is wrong and what specific change to make. Reference their code if possible. Do not show the complete solution or corrected code blocks.
+Write a direct, concrete 2-3 sentence hint that:
+1. Names exactly what in THEIR code is wrong or missing (reference the actual line/construct).
+2. Says precisely what change to make and where (which part of their code to edit).
+Do NOT paste the complete solution or a full corrected code block — describe the change in words (a single short inline expression like `len(x)` is fine, a finished function is not.)
 Return only the hint text."""
 
         try:

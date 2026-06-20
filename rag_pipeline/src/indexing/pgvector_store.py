@@ -280,6 +280,25 @@ class PgVectorStore:
         with self._cursor(commit=True) as cur:
             cur.executemany(sql, rows)
 
+    def delete_where(self, where: dict[str, Any]) -> int:
+        """Delete every row matching *where*. Returns the number deleted.
+
+        A non-empty filter is REQUIRED — an empty/None clause is refused so a
+        caller can never wipe the whole table by accident. Used to purge a
+        book's chunks when a source is removed from a corpus or re-indexed.
+        """
+        clause, params = _where_to_sql(where)
+        if not clause:
+            raise ValueError(
+                "delete_where requires a non-empty filter; refusing to delete "
+                "the entire table."
+            )
+        with self._cursor(commit=True) as cur:
+            cur.execute(f"DELETE FROM {self.table} WHERE {clause}", params)
+            deleted = cur.rowcount
+        logger.info("pgvector_deleted", count=deleted, where=where)
+        return int(deleted)
+
     def update_metadata(self, ids: list[str], metadatas: list[dict[str, Any]]) -> None:
         """Merge metadata keys onto existing rows (Chroma-style partial update).
 

@@ -280,6 +280,12 @@ class PathwayGenerator:
         if required:
             self._ensure_clo_coverage(sessions, scope, required, concept_label, concept_to_clos)
 
+        # 9.5. Bound each session's chunk set so the slide deck never becomes
+        #      abnormally long. Done AFTER coverage injection so it bounds both
+        #      curriculum and injected chunks, and it keeps >=1 chunk per concept
+        #      so CLO coverage stays intact.
+        self._cap_session_chunks(sessions)
+
         # 10. Provenance: stamp each session with the CLOs it teaches.
         for s in sessions:
             clos: set[str] = set()
@@ -345,6 +351,77 @@ class PathwayGenerator:
                 f"corpus chunks and cannot be covered — {details}. Add sources "
                 "covering these concepts (or run tag_chunks_with_concepts)."
             )
+
+    def _cap_session_chunks(self, sessions: list[Session]) -> None:
+        """Bound each session's chunks to keep slide decks a sane length.
+
+        For every session, keep at most ``max_chunks_per_concept`` representative
+        chunks per concept_id and at most ``max_chunks_per_session`` chunks total.
+        Chunks are already ordered definitional-first / earliest-page, so keeping
+        the first few per concept yields the most representative slides.
+
+        COVERAGE INVARIANT: at least one chunk per concept is always retained, so
+        capping can never drop a CLO concept the coverage step just guaranteed.
+        """
+        max_pc = int(getattr(self._settings, "max_chunks_per_concept", 0) or 0)
+        max_total = int(getattr(self._settings, "max_chunks_per_session", 0) or 0)
+        if max_pc <= 0 and max_total <= 0:
+            return
+
+        for s in sessions:
+            before = len(s.chunks)
+            s.chunks = self._select_representative_chunks(s.chunks, max_pc, max_total)
+            if len(s.chunks) != before:
+                logger.info(
+                    "session_chunks_capped",
+                    session=s.session_number, before=before, after=len(s.chunks),
+                )
+
+    @staticmethod
+    def _select_representative_chunks(
+        chunks: list[SessionChunk], max_per_concept: int, max_total: int,
+    ) -> list[SessionChunk]:
+        """Pick a bounded, concept-balanced subset, preserving original order.
+
+        Strategy: group by concept_id (insertion order), cap each group to
+        ``max_per_concept``, then guarantee one-per-concept before filling the
+        remaining ``max_total`` budget round-robin. The result is re-sorted into
+        the original chunk order so the deck reads coherently.
+        """
+        if not chunks:
+            return chunks
+
+        order = {c.chunk_id: i for i, c in enumerate(chunks)}
+        groups: dict[str, list[SessionChunk]] = {}
+        for c in chunks:
+            groups.setdefault(getattr(c, "concept_id", "") or "__untagged__", []).append(c)
+
+        # Per-concept cap.
+        if max_per_concept > 0:
+            for key in groups:
+                groups[key] = groups[key][:max_per_concept]
+
+        queues = [list(g) for g in groups.values()]
+
+        # Round 1: one per concept (coverage guarantee — may exceed max_total when
+        # a session legitimately spans more concepts than the cap; coverage wins).
+        selected: list[SessionChunk] = [q.pop(0) for q in queues if q]
+
+        # Fill the remaining budget round-robin.
+        if max_total <= 0 or len(selected) < max_total:
+            filling = True
+            while filling and (max_total <= 0 or len(selected) < max_total):
+                filling = False
+                for q in queues:
+                    if not q:
+                        continue
+                    selected.append(q.pop(0))
+                    filling = True
+                    if max_total > 0 and len(selected) >= max_total:
+                        break
+
+        selected.sort(key=lambda c: order[c.chunk_id])
+        return selected
 
     @staticmethod
     def _best_fit_session(sessions: list[Session], label: str) -> Session:

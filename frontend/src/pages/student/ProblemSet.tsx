@@ -182,6 +182,21 @@ export default function ProblemSet() {
                         restoredResults[qid] = sub.result;
                     }
                     setResults(restoredResults);
+                    // Restore previously-revealed dynamic hints so a reload /
+                    // resubmission never "forgets" that hint 2 was already shown
+                    // (which would wrongly block hint 3).
+                    const restoredHints: Record<string, { hint_number: number; content: string; penalty: number }[]> = {};
+                    for (const [qid, tr] of Object.entries(ps.hint_tracking || {})) {
+                        const revealed = tr?.dynamic_hints_revealed || [];
+                        if (revealed.length) {
+                            restoredHints[qid] = revealed.map(h => ({
+                                hint_number: h.hint_number,
+                                content: h.content,
+                                penalty: h.penalty_applied ?? 0,
+                            }));
+                        }
+                    }
+                    setDynamicHints(restoredHints);
                     // Find first unanswered
                     const firstUnanswered = ps.questions.findIndex(q => !ps.submissions?.[q.id]);
                     setCurrentIdx(firstUnanswered >= 0 ? firstUnanswered : ps.questions.length);
@@ -272,8 +287,12 @@ export default function ProblemSet() {
                 sessionNumber: sessionNumber as string,
                 currentCode: codeMap[current.id] || '',
                 hintNumber: hintNum,
+                // After a failed submission, pass the EVALUATED rubric (per-check
+                // results) so the hint targets the actual failing checks. The raw
+                // rubric has no results, which would make every check look passing
+                // and degrade the hint to the generic static one.
                 evaluatedRubric: existingResult && !existingResult.passed
-                    ? (current.rubric as any[]) // pass rubric if failed submission exists
+                    ? (existingResult.evaluated_rubric ?? null)
                     : null,
             });
             setDynamicHints(p => ({

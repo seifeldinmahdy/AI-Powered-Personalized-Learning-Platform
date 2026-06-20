@@ -73,9 +73,32 @@ class RetrievalScope:
                 "vector store without a corpus scope."
             )
 
+    @property
+    def membership_key(self) -> str:
+        """Flat metadata key flagging chunk membership in THIS corpus.
+
+        Membership is a per-corpus flag (``corpus__<corpus_id> = "1"``) rather than
+        a single stamped ``corpus_id``, so one book's chunks can belong to many
+        corpora at once (a book selected into multiple courses). Detached chunks
+        carry ``"0"`` (or no key) and are excluded by the ``= "1"`` filter.
+        """
+        return f"corpus__{self.corpus_id}"
+
+    def concept_key(self) -> str:
+        """Flat metadata key holding this corpus's concept tag for a chunk.
+
+        Concepts are per-course, so a shared book is tagged independently per
+        corpus (``concept__<corpus_id> = "<concept_id>"``).
+        """
+        return f"concept__{self.corpus_id}"
+
     def where(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Build the ChromaDB ``where`` clause for this scope (+ optional extras)."""
-        base = {"corpus_id": self.corpus_id}
+        """Build the ``where`` clause for this scope (+ optional extras).
+
+        Scopes on the per-corpus membership flag, so retrieval only ever returns
+        chunks selected into this corpus — never the whole table.
+        """
+        base = {self.membership_key: "1"}
         if not extra:
             return base
         conditions = [{k: v} for k, v in {**base, **extra}.items()]
@@ -120,7 +143,15 @@ def _parse_depends_on(raw: Any) -> list[str]:
 
 
 def _chunk_from_meta(chunk_id: str, doc: str, meta: dict[str, Any],
-                     relevance: float | None = None) -> RetrievedChunk:
+                     relevance: float | None = None,
+                     corpus_id: str | None = None) -> RetrievedChunk:
+    # Concept is per-corpus (``concept__<corpus_id>``); fall back to the legacy
+    # scalar ``concept_id`` for not-yet-migrated chunks.
+    concept = ""
+    if corpus_id:
+        concept = str(meta.get(f"concept__{corpus_id}", "") or "")
+    if not concept:
+        concept = str(meta.get("concept_id", "") or "")
     return RetrievedChunk(
         chunk_id=chunk_id,
         raw_text=doc or "",
@@ -130,9 +161,9 @@ def _chunk_from_meta(chunk_id: str, doc: str, meta: dict[str, Any],
         depends_on=_parse_depends_on(meta.get("depends_on", "[]")),
         summary=meta.get("summary", ""),
         book=meta.get("book", ""),
-        corpus_id=str(meta.get("corpus_id", "")),
+        corpus_id=str(corpus_id or meta.get("corpus_id", "")),
         course_id=str(meta.get("course_id", meta.get("course", ""))),
-        concept_id=str(meta.get("concept_id", "")),
+        concept_id=concept,
         page_start=int(meta.get("page_start", 0)),
         page_end=int(meta.get("page_end", 0)),
         chunk_index=int(meta.get("chunk_index", 0)),
@@ -161,7 +192,7 @@ class RetrievalService:
         """Return every chunk in *scope*, ordered by ``chunk_index``."""
         scope.validate()
         res = self._store.get_where(scope.where(), include=["documents", "metadatas"])
-        chunks = self._rows_to_chunks(res)
+        chunks = self._rows_to_chunks(res, scope.corpus_id)
         chunks.sort(key=lambda c: c.chunk_index)
         logger.info("retrieval_get_all_chunks", corpus_id=scope.corpus_id, count=len(chunks))
         return chunks
@@ -179,7 +210,7 @@ class RetrievalService:
             return []
         res = self._store.get_by_ids(ids, where=scope.where(),
                                      include=["documents", "metadatas"])
-        return self._rows_to_chunks(res)
+        return self._rows_to_chunks(res, scope.corpus_id)
 
     def get_topics(self, scope: RetrievalScope) -> list[str]:
         """Distinct topic strings within *scope*."""
@@ -220,10 +251,10 @@ class RetrievalService:
         """
         scope.validate()
         res = self._store.get_where(
-            scope.where({"concept_id": str(concept_id)}),
+            scope.where({scope.concept_key(): str(concept_id)}),
             include=["documents", "metadatas"],
         )
-        chunks = self._rows_to_chunks(res)
+        chunks = self._rows_to_chunks(res, scope.corpus_id)
         chunks.sort(key=lambda c: c.chunk_index)
         return chunks
 
@@ -231,9 +262,10 @@ class RetrievalService:
         """concept_id → chunk_count within *scope* (untagged chunks excluded)."""
         scope.validate()
         res = self._store.get_where(scope.where(), include=["metadatas"])
+        ckey = scope.concept_key()
         counts: dict[str, int] = {}
         for m in res.get("metadatas", []):
-            cid = m.get("concept_id")
+            cid = m.get(ckey) or m.get("concept_id")
             if cid:
                 counts[str(cid)] = counts.get(str(cid), 0) + 1
         return counts
@@ -275,14 +307,14 @@ class RetrievalService:
         if difficulty:
             extra["difficulty"] = difficulty
         if concept_id:
-            extra["concept_id"] = str(concept_id)
+            extra[scope.concept_key()] = str(concept_id)
 
         results = self._store.query(
             embedding=query_embedding,
             filters=scope.where(extra or None),
             top_k=top_k,
         )
-        return self._query_results_to_chunks(results)
+        return self._query_results_to_chunks(results, scope.corpus_id)
 
     def to_source_chunks(self, chunks: list[RetrievedChunk]) -> list[SourceChunk]:
         """Adapter: RetrievedChunk → rag_pipeline SourceChunk (for Batch 3)."""
@@ -303,17 +335,17 @@ class RetrievalService:
     # ── Internal helpers ─────────────────────────────────────────────
 
     @staticmethod
-    def _rows_to_chunks(res: dict[str, Any]) -> list[RetrievedChunk]:
+    def _rows_to_chunks(res: dict[str, Any], corpus_id: str | None = None) -> list[RetrievedChunk]:
         ids = res.get("ids", []) or []
         docs = res.get("documents", []) or [""] * len(ids)
         metas = res.get("metadatas", []) or [{}] * len(ids)
         return [
-            _chunk_from_meta(cid, doc, meta or {})
+            _chunk_from_meta(cid, doc, meta or {}, corpus_id=corpus_id)
             for cid, doc, meta in zip(ids, docs, metas)
         ]
 
     @staticmethod
-    def _query_results_to_chunks(results: dict[str, Any]) -> list[RetrievedChunk]:
+    def _query_results_to_chunks(results: dict[str, Any], corpus_id: str | None = None) -> list[RetrievedChunk]:
         if not results.get("ids") or not results["ids"][0]:
             return []
         ids = results["ids"][0]
@@ -323,5 +355,5 @@ class RetrievalService:
         out: list[RetrievedChunk] = []
         for cid, doc, meta, dist in zip(ids, docs, metas, distances):
             relevance = round(max(0.0, 1.0 - dist / 2.0), 4)
-            out.append(_chunk_from_meta(cid, doc, meta or {}, relevance=relevance))
+            out.append(_chunk_from_meta(cid, doc, meta or {}, relevance=relevance, corpus_id=corpus_id))
         return out

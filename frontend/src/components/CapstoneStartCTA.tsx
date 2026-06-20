@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
-import { Loader2, Trophy, Github } from 'lucide-react';
+import { Loader2, Trophy, Github, Lock } from 'lucide-react';
 import {
     getCapstoneForCourse, getMySubmission, provisionRepo,
     type Capstone,
@@ -79,44 +79,35 @@ export function CapstoneStartCTA({ courseId, variant = 'card', locked = false }:
         <button
             onClick={handleStart}
             disabled={starting || locked}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-                locked 
-                    ? 'bg-muted text-muted-foreground cursor-not-allowed opacity-70' 
-                    : 'bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50'
-            }`}
+            className={locked ? 'btn btn-ghost-dark' : 'btn btn-red'}
+            style={{ padding: '12px 20px', ...(locked ? { cursor: 'not-allowed', opacity: 0.7 } : {}) }}
         >
-            {starting ? <Loader2 className="w-4 h-4 animate-spin" /> : locked ? <Trophy className="w-4 h-4 opacity-50" /> : <Trophy className="w-4 h-4" />}
-            {locked ? 'Finish coursework to start' : 'Start your capstone'}
+            {starting ? <Loader2 size={16} className="animate-spin" /> : locked ? <Lock size={16} /> : <Trophy size={16} />}
+            {locked ? 'FINISH COURSEWORK TO START' : 'START YOUR CAPSTONE'}
         </button>
     );
 
     const modal = askUser && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-            <div className="bg-card rounded-2xl border-2 border-border p-5 w-full max-w-md space-y-3">
-                <h2 className="flex items-center gap-2 font-semibold">
-                    <Github className="w-5 h-5" /> Connect your GitHub
+        <div className="codex" style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.45)', padding: 16 }}>
+            <div style={{ width: '100%', maxWidth: 440, background: 'var(--bg-surface)', borderRadius: 12, border: '1px solid var(--hairline)', padding: 24, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <h2 className="t-heading" style={{ fontSize: 20, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Github size={20} /> Connect your GitHub
                 </h2>
-                <p className="text-sm text-muted-foreground">
+                <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>
                     We'll create your capstone repository and invite you as a collaborator.
                 </p>
                 <input
-                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                    className="input"
                     placeholder="Your GitHub username"
                     value={ghUser}
                     onChange={e => setGhUser(e.target.value)}
                     autoFocus
                 />
-                <div className="flex gap-2 justify-end">
-                    <button onClick={() => setAskUser(false)} className="px-4 py-1.5 rounded-lg text-sm border hover:bg-muted">
-                        Cancel
-                    </button>
-                    <button
-                        onClick={provisionAndGo}
-                        disabled={starting || !ghUser.trim()}
-                        className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                    >
-                        {starting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Github className="w-4 h-4" />}
-                        Create repo & start
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                    <button onClick={() => setAskUser(false)} className="btn btn-ghost-dark" style={{ padding: '10px 16px' }}>CANCEL</button>
+                    <button onClick={provisionAndGo} disabled={starting || !ghUser.trim()} className="btn btn-red" style={{ padding: '10px 16px' }}>
+                        {starting ? <Loader2 size={16} className="animate-spin" /> : <Github size={16} />}
+                        CREATE REPO & START
                     </button>
                 </div>
             </div>
@@ -130,16 +121,16 @@ export function CapstoneStartCTA({ courseId, variant = 'card', locked = false }:
     if (variant === 'banner') {
         return (
             <>
-                <div className="bg-card rounded-2xl border-2 border-primary/30 p-6 shadow-sm flex items-center gap-5">
-                    <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                        <Trophy className="w-6 h-6 text-primary" />
+                <div className="codex" style={{ display: 'flex', alignItems: 'center', gap: 20, background: 'var(--bg-surface)', borderRadius: 12, border: '1px solid var(--accent-primary)', padding: 24 }}>
+                    <div style={{ width: 48, height: 48, borderRadius: 12, flexShrink: 0, background: 'rgba(37,99,235,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Trophy size={24} style={{ color: 'var(--accent-primary)' }} />
                     </div>
-                    <div className="flex-1">
-                        <p className="font-semibold text-foreground mb-0.5">
-                            {locked ? "Capstone project locked" : "You finished the coursework — time for your capstone!"}
+                    <div style={{ flex: 1 }}>
+                        <p className="t-body" style={{ margin: 0, fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>
+                            {locked ? 'Capstone project locked' : 'You finished the coursework — time for your capstone!'}
                         </p>
-                        <p className="text-sm text-muted-foreground">
-                            {locked ? "Complete all sessions to unlock your capstone project." : "Start the project to get your repo and the in-platform editor."}
+                        <p className="t-body" style={{ margin: '2px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>
+                            {locked ? 'Complete all sessions to unlock your capstone project.' : 'Start the project to get your repo and the in-platform editor.'}
                         </p>
                     </div>
                     {button}
@@ -152,12 +143,12 @@ export function CapstoneStartCTA({ courseId, variant = 'card', locked = false }:
     // card
     return (
         <>
-            <div className="bg-gradient-to-br from-primary/5 to-secondary/5 rounded-2xl border-2 border-primary/30 p-6 space-y-3">
-                <h3 className="flex items-center gap-2 font-semibold">
-                    <Trophy className={`w-5 h-5 ${locked ? 'text-muted-foreground' : 'text-primary'}`} /> Capstone project
+            <div className="codex" style={{ display: 'flex', flexDirection: 'column', gap: 12, background: 'var(--bg-surface)', borderRadius: 12, border: '1px solid var(--accent-primary)', padding: 24 }}>
+                <h3 className="t-heading" style={{ fontSize: 18, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Trophy size={18} style={{ color: locked ? 'var(--steel-light)' : 'var(--accent-primary)' }} /> Capstone project
                 </h3>
-                <p className="text-sm text-muted-foreground">
-                    {locked 
+                <p className="t-body" style={{ margin: 0, fontSize: 14, color: 'var(--text-secondary)' }}>
+                    {locked
                         ? "Complete all your coursework sessions first. Then you can start your capstone, and we'll set up your GitHub repo and open the in-platform editor."
                         : "You've completed the coursework. Start your capstone — we'll set up your GitHub repo and open the in-platform editor."}
                 </p>

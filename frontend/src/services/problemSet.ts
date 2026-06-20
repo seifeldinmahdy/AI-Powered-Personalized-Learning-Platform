@@ -70,6 +70,13 @@ export interface SubmissionData {
     result: EvaluationResult;
 }
 
+export interface RevealedHint {
+    hint_number: number;
+    content: string;
+    targets_check_id?: string | null;
+    penalty_applied?: number;
+}
+
 export interface ProblemSetData {
     problem_set_id: string;
     student_id: string;
@@ -78,6 +85,12 @@ export interface ProblemSetData {
     generated_at: string;
     questions: ProblemSetQuestion[];
     submissions: Record<string, SubmissionData>;
+    // Per-question hint state persisted server-side; lets the UI restore which
+    // hints were already revealed after a reload or resubmission.
+    hint_tracking?: Record<string, {
+        hint_deductions?: Record<string, number>;
+        dynamic_hints_revealed?: RevealedHint[];
+    }>;
 }
 
 export interface GenerateProblemSetOptions {

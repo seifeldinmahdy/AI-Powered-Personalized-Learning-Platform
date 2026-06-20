@@ -28,25 +28,32 @@ CORPUS_B = "corpus_bbbbbbbb"
 
 def _add_chunk(store, chunk_id, corpus_id, course_id, topic, difficulty,
                embedding, chunk_index=0, book="bookA", concept_id=""):
+    # New model: per-corpus membership flag (corpus__<id>="1") and per-corpus
+    # concept tag (concept__<id>=<concept_id>), so a book can belong to many
+    # corpora. Legacy corpus_id/concept_id are kept to exercise the fallback.
+    meta = {
+        "topic": topic,
+        "difficulty": difficulty,
+        "is_definitional": False,
+        "depends_on": "[]",
+        "summary": f"summary {chunk_id}",
+        "book": book,
+        "course": book,
+        "corpus_id": corpus_id,
+        "course_id": course_id,
+        "concept_id": concept_id,
+        f"corpus__{corpus_id}": "1",
+        "page_start": 1,
+        "page_end": 2,
+        "chunk_index": chunk_index,
+    }
+    if concept_id:
+        meta[f"concept__{corpus_id}"] = concept_id
     store.collection.add(
         ids=[chunk_id],
         documents=[f"text for {chunk_id} about {topic}"],
         embeddings=[embedding],
-        metadatas=[{
-            "topic": topic,
-            "difficulty": difficulty,
-            "is_definitional": False,
-            "depends_on": "[]",
-            "summary": f"summary {chunk_id}",
-            "book": book,
-            "course": book,
-            "corpus_id": corpus_id,
-            "course_id": course_id,
-            "concept_id": concept_id,
-            "page_start": 1,
-            "page_end": 2,
-            "chunk_index": chunk_index,
-        }],
+        metadatas=[meta],
     )
 
 

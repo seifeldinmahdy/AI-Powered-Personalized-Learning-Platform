@@ -15,7 +15,6 @@ router = APIRouter(prefix="/corpus", tags=["corpus-authoring"])
 
 def _require_service_key(x_service_key: str | None) -> None:
     expected = os.getenv("INTERNAL_SERVICE_KEY", "")
-    print(f"DEBUG: expected='{expected}', received='{x_service_key}'")
     if not expected or x_service_key != expected:
         raise HTTPException(status_code=403, detail="Service key required")
 
@@ -61,3 +60,44 @@ async def index_status(corpus_id: str, book_stem: str, x_service_key: str | None
     _require_service_key(x_service_key)
     from services.corpus_indexing import get_status
     return get_status(corpus_id, book_stem)
+
+
+class CorpusBookRequest(BaseModel):
+    book_stem: str
+    corpus_id: str
+
+
+@router.post("/attach")
+async def attach_book(req: CorpusBookRequest, x_service_key: str | None = Header(default=None)):
+    """Add an already-indexed book to a corpus (fast; no re-index).
+
+    If the book isn't indexed yet, this kicks off indexing and attaches on
+    completion (same as /index) — so a 2nd course reusing the book is instant.
+    """
+    _require_service_key(x_service_key)
+    from services.corpus_indexing import attach_book_to_corpus, start_indexing
+    res = attach_book_to_corpus(req.book_stem, req.corpus_id)
+    if not res.get("indexed"):
+        # Not in the library yet — index it (background) and attach when done.
+        return start_indexing(req.book_stem, req.corpus_id)
+    return res
+
+
+@router.post("/detach")
+async def detach_book(req: CorpusBookRequest, x_service_key: str | None = Header(default=None)):
+    """Remove a book from a corpus (membership only). Chunks stay in the DB."""
+    _require_service_key(x_service_key)
+    from services.corpus_indexing import detach_book_from_corpus
+    return detach_book_from_corpus(req.book_stem, req.corpus_id)
+
+
+class DeleteBookRequest(BaseModel):
+    book_stem: str
+
+
+@router.post("/delete-book")
+async def delete_book(req: DeleteBookRequest, x_service_key: str | None = Header(default=None)):
+    """Delete a book's chunks from the vector library ENTIRELY (all corpora)."""
+    _require_service_key(x_service_key)
+    from services.corpus_indexing import delete_book_entirely
+    return delete_book_entirely(req.book_stem)

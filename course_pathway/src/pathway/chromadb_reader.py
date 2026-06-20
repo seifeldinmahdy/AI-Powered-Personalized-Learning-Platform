@@ -184,9 +184,21 @@ class ChromaDBReader:
     # ── Introspection (health / dev tooling) ─────────────────────────
 
     def list_corpus_ids(self) -> list[str]:
-        """Distinct corpus_id values present in the collection (no chunk content)."""
+        """Distinct corpus ids that at least one chunk is a member of.
+
+        Membership is the per-corpus flag ``corpus__<corpus_id> = "1"`` (a book can
+        belong to many corpora), so we derive the ids from those keys. The legacy
+        scalar ``corpus_id`` is included as a fallback for not-yet-migrated chunks.
+        """
         res = self._service._store.get_where(None, include=["metadatas"])
-        ids = {m.get("corpus_id") for m in res.get("metadatas", []) if m.get("corpus_id")}
+        ids: set[str] = set()
+        for m in res.get("metadatas", []):
+            for k, v in (m or {}).items():
+                if k.startswith("corpus__") and str(v) == "1":
+                    ids.add(k[len("corpus__"):])
+            legacy = m.get("corpus_id") if m else None
+            if legacy:
+                ids.add(str(legacy))
         return sorted(ids)
 
     @property

@@ -56,6 +56,17 @@ class PathwaySettings(BaseSettings):
     session_min_tokens: int = 3000
     session_max_tokens: int = 5000
 
+    # ── Per-session deck bounding (slide deck length) ────────────
+    # A slide deck renders ~one content slide per session chunk, so an
+    # unbounded session produces an abnormally long deck. These caps keep each
+    # session linked to its concepts but bounded: at most
+    # ``max_chunks_per_concept`` representative chunks per concept_id, and at
+    # most ``max_chunks_per_session`` chunks total. The cap NEVER drops a
+    # concept entirely (>=1 chunk per concept is always kept), so CLO coverage
+    # is preserved. Set either to 0 to disable that bound.
+    max_chunks_per_concept: int = 3
+    max_chunks_per_session: int = 12
+
     # ── Section discovery ────────────────────────────────────────
     topic_similarity_threshold: float = 0.85
 
