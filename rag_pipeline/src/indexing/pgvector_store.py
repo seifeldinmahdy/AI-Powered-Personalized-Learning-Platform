@@ -164,7 +164,18 @@ class PgVectorStore:
 
     @contextmanager
     def _cursor(self, commit: bool = False):
-        conn = self._psycopg2.connect(self._dsn)
+        # Bound the connect so a Supabase/pooler hiccup fails fast instead of
+        # hanging forever (which freezes any FastAPI route that awaits it). TCP
+        # keepalives also tear down a half-open socket. These are libpq params
+        # psycopg2 merges with the DSN.
+        conn = self._psycopg2.connect(
+            self._dsn,
+            connect_timeout=int(os.getenv("PGVECTOR_CONNECT_TIMEOUT", "10")),
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5,
+        )
         try:
             with conn.cursor() as cur:
                 yield cur

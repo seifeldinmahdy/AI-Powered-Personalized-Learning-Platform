@@ -20,8 +20,12 @@ def _require_service_key(x_service_key: str | None) -> None:
 
 
 @router.get("/available-books")
-async def available_books(corpus_id: str = "", x_service_key: str | None = Header(default=None)):
-    """Books available to attach: PDFs on disk + their index state."""
+def available_books(corpus_id: str = "", x_service_key: str | None = Header(default=None)):
+    """Books available to attach: PDFs on disk + their index state.
+
+    Sync ``def`` on purpose: it hits the (blocking) vector store, so FastAPI runs
+    it in a threadpool and a slow DB call can't freeze the event loop.
+    """
     _require_service_key(x_service_key)
     from services.corpus_indexing import list_books
     return {"books": list_books(corpus_id or None)}
@@ -47,7 +51,7 @@ class IndexRequest(BaseModel):
 
 
 @router.post("/index")
-async def index_book(req: IndexRequest, x_service_key: str | None = Header(default=None)):
+def index_book(req: IndexRequest, x_service_key: str | None = Header(default=None)):
     """Index a book into a corpus (background). Returns the initial status."""
     _require_service_key(x_service_key)
     from services.corpus_indexing import start_indexing
@@ -69,7 +73,7 @@ class CorpusBookRequest(BaseModel):
 
 
 @router.post("/attach")
-async def attach_book(req: CorpusBookRequest, x_service_key: str | None = Header(default=None)):
+def attach_book(req: CorpusBookRequest, x_service_key: str | None = Header(default=None)):
     """Add an already-indexed book to a corpus (fast; no re-index).
 
     If the book isn't indexed yet, this kicks off indexing and attaches on
@@ -88,7 +92,7 @@ async def attach_book(req: CorpusBookRequest, x_service_key: str | None = Header
 
 
 @router.post("/detach")
-async def detach_book(req: CorpusBookRequest, x_service_key: str | None = Header(default=None)):
+def detach_book(req: CorpusBookRequest, x_service_key: str | None = Header(default=None)):
     """Remove a book from a corpus (membership only). Chunks stay in the DB."""
     _require_service_key(x_service_key)
     from services.corpus_indexing import detach_book_from_corpus
@@ -100,7 +104,7 @@ class DeleteBookRequest(BaseModel):
 
 
 @router.post("/delete-book")
-async def delete_book(req: DeleteBookRequest, x_service_key: str | None = Header(default=None)):
+def delete_book(req: DeleteBookRequest, x_service_key: str | None = Header(default=None)):
     """Delete a book's chunks from the vector library ENTIRELY (all corpora)."""
     _require_service_key(x_service_key)
     from services.corpus_indexing import delete_book_entirely
