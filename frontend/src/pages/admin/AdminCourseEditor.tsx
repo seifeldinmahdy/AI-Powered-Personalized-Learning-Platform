@@ -166,8 +166,11 @@ const ConceptMultiSelect = ({
                     setConcepts(prev => [...prev, newConcept]);
                     onChange([...selectedIds, String(newConcept.id)]);
                     e.currentTarget.value = '';
-                  } catch (err) {
-                    toast.error("Failed to create concept");
+                  } catch (err: any) {
+                    // Backend rejects (400) a concept with no matching corpus
+                    // content and returns the reason in `detail`.
+                    const detail = err?.response?.data?.detail;
+                    toast.error(detail || "Failed to create concept");
                   } finally {
                     setCreating(false);
                   }
@@ -1609,7 +1612,7 @@ export default function AdminCourseEditor() {
         </div>
 
         {cloTab === 'list' ? (
-          <div className="admin-card overflow-hidden">
+          <div className="admin-card overflow-visible">
             {cloLoading ? (
               <div className="flex items-center justify-center py-10">
                 <Loader2 size={24} className="animate-spin" style={{ color: 'var(--admin-ink-secondary)' }} />

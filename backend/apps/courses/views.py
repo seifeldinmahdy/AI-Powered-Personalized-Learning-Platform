@@ -532,6 +532,47 @@ class ConceptViewSet(viewsets.ModelViewSet):
         slug = serializer.validated_data.get("slug") or slugify(label)[:60]
         serializer.save(course_id=course_pk, slug=slug)
 
+    def create(self, request, *args, **kwargs):
+        """Create a (manual) concept, then ground it against the corpus.
+
+        A concept the corpus has no content for would later abort CLO coverage,
+        so we tag immediately and roll the concept back if ZERO chunks match. We
+        only reject when the corpus actually HAS chunks but none matched — an
+        empty corpus or an unreachable vector store leaves the concept in place
+        (the admin may be authoring before sources are indexed).
+        """
+        response = super().create(request, *args, **kwargs)
+        if response.status_code != status.HTTP_201_CREATED:
+            return response
+
+        concept_id = response.data.get("id")
+        course_pk = self.kwargs.get("course_pk")
+        if not (concept_id and course_pk):
+            return response
+
+        try:
+            from apps.courses.auto_tag import tag_course_chunks
+            res = tag_course_chunks(course_pk)
+        except Exception as exc:
+            logger.warning("concept grounding tag failed: %s", exc)
+            return response
+
+        if "error" in res:
+            # Empty corpus or store offline — cannot prove it's ungrounded.
+            return response
+
+        grounded = res.get("per_concept", {}).get(str(concept_id), 0)
+        if grounded == 0:
+            label = response.data.get("label", "concept")
+            Concept.objects.filter(pk=concept_id).delete()
+            return Response(
+                {"detail": f"“{label}” has no matching content in this "
+                           f"course’s corpus, so it wasn’t added. Index a "
+                           f"source that covers it first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return response
+
     def get_queryset(self):
         course_pk = self.kwargs.get("course_pk")
         qs = Concept.objects.select_related("parent").prefetch_related("children")
@@ -946,18 +987,33 @@ class CourseCorpusViewSet(viewsets.ViewSet):
 
         # Detach the book from this corpus (best-effort). A failure here must not
         # block removing the source row, but is surfaced in logs.
+        detached_ok = False
         try:
-            requests.post(
+            resp = requests.post(
                 f"{_ai_url().rstrip('/')}/corpus/detach",
                 json={"book_stem": source.book_stem, "corpus_id": source.corpus.corpus_id},
                 headers=_svc_headers(), timeout=60,
             )
+            detached_ok = resp.status_code == 200
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning("corpus source detach failed: %s", exc)
+            logger.warning("corpus source detach failed: %s", exc)
 
         source.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+
+        # Cascade-clean orphaned auto concepts: the book's chunks are now
+        # corpus__<id>="0", so any auto concept grounded ONLY by this book has no
+        # chunks left → delete it (and its CLO links). Only runs if the detach
+        # actually flipped membership, else every concept would still look grounded.
+        cleanup = None
+        if detached_ok:
+            try:
+                from apps.courses.auto_tag import cleanup_orphaned_auto_concepts
+                cleanup = cleanup_orphaned_auto_concepts(course_pk)
+            except Exception as exc:
+                logger.warning("orphaned-concept cleanup failed: %s", exc)
+
+        return Response({"detached": detached_ok, "cleanup": cleanup},
+                        status=status.HTTP_200_OK)
 
     def delete_book(self, request, course_pk=None, book_stem=None):
         """DELETE …/corpus/library/<book_stem>/ — admin: retire a book entirely.

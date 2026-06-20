@@ -95,14 +95,27 @@ DATABASES = {
         "PASSWORD": os.getenv("DB_PASSWORD", "postgres"),
         "HOST": os.getenv("DB_HOST"),
         "PORT": os.getenv("DB_PORT", "5432"),
-        'OPTIONS': {
-            'sslmode': 'require',  
+        # Reuse a connection across requests instead of opening a fresh one each
+        # time — this skips the TLS handshake + Supabase pooler auth round-trip
+        # per request, which is the bulk of the per-call latency to a remote DB.
+        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),
+        # Validate a reused connection at the start of each request; if Supabase's
+        # pooler dropped it (the "server closed the connection unexpectedly" 500),
+        # Django reconnects transparently instead of erroring. Needs Django 4.1+.
+        "CONN_HEALTH_CHECKS": True,
+        "OPTIONS": {
+            "sslmode": os.getenv("DB_SSLMODE", "require"),
+            # Detect a dropped pooler socket fast instead of hanging: give up
+            # connecting after 10s, and let TCP keepalives tear down a half-open
+            # connection (probe after 30s idle, every 10s, dead after 5 misses).
+            "connect_timeout": 10,
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 5,
         },
     }
 }
-# Enable SSL for production (e.g., Supabase). Set DB_SSLMODE=require in .env.
-if os.getenv("DB_SSLMODE"):
-    DATABASES["default"]["OPTIONS"] = {"sslmode": os.getenv("DB_SSLMODE")}
 
 # ---------- Cache (Redis/LocMem) ----------
 CACHES = {
