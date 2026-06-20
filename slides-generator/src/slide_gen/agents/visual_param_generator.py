@@ -669,7 +669,13 @@ def generate_visual_params(
 
     # ── Special XML path for architecture_diagram ──
     if template_id == "architecture_diagram":
-        return _generate_architecture_xml(bullets, title, host, model, key)
+        # Wrap the XML in a dict under "xml": params must be a dict[str, Any] for
+        # both VisualTemplate and the ai_service VisualOut. Returning a bare
+        # string here made Pydantic reject it and fall back to empty params,
+        # which rendered the "Architecture Diagram" placeholder. The frontend
+        # reads params.xml.
+        xml = _generate_architecture_xml(bullets, title, host, model, key)
+        return {"xml": xml} if xml else None
 
     # ── Conceptual path: LLM enrichment picks the sub-type ──
     if template_id == "conceptual":
@@ -990,8 +996,9 @@ def _deterministic_fallback(
         children = {root: bullets[1:]} if len(bullets) > 1 else {}
         return {"root": root, "children": children, "title": title, "relationship_label": ""}
     elif template_id == "architecture_diagram":
-        # For XML path: return fallback XML string
-        return _architecture_xml_fallback(bullets, title)
+        # Architecture params are a dict carrying the XML under "xml" (the
+        # renderer reads params.xml); a bare string fails Pydantic validation.
+        return {"xml": _architecture_xml_fallback(bullets, title)}
     else:
         return {"title": title, "points": bullets}
 

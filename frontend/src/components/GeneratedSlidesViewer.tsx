@@ -1,8 +1,7 @@
-import { useState } from 'react';
-import { Maximize2, Minimize2, ChevronLeft, ChevronRight, Eye, Copy, Play, Terminal, Sparkles } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Maximize2, Minimize2, ChevronLeft, ChevronRight, Eye, Copy, Check, Play, Terminal, Sparkles } from 'lucide-react';
 import type { GeneratedSlide, SlideContentItem, SlideCodeBlock } from '../services/pathway';
 import { VisualRenderer } from './VisualRenderer';
-import { EquationRenderer } from './EquationRenderer';
 
 interface GeneratedSlidesViewerProps {
   slides: GeneratedSlide[];
@@ -104,7 +103,10 @@ export function GeneratedSlidesViewer({
           <div style={{ padding: 48, flex: '1 1 0%', minHeight: 0, overflowY: 'auto' }}>
             <div style={{ maxWidth: 768, marginInline: 'auto' }}>
               {currentSlide ? (
-                <SlideRenderer slide={currentSlide} />
+                // key per slide → the subtree remounts on navigation, so each
+                // slide's code block starts un-run; the output only appears when
+                // the student clicks Run on the slide they're actually viewing.
+                <SlideRenderer key={currentSlide.source_chunk_id || currentIndex} slide={currentSlide} />
               ) : (
                 <div className="t-body steel" style={{ textAlign: 'center', padding: '80px 0' }}>No slide content available.</div>
               )}
@@ -223,63 +225,29 @@ function BulletList({ items }: { items: GeneratedSlide['body_content'] }) {
 
 function ContentSlide({ slide }: { slide: GeneratedSlide }) {
   const layout = slide.layout ?? 'List_View';
-  const hasEquations = slide.equation_block && slide.equation_block.length > 0;
+  const hasBullets = slide.body_content.length > 0;
 
-  // ── Equation_Focus: bullets first, equations below ────────────
-  if (layout === 'Equation_Focus') {
-    return (
-      <>
-        <SlideHeader title={slide.title} />
-        {slide.body_content.length > 0 && (
-          <div style={{ marginBottom: 24 }}>
+  // ── Code_Main: code sits in the visual slot (right), bullets left ──
+  // The code block occupies where visuals usually sit, so a code slide reads
+  // like any other two-column slide instead of pushing content around.
+  if (layout === 'Code_Main' && slide.code_block) {
+    if (hasBullets) {
+      return (
+        <>
+          <SlideHeader title={slide.title} />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, alignItems: 'start' }}>
             <BulletList items={slide.body_content} />
+            <div style={{ minWidth: 0 }}>
+              <CodeBlockRenderer code={slide.code_block} />
+            </div>
           </div>
-        )}
-        {hasEquations && (
-          <div style={{ padding: 20, borderRadius: 8, border: '1px solid var(--hairline)', borderLeft: '2px solid var(--accent-primary)', background: 'var(--bg-surface)' }}>
-            <div className="t-label" style={{ color: 'var(--accent-primary)', marginBottom: 12 }}>KEY EQUATIONS</div>
-            <EquationRenderer equations={slide.equation_block!} />
-          </div>
-        )}
-      </>
-    );
-  }
-
-  // ── Equation_Visual: equations left, diagram right ─────────────
-  if (layout === 'Equation_Visual') {
+        </>
+      );
+    }
     return (
       <>
         <SlideHeader title={slide.title} />
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, alignItems: 'start' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {hasEquations && (
-              <div style={{ padding: 16, borderRadius: 8, border: '1px solid var(--hairline)', borderLeft: '2px solid var(--accent-primary)', background: 'var(--bg-surface)' }}>
-                <div className="t-label" style={{ color: 'var(--accent-primary)', marginBottom: 12 }}>EQUATIONS</div>
-                <EquationRenderer equations={slide.equation_block!} />
-              </div>
-            )}
-            {slide.body_content.length > 0 && <BulletList items={slide.body_content} />}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center' }}>
-            {slide.visual && <VisualRenderer visual={slide.visual} />}
-          </div>
-        </div>
-      </>
-    );
-  }
-
-  // ── Code_Main: code is primary ─────────────────────────────────
-  if (layout === 'Code_Main') {
-    return (
-      <>
-        <SlideHeader title={slide.title} />
-        {slide.code_block && <CodeBlockRenderer code={slide.code_block} />}
-        {slide.body_content.length > 0 && (
-          <div style={{ marginTop: 24 }}>
-            <BulletList items={slide.body_content} />
-          </div>
-        )}
-        {hasEquations && <EquationRenderer equations={slide.equation_block!} />}
+        <CodeBlockRenderer code={slide.code_block} />
       </>
     );
   }
@@ -295,27 +263,31 @@ function ContentSlide({ slide }: { slide: GeneratedSlide }) {
             {slide.visual && <VisualRenderer visual={slide.visual} />}
           </div>
         </div>
-        {hasEquations && (
-          <div style={{ marginTop: 24 }}>
-            <EquationRenderer equations={slide.equation_block!} />
-          </div>
-        )}
       </>
     );
   }
 
-  // ── List_View (default): plain text ───────────────────────────
+  // ── List_View (default): plain text; a stray code block sits on the right ──
   return (
     <>
       <SlideHeader title={slide.title} />
-      {slide.body_content.length > 0 && (
-        <div style={{ marginBottom: 32 }}>
+      {slide.code_block ? (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, alignItems: 'start' }}>
           <BulletList items={slide.body_content} />
+          <div style={{ minWidth: 0 }}>
+            <CodeBlockRenderer code={slide.code_block} />
+          </div>
         </div>
+      ) : (
+        <>
+          {hasBullets && (
+            <div style={{ marginBottom: 32 }}>
+              <BulletList items={slide.body_content} />
+            </div>
+          )}
+          {slide.visual && <VisualRenderer visual={slide.visual} />}
+        </>
       )}
-      {slide.code_block && <CodeBlockRenderer code={slide.code_block} />}
-      {slide.visual && <VisualRenderer visual={slide.visual} />}
-      {hasEquations && <EquationRenderer equations={slide.equation_block!} />}
     </>
   );
 }
@@ -345,12 +317,13 @@ function ContentItemRenderer({ item }: { item: SlideContentItem }) {
     );
   }
 
-  // Example (green accent)
+  // Example (green accent) — rendered in the display font so it is visibly
+  // distinct from the body text, but clearer than the previous serif italic.
   if (ht === 'example') {
     return (
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: 16, background: 'rgba(22,163,74,0.05)', border: '1px solid rgba(22,163,74,0.2)', borderRadius: 8 }}>
         <span className="t-label" style={{ color: 'var(--accent-success)', marginTop: 2, flexShrink: 0 }}>EXAMPLE</span>
-        <p className="t-body" style={{ margin: 0, color: 'var(--text-primary)', fontStyle: 'italic', fontFamily: 'var(--ff-editorial)' }}>{item.text}</p>
+        <p style={{ margin: 0, color: 'var(--text-primary)', fontFamily: 'var(--ff-display)', fontWeight: 500, fontSize: 15, lineHeight: 1.5, letterSpacing: '0.01em' }}>{item.text}</p>
       </div>
     );
   }
@@ -376,10 +349,69 @@ function ContentItemRenderer({ item }: { item: SlideContentItem }) {
 
 // ── Code block rendering ───────────────────────────────────────
 
+// Minimal, dependency-free syntax highlighter (VS Code "Dark+" palette). Good
+// enough to make Python/JS snippets read like real code on a slide.
+const CODE_COLORS = {
+  comment: '#6A9955',
+  string: '#CE9178',
+  number: '#B5CEA8',
+  keyword: '#569CD6',
+  builtin: '#4EC9B0',
+  func: '#DCDCAA',
+  plain: '#D4D4D4',
+};
+
+const CODE_TOKEN_RE = new RegExp(
+  [
+    '(#[^\\n]*|//[^\\n]*)',                                   // 1 comment
+    '("(?:[^"\\\\]|\\\\.)*"|\'(?:[^\'\\\\]|\\\\.)*\'|`(?:[^`\\\\]|\\\\.)*`)', // 2 string
+    '\\b(\\d+(?:\\.\\d+)?)\\b',                               // 3 number
+    '\\b(def|class|return|if|elif|else|for|while|in|import|from|as|with|try|except|finally|raise|lambda|yield|pass|break|continue|and|or|not|is|None|True|False|const|let|var|function|new|typeof|async|await|of|export|default|this)\\b', // 4 keyword
+    '\\b(print|len|range|int|str|float|bool|list|dict|set|tuple|sum|max|min|map|filter|sorted|enumerate|zip|abs|round|open|input|console|Math|JSON|Array|Object)\\b', // 5 builtin
+    '([A-Za-z_]\\w*)(?=\\s*\\()',                             // 6 function call
+  ].join('|'),
+  'g',
+);
+
+function highlightCode(code: string): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  let m: RegExpExecArray | null;
+  CODE_TOKEN_RE.lastIndex = 0;
+  while ((m = CODE_TOKEN_RE.exec(code)) !== null) {
+    if (m.index > last) out.push(code.slice(last, m.index));
+    const full = m[0];
+    const color = m[1] ? CODE_COLORS.comment
+      : m[2] ? CODE_COLORS.string
+      : m[3] ? CODE_COLORS.number
+      : m[4] ? CODE_COLORS.keyword
+      : m[5] ? CODE_COLORS.builtin
+      : CODE_COLORS.func;
+    out.push(<span key={key++} style={{ color }}>{full}</span>);
+    last = m.index + full.length;
+    if (m.index === CODE_TOKEN_RE.lastIndex) CODE_TOKEN_RE.lastIndex++; // guard zero-width
+  }
+  if (last < code.length) out.push(code.slice(last));
+  return out;
+}
+
 function CodeBlockRenderer({ code }: { code: SlideCodeBlock }) {
   const [ran, setRan] = useState(false);
+  const [copied, setCopied] = useState(false);
   // Output is demonstrative (LLM-written, not executed). Only offer Run when present.
   const hasOutput = !!code.runnable && typeof code.output === 'string';
+
+  // Revert the "copied" affordance after a moment (cleaned up on unmount).
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1600);
+    return () => clearTimeout(t);
+  }, [copied]);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(code.code).then(() => setCopied(true)).catch(() => {});
+  };
 
   return (
     <div style={{ marginBottom: 32 }}>
@@ -404,17 +436,17 @@ function CodeBlockRenderer({ code }: { code: SlideCodeBlock }) {
               </button>
             )}
             <button
-              onClick={() => navigator.clipboard.writeText(code.code)}
+              onClick={handleCopy}
               className="t-label"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6, color: '#9CA3AF', padding: '4px 8px', cursor: 'pointer' }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: copied ? 'rgba(34,197,94,0.12)' : 'transparent', border: `1px solid ${copied ? 'rgba(34,197,94,0.4)' : 'rgba(255,255,255,0.15)'}`, borderRadius: 6, color: copied ? '#4ADE80' : '#9CA3AF', padding: '4px 8px', cursor: 'pointer', transition: 'color 150ms ease, background 150ms ease, border-color 150ms ease' }}
             >
-              <Copy size={11} /> COPY
+              {copied ? <Check size={11} /> : <Copy size={11} />} {copied ? 'COPIED' : 'COPY'}
             </button>
           </div>
         </div>
         {/* maxHeight keeps the block from overflowing the slide / pushing layout */}
         <pre className="codeblock" style={{ margin: 0, borderRadius: 0, overflowX: 'auto', maxHeight: 320, overflowY: 'auto' }}>
-          <code>{code.code}</code>
+          <code style={{ color: CODE_COLORS.plain }}>{highlightCode(code.code)}</code>
         </pre>
         {hasOutput && ran && (
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.25)' }}>

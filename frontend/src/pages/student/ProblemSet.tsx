@@ -26,6 +26,14 @@ import {
     AlertTriangle, Eye, Code2, BarChart3, SkipForward,
 } from 'lucide-react';
 import { CapstoneStartCTA } from '../../components/CapstoneStartCTA';
+import { TypewriterLoader } from '../../components/personifai/TypewriterLoader';
+
+const PROBLEM_SET_LOADING_MESSAGES = [
+    'Crafting your problem set...',
+    'Analyzing your session...',
+    'Tailoring questions to your level...',
+    'Almost ready...',
+];
 
 /* ── design tokens (personifai / codex) ──────────────────────
    The system is deliberately two-tone for outcomes: pass = green
@@ -343,11 +351,12 @@ export default function ProblemSet() {
 
     if (loading) {
         return (
-            <div className="codex" style={{ flex: 1, minHeight: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18, background: 'var(--bg-primary)', textAlign: 'center', padding: 24 }}>
-                <Loader2 size={34} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
-                <div className="t-heading" style={{ fontSize: 24, color: 'var(--text-primary)' }}>Crafting your problem set…</div>
-                <div className="t-mono steel">Analyzing your session and tailoring questions</div>
-            </div>
+            <TypewriterLoader
+                variant="inline"
+                label="CRAFTING YOUR PROBLEM SET"
+                caption="Analyzing your session and tailoring questions"
+                messages={PROBLEM_SET_LOADING_MESSAGES}
+            />
         );
     }
 

@@ -72,30 +72,88 @@ def format_input(chunk: str, profile_dict: dict) -> str:
     )
 
 
-# Tag patterns for parsing (matches training data format)
-_TITLE_RE = re.compile(r"^TITLE:\s*(.+)", re.IGNORECASE)
-_DEFINE_RE = re.compile(r"^DEFINE\s*\[([^\]]+)\]:\s*(.+)", re.IGNORECASE)
-_BULLET_RE = re.compile(r"^BULLET\s*\[([^\]]+)\]:\s*(.+)", re.IGNORECASE)
+# Highlight types a BULLET tag may carry (the bracket content for a bullet)
+_BULLET_HIGHLIGHTS = {"key_concept", "example", "attention", "code"}
 
-# Map tag names to HighlightType values
-_TAG_TO_HIGHLIGHT = {
-    "key_concept": "key_concept",
-    "example": "example",
-    "attention": "attention",
-    "code": "code",
-}
+# Canonical tag words the model is trained to emit.
+_TAG_CANON = {"TITLE": "title", "DEFINE": "define", "BULLET": "bullet"}
+
+# A tag line / inline tag: a leading word, an optional [bracket], then a colon.
+# Deliberately loose on the word so we can fuzzy-repair beam-search corruptions
+# (BUFLET, BONUS, DEFOrm, BINE, EFINE, ULLET, …) in _classify_tag_word.
+_TAG_RE = re.compile(r"^([A-Za-z]{3,})\s*(?:\[([^\]]*)\])?\s*:\s*(.*)$")
+_TAG_SPLIT_RE = re.compile(r"([A-Za-z]{3,})\s*(?:\[([^\]]{0,40})\])?\s*:")
+
+
+def _classify_tag_word(word: str, bracket: str | None) -> str | None:
+    """Map a possibly-garbled tag word to 'title' / 'define' / 'bullet'.
+
+    The fine-tuned T5 sometimes emits a tag with a wrong sub-token from beam
+    search — e.g. ``DEFINE``→``DEFOrm``/``BINE``, ``BULLET``→``BUFLET``/
+    ``BONUS``. We recover intent from (1) distinctive prefixes, (2) a known
+    highlight bracket, and (3) fuzzy similarity. Returns None when it is not a
+    tag (so ordinary prose like ``Note:`` is left alone).
+    """
+    import difflib
+
+    w = "".join(c for c in word.upper() if c.isalpha())
+    if len(w) < 3:
+        return None
+
+    # (1) Distinctive 3-letter prefixes — strongest, cheapest signal.
+    if w.startswith("TIT"):
+        return "title"
+    if w.startswith("DEF"):     # DEFINE, DEFOrm, …
+        return "define"
+    if w.startswith("BUL"):     # BULLET, BULLLET, …
+        return "bullet"
+
+    # (2) A recognized highlight bracket means it is a BULLET regardless of the
+    #     (garbled) word — catches "BONUS [example]:", "BUFLET [example]:".
+    if bracket and bracket.strip().lower() in _BULLET_HIGHLIGHTS:
+        return "bullet"
+
+    # (3) Fuzzy match against the canonical tag words (catches BINE→DEFINE etc.)
+    best, score = None, 0.0
+    for cand, kind in _TAG_CANON.items():
+        r = difflib.SequenceMatcher(None, w, cand).ratio()
+        if r > score:
+            best, score = kind, r
+    return best if score >= 0.6 else None
+
+
+def _append_tag_item(kind: str, bracket: str | None, body: str, items: list) -> None:
+    """Turn a classified tag + its text into a structured item."""
+    body = body.strip()
+    bracket_l = (bracket or "").strip().lower()
+
+    if kind == "define":
+        # DEFINE [term]: description. A garbled DEFINE with no usable term
+        # (e.g. "DEFOrm: ...") still keeps its text — as a key_concept bullet
+        # so it is never silently merged into the previous bullet or lost.
+        if bracket and bracket.strip():
+            items.append({"text": body, "highlight_type": "definition", "term": bracket.strip()})
+        elif body:
+            items.append({"text": body, "highlight_type": "key_concept", "term": None})
+        return
+
+    # bullet
+    highlight = bracket_l if bracket_l in _BULLET_HIGHLIGHTS else "none"
+    if body:
+        items.append({"text": body, "highlight_type": highlight, "term": None})
 
 
 def parse_output(text: str) -> dict:
     """
-    Parse T5 output into structured data.
+    Parse T5 output into structured data, tolerant of garbled tags.
 
-    Handles the full trained output format:
+    Handles the trained output format and its beam-search corruptions:
         TITLE: Some Title Here
         DEFINE [term]: description of the term
         BULLET [key_concept]: First bullet point
         BULLET [example]: An example
-        BULLET [attention]: A warning
+        BUFLET [example]: ...   ← repaired to a BULLET (example)
+        DEFOrm: ...             ← repaired to a DEFINE-style item
 
     Returns:
         Dict with:
@@ -104,76 +162,44 @@ def parse_output(text: str) -> dict:
           and optionally 'term' for definitions
     """
     title = "Untitled"
-    items = []
-    found_any_tag = False  # Track if we've seen at least one structured tag
+    items: list[dict] = []
+    found_any_tag = False
 
-    # T5 might generate tags inline (separated by spaces instead of newlines)
-    # Insert newlines before any known tags to ensure proper splitting
-    text = re.sub(r"(?<!^)(\bTITLE:|\bDEFINE \[|\bBULLET \[|\bDEFINE:|\bBULLET:)", r"\n\1", text, flags=re.IGNORECASE)
+    # The model often runs tags together on one line. Insert a newline before any
+    # token that classifies as a real tag so each becomes its own item. (A bare
+    # prose "word:" is left untouched because _classify_tag_word returns None.)
+    def _split_repl(m: "re.Match") -> str:
+        if _classify_tag_word(m.group(1), m.group(2)) is None:
+            return m.group(0)
+        return "\n" + m.group(0)
+
+    text = _TAG_SPLIT_RE.sub(_split_repl, text)
 
     for line in text.strip().split("\n"):
         line = line.strip()
         if not line:
             continue
 
-        # Try TITLE
-        m = _TITLE_RE.match(line)
-        if m:
-            title = m.group(1).strip()
+        m = _TAG_RE.match(line)
+        kind = _classify_tag_word(m.group(1), m.group(2)) if m else None
+
+        if kind == "title":
+            title = m.group(3).strip() or title
+            found_any_tag = True
+            continue
+        if kind in ("define", "bullet"):
+            _append_tag_item(kind, m.group(2), m.group(3), items)
             found_any_tag = True
             continue
 
-        # Try DEFINE [term]: description
-        m = _DEFINE_RE.match(line)
-        if m:
-            term = m.group(1).strip()
-            description = m.group(2).strip()
-            items.append({
-                "text": description,
-                "highlight_type": "definition",
-                "term": term,
-            })
-            found_any_tag = True
-            continue
+        # Untagged line: keep it only if we haven't locked into structured mode
+        # yet (otherwise it is leaked source text). Mirrors prior behavior.
+        if not found_any_tag:
+            items.append({"text": line, "highlight_type": "none", "term": None})
 
-        # Try BULLET [tag]: text
-        m = _BULLET_RE.match(line)
-        if m:
-            tag = m.group(1).strip().lower()
-            bullet_text = m.group(2).strip()
-            highlight = _TAG_TO_HIGHLIGHT.get(tag, "none")
-            items.append({
-                "text": bullet_text,
-                "highlight_type": highlight,
-                "term": None,
-            })
-            found_any_tag = True
-            continue
-
-        # Fallback: plain BULLET: or TITLE: (old format compat)
-        if line.upper().startswith("BULLET:"):
-            bullet_text = line[7:].strip()
-            if bullet_text:
-                items.append({
-                    "text": bullet_text,
-                    "highlight_type": "none",
-                    "term": None,
-                })
-                found_any_tag = True
-            continue
-
-        # If we've already seen structured tags, discard any unmatched
-        # lines — they are raw source text that leaked from the model.
-        # Only keep untagged lines if NO tags have been found yet.
-
-    # Ultimate fallback: if no structured output was found at all,
-    # treat the whole text as a single bullet.
+    # Ultimate fallback: nothing structured at all → whole text as one bullet.
     if not found_any_tag and not items and text.strip():
-        items.append({
-            "text": text.strip(),
-            "highlight_type": "none",
-            "term": None,
-        })
+        items.append({"text": text.strip(), "highlight_type": "none", "term": None})
 
     return {"title": title, "items": items}
 

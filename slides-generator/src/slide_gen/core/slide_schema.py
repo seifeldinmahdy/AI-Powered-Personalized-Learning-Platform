@@ -13,16 +13,10 @@ class Layout(str, Enum):
     Content_Visual   — text bullets alongside a diagram/chart
     List_View        — text-only bullets, no visual element
     Code_Main        — code block is the primary element
-    Equation_Focus   — text bullets first, then equations rendered below (KaTeX);
-                       used when math is present but text context comes first
-    Equation_Visual  — equations alongside a diagram (e.g. a flowchart annotated with
-                       formulas); used when both math AND a visual template are present
     """
     CONTENT_VISUAL   = "Content_Visual"
     LIST_VIEW        = "List_View"
     CODE_MAIN        = "Code_Main"
-    EQUATION_FOCUS   = "Equation_Focus"
-    EQUATION_VISUAL  = "Equation_Visual"
 
 
 class SlideType(str, Enum):
@@ -81,21 +75,6 @@ class VisualTemplate(BaseModel):
     )
 
 
-class EquationItem(BaseModel):
-    """A single mathematical equation extracted from slide content."""
-
-    latex: str = Field(
-        description="Raw LaTeX math expression (no $ delimiters or environments)"
-    )
-    label: str = Field(
-        description="Short human-readable name for the equation"
-    )
-    display: bool = Field(
-        default=True,
-        description="True for display-mode (centered block), False for inline"
-    )
-
-
 class ContentItem(BaseModel):
     """Single content item (bullet point or definition) on a slide."""
     
@@ -140,10 +119,6 @@ class SlideInstruction(BaseModel):
     code_block: Optional[CodeBlock] = Field(
         default=None,
         description="Optional code block for programming examples"
-    )
-    equation_block: Optional[list[EquationItem]] = Field(
-        default=None,
-        description="Extracted math equations rendered via KaTeX on the frontend"
     )
     alt_text: Optional[str] = Field(
         default=None,

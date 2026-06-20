@@ -17,11 +17,9 @@ from slide_gen.agents.code_extractor import build_code_block
 from slide_gen.agents.accessibility import generate_alt_text
 from slide_gen.agents.visual_param_generator import generate_visual_params
 from slide_gen.agents.judge import judge_template, judge_params
-from slide_gen.agents.math_extractor import extract_math
 from slide_gen.core.slide_schema import (
     CodeBlock,
     ContentItem,
-    EquationItem,
     HighlightType,
     Layout,
     SlideInstruction,
@@ -94,25 +92,17 @@ def _assign_highlight_types_heuristic(bullets: list[str]) -> list[ContentItem]:
 def _choose_layout(
     has_visual: bool,
     has_code: bool,
-    has_math: bool,
-    composition_mode: str,
 ) -> Layout:
     """
-    Choose slide layout based on content and preference.
+    Choose slide layout based on content.
 
     Priority (highest → lowest):
-      1. Code present                → Code_Main
-      2. Math + visual present       → Equation_Visual
-      3. Math only (no visual)       → Equation_Focus  (text first, equations below)
-      4. Visual only (no math)       → Content_Visual
-      5. Text only                   → List_View
+      1. Code present     → Code_Main
+      2. Visual present   → Content_Visual
+      3. Text only        → List_View
     """
     if has_code:
         return Layout.CODE_MAIN
-    if has_math and has_visual:
-        return Layout.EQUATION_VISUAL
-    if has_math:
-        return Layout.EQUATION_FOCUS
     if has_visual:
         return Layout.CONTENT_VISUAL
     return Layout.LIST_VIEW
@@ -233,20 +223,10 @@ def process_chunk(
         screen_reader_active=profile.screen_reader_active,
     )
 
-    # ---- Agent 6: Math Extractor (runs on raw chunk, parallel-safe) ----
-    equation_block = None
-    try:
-        equation_block = extract_math(chunk)
-    except Exception:
-        equation_block = None
-
     # ---- Layout Selection (Component 4) ----
-    has_math = equation_block is not None and len(equation_block) > 0
     layout = _choose_layout(
         has_visual=visual is not None,
         has_code=code_block is not None,
-        has_math=has_math,
-        composition_mode=profile.composition_mode.value,
     )
 
     return SlideInstruction(
@@ -256,7 +236,6 @@ def process_chunk(
         body_content=body_content,
         visual=visual,
         code_block=code_block,
-        equation_block=equation_block,
         alt_text=alt_text,
     )
 

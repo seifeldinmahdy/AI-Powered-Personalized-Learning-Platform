@@ -12,7 +12,7 @@ import {
   getSessionCompletions,
   createSessionCompletion,
 } from '../../services/progress';
-import { Loader2, Route, CheckCircle2, PlayCircle, Lock, Circle, Camera, CameraOff, X } from 'lucide-react';
+import { Route, CheckCircle2, PlayCircle, Lock, Circle, Camera, CameraOff, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import {
@@ -39,6 +39,13 @@ const SLIDE_LOADING_MESSAGES = [
   'Classifying visual elements...',
   'Extracting code examples...',
   'Building your slide deck...',
+  'Almost ready...',
+];
+
+const CHECKPOINT_LOADING_MESSAGES = [
+  'Building your knowledge check...',
+  'Picking questions at your level...',
+  'Calibrating difficulty to your mastery...',
   'Almost ready...',
 ];
 
@@ -838,20 +845,13 @@ export default function LiveSession() {
   // ─── Render ───────────────────────────────────────────────────
 
   if (loading) {
-    if (sessionStorage.getItem('pathway_plan')) {
-      return (
-        <TypewriterLoader
-          variant="fixed"
-          label="BUILDING YOUR SESSION"
-          caption="Generating personalized materials"
-          messages={SLIDE_LOADING_MESSAGES}
-        />
-      );
-    }
     return (
-      <div className="codex" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)' }}>
-        <Loader2 size={36} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
-      </div>
+      <TypewriterLoader
+        variant="fixed"
+        label="BUILDING YOUR SESSION"
+        caption="Generating personalized materials"
+        messages={SLIDE_LOADING_MESSAGES}
+      />
     );
   }
 
@@ -1124,17 +1124,12 @@ export default function LiveSession() {
       {/* Knowledge-checkpoint generation overlay — blurs the lesson while the
           MCQs are being generated, before the modal itself opens. */}
       {checkpointLoading && !checkpoint && (
-        <div
-          className="codex"
-          style={{
-            position: 'fixed', inset: 0, zIndex: 10000, display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center', gap: 16, padding: 20,
-            background: 'rgba(19,16,13,0.55)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-          }}
-        >
-          <Loader2 size={32} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
-          <div className="t-label" style={{ color: 'var(--bg-paper)' }}>BUILDING YOUR KNOWLEDGE CHECK…</div>
-        </div>
+        <TypewriterLoader
+          variant="fixed"
+          label="KNOWLEDGE CHECK"
+          caption="A few quick questions to lock in what you've learned"
+          messages={CHECKPOINT_LOADING_MESSAGES}
+        />
       )}
 
       {/* In-session MCQ knowledge checkpoint (pop-up, blurs + blocks the lesson). */}
