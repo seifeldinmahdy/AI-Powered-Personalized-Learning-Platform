@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="760" height="150" viewBox="0 0 760 150" role="img" aria-label="PersonifAI.">
-  <text x="12" y="118" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-weight="800" font-size="110" letter-spacing="-6">
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="150" viewBox="0 0 700 150" role="img" aria-label="PersonifAI.">
+  <text x="350" y="118" text-anchor="middle" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-weight="800" font-size="110" letter-spacing="-6">
     <tspan fill="#F5F3EF">Personif</tspan><tspan fill="#3B82F6">AI.</tspan>
   </text>
 </svg>
