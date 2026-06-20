@@ -309,17 +309,22 @@ def _clip_output(output: str | None) -> str | None:
     return text or None
 
 
+def _normalize_escapes(s: str | None) -> str | None:
+    """Turn literal backslash-escapes into real characters.
+
+    The model sometimes emits ``print(1)\\nprint(2)`` (a literal backslash + n)
+    instead of a real newline, which then renders as ``\\n`` on the slide. Only
+    fires when such sequences are present, so genuine code is untouched.
+    """
+    if not s:
+        return s
+    if "\\n" in s or "\\t" in s or "\\r" in s:
+        s = s.replace("\\r\\n", "\n").replace("\\r", "\n").replace("\\n", "\n").replace("\\t", "\t")
+    return s
+
+
 def _code_line_count(code: str) -> int:
     return len([ln for ln in code.split("\n")])
-
-
-def _clip_code(code: str) -> str:
-    """Trim extracted code to the slide line budget (best-effort, keeps the head)."""
-    lines = code.split("\n")
-    if len(lines) <= MAX_CODE_LINES:
-        return code.rstrip("\n")
-    kept = lines[:MAX_CODE_LINES]
-    return "\n".join(kept).rstrip("\n") + "\n# ..."
 
 
 def _signal_count(chunk: str) -> int:
@@ -328,51 +333,7 @@ def _signal_count(chunk: str) -> int:
     return sum(1 for term in _CODE_SIGNAL_TERMS if term in low)
 
 
-# --- Path A: validate & augment code the regex already found -----------------
-
-_VALIDATE_SYSTEM = (
-    "You verify and lightly repair short code snippets pulled from lecture text "
-    "so they can be shown on a slide. You fix only obvious breakage (indentation, "
-    "an unmatched bracket, an undefined name needed to run), make the snippet "
-    "self-contained, and predict its console output. You never invent unrelated "
-    "functionality. Output ONLY JSON."
-)
-
-
-def _validate_and_augment(language: str, code: str, title: str | None,
-                          timeout: int) -> dict | None:
-    """LLM-validate extracted code and produce a demonstrative output."""
-    user = (
-        f"## DETECTED LANGUAGE: {language}\n\n"
-        f"## SLIDE TITLE: {title or '(none)'}\n\n"
-        f"## EXTRACTED CODE:\n```\n{code[:1500]}\n```\n\n"
-        f"Tasks:\n"
-        f"1. Repair only what is needed so this runs standalone (keep it faithful "
-        f"to the original; do not add unrelated logic).\n"
-        f"2. Keep it at most {MAX_CODE_LINES} lines.\n"
-        f"3. Give the exact console output it would print, at most "
-        f"{MAX_OUTPUT_LINES} lines / {MAX_OUTPUT_CHARS} chars. If it prints "
-        f"nothing, use an empty string.\n\n"
-        'Output ONLY: {"language": "...", "is_valid": "yes/no", '
-        '"code": "the final snippet", "output": "expected stdout", '
-        '"output_is_short": "yes/no"}'
-    )
-    result = _call_llm(_VALIDATE_SYSTEM, user, timeout=timeout)
-    if not result or not result.get("code"):
-        return None
-    final_code = _clip_code(str(result["code"]))
-    out = _clip_output(result.get("output"))
-    lang = str(result.get("language") or language).strip().lower() or language
-    return {
-        "language": lang,
-        "code": final_code,
-        "output": out,
-        "runnable": out is not None,
-        "generated": False,
-    }
-
-
-# --- Path B: HDEval gate + generate an example for a code-less chunk ----------
+# --- HDEval gate + generate an example (the ONLY source of code blocks) -------
 
 _GENERATE_SYSTEM = (
     "You decide whether a tiny runnable code example would help teach the slide "
@@ -425,7 +386,7 @@ def _gate_and_generate(chunk: str, title: str | None, bullets: list[str] | None,
     if not gate:
         return None
 
-    code = str(result.get("code") or "").strip()
+    code = (_normalize_escapes(str(result.get("code") or "")) or "").strip()
     if not code:
         return None
     # Generated code that blows the line budget is rejected rather than truncated
@@ -433,7 +394,7 @@ def _gate_and_generate(chunk: str, title: str | None, bullets: list[str] | None,
     if _code_line_count(code) > MAX_CODE_LINES:
         return None
 
-    out = _clip_output(result.get("output"))
+    out = _clip_output(_normalize_escapes(result.get("output")))
     lang = str(result.get("language") or detect_language(code)).strip().lower() or "python"
     return {
         "language": lang,
@@ -457,45 +418,19 @@ def build_code_block(
     Returns a dict with keys ``language, code, output, runnable, generated`` or
     ``None`` when no code should be shown.
 
-    Flow:
-      1. Deterministic ``extract_code`` (the prior).
-      2. If code was found → LLM validate/augment + demonstrative output (Path A).
-      3. If no code but strong code signals → HDEval yes/no gate, and only on a
-         full pass, LLM generate a snippet + output (Path B).
+    Code blocks are produced ONLY by the LLM (HDEval yes/no gate → generate). The
+    deterministic regex extractor is intentionally NOT used to create blocks — it
+    triggered empty/garbage blocks on code-less prose. The regex helpers remain
+    available for other callers, but never gate a slide's code here.
 
-    Every LLM step fails OPEN: on any error or when the LLM is disabled, this
-    degrades to the deterministic result (extracted code with no output) or
-    ``None`` — never worse than the regex-only behavior.
+    Flow:
+      1. Cheap signal pre-filter to skip obvious non-code chunks (saves a call).
+      2. HDEval yes/no gate; only on a full pass does the LLM generate a snippet
+         + demonstrative output.
+
+    Fails OPEN: on any LLM error, or when the LLM is disabled, returns ``None``.
     """
     use_llm = _llm_enabled() if enable_llm is None else enable_llm
-
-    deterministic = extract_code(chunk)
-
-    # --- Path A: regex found code ---
-    if deterministic:
-        if not use_llm:
-            return {
-                "language": deterministic["language"],
-                "code": _clip_code(deterministic["code"]),
-                "output": None,
-                "runnable": False,
-                "generated": False,
-            }
-        augmented = _validate_and_augment(
-            deterministic["language"], deterministic["code"], title, timeout
-        )
-        if augmented:
-            return augmented
-        # Fail open to the raw extracted code (still useful, just no output).
-        return {
-            "language": deterministic["language"],
-            "code": _clip_code(deterministic["code"]),
-            "output": None,
-            "runnable": False,
-            "generated": False,
-        }
-
-    # --- Path B: no literal code — consider generating one ---
     if not use_llm:
         return None
     if _signal_count(chunk) < _STRONG_SIGNAL_MIN:

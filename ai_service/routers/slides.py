@@ -110,12 +110,6 @@ class CodeBlockOut(BaseModel):
     generated: bool = False
 
 
-class EquationItemOut(BaseModel):
-    latex: str
-    label: str
-    display: bool = True
-
-
 class VisualOut(BaseModel):
     template: str
     params: dict[str, Any] = Field(default_factory=dict)
@@ -138,7 +132,6 @@ class SlideOut(BaseModel):
     body_content: list[ContentItemOut] = Field(default_factory=list)
     visual: Optional[VisualOut] = None
     code_block: Optional[CodeBlockOut] = None
-    equation_block: Optional[list[EquationItemOut]] = None
     alt_text: Optional[str] = None
     source_chunk_id: str = ""
     source_topic: str = ""
@@ -547,24 +540,7 @@ def _generate_session_slides(
         except Exception as e:
             logger.warning("code_extractor_failed: %s", str(e))
 
-        # 4. Math Extractor
-        equation_block_out = None
-        try:
-            from slide_gen.agents.math_extractor import extract_math  # type: ignore
-            equations = extract_math(cleaned)
-            if equations:
-                equation_block_out = [
-                    EquationItemOut(
-                        latex=eq.latex,
-                        label=eq.label,
-                        display=eq.display,
-                    )
-                    for eq in equations
-                ]
-        except Exception as e:
-            logger.warning("math_extractor_failed: %s", str(e))
-
-        # 5. Layout selection
+        # 4. Layout selection
         if code_out:
             layout = "Code_Main"
         elif visual_out:
@@ -572,7 +548,7 @@ def _generate_session_slides(
         else:
             layout = "List_View"
 
-        # 6. Build mastery metadata
+        # 5. Build mastery metadata
         mastery_meta = SlideMasteryMetadata(
             mastery_used=slide_mastery,
             global_mastery=global_mastery,
@@ -589,7 +565,6 @@ def _generate_session_slides(
             body_content=body,
             visual=visual_out,
             code_block=code_out,
-            equation_block=equation_block_out,
             source_chunk_id=chunk_in.chunk_id,
             source_topic=chunk_in.topic,
             source_page_start=chunk_in.page_start,
