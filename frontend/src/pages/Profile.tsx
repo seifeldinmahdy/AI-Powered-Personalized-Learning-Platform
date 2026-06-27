@@ -219,7 +219,7 @@ export default function Profile() {
               </div>
               {[
                 { key: "email_notifications" as const, label: "Email notifications", desc: "Course updates and reminders by email.", checked: preferences?.email_notifications ?? true },
-                { key: "ai_tutor_voice_enabled" as const, label: "AI tutor voice", desc: "Spoken feedback from Dr. Nova.", checked: preferences?.ai_tutor_voice_enabled ?? true },
+                { key: "ai_tutor_voice_enabled" as const, label: "AI tutor voice", desc: "Spoken feedback from LearnPal.", checked: preferences?.ai_tutor_voice_enabled ?? true },
                 { key: "study_reminders" as const, label: "Study reminders", desc: "Daily nudges to keep your streak.", checked: preferences?.study_reminders ?? true },
               ].map((p, i) => (
                 <div key={p.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "18px 0", borderTop: i === 0 ? "1px solid var(--hairline)" : "none", borderBottom: "1px solid var(--hairline)" }}>

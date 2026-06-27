@@ -41,7 +41,7 @@ class EmotionEventInput(BaseModel):
     event_type: str = "passive"
     intent_classification: Optional[str] = None
     question_transcript: Optional[str] = None
-    dr_nova_response_summary: Optional[str] = None
+    learnpal_response_summary: Optional[str] = None
 
 
 
@@ -134,7 +134,7 @@ def _group_session_log_by_slide(session_data) -> list[dict]:
         if not entry["slide_content"] and event.get("slide_content"):
             entry["slide_content"] = event["slide_content"]
 
-        text = event.get("dr_nova_response_summary") or event.get("text", "")
+        text = event.get("learnpal_response_summary") or event.get("text", "")
         if text:
             entry["tutor_responses"].append(text)
 

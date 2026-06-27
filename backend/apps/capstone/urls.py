@@ -17,7 +17,6 @@ urlpatterns = [
     path("", include(router.urls)),
     path("course/<int:course_id>/", views.capstone_for_course, name="capstone-for-course"),
     path("capstones/<int:capstone_id>/my-submission/", views.my_submission, name="capstone-my-submission"),
-    path("capstones/<int:capstone_id>/submit/", views.submit_archive, name="capstone-submit-archive"),
     path("capstones/<int:capstone_id>/provision-repo/", views.provision_repo, name="capstone-provision-repo"),
     path("capstones/<int:capstone_id>/submit-from-repo/", views.submit_from_repo, name="capstone-submit-from-repo"),
     path("capstones/<int:capstone_id>/submit-for-grading/", views.submit_for_grading, name="capstone-submit-for-grading"),
@@ -40,6 +39,8 @@ urlpatterns = [
     path("capstones/<int:capstone_id>/recommendations/", views.teammate_recommendations, name="capstone-recommendations"),
     path("capstones/<int:capstone_id>/my-team/", views.my_team, name="capstone-my-team"),
     path("capstones/<int:capstone_id>/process-queue/", views.process_matchmaking, name="capstone-process-queue"),
+    path("team/<int:team_id>/accept/", views.accept_match, name="capstone-team-accept"),
+    path("team/<int:team_id>/decline/", views.decline_match, name="capstone-team-decline"),
 
     # Team role advisor (advisory only)
     path("team/<int:team_id>/role-advice/", views.team_role_advice, name="capstone-team-role-advice"),

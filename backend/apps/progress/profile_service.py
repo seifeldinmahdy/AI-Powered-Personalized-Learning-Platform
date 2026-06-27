@@ -67,7 +67,7 @@ def _provisional_summary(claims: list[dict]) -> str:
     """Deterministic plain-English summary synthesized from the LIVE claims.
 
     A stopgap used ONLY until the session profiler authors the canonical summary,
-    so Dr. Nova has context after placement/lab even when no LLM summary exists
+    so LearnPal has context after placement/lab even when no LLM summary exists
     yet. No LLM, and it never echoes field descriptions — just the student's
     current signals.
     """
@@ -177,7 +177,7 @@ def apply_claims(student_id: int, claims: list[dict],
         # summary it always wins and is stamped source="session". Before the first
         # live session has authored one, we keep a deterministic PROVISIONAL
         # summary, regenerated from the live claims on each non-session update, so
-        # Dr. Nova has context after placement/lab. A provisional NEVER overwrites
+        # LearnPal has context after placement/lab. A provisional NEVER overwrites
         # a canonical summary — clean sourcing keeps the audit unambiguous.
         if summary is not None and summary_source == "session":
             profile.profile_summary = summary

@@ -5,13 +5,27 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 
 const AI_URL = import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8001';
 
-export interface Nova3DAvatarProps {
+export interface LearnPal3DAvatarProps {
   isSpeaking: boolean;
   emotion?: string;
   blendshapeData?: { names: string[]; frames: number[][] } | null;
+  // performance.now() ms that frame 0 of blendshapeData should align to. Lets the
+  // caller resume a track at the correct frame after a pause (e.g. after a fun
+  // reaction interrupts the lecture). When omitted, playback starts "now".
+  blendshapeEpochMs?: number | null;
+  // A one-shot facial reaction (easter egg). Bump `token` to (re)play it.
+  reaction?: { kind: 'laugh' | 'frown' | 'dizzy'; token: number } | null;
   size?: number;
   isFloating?: boolean;
 }
+
+// Audio2Face tends to over-open the jaw; scale the openness shapes down so the
+// mouth movement reads natural. Tune MOUTH_SCALE (1 = raw A2F, lower = calmer).
+const MOUTH_SCALE = 0.6;
+const MOUTH_OPEN_SHAPES = new Set(['jawopen', 'mouthopen', 'mouthlowerdownleft', 'mouthlowerdownright']);
+
+// How long each one-shot facial reaction plays (seconds).
+const REACTION_DURATIONS: Record<string, number> = { laugh: 1.6, frown: 1.3, dizzy: 1.9 };
 
 /* ─── Emotion response mapping (student → avatar) ─── */
 const STUDENT_TO_AVATAR: Record<string, string> = {
@@ -48,28 +62,10 @@ const VISEME_SEQ = [
   { t: 1.00, JawOpen: 0, MouthFunnel: 0, MouthPucker: 0 },
 ];
 
-/* ─── Eye look positions ─── */
-const EYE_POSITIONS: Record<string, number>[] = [
-  {},
-  { EyeLookOutLeft: 0.3, EyeLookInRight: 0.3 },
-  { EyeLookInLeft: 0.3, EyeLookOutRight: 0.3 },
-  { EyeLookUpLeft: 0.25, EyeLookUpRight: 0.25 },
-  { EyeLookDownLeft: 0.2, EyeLookDownRight: 0.2 },
-  { EyeLookUpLeft: 0.2, EyeLookOutLeft: 0.2, EyeLookUpRight: 0.2, EyeLookInRight: 0.2 },
-  { EyeLookUpLeft: 0.2, EyeLookInLeft: 0.2, EyeLookUpRight: 0.2, EyeLookOutRight: 0.2 },
-  { EyeSquintLeft: 0.2, EyeSquintRight: 0.2 },
-];
-
-const EYE_LOOK_NAMES = [
-  'EyeLookOutLeft', 'EyeLookInRight', 'EyeLookInLeft', 'EyeLookOutRight',
-  'EyeLookUpLeft', 'EyeLookUpRight', 'EyeLookDownLeft', 'EyeLookDownRight',
-  'EyeSquintLeft', 'EyeSquintRight',
-];
-
 const VISEME_NAMES = ['JawOpen', 'MouthFunnel', 'MouthPucker', 'MouthLowerDownLeft', 'MouthLowerDownRight'];
 const BLINK_NAMES = ['EyeBlinkLeft', 'EyeBlinkRight'];
 
-export function Nova3DAvatar({ isSpeaking, emotion, blendshapeData, size = 120, isFloating = false }: Nova3DAvatarProps) {
+export function LearnPal3DAvatar({ isSpeaking, emotion, blendshapeData, blendshapeEpochMs, reaction, size = 120, isFloating = false }: LearnPal3DAvatarProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef({
     renderer: null as THREE.WebGLRenderer | null,
@@ -83,14 +79,33 @@ export function Nova3DAvatar({ isSpeaking, emotion, blendshapeData, size = 120, 
     loaded: false,
     bsStartTime: 0,
     lastBsData: null as any,
+    lastBsEpoch: undefined as number | null | undefined,
     // Idle state
     blinkValue: 0,
     blinkPhase: 'idle' as 'idle' | 'closing' | 'hold' | 'opening',
     blinkPhaseTime: 0,
-    targetEyePos: {} as Record<string, number>,
-    currentEyePos: {} as Record<string, number>,
     microSmileValue: 0,
     microSmileTarget: 0,
+    // Gaze (eyeballs): this avatar steers the eyes via the LeftEye/RightEye
+    // BONES, not the eyeLook* morphs — so cursor-follow & idle saccades rotate
+    // these bones. gazeX/Y are smoothed toward targetGazeX/Y (-1..1).
+    targetGazeX: 0,
+    targetGazeY: 0,
+    gazeX: 0,
+    gazeY: 0,
+    eyeBones: [] as { obj: THREE.Object3D; base: { x: number; y: number } }[],
+    // Cursor eye-tracking: when the pointer is near the avatar, the gaze (and a
+    // subtle head turn) follow it, overriding the random idle eye movement.
+    cursorTracking: false,
+    targetHeadYaw: 0,
+    targetHeadPitch: 0,
+    headYaw: 0,
+    headPitch: 0,
+    // One-shot facial reaction (laugh / frown / dizzy eyes).
+    reactionKind: '' as string,
+    reactionStart: 0,
+    reactionActive: false,
+    reactionToken: -1,
     // Emotion state
     targetEmotionBS: {} as Record<string, number>,
     currentEmotionBS: {} as Record<string, number>,
@@ -102,12 +117,25 @@ export function Nova3DAvatar({ isSpeaking, emotion, blendshapeData, size = 120, 
 
   const emotionRef = useRef(emotion);
   const blendshapeRef = useRef(blendshapeData);
+  const blendshapeEpochRef = useRef(blendshapeEpochMs);
   const isSpeakingRef = useRef(isSpeaking);
 
   // Keep refs in sync
   useEffect(() => { emotionRef.current = emotion; }, [emotion]);
   useEffect(() => { blendshapeRef.current = blendshapeData; }, [blendshapeData]);
+  useEffect(() => { blendshapeEpochRef.current = blendshapeEpochMs; }, [blendshapeEpochMs]);
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
+
+  // Kick off a facial reaction when its token changes.
+  useEffect(() => {
+    if (reaction && reaction.token !== stateRef.current.reactionToken) {
+      const s = stateRef.current;
+      s.reactionToken = reaction.token;
+      s.reactionKind = reaction.kind;
+      s.reactionStart = performance.now() / 1000;
+      s.reactionActive = true;
+    }
+  }, [reaction]);
 
   // Update emotion targets
   useEffect(() => {
@@ -169,10 +197,26 @@ export function Nova3DAvatar({ isSpeaking, emotion, blendshapeData, size = 120, 
           }
         });
         s.morphMeshes = morphMeshes;
-        console.log('[Nova3D] Morph meshes found:', morphMeshes.length);
+        console.log('[LearnPal3D] Morph meshes found:', morphMeshes.length);
         if (morphMeshes.length > 0) {
-          console.log('[Nova3D] Morph targets:', Object.keys(morphMeshes[0].morphTargetDictionary!));
+          console.log('[LearnPal3D] Morph targets:', Object.keys(morphMeshes[0].morphTargetDictionary!));
         }
+
+        // Collect the eye bones for gaze. This avatar poses the eyeballs via
+        // the LeftEye/RightEye bones — the eyeLook* morphs exist but don't
+        // visibly rotate the eyeball, which is why morph-only cursor tracking
+        // moved the head but not the eyes.
+        const eyeBones: { obj: THREE.Object3D; base: { x: number; y: number } }[] = [];
+        model.traverse((child) => {
+          const isBone = (child as unknown as { isBone?: boolean }).isBone;
+          const named = /^(LeftEye|RightEye)$/i.test(child.name);
+          const looksLikeEyeBone = !!isBone && /eye/i.test(child.name) && !/lash|mesh|ao/i.test(child.name);
+          if (named || looksLikeEyeBone) {
+            eyeBones.push({ obj: child, base: { x: child.rotation.x, y: child.rotation.y } });
+          }
+        });
+        s.eyeBones = eyeBones;
+        console.log('[LearnPal3D] Eye bones found:', eyeBones.map((b) => b.obj.name));
 
         // Center the model in the scene
         const box = new THREE.Box3().setFromObject(model);
@@ -196,10 +240,10 @@ export function Nova3DAvatar({ isSpeaking, emotion, blendshapeData, size = 120, 
         scheduleMicroSmile();
       }, undefined, (err) => {
         if (fallbackUrl) {
-          console.warn(`[Nova3D] Failed to load ${url}, trying fallback ${fallbackUrl}...`);
+          console.warn(`[LearnPal3D] Failed to load ${url}, trying fallback ${fallbackUrl}...`);
           loadModel(fallbackUrl);
         } else {
-          console.error('[Nova3D] Model load failed:', err);
+          console.error('[LearnPal3D] Model load failed:', err);
         }
       });
     };
@@ -267,9 +311,16 @@ export function Nova3DAvatar({ isSpeaking, emotion, blendshapeData, size = 120, 
       const delay = 2000 + Math.random() * 3000;
       const t = setTimeout(() => {
         if (!s.mounted) return;
-        // 40% center bias
-        const idx = Math.random() < 0.4 ? 0 : Math.floor(Math.random() * EYE_POSITIONS.length);
-        s.targetEyePos = { ...EYE_POSITIONS[idx] };
+        // While the gaze is locked to the cursor, skip the random idle saccade.
+        if (!s.cursorTracking) {
+          // 40% center bias, else a small random glance.
+          if (Math.random() < 0.4) {
+            s.targetGazeX = 0; s.targetGazeY = 0;
+          } else {
+            s.targetGazeX = (Math.random() * 2 - 1) * 0.6;
+            s.targetGazeY = (Math.random() * 2 - 1) * 0.4;
+          }
+        }
         scheduleEyeMove();
       }, delay);
       s.timeouts.push(t);
@@ -308,11 +359,15 @@ export function Nova3DAvatar({ isSpeaking, emotion, blendshapeData, size = 120, 
 
       // ── LAYER 1: Speech ──
       const bsData = blendshapeRef.current;
+      const bsEpoch = blendshapeEpochRef.current;
 
-      // Track start time when bsData changes
-      if (bsData && bsData !== s.lastBsData) {
+      // (Re)anchor frame 0 when the track changes OR its epoch changes (the
+      // latter lets a caller resume a paused track at the right frame). An
+      // explicit epoch aligns to that wall-clock ms; otherwise start "now".
+      if (bsData && (bsData !== s.lastBsData || bsEpoch !== s.lastBsEpoch)) {
         s.lastBsData = bsData;
-        s.bsStartTime = now / 1000;
+        s.lastBsEpoch = bsEpoch;
+        s.bsStartTime = bsEpoch != null ? bsEpoch / 1000 : now / 1000;
       }
       if (!isPlaying) {
         s.lastBsData = null;
@@ -325,7 +380,11 @@ export function Nova3DAvatar({ isSpeaking, emotion, blendshapeData, size = 120, 
         // Audio2Face NIM outputs blendshapes at 30 FPS
         const frameIdx = Math.min(Math.floor(elapsed * 30), bsData.frames.length - 1);
         const frame = bsData.frames[frameIdx];
-        bsData.names.forEach((name, i) => { lerpBS(name, frame[i], 0.25); });
+        bsData.names.forEach((name, i) => {
+          // Damp the over-eager jaw/mouth openness A2F produces.
+          const v = MOUTH_OPEN_SHAPES.has(name.toLowerCase()) ? frame[i] * MOUTH_SCALE : frame[i];
+          lerpBS(name, v, 0.25);
+        });
         s.lastA2fNames = bsData.names;
       } else if (isPlaying && !bsData) {
         // Fallback viseme mode
@@ -400,14 +459,55 @@ export function Nova3DAvatar({ isSpeaking, emotion, blendshapeData, size = 120, 
       }
       BLINK_NAMES.forEach(n => setBS(n, s.blinkValue));
 
-      // Eye movement
-      EYE_LOOK_NAMES.forEach(name => {
-        const target = s.targetEyePos[name] ?? 0;
-        const cur = s.currentEyePos[name] ?? 0;
-        const next = cur + (target - cur) * 0.08;
-        s.currentEyePos[name] = next;
-        setBS(name, next);
-      });
+      // ── Facial reaction (one-shot easter egg): laugh / frown / dizzy eyes ──
+      let reactionKind = '';
+      let reactionEnv = 0;   // ease 0→1→0 over the reaction
+      let reactionRt = 0;    // seconds since the reaction started
+      let dizzy = false;
+      if (s.reactionActive) {
+        reactionRt = (now / 1000) - s.reactionStart;
+        const dur = REACTION_DURATIONS[s.reactionKind] ?? 1.5;
+        if (reactionRt >= dur) {
+          s.reactionActive = false;
+        } else {
+          reactionKind = s.reactionKind;
+          reactionEnv = Math.sin((reactionRt / dur) * Math.PI);
+          if (reactionKind === 'dizzy') dizzy = true;
+        }
+      }
+
+      // Eye movement (gaze). Smooth toward the target, then steer the eye
+      // bones — the real driver on this rig. The eyeLook* morphs are written
+      // too so non-bone rigs still track, but they no-op harmlessly here.
+      s.gazeX += (s.targetGazeX - s.gazeX) * 0.12;
+      s.gazeY += (s.targetGazeY - s.gazeY) * 0.12;
+      let gx = s.gazeX, gy = s.gazeY;
+      if (dizzy) {
+        // Eyes roll around in a circle — woozy after being thrown.
+        const spin = reactionRt * 7.5; // ~1.2 revolutions per second
+        gx = Math.cos(spin) * 0.9;
+        gy = Math.sin(spin) * 0.9;
+      }
+      if (s.eyeBones.length > 0) {
+        // Sign convention for this rig: +y looks toward the viewer's right,
+        // +x looks down. Flip a sign here if a future avatar tracks
+        // mirrored/inverted.
+        const EYE_YAW = 0.6;   // radians at full horizontal deflection
+        const EYE_PITCH = 0.5; // radians at full vertical deflection
+        for (const { obj, base } of s.eyeBones) {
+          obj.rotation.y = base.y + gx * EYE_YAW;
+          obj.rotation.x = base.x + gy * EYE_PITCH;
+        }
+      }
+      // Morph fallback (mirror-correct ARKit eyeLook mapping).
+      setBS('EyeLookOutLeft', gx > 0 ? gx * 0.6 : 0);
+      setBS('EyeLookInRight', gx > 0 ? gx * 0.6 : 0);
+      setBS('EyeLookInLeft', gx < 0 ? -gx * 0.6 : 0);
+      setBS('EyeLookOutRight', gx < 0 ? -gx * 0.6 : 0);
+      setBS('EyeLookDownLeft', gy > 0 ? gy * 0.5 : 0);
+      setBS('EyeLookDownRight', gy > 0 ? gy * 0.5 : 0);
+      setBS('EyeLookUpLeft', gy < 0 ? -gy * 0.5 : 0);
+      setBS('EyeLookUpRight', gy < 0 ? -gy * 0.5 : 0);
 
       // Micro smile
       s.microSmileValue += (s.microSmileTarget - s.microSmileValue) * 0.04;
@@ -417,11 +517,33 @@ export function Nova3DAvatar({ isSpeaking, emotion, blendshapeData, size = 120, 
         setBS('MouthSmileRight', Math.min(1, curR + s.microSmileValue));
       }
 
-      // Head sway
+      // Facial reaction expression overlay (additive, layered over any talking).
+      if (reactionKind === 'laugh' || reactionKind === 'frown') {
+        const addBS = (n: string, v: number) => setBS(n, Math.min(1, getBS(n) + v));
+        if (reactionKind === 'laugh') {
+          addBS('MouthSmileLeft', 0.7 * reactionEnv); addBS('MouthSmileRight', 0.7 * reactionEnv);
+          addBS('CheekSquintLeft', 0.45 * reactionEnv); addBS('CheekSquintRight', 0.45 * reactionEnv);
+          addBS('EyeSquintLeft', 0.3 * reactionEnv); addBS('EyeSquintRight', 0.3 * reactionEnv);
+          addBS('BrowInnerUp', 0.2 * reactionEnv);
+          // "ha-ha" jaw bob — only when not lip-syncing speech (else it fights it).
+          if (!isPlaying) addBS('JawOpen', Math.max(0, Math.sin(reactionRt * 16)) * 0.22 * reactionEnv);
+        } else {
+          addBS('MouthFrownLeft', 0.55 * reactionEnv); addBS('MouthFrownRight', 0.55 * reactionEnv);
+          addBS('BrowDownLeft', 0.35 * reactionEnv); addBS('BrowDownRight', 0.35 * reactionEnv);
+          addBS('MouthPucker', 0.12 * reactionEnv);
+        }
+      }
+
+      // Head sway (+ a gentle turn toward the cursor when tracking)
       if (s.rootGroup) {
         const t = now / 1000;
-        s.rootGroup.rotation.z = Math.sin(t * 0.4) * 0.008;
-        s.rootGroup.rotation.x = Math.sin(t * 0.3) * 0.005;
+        s.headYaw += (s.targetHeadYaw - s.headYaw) * 0.08;
+        s.headPitch += (s.targetHeadPitch - s.headPitch) * 0.08;
+        // Dizzy adds a woozy head roll on top of the idle sway.
+        const dizzyRoll = dizzy ? Math.sin(reactionRt * 9) * 0.06 : 0;
+        s.rootGroup.rotation.z = Math.sin(t * 0.4) * 0.008 + dizzyRoll;
+        s.rootGroup.rotation.x = Math.sin(t * 0.3) * 0.005 + s.headPitch;
+        s.rootGroup.rotation.y = Math.sin(t * 0.25) * 0.006 + s.headYaw;
       }
 
       renderer.render(scene, camera);
@@ -437,12 +559,48 @@ export function Nova3DAvatar({ isSpeaking, emotion, blendshapeData, size = 120, 
     };
     document.addEventListener('visibilitychange', onVisChange);
 
+    // ── Cursor eye-tracking ──
+    // When the pointer comes near the avatar, map its offset from the avatar's
+    // centre to the eye-look blendshapes (mirror-correct: cursor to the viewer's
+    // right → the avatar looks to its left, which reads as "toward the cursor"),
+    // plus a subtle head turn. Beyond `reach`, idle gaze resumes.
+    const stopTracking = () => {
+      if (!s.cursorTracking) return;
+      s.cursorTracking = false;
+      s.targetGazeX = 0;
+      s.targetGazeY = 0;
+      s.targetHeadYaw = 0;
+      s.targetHeadPitch = 0;
+    };
+    const onPointerMove = (e: MouseEvent) => {
+      if (!s.mounted || !s.loaded) return;
+      const rect = container.getBoundingClientRect();
+      if (rect.width === 0) return;
+      const dx = e.clientX - (rect.left + rect.width / 2);
+      const dy = e.clientY - (rect.top + rect.height / 2);
+      const reach = Math.max(rect.width, rect.height) * 0.5 + 200; // "close to" the avatar
+      if (Math.hypot(dx, dy) > reach) { stopTracking(); return; }
+
+      s.cursorTracking = true;
+      const nx = Math.max(-1, Math.min(1, dx / reach));
+      const ny = Math.max(-1, Math.min(1, dy / reach));
+      // Eyes lead the cursor; the head follows with a subtler turn.
+      s.targetGazeX = nx;
+      s.targetGazeY = ny;
+      s.targetHeadYaw = nx * 0.16;
+      s.targetHeadPitch = ny * 0.10;
+    };
+    window.addEventListener('mousemove', onPointerMove);
+    document.addEventListener('mouseleave', stopTracking);
+
     // ── Cleanup ──
     return () => {
       s.mounted = false;
       cancelAnimationFrame(s.rafId);
       s.timeouts.forEach(t => clearTimeout(t));
       document.removeEventListener('visibilitychange', onVisChange);
+      window.removeEventListener('mousemove', onPointerMove);
+      document.removeEventListener('mouseleave', stopTracking);
       scene.traverse((obj) => {
         const m = obj as THREE.Mesh;
         if (m.geometry) m.geometry.dispose();

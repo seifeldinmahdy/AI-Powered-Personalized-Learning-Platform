@@ -118,14 +118,26 @@ def generate_ci_workflow(language: str, run_command: str = "") -> str:
     lang = normalize_language(language)
     setup, default_run = _SPECS.get(lang, _SPECS["python"])
     run = (run_command or "").strip() or default_run
+    # Cost controls (private repos consume billed Actions minutes, so keep usage
+    # inside the org's free allowance):
+    #   - trigger only on the student's `work` branch (+ PRs into work/main), not
+    #     every branch/tag, so we don't burn minutes on incidental pushes;
+    #   - cancel superseded in-flight runs for the same ref (no stacked builds);
+    #   - hard 10-minute job timeout so a hung build can't drain the quota.
     return (
         "name: ci\n"
         "on:\n"
         "  push:\n"
+        "    branches: [work]\n"
         "  pull_request:\n"
+        "    branches: [work, main]\n"
+        "concurrency:\n"
+        "  group: ci-${{ github.ref }}\n"
+        "  cancel-in-progress: true\n"
         "jobs:\n"
         "  ci:\n"
         "    runs-on: ubuntu-latest\n"
+        "    timeout-minutes: 10\n"
         "    steps:\n"
         "      - uses: actions/checkout@v4\n"
         f"{setup}"

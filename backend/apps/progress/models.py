@@ -332,7 +332,7 @@ class Bookmark(models.Model):
 # ------------------------------------------------------------------
 # Student Learning Profile — rewrite-based persistent profile per student.
 # Overwritten (not appended) after each session by the profiler LLM.
-# Dr. Nova reads profile_summary at session start to personalize teaching.
+# LearnPal reads profile_summary at session start to personalize teaching.
 # ------------------------------------------------------------------
 class StudentLearningProfile(models.Model):
     student = models.OneToOneField(
@@ -350,7 +350,7 @@ class StudentLearningProfile(models.Model):
         default="",
         help_text=(
             "Concise plain-English paragraph (max 5 sentences) written by the profiler LLM. "
-            "This is what Dr. Nova reads at session start."
+            "This is what LearnPal reads at session start."
         ),
     )
     # Provenance of the current profile_summary: "session" = canonical (authored

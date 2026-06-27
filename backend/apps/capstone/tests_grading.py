@@ -42,7 +42,7 @@ def _passing_ai(item_ids):
 
 
 def _make(username="stu", with_repo=True, status="pending"):
-    course = Course.objects.create(title="C", total_lessons_count=1)
+    course = Course.objects.create(title="C")
     cap = Capstone.objects.create(course=course, title="Cap", status="active")
     item = CapstoneRubricItem.objects.create(capstone=cap, text="works", category="core", weight=1)
     user = User.objects.create_user(username=username, email=f"{username}@x.com", password="pw")
@@ -232,7 +232,10 @@ class RecoveryRewardIdempotencyTests(TestCase):
         self.assertEqual(sub.verdict, "pass")
         self.assertTrue(sub.mastery_applied)
         xp_first = StudentProfile.objects.get(user=c["user"]).current_xp
-        self.assertEqual(xp_first, CAPSTONE_XP)  # score 100 → full XP
+        # The capstone-specific award is full XP at score 100. (Total current_xp
+        # also includes the separate course-completion XP, so assert on the
+        # capstone award itself, not the running total.)
+        self.assertEqual(sub.xp_awarded, CAPSTONE_XP)
         awarded_first = sub.xp_awarded
 
         # Make it look stuck again and recover a SECOND time → grades PASS again.

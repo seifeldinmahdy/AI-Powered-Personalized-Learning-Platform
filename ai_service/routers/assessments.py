@@ -623,6 +623,9 @@ async def mcq_submit_endpoint(
         # Stamp the verified identity before construction (overwrite-before-read).
         # CheckpointSubmission has no nested context — only the top-level id.
         req["student_id"] = student_id
+        # session_id is NOT part of CheckpointSubmission — pull it off the raw body
+        # (it's the live-session / durable-log key used to feed tutor + profiler).
+        session_id = str(req.pop("session_id", "") or "")
         submission = CheckpointSubmission(**req)
         result = score_checkpoint(submission)
 
@@ -670,6 +673,64 @@ async def mcq_submit_endpoint(
                             "concept_id": qr.get("concept_id") or None,
                         })
                 store.save(submission.student_id, submission.course_id, context)
+
+        # ── Feed the result to the LIVE session (tutor) + DURABLE log (profiler) ──
+        # Point 4: previously the checkpoint result reached neither LearnPal nor the
+        # session profiler. We now (a) push the wrong answers into SharedSessionStore
+        # so the tutor can address them on the next turn, and (b) append a durable
+        # ``checkpoint`` event so the end-of-session profiler turns MCQ performance
+        # into profile claims. Both are best-effort — never break scoring/return.
+        if session_id:
+            # Correlate per-question results back to their question text (the score
+            # output drops it; the submission still has it, indexed identically).
+            mistakes: list[dict] = []
+            for qr in (result.question_results or []):
+                if qr.get("correct"):
+                    continue
+                qi = qr.get("index")
+                qtext = ""
+                if isinstance(qi, int) and 0 <= qi < len(submission.questions):
+                    qtext = submission.questions[qi].question
+                mistakes.append({
+                    "question": qtext,
+                    "chosen_answer": qr.get("chosen_answer", ""),
+                    "correct_answer": qr.get("correct_answer", ""),
+                    "topic": qr.get("topic", ""),
+                    "concept_id": qr.get("concept_id") or "",
+                })
+
+            # (a) Tutor: keep the last few mistakes on the live state (cap at 8).
+            try:
+                from services.session_store import get_session_store
+                sess_store = get_session_store()
+                live_ctx = sess_store.get_session(session_id)
+                if live_ctx is not None:
+                    existing = live_ctx.live.recent_mcq_mistakes or []
+                    merged = (list(existing) + mistakes)[-8:]
+                    sess_store.update_session(session_id, live_kwargs={"recent_mcq_mistakes": merged})
+            except Exception:
+                logger.warning("checkpoint → tutor live feed failed", exc_info=True)
+
+            # (b) Profiler: durable, append-only event the session profiler folds.
+            try:
+                from services.session_event_log import get_session_event_log
+                get_session_event_log().append(
+                    session_id,
+                    "checkpoint",
+                    {
+                        "score": result.score,
+                        "correct_count": result.correct_count,
+                        "total_count": result.total_count,
+                        "checkpoint_index": submission.checkpoint_index,
+                        "per_concept_scores": result.per_concept_scores,
+                        "per_topic_scores": result.per_topic_scores,
+                        "mistakes": mistakes,
+                    },
+                    student_id=submission.student_id,
+                    course_id=str(submission.course_id),
+                )
+            except Exception:
+                logger.warning("checkpoint → durable profiler event failed", exc_info=True)
 
         return result.model_dump()
 

@@ -251,6 +251,10 @@ export interface SubmitCheckpointPayload {
     student_id: string; // overwritten server-side by the verified identity
     session_number: number;
     checkpoint_index: number;
+    // Live-session id (SharedSessionStore / durable-log key). Lets the server feed
+    // the result to the tutor (recent mistakes) and the session profiler. Optional
+    // so older callers still work; omitted → no live feed, scoring unchanged.
+    session_id?: string;
 }
 
 /** Submit checkpoint answers; the server scores and records concept mastery. */

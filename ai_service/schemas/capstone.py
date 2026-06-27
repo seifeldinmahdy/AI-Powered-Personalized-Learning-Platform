@@ -5,8 +5,15 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class RubricCheckDraft(BaseModel):
+    text: str                       # one atomic binary (yes/no) sub-check
+
+
 class CapstoneRubricDraft(BaseModel):
     text: str
+    # Hierarchical decomposition: each criterion breaks into 2-4 atomic binary
+    # checks the judge can answer from the code. A criterion passes iff all pass.
+    checks: list[RubricCheckDraft] = Field(default_factory=list)
     category: str = "core"          # core | stretch
     weight: int = 1
     min_team_size: int = 1
@@ -50,9 +57,15 @@ class MapProposalResponse(BaseModel):
     suggestions: list[str]
 
 
+class RubricCheckForEval(BaseModel):
+    id: str             # stable check id within its criterion
+    text: str
+
+
 class RubricItemForEval(BaseModel):
     id: int
     text: str
+    checks: list[RubricCheckForEval] = Field(default_factory=list)
     weight: int = 1
     category: str = "core"
 
@@ -65,9 +78,16 @@ class CapstoneEvalRequest(BaseModel):
     proposal_text: str = ""
 
 
-class RubricItemResult(BaseModel):
+class RubricCheckResult(BaseModel):
     passed: bool        # binary — LLM judges yes/no only
     evidence: str       # short quote or reason from code
+
+
+class RubricItemResult(BaseModel):
+    passed: bool        # derived: true iff every check passed (or the coarse yes/no)
+    evidence: str       # short quote or reason from code
+    # Per-check results, keyed by check id. Empty for legacy (no-checks) criteria.
+    checks: dict[str, RubricCheckResult] = Field(default_factory=dict)
 
 
 class CapstoneEvalResult(BaseModel):

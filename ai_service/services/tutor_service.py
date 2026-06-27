@@ -55,7 +55,7 @@ _TTS_AWARENESS = (
 # ── System prompts (finetuned for pedagogical benchmarks) ──
 
 LECTURE_SYSTEM_PROMPT = f"""\
-You are Dr. Nova, an expert AI tutor giving a private one-on-one lecture that runs ALONGSIDE a slide deck the student is watching on screen.
+You are LearnPal, an expert AI tutor giving a private one-on-one lecture that runs ALONGSIDE a slide deck the student is watching on screen.
 
 {_TTS_AWARENESS}
 
@@ -86,7 +86,7 @@ Keep it under 300 words. Do not add opinions or new information.
 """
 
 ANSWER_SYSTEM_PROMPT = f"""\
-You are Dr. Nova, an expert AI tutor. A student has asked a question during your lecture.
+You are LearnPal, an expert AI tutor. A student has asked a question during your lecture.
 
 {_TTS_AWARENESS}
 
@@ -101,7 +101,7 @@ RULES:
 """
 
 REPHRASE_SYSTEM_PROMPT = f"""\
-You are Dr. Nova, an expert AI tutor. A student has just asked you to explain the same topic in
+You are LearnPal, an expert AI tutor. A student has just asked you to explain the same topic in
 a different, simpler way.
 
 {_TTS_AWARENESS}
@@ -115,7 +115,7 @@ RULES:
 """
 
 EMOTIONAL_SYSTEM_PROMPT = f"""\
-You are Dr. Nova, an expert AI tutor. A student is expressing an emotional state during your session.
+You are LearnPal, an expert AI tutor. A student is expressing an emotional state during your session.
 
 {_TTS_AWARENESS}
 
@@ -149,7 +149,7 @@ Do not output any explanation, markdown, or extra text. Only the single lower-ca
 
 
 PACE_SYSTEM_PROMPT = f"""\
-You are Dr. Nova, an expert AI tutor. A student has asked you to change the pace of the session.
+You are LearnPal, an expert AI tutor. A student has asked you to change the pace of the session.
 
 {_TTS_AWARENESS}
 
@@ -901,6 +901,9 @@ def _assemble_user_prompt(
         roadmap = _lesson_roadmap(session)
         if roadmap:
             parts.append(roadmap)
+        mcq_block = _recent_mcq_block(session)
+        if mcq_block:
+            parts.append(mcq_block)
 
     parts.append(f"CURRENT TOPIC: {session.current_topic or 'N/A'}")
     if session.current_subtopic:
@@ -1281,6 +1284,10 @@ async def generate_lecture_chunk(
     roadmap = _lesson_roadmap(session)
     if roadmap:
         context_parts.append(roadmap)
+
+    mcq_block = _recent_mcq_block(session)
+    if mcq_block:
+        context_parts.append(mcq_block)
 
     context_parts.append(f"CURRENT MAIN TOPIC: {topic_name}")
     if subtopic_name:
@@ -2239,6 +2246,36 @@ def _prior_lessons_block(session: TutorSession) -> str:
     )
 
 
+def _recent_mcq_block(session: TutorSession) -> str:
+    """Recent in-session MCQ checkpoint mistakes from SharedSessionStore.
+
+    Lets LearnPal proactively revisit what the student JUST got wrong on a
+    knowledge check, instead of being unaware of it (the old behavior).
+    """
+    try:
+        from services.session_store import get_session_store
+        ctx = get_session_store().get_session(session.session_id)
+    except Exception:
+        return ""
+    if not ctx or not getattr(ctx, "live", None):
+        return ""
+    mistakes = getattr(ctx.live, "recent_mcq_mistakes", None) or []
+    if not mistakes:
+        return ""
+    lines = []
+    for m in mistakes[-4:]:
+        topic = (m.get("topic") or "").strip()
+        correct = (m.get("correct_answer") or "").strip()
+        q = (m.get("question") or "").strip()
+        desc = q or topic or "a recent question"
+        lines.append(f"- {desc} (correct answer: {correct})" if correct else f"- {desc}")
+    return (
+        "RECENT KNOWLEDGE-CHECK MISTAKES (the student just answered these WRONG on "
+        "an in-session quiz — when relevant, gently revisit or clarify the idea in "
+        "your own words; do NOT re-quiz them):\n" + "\n".join(lines)
+    )
+
+
 async def handle_emotional_state_stream(
     session_id: str,
     student_message: str,
@@ -2766,6 +2803,10 @@ async def generate_lecture_chunk_stream(
     roadmap = _lesson_roadmap(session)
     if roadmap:
         context_parts.append(roadmap)
+
+    mcq_block = _recent_mcq_block(session)
+    if mcq_block:
+        context_parts.append(mcq_block)
 
     context_parts.append(f"CURRENT MAIN TOPIC: {topic_name}")
     if subtopic_name:

@@ -19,6 +19,9 @@ import { AIDraftReviewTable, type Column } from '../../components/AIDraftReviewT
 // ---- Rubric item draft shape for AIDraftReviewTable ----
 type RubricRow = {
     text: string;
+    // Atomic binary sub-checks drafted by the AI; carried through to save so the
+    // hierarchical rubric is persisted (criterion passes iff all checks pass).
+    checks?: { text: string }[];
     category: string;
     weight: number;
     min_team_size: number;
@@ -187,6 +190,7 @@ export default function AdminCapstoneEditor() {
         for (const row of rows) {
             await createRubricItem(capstone.id, {
                 text: row.text,
+                checks: row.checks ?? [],
                 category: row.category as 'core' | 'stretch',
                 weight: Number(row.weight),
                 min_team_size: Number(row.min_team_size),

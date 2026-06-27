@@ -70,6 +70,7 @@ class LiveSessionState(BaseModel):
     visited_slides: list[int] = Field(default_factory=list, description="List of visited slide indices")
     time_spent_per_slide: dict[str, float] = Field(default_factory=dict, description="Time spent on each slide (str index -> float seconds)")
     tutor_events: list[dict] = Field(default_factory=list, description="Log of tutor auto-explanations, questions, re-explanations")
+    recent_mcq_mistakes: list[dict] = Field(default_factory=list, description="Recent in-session MCQ questions the student answered WRONG (question/correct_answer/topic/concept_id), so the tutor can address them in the next turn")
     emotion_signals: list[dict] = Field(default_factory=list, description="Log of all emotion events tagged with slide indices")
 
     fused_emotion: str = Field(default="", description="Current resolved student emotion")

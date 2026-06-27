@@ -73,17 +73,23 @@ def _get_effective_rubric(capstone: Capstone, team_size: int) -> list[CapstoneRu
 
 def _compute_score(rubric_items: list[CapstoneRubricItem], results: dict) -> float:
     """
-    Deterministic weighted score.  results = {str(item_id): {passed, weight, evidence}}.
-    score = sum(weight * passed) / sum(weight * applicable) * 100
+    Deterministic weighted score with PARTIAL CREDIT per atomic check (mirrors the
+    problem-set scoring). For each criterion, fraction = checks_passed/checks_total
+    (legacy no-check items: fraction = 1 if passed else 0).
+    score = sum(weight * fraction) / sum(weight) * 100
     """
     total_weight = sum(item.weight for item in rubric_items)
     if total_weight == 0:
         return 0.0
-    earned = sum(
-        item.weight
-        for item in rubric_items
-        if results.get(str(item.id), {}).get("passed", False)
-    )
+    earned = 0.0
+    for item in rubric_items:
+        r = results.get(str(item.id), {})
+        total = r.get("checks_total") or 0
+        if total > 0:
+            fraction = (r.get("checks_passed") or 0) / total
+        else:
+            fraction = 1.0 if r.get("passed", False) else 0.0
+        earned += item.weight * fraction
     return round(earned / total_weight * 100, 2)
 
 
@@ -91,9 +97,9 @@ def _compute_verdict(rubric_items: list, results: dict, pass_policy: str = "all_
     """
     PASS/FAIL computed in Python — the LLM never decides this.
 
-    Policy 'all_core' (the only policy today, uniform across solo/team and
-    admin-defined/student-proposed): PASS iff every applicable CORE criterion
-    passes. Stretch criteria affect score/feedback but never the verdict.
+    Policy 'all_core': PASS iff every applicable CORE criterion passes, where a
+    criterion passes iff ALL of its atomic checks pass (the stored ``passed`` flag
+    is already that conjunction). Stretch criteria affect score but never the verdict.
     """
     core_items = [i for i in rubric_items if i.category == "core"]
     if not core_items:
@@ -156,17 +162,50 @@ def _update_concept_mastery_sync(student_id: int, results: dict, rubric_items: l
 
 
 def _normalize_results(rubric_items: list[CapstoneRubricItem], ai_result: dict) -> dict:
-    """Turn the AI's {results: {id: {passed, evidence}}} into the stored shape,
-    keyed by every applicable rubric item id (missing → failed)."""
+    """Turn the AI's per-check results into the stored shape, keyed by every
+    applicable rubric item id (missing → failed). A criterion passes iff all of
+    its atomic checks pass; checks_passed/checks_total drive partial-credit scoring.
+    Legacy criteria (no checks) collapse to a single coarse yes/no."""
     ai_results = ai_result.get("results", {})
     results = {}
     for item in rubric_items:
         key = str(item.id)
-        item_result = ai_results.get(key) or ai_results.get(int(item.id), {}) or {}
+        raw = ai_results.get(key) or ai_results.get(int(item.id)) or {}
+        raw_checks = raw.get("checks", {}) if isinstance(raw, dict) else {}
+        item_checks = item.checks or []
+
+        check_results = {}
+        if item_checks:
+            for i, chk in enumerate(item_checks):
+                cid = str(chk.get("id") or i)
+                cval = (raw_checks.get(cid) or raw_checks.get(str(i)) or {}) if isinstance(raw_checks, dict) else {}
+                check_results[cid] = {
+                    "text": chk.get("text", ""),
+                    "passed": bool(cval.get("passed", False)),
+                    "evidence": cval.get("evidence", ""),
+                }
+            total = len(check_results)
+            passed_count = sum(1 for c in check_results.values() if c["passed"])
+            item_passed = total > 0 and passed_count == total
+            evidence = "; ".join(c["evidence"] for c in check_results.values() if c["evidence"])[:500]
+        else:
+            # Legacy item: AI may return an "_all" check or a coarse item-level flag.
+            cval = raw_checks.get("_all") if isinstance(raw_checks, dict) else None
+            if cval is None:
+                item_passed = bool(raw.get("passed", False))
+                evidence = raw.get("evidence", "")
+            else:
+                item_passed = bool(cval.get("passed", False))
+                evidence = cval.get("evidence", "")
+            total, passed_count = 1, (1 if item_passed else 0)
+
         results[key] = {
-            "passed": bool(item_result.get("passed", False)),
+            "passed": item_passed,
             "weight": item.weight,
-            "evidence": item_result.get("evidence", ""),
+            "evidence": evidence,
+            "checks": check_results,
+            "checks_passed": passed_count,
+            "checks_total": total,
         }
     return results
 
@@ -203,14 +242,28 @@ def _apply_grade(sub, team, rubric_items, results, score, verdict,
     sub.save(update_fields=fields)
 
     if grant_rewards:
-        _apply_xp_delta(student_id, sub.xp_awarded)
-        _update_concept_mastery_sync(student_id, results, rubric_items)
-        # Capstone PASS is the terminal gate → mark the course complete.
-        try:
-            from apps.courses.completion import mark_complete_if_eligible
-            mark_complete_if_eligible(sub.enrollment)
-        except Exception:
-            logger.exception("Could not mark course completion for submission %s", sub.id)
+        # Reward recipients: for a TEAM submission, every member earns XP + mastery
+        # + course completion (a shared PASS completes the course for the whole
+        # team); for solo, just the one student.
+        from apps.courses.models import Enrollment
+        if team:
+            recipients = list(team.members.all())
+        else:
+            recipients = [sub.enrollment.student]
+
+        for member in recipients:
+            _apply_xp_delta(member.id, sub.xp_awarded)
+            _update_concept_mastery_sync(member.id, results, rubric_items)
+            # Capstone PASS is the terminal gate → mark the course complete.
+            try:
+                from apps.courses.completion import mark_complete_if_eligible
+                enr = Enrollment.objects.filter(
+                    course=sub.capstone.course, student=member
+                ).first()
+                if enr:
+                    mark_complete_if_eligible(enr)
+            except Exception:
+                logger.exception("Could not mark course completion for member %s", member.id)
 
 
 def _evaluate_and_grade(sub, code_bundle: str, proposal_text: str = "") -> None:
@@ -264,7 +317,16 @@ def _call_ai_evaluate(capstone: Capstone, rubric_items: list[CapstoneRubricItem]
         "capstone_title": capstone.title,
         "brief": capstone.brief_text,
         "rubric_items": [
-            {"id": item.id, "text": item.text, "weight": item.weight, "category": item.category}
+            {
+                "id": item.id,
+                "text": item.text,
+                "checks": [
+                    {"id": str(c.get("id") or i), "text": c.get("text", "")}
+                    for i, c in enumerate(item.checks or [])
+                ],
+                "weight": item.weight,
+                "category": item.category,
+            }
             for item in rubric_items
         ],
         "code_bundle": code_bundle,
@@ -493,7 +555,23 @@ class CapstoneProposalViewSet(viewsets.ModelViewSet):
         return CapstoneProposal.objects.filter(student=user)
 
     def perform_create(self, serializer):
-        serializer.save(student=self.request.user)
+        """Solo → a per-student proposal. Team → ONE shared proposal attached to the
+        author's team (so a team proposes a single agreed idea, not N competing ones)."""
+        user = self.request.user
+        capstone = serializer.validated_data.get("capstone")
+        team = None
+        if capstone and capstone.team_mode == "team":
+            team = Team.objects.filter(capstone=capstone, members=user).first()
+            if not team:
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError("Join or form a team before proposing a project idea.")
+            if CapstoneProposal.objects.filter(capstone=capstone, team=team).exists():
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError("Your team already has a proposal.")
+        proposal = serializer.save(student=user, team=team)
+        # The author agrees by submitting; remaining team members must agree too
+        # before the proposal is the team's official one.
+        proposal.agreed_members.add(user)
 
     def create(self, request, *args, **kwargs):
         if _is_admin(request.user):
@@ -549,6 +627,36 @@ class CapstoneProposalViewSet(viewsets.ModelViewSet):
         except Exception:
             logger.exception("map_rubric AI call failed")
             return Response({"error": "AI service unavailable."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    def _team_proposal_or_error(self, pk, user):
+        """Look up a team proposal that `user` may act on (a member of its team).
+        Bypasses the per-author queryset so any teammate can agree/reject."""
+        proposal = CapstoneProposal.objects.filter(pk=pk).first()
+        if not proposal:
+            return None, Response({"error": "Proposal not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not (proposal.team_id and proposal.team.members.filter(pk=user.id).exists()):
+            return None, Response({"error": "Not a member of this proposal's team."},
+                                  status=status.HTTP_403_FORBIDDEN)
+        return proposal, None
+
+    @action(detail=True, methods=["post"], url_path="agree")
+    def agree(self, request, pk=None):
+        """POST /capstone/proposals/<id>/agree/ — a team member agrees to the shared idea."""
+        proposal, err = self._team_proposal_or_error(pk, request.user)
+        if err:
+            return err
+        proposal.agreed_members.add(request.user)
+        return Response(CapstoneProposalSerializer(proposal).data)
+
+    @action(detail=True, methods=["post"], url_path="reject-idea")
+    def reject_idea(self, request, pk=None):
+        """POST /capstone/proposals/<id>/reject-idea/ — a team member rejects the shared
+        idea, removing it so the team can draft a new one together."""
+        proposal, err = self._team_proposal_or_error(pk, request.user)
+        if err:
+            return err
+        proposal.delete()
+        return Response({"status": "rejected"})
 
 
 # ---------------------------------------------------------------------------
@@ -619,81 +727,90 @@ def my_submission(request, capstone_id):
     return Response(CapstoneSubmissionSerializer(sub).data)
 
 
-@api_view(["POST"])
-@permission_classes([permissions.IsAuthenticated])
-def submit_archive(request, capstone_id):
-    """
-    POST /capstone/<capstone_id>/submit/
-    Body: {code_bundle: str, proposal_id?: int}
-
-    1. Resolve enrollment.
-    2. Build effective rubric (solo → team_size=1).
-    3. Call AI service /capstone/evaluate (LLM returns binary pass/fail only).
-    4. Compute score deterministically in Django.
-    5. Save CapstoneSubmission.
-    6. Fire-and-forget: award XP, update concept mastery.
-    """
-    user = request.user
-    code_bundle = request.data.get("code_bundle", "")
-    if not code_bundle:
-        return Response({"error": "code_bundle required."}, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
-        capstone = Capstone.objects.prefetch_related("rubric_items").get(pk=capstone_id)
-    except Capstone.DoesNotExist:
-        return Response({"error": "Capstone not found."}, status=status.HTTP_404_NOT_FOUND)
-
-    from apps.courses.models import Enrollment
-    enrollment = Enrollment.objects.filter(student=user, course=capstone.course).first()
-    if not enrollment:
-        return Response({"error": "Not enrolled in this course."}, status=status.HTTP_403_FORBIDDEN)
-
-    # Resolve proposal (optional for admin_defined capstones)
-    proposal = None
-    proposal_id = request.data.get("proposal_id")
-    proposal_text = ""
-    if proposal_id:
-        try:
-            proposal = CapstoneProposal.objects.get(pk=proposal_id, student=user)
-            proposal_text = f"{proposal.title}\n{proposal.description}"
-        except CapstoneProposal.DoesNotExist:
-            return Response({"error": "Proposal not found."}, status=status.HTTP_404_NOT_FOUND)
-
-    # Resolve team + size-scaled rubric (Batch 3).
-    # Solo → team_size=1 → core-only; full team → core+stretch.
-    team = Team.objects.filter(capstone=capstone, members=user).first()
-    team_size = team.members.count() if team else 1
-    rubric_items = _get_effective_rubric(capstone, team_size)
-    if not rubric_items:
-        return Response({"error": "No rubric items defined."}, status=status.HTTP_400_BAD_REQUEST)
-
-    # Create submission in evaluating state. Stamp grading_started_at so that a
-    # process death mid-grade is detectable by recover_stuck_grades (an archive
-    # submission has no repo to re-read, so recovery fails it for re-submit).
-    sub = CapstoneSubmission.objects.create(
-        capstone=capstone,
-        enrollment=enrollment,
-        proposal=proposal,
-        team=team,
-        status="evaluating",
-        grading_started_at=dj_timezone.now(),
-    )
-
-    # Synchronous grade (archive submit is a one-shot; acceptable to block).
-    # Deterministic score computed in Python; LLM only judges pass/fail.
-    _evaluate_and_grade(sub, code_bundle, proposal_text)
-    sub.refresh_from_db()
-
-    http_status = (
-        status.HTTP_201_CREATED if sub.status == "completed"
-        else status.HTTP_503_SERVICE_UNAVAILABLE
-    )
-    return Response(CapstoneSubmissionSerializer(sub).data, status=http_status)
+# NOTE: the old paste-a-code-bundle path (submit_archive / POST .../submit/) was
+# removed. It bypassed the repo + CI-green integrity model (a student could paste
+# arbitrary code), so the single submission surface is now the provisioned repo
+# graded at its CI-passed work-branch HEAD (submit_for_grading / submit_from_repo).
+# The shared deterministic evaluator (_evaluate_and_grade) is still used by the
+# repo grading worker.
 
 
 # ---------------------------------------------------------------------------
 # GitHub integration views
 # ---------------------------------------------------------------------------
+
+def _invite_collaborator(org: str, repo_name: str, username: str, hdrs: dict) -> None:
+    """Best-effort: invite a GitHub user to the repo with push access."""
+    if not username:
+        return
+    try:
+        requests.put(
+            f"https://api.github.com/repos/{org}/{repo_name}/collaborators/{username}",
+            json={"permission": "push"}, headers=hdrs, timeout=15,
+        )
+    except Exception:
+        logger.exception("collaborator invite failed for %s", username)
+
+
+def _create_capstone_repo(capstone, repo_name: str, org: str, hdrs: dict,
+                          invite_usernames, seed_author: str) -> str:
+    """Create a PRIVATE repo (template or blank), protect main (required 'ci'
+    check), invite every collaborator, create the 'work' branch, and seed the
+    standardized CI workflow. Returns repo_url; raises RuntimeError on create."""
+    if capstone.github_template_repo:
+        owner, template = capstone.github_template_repo.split("/", 1)
+        create_resp = requests.post(
+            f"https://api.github.com/repos/{owner}/{template}/generate",
+            json={"owner": org, "name": repo_name, "private": True}, headers=hdrs, timeout=30,
+        )
+    else:
+        create_resp = requests.post(
+            f"https://api.github.com/orgs/{org}/repos",
+            json={"name": repo_name, "private": True, "auto_init": True}, headers=hdrs, timeout=30,
+        )
+    if create_resp.status_code not in (200, 201):
+        raise RuntimeError(create_resp.text)
+    repo_url = create_resp.json().get("html_url", f"https://github.com/{org}/{repo_name}")
+
+    requests.put(
+        f"https://api.github.com/repos/{org}/{repo_name}/branches/main/protection",
+        json={
+            "required_status_checks": {"strict": True, "contexts": ["ci"]},
+            "enforce_admins": False,
+            "required_pull_request_reviews": None,
+            "restrictions": None,
+        },
+        headers=hdrs, timeout=15,
+    )
+
+    for username in {u for u in invite_usernames if u}:
+        _invite_collaborator(org, repo_name, username, hdrs)
+
+    branch = "work"
+    try:
+        from .capstone_git import ensure_branch
+        ensure_branch(repo_url, branch)
+    except Exception:
+        logger.exception("Could not pre-create work branch for %s", repo_name)
+
+    # Seed the standardized CI workflow onto the work branch (canonical wins; else
+    # a language default when no template repo provides one). Best-effort.
+    workflow = (capstone.ci_workflow or "").strip()
+    if not workflow and not capstone.github_template_repo:
+        from .ci_templates import generate_ci_workflow
+        workflow = generate_ci_workflow(capstone.language, capstone.run_command)
+    if workflow:
+        try:
+            from .capstone_git import commit as git_commit
+            git_commit(
+                repo_url=repo_url, branch=branch,
+                changed_files=[{"path": ".github/workflows/ci.yml", "content": workflow}],
+                message="ci: standardized course workflow", author_name=seed_author,
+            )
+        except Exception:
+            logger.exception("Could not seed CI workflow for %s", repo_name)
+    return repo_url
+
 
 @api_view(["POST"])
 @permission_classes([permissions.IsAuthenticated])
@@ -702,18 +819,16 @@ def provision_repo(request, capstone_id):
     POST /capstone/<capstone_id>/provision-repo/
     Body: {github_username: str}
 
-    Creates a PRIVATE repo from the capstone template under GITHUB_ORG, sets
-    branch protection on main, and invites the student as collaborator.
-    Private repos protect academic integrity (a passing repo is not publicly
-    copyable). Never returns the installation token to the client.
+    Solo: one PRIVATE repo per student. Team: ONE shared PRIVATE repo per TEAM —
+    every member is invited as a collaborator, so the team collaborates on a single
+    codebase (instead of each member getting a separate repo). Private repos protect
+    academic integrity; the installation token never reaches the client.
     """
     if not settings.GITHUB_ORG:
         return Response({"error": "GitHub integration not configured."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
     github_username = request.data.get("github_username", "").strip()
     if not github_username:
-        # Reuse the student's most recently used GitHub handle so they only ever
-        # type it once — every later capstone auto-provisions with no input.
         github_username = _last_github_username(request.user)
     if not github_username:
         return Response(
@@ -731,8 +846,59 @@ def provision_repo(request, capstone_id):
     if not enrollment:
         return Response({"error": "Not enrolled."}, status=status.HTTP_403_FORBIDDEN)
 
-    # Idempotent: if this student already has a provisioned repo for this capstone,
-    # return it instead of trying to create another (safe for auto-provision-on-start).
+    from .github_app import github_headers
+    org = settings.GITHUB_ORG
+
+    # ── Team mode: one shared repo per team ──────────────────────────────
+    if capstone.team_mode == "team":
+        team = Team.objects.filter(capstone=capstone, members=request.user).first()
+        if not team:
+            return Response(
+                {"error": "Form or join a team before provisioning a repo.", "reason": "no_team"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        if team.status == "forming":
+            return Response(
+                {"error": "Confirm your team (all members must accept) before provisioning the repo.",
+                 "reason": "team_unconfirmed"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        # Idempotent: team already has a repo → just ensure THIS member is invited
+        # and that they have a submission row pointing at it.
+        if team.repo_url:
+            repo_name = team.repo_url.rstrip("/").split("/")[-1]
+            try:
+                _invite_collaborator(org, repo_name, github_username, github_headers())
+            except Exception:
+                logger.exception("re-invite to team repo failed")
+            CapstoneSubmission.objects.update_or_create(
+                capstone=capstone, enrollment=enrollment,
+                defaults={"repo_url": team.repo_url, "branch": team.branch,
+                          "team": team, "github_username": github_username, "status": "pending"},
+            )
+            return Response({"repo_url": team.repo_url, "repo_name": repo_name,
+                             "branch": team.branch, "already_provisioned": True})
+
+        repo_name = f"capstone-{capstone_id}-team-{team.id}"
+        invites = [github_username] + [_last_github_username(m) for m in team.members.all()]
+        try:
+            hdrs = github_headers()
+            repo_url = _create_capstone_repo(capstone, repo_name, org, hdrs, invites, github_username)
+        except Exception:
+            logger.exception("team provision_repo failed for capstone %s", capstone_id)
+            return Response({"error": "GitHub provisioning failed."}, status=status.HTTP_502_BAD_GATEWAY)
+
+        team.repo_url = repo_url
+        team.branch = "work"
+        team.save(update_fields=["repo_url", "branch"])
+        CapstoneSubmission.objects.update_or_create(
+            capstone=capstone, enrollment=enrollment,
+            defaults={"repo_url": repo_url, "branch": "work", "team": team,
+                      "github_username": github_username, "status": "pending"},
+        )
+        return Response({"repo_url": repo_url, "repo_name": repo_name, "branch": "work"})
+
+    # ── Solo mode: one repo per student ──────────────────────────────────
     existing = CapstoneSubmission.objects.filter(
         capstone=capstone, enrollment=enrollment
     ).exclude(repo_url="").first()
@@ -744,106 +910,20 @@ def provision_repo(request, capstone_id):
             "already_provisioned": True,
         })
 
-    from .github_app import github_headers
-
     repo_name = f"capstone-{capstone_id}-{request.user.username}"
-    org = settings.GITHUB_ORG
-
     try:
         hdrs = github_headers()
-
-        # 1. Create repo from template (or blank if no template set)
-        if capstone.github_template_repo:
-            owner, template = capstone.github_template_repo.split("/", 1)
-            create_resp = requests.post(
-                f"https://api.github.com/repos/{owner}/{template}/generate",
-                json={"owner": org, "name": repo_name, "private": True},
-                headers=hdrs,
-                timeout=30,
-            )
-        else:
-            create_resp = requests.post(
-                f"https://api.github.com/orgs/{org}/repos",
-                json={"name": repo_name, "private": True, "auto_init": True},
-                headers=hdrs,
-                timeout=30,
-            )
-
-        if create_resp.status_code not in (200, 201):
-            return Response({"error": create_resp.json()}, status=status.HTTP_502_BAD_GATEWAY)
-
-        repo_data = create_resp.json()
-        repo_url = repo_data.get("html_url", f"https://github.com/{org}/{repo_name}")
-
-        # 2. Branch protection on main
-        requests.put(
-            f"https://api.github.com/repos/{org}/{repo_name}/branches/main/protection",
-            json={
-                "required_status_checks": {"strict": True, "contexts": ["ci"]},
-                "enforce_admins": False,
-                "required_pull_request_reviews": None,
-                "restrictions": None,
-            },
-            headers=hdrs,
-            timeout=15,
-        )
-
-        # 3. Invite student as collaborator with push access
-        requests.put(
-            f"https://api.github.com/repos/{org}/{repo_name}/collaborators/{github_username}",
-            json={"permission": "push"},
-            headers=hdrs,
-            timeout=15,
-        )
-
-        # 4. Create the 'work' feature branch (students never commit to main)
-        branch = "work"
-        try:
-            from .capstone_git import ensure_branch
-            ensure_branch(repo_url, branch)
-        except Exception:
-            logger.exception("Could not pre-create work branch for %s", repo_name)
-
-        # 4b. Seed the STANDARDIZED CI workflow onto the work branch so the
-        # required "ci" check runs identically for every student. The canonical
-        # ci_workflow wins; otherwise — only when no template repo already
-        # provides CI — generate a language-appropriate default (this also fixes
-        # the blank-repo case where the required "ci" check could never run).
-        # Best-effort: provisioning still succeeds if the seed commit fails.
-        workflow = (capstone.ci_workflow or "").strip()
-        if not workflow and not capstone.github_template_repo:
-            from .ci_templates import generate_ci_workflow
-            workflow = generate_ci_workflow(capstone.language, capstone.run_command)
-        if workflow:
-            try:
-                from .capstone_git import commit as git_commit
-                git_commit(
-                    repo_url=repo_url,
-                    branch=branch,
-                    changed_files=[{"path": ".github/workflows/ci.yml", "content": workflow}],
-                    message="ci: standardized course workflow",
-                    author_name=github_username,
-                )
-            except Exception:
-                logger.exception("Could not seed CI workflow for %s", repo_name)
-
-        # 5. Persist a submission stub so the workspace can resolve the repo
-        CapstoneSubmission.objects.update_or_create(
-            capstone=capstone,
-            enrollment=enrollment,
-            defaults={
-                "repo_url": repo_url,
-                "branch": branch,
-                "github_username": github_username,
-                "status": "pending",
-            },
-        )
-
-        return Response({"repo_url": repo_url, "repo_name": repo_name, "branch": branch})
-
+        repo_url = _create_capstone_repo(capstone, repo_name, org, hdrs, [github_username], github_username)
     except Exception:
         logger.exception("provision_repo failed for capstone %s", capstone_id)
         return Response({"error": "GitHub provisioning failed."}, status=status.HTTP_502_BAD_GATEWAY)
+
+    CapstoneSubmission.objects.update_or_create(
+        capstone=capstone, enrollment=enrollment,
+        defaults={"repo_url": repo_url, "branch": "work",
+                  "github_username": github_username, "status": "pending"},
+    )
+    return Response({"repo_url": repo_url, "repo_name": repo_name, "branch": "work"})
 
 
 @api_view(["POST"])
@@ -992,9 +1072,23 @@ def _resolve_submission(user, capstone_id) -> tuple:
     except Capstone.DoesNotExist:
         return None, None, Response({"error": "Capstone not found."}, status=status.HTTP_404_NOT_FOUND)
 
-    sub = CapstoneSubmission.objects.filter(
-        capstone_id=capstone_id, enrollment__student=user
-    ).first()
+    sub = None
+    # Team mode: any member resolves the team's single shared submission/repo.
+    if capstone.team_mode == "team":
+        team = Team.objects.filter(capstone=capstone, members=user).first()
+        if team:
+            sub = (CapstoneSubmission.objects
+                   .filter(capstone=capstone, team=team).exclude(repo_url="").first())
+            # Fall back to the team's own repo_url if a submission row isn't keyed
+            # to the team yet (e.g. provisioned by another member).
+            if not sub and team.repo_url:
+                sub = (CapstoneSubmission.objects
+                       .filter(capstone=capstone, enrollment__student=user).first())
+    if sub is None:
+        sub = CapstoneSubmission.objects.filter(
+            capstone_id=capstone_id, enrollment__student=user
+        ).first()
+
     if not sub or not sub.repo_url:
         return None, capstone, Response(
             {"error": "No repo provisioned yet. Provision your repo first."},
@@ -1399,6 +1493,93 @@ def my_team(request, capstone_id):
     if not team:
         return Response({"team": None})
     return Response(TeamSerializer(team).data)
+
+
+def _requeue_student(capstone, user):
+    """Put a student back into the waiting queue with a fresh fill window,
+    preserving their declined-pairs list."""
+    from .matchmaking import DEFAULT_FILL_WINDOW
+    MatchmakingQueueEntry.objects.update_or_create(
+        capstone=capstone, student=user,
+        defaults={"status": "waiting", "team": None,
+                  "fill_window_expires_at": dj_timezone.now() + DEFAULT_FILL_WINDOW},
+    )
+
+
+def _record_mutual_declines(capstone, decliner_id, other_ids):
+    """Remember that `decliner` and each `other` declined each other, so the
+    matchmaker won't re-propose that pairing."""
+    entries = {e.student_id: e for e in MatchmakingQueueEntry.objects.filter(
+        capstone=capstone, student_id__in=[decliner_id, *other_ids])}
+    de = entries.get(decliner_id)
+    if de is not None:
+        de.declined_user_ids = sorted(set(de.declined_user_ids or []) | set(other_ids))
+        de.save(update_fields=["declined_user_ids"])
+    for oid in other_ids:
+        oe = entries.get(oid)
+        if oe is not None:
+            oe.declined_user_ids = sorted(set(oe.declined_user_ids or []) | {decliner_id})
+            oe.save(update_fields=["declined_user_ids"])
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def accept_match(request, team_id):
+    """POST /capstone/team/<id>/accept/ — confirm a proposed team. Once every
+    member accepts, the team becomes active."""
+    team, err = _team_for_member(team_id, request.user)
+    if err:
+        return err
+    if team.status != "forming":
+        return Response(TeamSerializer(team).data)  # already resolved
+    team.confirmed_members.add(request.user)
+    member_ids = set(team.members.values_list("id", flat=True))
+    confirmed_ids = set(team.confirmed_members.values_list("id", flat=True))
+    if member_ids and member_ids <= confirmed_ids:
+        team.status = "active"
+        team.save(update_fields=["status"])
+    return Response(TeamSerializer(team).data)
+
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def decline_match(request, team_id):
+    """POST /capstone/team/<id>/decline/ — decline a proposed team. The decliner
+    is removed and re-queued (and won't be re-paired with these teammates). If
+    fewer than two members remain, the team disbands and the rest are re-queued."""
+    team, err = _team_for_member(team_id, request.user)
+    if err:
+        return err
+    if team.status != "forming":
+        return Response({"error": "This team is already confirmed; leave it instead."},
+                        status=status.HTTP_409_CONFLICT)
+
+    user = request.user
+    capstone = team.capstone
+    other_ids = list(team.members.exclude(pk=user.id).values_list("id", flat=True))
+    _record_mutual_declines(capstone, user.id, other_ids)
+
+    team.members.remove(user)
+    team.confirmed_members.remove(user)
+    _requeue_student(capstone, user)
+
+    remaining = list(team.members.all())
+    if len(remaining) < 2:
+        for m in remaining:
+            _requeue_student(capstone, m)
+        team.members.clear()
+        team.confirmed_members.clear()
+        team.status = "disbanded"
+        team.save(update_fields=["status"])
+
+    # Best-effort: try to re-form teams from the refreshed queue.
+    try:
+        from .matchmaking import process_queue
+        process_queue(capstone, force=False)
+    except Exception:
+        logger.exception("re-process after decline failed")
+
+    return Response({"status": "declined"})
 
 
 @api_view(["POST"])

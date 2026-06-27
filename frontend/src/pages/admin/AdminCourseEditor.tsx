@@ -1395,6 +1395,7 @@ export default function AdminCourseEditor() {
     try {
       const created = await createRubricItem(capstone.id, {
         text: 'New criterion',
+        checks: [],
         category: 'core',
         clo: null,
         concept: null,
@@ -1427,6 +1428,7 @@ export default function AdminCourseEditor() {
       try {
         await createRubricItem(capstone.id, {
           text: draft.text,
+          checks: draft.checks ?? [],
           category: draft.category as 'core' | 'stretch',
           clo: null,
           concept: null,

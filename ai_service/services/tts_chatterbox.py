@@ -240,7 +240,7 @@ class ChatterboxTurboService:
 
     @staticmethod
     def get_preset_voices() -> dict:
-        return {"dr_nova": "chatterbox-turbo"}
+        return {"learnpal": "chatterbox-turbo"}
 
     @staticmethod
     def get_supported_styles() -> list[str]:

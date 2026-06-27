@@ -325,6 +325,28 @@ async def tutor_synthesize_audio(request: TutorSynthesizeAudioRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class ReactionSynthesizeRequest(BaseModel):
+    text: str = Field(..., description="Quip text to synthesize")
+    emotion: Optional[str] = Field(default=None, description="A2F delivery emotion (e.g. excited, happy, sad)")
+    voice: Optional[str] = Field(default=None, description="TTS voice; defaults to LearnPal's voice")
+
+
+@router.post("/synthesize-reaction")
+async def tutor_synthesize_reaction(request: ReactionSynthesizeRequest):
+    """Synthesize a short, session-less voiceline + A2F blendshapes for the
+    avatar's playful reactions. Used by the offline-demo bake script to pre-
+    render the easter-egg quips in LearnPal's real voice with lip-sync.
+    """
+    voice = request.voice or "en-US-GuyNeural"
+    try:
+        audio_base64 = await _synthesize_audio(request.text, voice, request.emotion)
+        blendshapes = await _generate_blendshapes(request.text, voice, request.emotion)
+        return {"success": True, "audio_base64": audio_base64, "blendshapes": blendshapes}
+    except Exception as e:
+        logger.error(f"Reaction synthesis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Repeat / Clarification ───────────────────────────────────────────
 
 # Extra TTS rate applied in verbatim repeat mode to make delivery slower/clearer.
@@ -571,7 +593,7 @@ async def _synthesize_audio(
     """Synthesize speech and return base64-encoded MP3.
 
     If *student_emotion* is provided the TTS rate and pitch are adjusted
-    so Dr. Nova's delivery mirrors the adaptive tone the LLM text already
+    so LearnPal's delivery mirrors the adaptive tone the LLM text already
     carries. Overridden by permanent pace if set by student intent.
     """
     try:

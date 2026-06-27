@@ -2,9 +2,17 @@ import api from './api';
 
 // ---- Shared types ----
 
+export interface RubricCheck {
+    id?: string;
+    text: string;
+}
+
 export interface CapstoneRubricItem {
     id: number;
     text: string;
+    // Atomic binary sub-checks (criterion passes iff all pass). May be empty for
+    // legacy criteria authored before hierarchical decomposition.
+    checks: RubricCheck[];
     category: 'core' | 'stretch';
     clo: number | null;
     concept: number | null;
@@ -41,6 +49,7 @@ export interface CapstoneProposal {
     capstone: number;
     student: number;
     student_username: string;
+    team: number | null;
     title: string;
     description: string;
     planned_features: string[];
@@ -49,6 +58,9 @@ export interface CapstoneProposal {
     confidence_score: number | null;
     submitted_at: string;
     reviewed_at: string | null;
+    // Team-mode agreement: which members have agreed, and whether all have.
+    agreed_member_ids: number[];
+    fully_agreed: boolean;
 }
 
 export interface CapstoneSubmission {
@@ -56,10 +68,18 @@ export interface CapstoneSubmission {
     capstone: number;
     enrollment: number;
     proposal: number | null;
+    team?: number | null;
     repo_url: string;
     latest_commit_sha: string;
     github_username: string;
-    results: Record<string, { passed: boolean; weight: number; evidence: string }>;
+    results: Record<string, {
+        passed: boolean;
+        weight: number;
+        evidence: string;
+        checks?: Record<string, { text: string; passed: boolean; evidence: string }>;
+        checks_passed?: number;
+        checks_total?: number;
+    }>;
     score: number | null;
     verdict: 'pending' | 'pass' | 'fail';
     feedback: string;
@@ -70,6 +90,7 @@ export interface CapstoneSubmission {
 
 export interface RubricDraft {
     text: string;
+    checks?: { text: string }[];
     category: string;
     weight: number;
     min_team_size: number;
@@ -194,6 +215,25 @@ export async function submitProposal(
     return resp.data;
 }
 
+/** The authenticated student's proposals (own + their team's shared one). */
+export async function getMyProposals(): Promise<CapstoneProposal[]> {
+    const resp = await api.get<CapstoneProposal[] | { results: CapstoneProposal[] }>('/capstone/proposals/');
+    const data = resp.data;
+    return Array.isArray(data) ? data : data.results ?? [];
+}
+
+/** A team member agrees to the team's shared proposal. */
+export async function agreeProposal(proposalId: number): Promise<CapstoneProposal> {
+    const resp = await api.post<CapstoneProposal>(`/capstone/proposals/${proposalId}/agree/`, {});
+    return resp.data;
+}
+
+/** A team member rejects the shared idea, removing it so the team can redraft. */
+export async function rejectProposalIdea(proposalId: number): Promise<{ status: string }> {
+    const resp = await api.post<{ status: string }>(`/capstone/proposals/${proposalId}/reject-idea/`, {});
+    return resp.data;
+}
+
 export async function approveProposal(
     proposalId: number,
     approvalStatus: 'approved' | 'rejected',
@@ -226,18 +266,6 @@ export async function getMySubmission(capstoneId: number): Promise<CapstoneSubmi
     } catch {
         return null;
     }
-}
-
-export async function submitArchive(
-    capstoneId: number,
-    codeBundle: string,
-    proposalId?: number,
-): Promise<CapstoneSubmission> {
-    const resp = await api.post<CapstoneSubmission>(
-        `/capstone/capstones/${capstoneId}/submit/`,
-        { code_bundle: codeBundle, proposal_id: proposalId },
-    );
-    return resp.data;
 }
 
 /**
@@ -346,8 +374,23 @@ export interface Team {
     name: string;
     members: number[];
     member_usernames: string[];
-    status: string;
+    confirmed_member_ids: number[];
+    // Usernames of members who haven't yet accepted a proposed ('forming') team.
+    awaiting_confirmation: string[];
+    status: string; // 'forming' (proposed, awaiting accepts) | 'active' | 'disbanded' | ...
+    repo_url?: string;
+    branch?: string;
     created_at: string;
+}
+
+export async function acceptMatch(teamId: number): Promise<Team> {
+    const resp = await api.post<Team>(`/capstone/team/${teamId}/accept/`, {});
+    return resp.data;
+}
+
+export async function declineMatch(teamId: number): Promise<{ status: string }> {
+    const resp = await api.post<{ status: string }>(`/capstone/team/${teamId}/decline/`, {});
+    return resp.data;
 }
 
 // ---- Part A: read ----

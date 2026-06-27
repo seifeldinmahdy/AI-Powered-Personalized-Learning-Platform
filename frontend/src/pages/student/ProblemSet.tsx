@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router';
 import Editor from '@monaco-editor/react';
+import { defineCodexTheme, CODEX_MONACO_THEME, CODEX_MONACO_FONT } from '../../lib/monacoTheme';
 import { toast } from 'sonner';
 import {
     generateProblemSet,
@@ -27,6 +28,7 @@ import {
 } from 'lucide-react';
 import { CapstoneStartCTA } from '../../components/CapstoneStartCTA';
 import { TypewriterLoader } from '../../components/personifai/TypewriterLoader';
+import { PathwayDrawer } from '../../components/PathwayDrawer';
 
 const PROBLEM_SET_LOADING_MESSAGES = [
     'Crafting your problem set...',
@@ -93,6 +95,10 @@ export default function ProblemSet() {
     const [codeMap, setCodeMap] = useState<Record<string, string>>({});
     const [results, setResults] = useState<Record<string, EvaluationResult>>({});
     const [solutionShown, setSolutionShown] = useState<Record<string, boolean>>({});
+    // Reveal-answer confirmation: viewing the solution locks the question (no more
+    // submissions), so we warn first unless the student opted out ("don't show again").
+    const [pendingReveal, setPendingReveal] = useState<string | null>(null);
+    const [dontWarnReveal, setDontWarnReveal] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [expandedSummary, setExpandedSummary] = useState<string | null>(null);
     const [regenerating, setRegenerating] = useState(false);
@@ -366,6 +372,29 @@ export default function ProblemSet() {
         setSolutionShown(p => ({ ...p, [qid]: true }));
     }
 
+    // Entry point for the "show possible answer" button: warn first (unless the
+    // student turned the warning off), since revealing locks the question.
+    const REVEAL_WARN_KEY = 'ps_hide_reveal_warning';
+    function requestShowSolution(qid: string) {
+        let optedOut = false;
+        try { optedOut = localStorage.getItem(REVEAL_WARN_KEY) === '1'; } catch { /* ignore */ }
+        if (optedOut) {
+            showSolutionForQuestion(qid);
+        } else {
+            setDontWarnReveal(false);
+            setPendingReveal(qid);
+        }
+    }
+
+    function confirmReveal() {
+        if (!pendingReveal) return;
+        if (dontWarnReveal) {
+            try { localStorage.setItem(REVEAL_WARN_KEY, '1'); } catch { /* ignore */ }
+        }
+        showSolutionForQuestion(pendingReveal);
+        setPendingReveal(null);
+    }
+
     /* ── loading / error states ────────────────────────────── */
 
     if (loading) {
@@ -409,6 +438,9 @@ export default function ProblemSet() {
                     <button onClick={() => navigate(-1)} className="t-label" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                         <ArrowLeft size={15} /> BACK
                     </button>
+                    {courseId && sessionNumber && (
+                        <PathwayDrawer courseId={courseId} currentSessionNumber={Number(sessionNumber)} activeStage="problem-set" />
+                    )}
                     <span style={{ flex: 1 }} />
                     <span className="t-label" style={{ color: 'var(--accent-primary)' }}>PROBLEM SET · COMPLETE</span>
                 </div>
@@ -567,6 +599,9 @@ export default function ProblemSet() {
                     <button onClick={() => navigate(-1)} className="t-label" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                         <ArrowLeft size={15} /> BACK
                     </button>
+                    {courseId && sessionNumber && (
+                        <PathwayDrawer courseId={courseId} currentSessionNumber={Number(sessionNumber)} activeStage="problem-set" />
+                    )}
                     <div>
                         <div className="t-label" style={{ color: 'var(--accent-primary)' }}>PROBLEM SET</div>
                         <div className="t-mono steel" style={{ marginTop: 2 }}>{locState.sessionTitle || locState.lessonTitle || 'Session practice'}</div>
@@ -758,7 +793,7 @@ export default function ProblemSet() {
                                 <>
                                     {!solutionShown[current!.id] ? (
                                         <button
-                                            onClick={() => showSolutionForQuestion(current!.id)}
+                                            onClick={() => requestShowSolution(current!.id)}
                                             className="btn btn-ghost-dark"
                                             style={{ marginTop: 16, width: '100%', justifyContent: 'center' }}
                                         >
@@ -790,13 +825,15 @@ export default function ProblemSet() {
                                     <Editor
                                         height="100%"
                                         language={current!.language || 'python'}
-                                        theme="vs-dark"
+                                        theme={CODEX_MONACO_THEME}
+                                        beforeMount={defineCodexTheme}
                                         value={codeMap[current!.id] ?? current!.starter_code}
                                         options={{
                                             minimap: { enabled: false },
                                             scrollBeyondLastLine: false,
                                             fontSize: 13,
                                             lineNumbersMinChars: 3,
+                                            fontFamily: CODEX_MONACO_FONT,
                                             padding: { top: 8, bottom: 8 },
                                             wordWrap: 'on',
                                             automaticLayout: true,
@@ -814,13 +851,15 @@ export default function ProblemSet() {
                                     <Editor
                                         height="100%"
                                         language={current!.language || 'python'}
-                                        theme="vs-dark"
+                                        theme={CODEX_MONACO_THEME}
+                                        beforeMount={defineCodexTheme}
                                         value={result.example_solution}
                                         options={{
                                             minimap: { enabled: false },
                                             scrollBeyondLastLine: false,
                                             fontSize: 13,
                                             lineNumbersMinChars: 3,
+                                            fontFamily: CODEX_MONACO_FONT,
                                             padding: { top: 8, bottom: 8 },
                                             wordWrap: 'on',
                                             automaticLayout: true,
@@ -845,7 +884,8 @@ export default function ProblemSet() {
                                 <Editor
                                     height="100%"
                                     language={current!.language || 'python'}
-                                    theme="vs-dark"
+                                    theme={CODEX_MONACO_THEME}
+                                    beforeMount={defineCodexTheme}
                                     value={codeMap[current!.id] ?? current!.starter_code}
                                     onChange={(v) => setCodeMap(p => ({ ...p, [current!.id]: v ?? '' }))}
                                     options={{
@@ -853,6 +893,7 @@ export default function ProblemSet() {
                                         scrollBeyondLastLine: false,
                                         fontSize: 14,
                                         lineNumbersMinChars: 3,
+                                        fontFamily: CODEX_MONACO_FONT,
                                         padding: { top: 12, bottom: 12 },
                                         wordWrap: 'on',
                                         automaticLayout: true,
@@ -898,6 +939,39 @@ export default function ProblemSet() {
                     </div>
                 </div>
             </div>
+
+            {/* Reveal-answer confirmation — viewing the solution locks the question */}
+            {pendingReveal && (
+                <div
+                    onClick={() => setPendingReveal(null)}
+                    style={{ position: 'fixed', inset: 0, zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, background: 'rgba(19,16,13,0.55)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
+                    role="dialog"
+                    aria-modal="true"
+                >
+                    <div
+                        onClick={e => e.stopPropagation()}
+                        style={{ width: '100%', maxWidth: 460, background: 'var(--bg-primary)', border: '1px solid var(--hairline)', borderRadius: 14, padding: 24, display: 'flex', flexDirection: 'column', gap: 14, boxShadow: '0 24px 80px rgba(0,0,0,0.35)' }}
+                    >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <AlertTriangle size={20} style={{ color: 'var(--accent-warm)' }} />
+                            <h3 className="t-heading" style={{ fontSize: 18, color: 'var(--text-primary)', margin: 0 }}>Reveal the answer?</h3>
+                        </div>
+                        <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                            If you view the possible answer, this question will be <strong style={{ color: 'var(--text-primary)' }}>locked</strong> — you won't be able to attempt or submit it again.
+                        </p>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={dontWarnReveal} onChange={e => setDontWarnReveal(e.target.checked)} />
+                            <span className="t-body" style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Don't show this again</span>
+                        </label>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 }}>
+                            <button onClick={() => setPendingReveal(null)} className="btn btn-ghost-dark" style={{ padding: '10px 18px' }}>CANCEL</button>
+                            <button onClick={confirmReveal} className="btn btn-red" style={{ padding: '10px 18px' }}>
+                                <Eye size={16} /> REVEAL ANSWER
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

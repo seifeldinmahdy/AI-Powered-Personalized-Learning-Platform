@@ -3,6 +3,8 @@ import type { CSSProperties } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import {
   ArrowLeft,
+  ArrowUp,
+  ArrowDown,
   BookOpen,
   CheckCircle2,
   ChevronDown,
@@ -23,7 +25,7 @@ import {
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Nova3DAvatar } from '../../components/Nova3DAvatar';
+import { LearnPal3DAvatar } from '../../components/LearnPal3DAvatar';
 import { TypewriterLoader } from '../../components/personifai/TypewriterLoader';
 import { getLesson } from '../../services/lessons';
 import {
@@ -41,6 +43,10 @@ import {
   type SuggestedQuestion,
 } from '../../services/codingLabs';
 import type { BlendshapeData } from '../../services/tutor';
+import { PathwayDrawer } from '../../components/PathwayDrawer';
+import Editor from '@monaco-editor/react';
+import { defineCodexTheme, CODEX_MONACO_THEME, CODEX_MONACO_FONT } from '../../lib/monacoTheme';
+import { highlightCode, CODE_COLORS } from '../../lib/highlightCode';
 
 
 const LAB_STYLES = `.coding-lab-page {
@@ -297,6 +303,13 @@ const LAB_STYLES = `.coding-lab-page {
   color: var(--lab-code-text);
 }
 
+.task-editor {
+  border: 1px solid var(--lab-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--lab-code-bg);
+}
+
 .cell-output {
   margin-top: 12px;
   border: 1px solid var(--lab-border);
@@ -513,14 +526,43 @@ button:disabled {
 
 .lab-tutor-avatar {
   flex: 0 0 auto;
+  position: relative;
   border: 3px solid var(--lab-surface);
   border-radius: 999px;
-  background: linear-gradient(135deg, #4c6fff, #10b981);
+  /* Resting state: solid brand blue (matches the live-session avatar + logo). */
+  background: var(--lab-primary);
   box-shadow: 0 14px 30px color-mix(in oklab, var(--text-primary) 18%, transparent);
 }
 
+/* The blue→green gradient sits on an overlay that cross-fades via opacity, so it
+   eases in/out instead of popping. Solid blue stays beneath as the base. */
+.lab-tutor-avatar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-image: linear-gradient(135deg, var(--lab-primary), var(--lab-success), var(--lab-primary));
+  background-size: 200% 200%;
+  opacity: 0;
+  transition: opacity 450ms ease;
+  pointer-events: none;
+  z-index: 0;
+}
+.lab-tutor-avatar > div { position: relative; z-index: 1; }
+
+/* Speaking: fade the gradient in (+ flow), and bob the whole avatar. */
 .lab-tutor-bubble.speaking .lab-tutor-avatar {
   animation: lab-tutor-speak 1.2s ease-in-out infinite;
+}
+.lab-tutor-bubble.speaking .lab-tutor-avatar::before {
+  opacity: 1;
+  animation: lab-orb-flow 2.4s ease infinite;
+}
+
+@keyframes lab-orb-flow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
 .lab-tutor-bubble.speaking .lab-tutor-body {
@@ -691,6 +733,34 @@ button:disabled {
   color: var(--lab-on-primary);
   font-weight: 800;
   cursor: pointer;
+}
+
+/* Floating "back to the current step" pill, shown when the active cell scrolls
+   out of view. */
+.lab-return-cell {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 45;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border: 1px solid var(--lab-primary);
+  border-radius: 999px;
+  background: var(--lab-primary);
+  color: var(--lab-on-primary);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 8px 24px color-mix(in oklab, var(--lab-primary) 40%, transparent);
+  animation: lab-return-pop 200ms ease;
+}
+.lab-return-cell:hover { filter: brightness(1.05); }
+@keyframes lab-return-pop {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
 .completion-overlay {
@@ -1412,7 +1482,11 @@ export default function CodingLab() {
   const [finalizing, setFinalizing] = useState(false);
   const [bubblePosition, setBubblePosition] = useState({ top: 140, left: 900 });
   const [bubbleText, setBubbleText] = useState('');
+  // isNarrating = audio is actually playing (drives the avatar's mouth). Kept
+  // separate from isPreparing (generating audio/blendshapes) so the avatar
+  // doesn't flap its mouth before the audio + face data are ready.
   const [isNarrating, setIsNarrating] = useState(false);
+  const [isPreparing, setIsPreparing] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isInitialPositioned, setIsInitialPositioned] = useState(false);
   const [narrationSide, setNarrationSide] = useState<'left' | 'right'>('right');
@@ -1433,6 +1507,9 @@ export default function CodingLab() {
   const [fabPos, setFabPos] = useState({ x: -1, y: -1 });
 
   const cellRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const headerRef = useRef<HTMLElement | null>(null);
+  // When the active cell scrolls out of view, show an arrow to jump back to it.
+  const [returnArrow, setReturnArrow] = useState<'up' | 'down' | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const narrationTokenRef = useRef(0);
   const isPausedRef = useRef(false);
@@ -1579,7 +1656,11 @@ export default function CodingLab() {
       const rect = node.getBoundingClientRect();
       const bubbleWidth = 340;
       const gap = 24;
-      const top = Math.max(96, Math.min(window.innerHeight - 280, rect.top + 12));
+      // Never let the bubble slide under the sticky header (+ any global nav above
+      // it) — clamp its top to the header's bottom edge.
+      const headerBottom = headerRef.current?.getBoundingClientRect().bottom ?? 88;
+      const minTop = headerBottom + 12;
+      const top = Math.max(minTop, Math.min(window.innerHeight - 280, rect.top + 12));
 
       // The grid layout ensures there is a wide empty column precisely where the tutor goes
       let left = narrationSide === 'right'
@@ -1590,6 +1671,12 @@ export default function CodingLab() {
       left = Math.max(16, Math.min(left, window.innerWidth - bubbleWidth - 16));
 
       setBubblePosition({ top, left });
+
+      // Show a "jump back to the current step" arrow when that cell is scrolled
+      // out of view (above the header or below the viewport).
+      if (rect.bottom < headerBottom + 8) setReturnArrow('up');
+      else if (rect.top > window.innerHeight - 8) setReturnArrow('down');
+      else setReturnArrow(null);
 
       if (!isInitialPositioned) {
         setTimeout(() => setIsInitialPositioned(true), 50);
@@ -1624,8 +1711,9 @@ export default function CodingLab() {
     audio.src = `data:audio/mpeg;base64,${base64}`;
     setIsPaused(false);
     isPausedRef.current = false;
-    audio.play().then(() => setIsNarrating(true)).catch(() => {
+    audio.play().then(() => { setIsNarrating(true); setIsPreparing(false); }).catch(() => {
       setIsNarrating(false);
+      setIsPreparing(false);
       toast.error('Click Start narration again if your browser blocked audio.');
     });
   }
@@ -1655,7 +1743,11 @@ export default function CodingLab() {
 
     const token = ++narrationTokenRef.current;
     setNarratingCellId(cell.id);
-    setIsNarrating(true);
+    // Preparing — NOT narrating yet. The avatar only starts moving its mouth once
+    // the audio actually plays (see setAudioBase64), so it can't flap silently
+    // while the audio + blendshapes are still being generated.
+    setIsPreparing(true);
+    setIsNarrating(false);
     setIsPaused(false);
     isPausedRef.current = false;
     hasSwappedRef.current = false;
@@ -1674,12 +1766,14 @@ export default function CodingLab() {
       setBubbleText(response.text);
       setBlendshapes(response.blendshapes || null);
       if (response.audio_base64) {
-        setAudioBase64(response.audio_base64);
+        setAudioBase64(response.audio_base64);  // flips isNarrating on once playing
       } else {
+        setIsPreparing(false);
         setIsNarrating(false);
         toast.error('The tutor generated text but audio was unavailable.');
       }
     } catch (err) {
+      setIsPreparing(false);
       setIsNarrating(false);
       toast.error(err instanceof Error ? err.message : 'Could not explain this lab cell.');
     }
@@ -1907,10 +2001,17 @@ export default function CodingLab() {
         style={{ display: 'none' }}
       />
 
-      <header className="lab-header">
+      <header className="lab-header" ref={headerRef}>
         <button className="lab-icon-button" onClick={() => navigate(`/course/${resolvedCourseId}/session/${resolvedSessionId}`)}>
           <ArrowLeft size={18} />
         </button>
+        {resolvedCourseId && resolvedSessionId && (
+          <PathwayDrawer
+            courseId={String(resolvedCourseId)}
+            currentSessionNumber={Number(resolvedSessionId)}
+            activeStage="lab"
+          />
+        )}
         <div>
           <span className="lab-kicker">Notebook Lab</span>
           <h1>{lab.title}</h1>
@@ -1925,7 +2026,7 @@ export default function CodingLab() {
 
       <aside className={`lab-tutor-bubble ${isNarrating ? 'speaking' : ''}`} style={bubbleStyle}>
         <div className="lab-tutor-avatar">
-          <Nova3DAvatar
+          <LearnPal3DAvatar
             isSpeaking={isNarrating}
             emotion={isNarrating ? 'excited' : 'happy'}
             blendshapeData={blendshapes}
@@ -1944,25 +2045,36 @@ export default function CodingLab() {
               {isPaused ? <Play size={12} /> : <Pause size={12} />}
               {isPaused ? 'Resume' : 'Pause'}
             </button>
-            <button onClick={() => explainCell(activeCell)} disabled={isNarrating}>
-              {isNarrating && narratingCellId === current?.id ? <Loader2 size={12} className="lab-spin" /> : <Volume2 size={12} />}
-              {isNarrating && narratingCellId === current?.id ? 'Speaking' : 'Explain'}
+            <button onClick={() => explainCell(activeCell)} disabled={isNarrating || isPreparing}>
+              {(isPreparing || isNarrating) && narratingCellId === current?.id ? <Loader2 size={12} className="lab-spin" /> : <Volume2 size={12} />}
+              {isPreparing && narratingCellId === current?.id ? 'Preparing…' : isNarrating && narratingCellId === current?.id ? 'Speaking' : 'Explain'}
             </button>
-            <button onClick={() => explainCell(activeCell + 1)} disabled={activeCell >= lab.cells.length - 1 || isNarrating}>
+            <button onClick={() => explainCell(activeCell + 1)} disabled={activeCell >= lab.cells.length - 1 || isNarrating || isPreparing}>
               Next cell
             </button>
           </div>
         </div>
       </aside>
 
+      {returnArrow && (
+        <button
+          className="lab-return-cell"
+          onClick={() => cellRefs.current[activeCell]?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+          title="Back to the current step"
+        >
+          {returnArrow === 'up' ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
+          Current cell
+        </button>
+      )}
+
       <main className={`lab-shell tutor-side-${narrationSide}`}>
         <section className="lab-main">
           <div className="lab-intro">
             <BookOpen size={18} />
             <p>{lab.intro}</p>
-            <button className="lab-guide-button" onClick={() => explainCell(0)} disabled={isNarrating}>
-              <Volume2 size={15} />
-              Start Lab Walkthrough
+            <button className="lab-guide-button" onClick={() => explainCell(0)} disabled={isNarrating || isPreparing}>
+              {isPreparing ? <Loader2 size={15} className="lab-spin" /> : <Volume2 size={15} />}
+              {isPreparing ? 'Preparing…' : 'Start Lab Walkthrough'}
             </button>
           </div>
 
@@ -1997,7 +2109,7 @@ export default function CodingLab() {
 
                       {cell.cell_type === 'code' && cell.code && (
                         <>
-                          <pre className="code-block"><code>{cell.code}</code></pre>
+                          <pre className="code-block"><code style={{ color: CODE_COLORS.plain }}>{highlightCode(cell.code)}</code></pre>
                           {cell.expected_output && (
                             <div className="cell-output">
                               <span>Output</span>
@@ -2016,11 +2128,26 @@ export default function CodingLab() {
                       {cell.cell_type === 'task' && (
                         <div className="task-cell">
                           <p className="task-prompt">{cell.task_prompt}</p>
-                          <textarea
-                            value={taskCode[cell.id] ?? codeFor(cell)}
-                            onChange={(event) => setTaskCode((prev) => ({ ...prev, [cell.id]: event.target.value }))}
-                            spellCheck={false}
-                          />
+                          <div className="task-editor">
+                            <Editor
+                              height="240px"
+                              language="python"
+                              theme={CODEX_MONACO_THEME}
+                              beforeMount={defineCodexTheme}
+                              value={taskCode[cell.id] ?? codeFor(cell)}
+                              onChange={(v) => setTaskCode((prev) => ({ ...prev, [cell.id]: v ?? '' }))}
+                              options={{
+                                minimap: { enabled: false },
+                                scrollBeyondLastLine: false,
+                                fontSize: 13,
+                                lineNumbersMinChars: 3,
+                                fontFamily: CODEX_MONACO_FONT,
+                                padding: { top: 10, bottom: 10 },
+                                wordWrap: 'on',
+                                automaticLayout: true,
+                              }}
+                            />
+                          </div>
 
                           {cell.success_criteria && cell.success_criteria.length > 0 && (
                             <div className="criteria">

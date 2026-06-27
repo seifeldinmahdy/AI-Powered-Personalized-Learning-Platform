@@ -43,6 +43,9 @@ docker-compose.override.yml
 # Claude temp files
 tmpclaude-*
 
+# Offline exhibition demo (record/replay fixtures, baked site) — never tracked
+/demo/
+
 # Model Weights & Large Files
 ai_service/models/clean_question_model/
 *.safetensors

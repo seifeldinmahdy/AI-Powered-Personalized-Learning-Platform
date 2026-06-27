@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import type { CSSProperties } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import Editor from '@monaco-editor/react';
+import { defineCodexTheme, CODEX_MONACO_THEME, CODEX_MONACO_FONT } from '../../lib/monacoTheme';
 import { toast } from 'sonner';
 import {
     Loader2, ArrowLeft, GitCommit, Play, Sparkles, FileCode, X,
@@ -374,13 +375,15 @@ export default function CapstoneWorkspace() {
                             <Editor
                                 height="100%"
                                 language={active ? langForPath(active) : 'plaintext'}
-                                theme="vs-dark"
+                                theme={CODEX_MONACO_THEME}
+                                beforeMount={defineCodexTheme}
                                 value={activeFile.content}
                                 onChange={(v) => editActive(v ?? '')}
                                 options={{
                                     minimap: { enabled: false },
                                     scrollBeyondLastLine: false,
                                     fontSize: 14,
+                                    fontFamily: CODEX_MONACO_FONT,
                                     wordWrap: 'on',
                                     automaticLayout: true,
                                 }}

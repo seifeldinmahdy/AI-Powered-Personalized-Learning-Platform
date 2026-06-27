@@ -29,6 +29,7 @@ from schemas.capstone import (
     ExtractSpecResponse,
     MapProposalRequest,
     MapProposalResponse,
+    RubricCheckResult,
     RubricItemResult,
     CapstoneAssistRequest,
     CapstoneAssistResponse,
@@ -94,8 +95,12 @@ async def draft_core_criteria(req: DraftRubricRequest) -> DraftRubricResponse:
     """
     system = (
         "You are an expert software engineering instructor designing a capstone project rubric.\n"
-        "Each rubric criterion MUST be a binary yes/no question answerable by reading the submitted code.\n"
-        "Do NOT include scores, grades, or percentages — just criteria.\n"
+        "Decompose the project into criteria, and DECOMPOSE EACH CRITERION into 2-4 atomic "
+        "binary (yes/no) checks that a judge can verify by reading the submitted code. "
+        "Each check tests ONE concrete, observable thing (a function exists, input is validated, "
+        "a test covers X, errors are handled, etc.) so grading is grounded and explainable — "
+        "exactly like a problem-set rubric.\n"
+        "Do NOT include scores, grades, or percentages — just criteria and their checks.\n"
         "Respond with valid JSON only, no prose outside the JSON block."
     )
 
@@ -112,12 +117,16 @@ Brief: {req.brief}
 Spec mode: {req.spec_mode}
 {team_note}
 
-Generate 8–12 rubric criteria. Return JSON:
+Generate 8–12 rubric criteria, each decomposed into 2–4 atomic binary checks. Return JSON:
 ```json
 {{
   "rubric_items": [
     {{
-      "text": "<binary yes/no question>",
+      "text": "<high-level criterion, e.g. 'Implements the core domain model'>",
+      "checks": [
+        {{"text": "<atomic yes/no check, e.g. 'A class/struct models the primary entity'>"}},
+        {{"text": "<atomic yes/no check, e.g. 'Required fields are present and typed'>"}}
+      ],
       "category": "core",
       "weight": 1,
       "min_team_size": 1,
@@ -127,6 +136,7 @@ Generate 8–12 rubric criteria. Return JSON:
   ]
 }}
 ```
+- checks: 2–4 atomic, independently-verifiable yes/no checks per criterion
 - category: "core" (must-pass) or "stretch" (bonus)
 - weight: 1–3 (higher = more important)
 - min_team_size: 1 (all) or 2+ (team-only criteria)
@@ -155,7 +165,8 @@ async def extract_criteria_from_spec(req: ExtractSpecRequest) -> ExtractSpecResp
     """
     system = (
         "You are an expert at extracting verifiable software requirements.\n"
-        "Convert each functional requirement into a binary yes/no rubric question.\n"
+        "Convert each functional requirement into a rubric criterion, and decompose each "
+        "criterion into 2-4 atomic binary (yes/no) checks verifiable by reading the code.\n"
         "Respond with valid JSON only."
     )
 
@@ -174,12 +185,15 @@ Specification document:
 {req.spec_text[:6000]}
 ---
 
-Extract all verifiable requirements as binary rubric criteria. Return JSON:
+Extract all verifiable requirements as rubric criteria, each with 2–4 atomic binary checks. Return JSON:
 ```json
 {{
   "rubric_items": [
     {{
-      "text": "<binary yes/no question>",
+      "text": "<criterion>",
+      "checks": [
+        {{"text": "<atomic yes/no check>"}}
+      ],
       "category": "core",
       "weight": 1,
       "min_team_size": 1,
@@ -270,26 +284,39 @@ Evaluate coverage. Return JSON:
 # evaluate_capstone_rubric
 # ---------------------------------------------------------------------------
 
+# Code bundle bound (chars) for the judge prompt. Matches the repo-bundle cap on
+# the Django side (read_repo_bundle ~200 KB) so we no longer silently drop ~150 KB
+# of a real project; this is ~50k tokens, within the eval model's context.
+_EVAL_BUNDLE_MAX_CHARS = 200_000
+
+
 async def evaluate_capstone_rubric(req: CapstoneEvalRequest) -> CapstoneEvalResult:
     """
-    Judge the submitted code bundle against each rubric item.
+    Judge the submitted code bundle against each rubric item's ATOMIC CHECKS.
 
-    The LLM returns ONLY binary pass/fail + evidence quote per item.
-    NUMERIC SCORE IS NEVER COMPUTED OR RETURNED HERE — that happens in Django.
+    The LLM returns ONLY binary pass/fail + evidence quote per CHECK (or per
+    criterion for legacy no-check items). A criterion passes iff every check
+    passes. NUMERIC SCORE IS NEVER COMPUTED OR RETURNED HERE — Django does that.
     """
     system = (
         "You are a strict software engineering evaluator.\n"
-        "For each rubric criterion, answer YES (passed=true) or NO (passed=false) "
-        "based solely on evidence found in the submitted code.\n"
-        "Provide a SHORT evidence quote (≤ 2 sentences) from the code to justify each decision.\n"
+        "Each rubric criterion is decomposed into atomic binary checks. For EACH check, "
+        "answer YES (passed=true) or NO (passed=false) based solely on evidence found in "
+        "the submitted code — judge checks independently.\n"
+        "Provide a SHORT evidence quote (≤ 2 sentences) from the code for each check.\n"
         "Do NOT compute totals, percentages, scores, or grades.\n"
         "Respond with valid JSON only."
     )
 
-    criteria_json = json.dumps(
-        [{"id": item.id, "text": item.text} for item in req.rubric_items],
-        indent=2,
-    )
+    # Criteria with their checks. Legacy items (no checks) get one synthetic check
+    # equal to the criterion text, so the judge always works at the check level.
+    criteria_payload = []
+    for item in req.rubric_items:
+        checks = [{"id": c.id, "text": c.text} for c in item.checks]
+        if not checks:
+            checks = [{"id": "_all", "text": item.text}]
+        criteria_payload.append({"id": item.id, "text": item.text, "checks": checks})
+    criteria_json = json.dumps(criteria_payload, indent=2)
 
     proposal_section = (
         f"\nStudent proposal context:\n{req.proposal_text[:500]}\n"
@@ -297,16 +324,15 @@ async def evaluate_capstone_rubric(req: CapstoneEvalRequest) -> CapstoneEvalResu
         else ""
     )
 
-    # Truncate code bundle to avoid context overflow (~50k chars ≈ ~12k tokens)
-    code_preview = req.code_bundle[:50000]
-    if len(req.code_bundle) > 50000:
+    code_preview = req.code_bundle[:_EVAL_BUNDLE_MAX_CHARS]
+    if len(req.code_bundle) > _EVAL_BUNDLE_MAX_CHARS:
         code_preview += "\n... [truncated for length] ..."
 
     user = f"""
 Capstone: {req.capstone_title}
 Brief: {req.brief}
 {proposal_section}
-Rubric criteria to evaluate:
+Rubric criteria (each with atomic checks) to evaluate:
 {criteria_json}
 
 Submitted code:
@@ -314,12 +340,13 @@ Submitted code:
 {code_preview}
 ```
 
-For EACH criterion ID, return passed (true/false) and evidence (short quote or "not found"). Return JSON:
+For EACH criterion, return a result for EACH of its check ids: passed (true/false) and evidence
+(short quote or "not found"). Return JSON keyed by criterion id, then check id:
 ```json
 {{
   "results": {{
-    "1": {{"passed": true, "evidence": "Line 42: <code quote>"}},
-    "2": {{"passed": false, "evidence": "No test files found."}}
+    "1": {{"checks": {{"c1": {{"passed": true, "evidence": "Line 42: <quote>"}}, "c2": {{"passed": false, "evidence": "No validation."}}}}}},
+    "2": {{"checks": {{"_all": {{"passed": false, "evidence": "No test files found."}}}}}}
   }},
   "feedback": "Overall qualitative comment for the student. No score."
 }}
@@ -336,11 +363,21 @@ For EACH criterion ID, return passed (true/false) and evidence (short quote or "
             data = {}
         raw_results = data.get("results", {})
         results: dict[str, RubricItemResult] = {}
-        for item_id, val in raw_results.items():
-            results[str(item_id)] = RubricItemResult(
-                passed=bool(val.get("passed", False)),
-                evidence=str(val.get("evidence", "")),
-            )
+        for item in req.rubric_items:
+            key = str(item.id)
+            raw = raw_results.get(key) or raw_results.get(item.id) or {}
+            raw_checks = raw.get("checks", raw) if isinstance(raw, dict) else {}
+            wanted = [c.id for c in item.checks] or ["_all"]
+            checks: dict[str, RubricCheckResult] = {}
+            for cid in wanted:
+                cval = raw_checks.get(cid, {}) if isinstance(raw_checks, dict) else {}
+                checks[cid] = RubricCheckResult(
+                    passed=bool(cval.get("passed", False)),
+                    evidence=str(cval.get("evidence", "")),
+                )
+            item_passed = all(c.passed for c in checks.values()) if checks else False
+            evidence = "; ".join(c.evidence for c in checks.values() if c.evidence)[:500]
+            results[key] = RubricItemResult(passed=item_passed, evidence=evidence, checks=checks)
         return CapstoneEvalResult(
             results=results,
             feedback=data.get("feedback", ""),

@@ -22,6 +22,9 @@ interface SessionCheckpointProps {
     courseId: string;
     studentId: string;
     sessionNumber: number;
+    /** Live-session id, threaded to submit so the server can feed the result to
+     *  the tutor + session profiler. */
+    sessionId?: string;
     /** Called when the student finishes (after viewing results) or skips. */
     onClose: () => void;
     /** Called once a checkpoint has been scored (so the parent can record it). */
@@ -46,6 +49,7 @@ export function SessionCheckpoint({
     courseId,
     studentId,
     sessionNumber,
+    sessionId,
     onClose,
     onScored,
 }: SessionCheckpointProps) {
@@ -75,6 +79,7 @@ export function SessionCheckpoint({
                 student_id: studentId,
                 session_number: sessionNumber,
                 checkpoint_index: checkpointIndex,
+                session_id: sessionId,
             });
             setResult(res);
             setPhase('results');
@@ -85,7 +90,7 @@ export function SessionCheckpoint({
             );
             setPhase('quiz');
         }
-    }, [questions, answers, courseId, studentId, sessionNumber, checkpointIndex, onScored]);
+    }, [questions, answers, courseId, studentId, sessionNumber, checkpointIndex, sessionId, onScored]);
 
     // Per-topic breakdown for the results analysis, derived from the server's
     // authoritative per_topic_scores (falls back to deriving from per-question).

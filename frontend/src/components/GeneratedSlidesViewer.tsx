@@ -2,12 +2,23 @@ import { useEffect, useState } from 'react';
 import { Maximize2, Minimize2, ChevronLeft, ChevronRight, Eye, Copy, Check, Play, Terminal, Sparkles } from 'lucide-react';
 import type { GeneratedSlide, SlideContentItem, SlideCodeBlock } from '../services/pathway';
 import { VisualRenderer } from './VisualRenderer';
+import { highlightCode, CODE_COLORS } from '../lib/highlightCode';
 
 interface GeneratedSlidesViewerProps {
   slides: GeneratedSlide[];
   currentIndex: number;
   sessionTitle: string;
   onSlideChange?: (index: number) => void;
+  // Gated forward/back navigation. When provided, the arrows call these instead
+  // of onSlideChange directly, so the parent can run the concept-checkpoint gate
+  // (and keep the backend session in sync) on every move. Falls back to
+  // onSlideChange(±1) when not provided.
+  onRequestNext?: () => void;
+  onRequestPrev?: () => void;
+  // The furthest slide the student may jump to via the strip dots. Dots beyond
+  // this are inert (you can review what you've reached, but can't skip ahead
+  // past unseen material + its knowledge checks). Defaults to the last slide.
+  maxReachableIndex?: number;
   // When true, slide navigation is locked (the tutor is speaking): the arrows
   // and the slide-strip dots become non-interactive with a not-allowed cursor.
   navLocked?: boolean;
@@ -20,6 +31,9 @@ export function GeneratedSlidesViewer({
   currentIndex,
   sessionTitle,
   onSlideChange,
+  onRequestNext,
+  onRequestPrev,
+  maxReachableIndex,
   navLocked = false,
   isFullscreen = false,
   onFullscreenToggle,
@@ -35,13 +49,18 @@ export function GeneratedSlidesViewer({
 
   const handlePrev = () => {
     if (navLocked || atFirst) return;
-    onSlideChange?.(currentIndex - 1);
+    if (onRequestPrev) onRequestPrev();
+    else onSlideChange?.(currentIndex - 1);
   };
 
   const handleNext = () => {
     if (navLocked || atLast) return;
-    onSlideChange?.(currentIndex + 1);
+    if (onRequestNext) onRequestNext();
+    else onSlideChange?.(currentIndex + 1);
   };
+
+  // Furthest dot the student may jump to (defaults to "any" when unset).
+  const maxDot = maxReachableIndex ?? totalSlides - 1;
 
   // Hoverable-but-inert styling while locked (a `disabled` attribute would hide
   // the not-allowed cursor affordance).
@@ -120,13 +139,16 @@ export function GeneratedSlidesViewer({
               {slides.map((_, i) => {
                 const active = i === currentIndex;
                 const visited = i < currentIndex;
+                // Locked if it's ahead of the furthest reached slide — you can't
+                // jump past unseen material (and skip its knowledge checks).
+                const dotLocked = navLocked || i > maxDot;
                 return (
                   <button
                     key={i}
-                    onClick={navLocked ? undefined : () => onSlideChange?.(i)}
-                    aria-disabled={navLocked}
-                    title={lockTitle}
-                    style={{ width: active ? 24 : 6, height: 4, borderRadius: 0, border: 'none', padding: 0, cursor: navCursor, background: active ? 'var(--accent-primary)' : visited ? 'var(--steel-light)' : 'var(--steel)', opacity: navLocked ? (visited || active ? 0.5 : 0.25) : (visited || active ? 1 : 0.4), transition: 'width 200ms ease' }}
+                    onClick={dotLocked ? undefined : () => onSlideChange?.(i)}
+                    aria-disabled={dotLocked}
+                    title={i > maxDot ? 'Reach this slide with Next first' : lockTitle}
+                    style={{ width: active ? 24 : 6, height: 4, borderRadius: 0, border: 'none', padding: 0, cursor: dotLocked ? 'not-allowed' : navCursor, background: active ? 'var(--accent-primary)' : visited ? 'var(--steel-light)' : 'var(--steel)', opacity: navLocked ? (visited || active ? 0.5 : 0.25) : (i > maxDot ? 0.3 : (visited || active ? 1 : 0.4)), transition: 'width 200ms ease' }}
                   />
                 );
               })}
@@ -348,53 +370,6 @@ function ContentItemRenderer({ item }: { item: SlideContentItem }) {
 }
 
 // ── Code block rendering ───────────────────────────────────────
-
-// Minimal, dependency-free syntax highlighter (VS Code "Dark+" palette). Good
-// enough to make Python/JS snippets read like real code on a slide.
-const CODE_COLORS = {
-  comment: '#6A9955',
-  string: '#CE9178',
-  number: '#B5CEA8',
-  keyword: '#569CD6',
-  builtin: '#4EC9B0',
-  func: '#DCDCAA',
-  plain: '#D4D4D4',
-};
-
-const CODE_TOKEN_RE = new RegExp(
-  [
-    '(#[^\\n]*|//[^\\n]*)',                                   // 1 comment
-    '("(?:[^"\\\\]|\\\\.)*"|\'(?:[^\'\\\\]|\\\\.)*\'|`(?:[^`\\\\]|\\\\.)*`)', // 2 string
-    '\\b(\\d+(?:\\.\\d+)?)\\b',                               // 3 number
-    '\\b(def|class|return|if|elif|else|for|while|in|import|from|as|with|try|except|finally|raise|lambda|yield|pass|break|continue|and|or|not|is|None|True|False|const|let|var|function|new|typeof|async|await|of|export|default|this)\\b', // 4 keyword
-    '\\b(print|len|range|int|str|float|bool|list|dict|set|tuple|sum|max|min|map|filter|sorted|enumerate|zip|abs|round|open|input|console|Math|JSON|Array|Object)\\b', // 5 builtin
-    '([A-Za-z_]\\w*)(?=\\s*\\()',                             // 6 function call
-  ].join('|'),
-  'g',
-);
-
-function highlightCode(code: string): React.ReactNode[] {
-  const out: React.ReactNode[] = [];
-  let last = 0;
-  let key = 0;
-  let m: RegExpExecArray | null;
-  CODE_TOKEN_RE.lastIndex = 0;
-  while ((m = CODE_TOKEN_RE.exec(code)) !== null) {
-    if (m.index > last) out.push(code.slice(last, m.index));
-    const full = m[0];
-    const color = m[1] ? CODE_COLORS.comment
-      : m[2] ? CODE_COLORS.string
-      : m[3] ? CODE_COLORS.number
-      : m[4] ? CODE_COLORS.keyword
-      : m[5] ? CODE_COLORS.builtin
-      : CODE_COLORS.func;
-    out.push(<span key={key++} style={{ color }}>{full}</span>);
-    last = m.index + full.length;
-    if (m.index === CODE_TOKEN_RE.lastIndex) CODE_TOKEN_RE.lastIndex++; // guard zero-width
-  }
-  if (last < code.length) out.push(code.slice(last));
-  return out;
-}
 
 function CodeBlockRenderer({ code }: { code: SlideCodeBlock }) {
   const [ran, setRan] = useState(false);

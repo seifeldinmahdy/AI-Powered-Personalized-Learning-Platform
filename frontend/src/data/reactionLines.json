@@ -1,0 +1,9 @@
+{
+  "shake":   { "anim": "react-wobble", "emotion": "surprised", "face": "dizzy", "quips": ["Whoa, easy there!", "I'm getting dizzy!", "Stop shaking me!", "Wobble wobble!"] },
+  "throw":   { "anim": "react-pop",    "emotion": "excited",   "face": "dizzy", "quips": ["Wheee!", "To infinity!", "Catch me!", "Geronimooo!"] },
+  "corner":  { "anim": "react-sulk",   "emotion": "sad",       "face": "frown", "quips": ["Hey, why the corner?", "It's lonely over here.", "Did I do something wrong?"] },
+  "enlarge": { "anim": "react-pop",    "emotion": "excited",   "face": "laugh", "quips": ["Big brain mode!", "Now you can really see me!", "Bigger is better!"] },
+  "shrink":  { "anim": "react-pop",    "emotion": "happy",     "face": "frown", "quips": ["Aww, back to mini.", "Compact and cute!", "Pocket sized!"] },
+  "detach":  { "anim": "react-pop",    "emotion": "excited",   "face": "laugh", "quips": ["Freedom!", "I'm free!", "Let's roam around!"] },
+  "dock":    { "anim": "react-pop",    "emotion": "happy",     "quips": ["Back to work.", "Home sweet home.", "Okay, focusing now."] }
+}

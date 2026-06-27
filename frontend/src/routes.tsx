@@ -74,6 +74,8 @@ export const router = createBrowserRouter([
                 lazy: () => import("./pages/student/ProblemSet").then(m => ({ Component: m.default })),
             },
             { path: "profile", Component: Profile },
+            // Alias — /me also resolves to the student's own profile.
+            { path: "me", Component: Profile },
             { path: "survey/:courseId", Component: SurveyPage },
             { path: "course/:courseId/capstone", Component: CapstonePage },
             { path: "course/:courseId/capstone/workspace", Component: CapstoneWorkspace },

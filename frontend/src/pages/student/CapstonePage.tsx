@@ -3,17 +3,18 @@ import type { CSSProperties } from 'react';
 import { useParams, Link } from 'react-router';
 import { toast } from 'sonner';
 import {
-    Loader2, Github, Upload, CheckCircle, XCircle, Clock, AlertCircle,
+    Loader2, Github, CheckCircle, XCircle, Clock, AlertCircle,
     Code2, Users, UserPlus, UserMinus, PartyPopper, MessageSquare, Sparkles, RefreshCw,
 } from 'lucide-react';
 import {
-    getCapstoneForCourse, getMySubmission, submitArchive, submitFromRepo, provisionRepo,
-    submitProposal,
-    joinQueue, leaveQueue, getRecommendations, getMyTeam,
+    getCapstoneForCourse, getMySubmission, submitFromRepo, provisionRepo,
+    submitProposal, getMyProposals, agreeProposal, rejectProposalIdea,
+    joinQueue, leaveQueue, getRecommendations, getMyTeam, acceptMatch, declineMatch,
     getRoleAdvice, refreshRoleAdvice,
-    type Capstone, type CapstoneSubmission,
+    type Capstone, type CapstoneSubmission, type CapstoneProposal,
     type TeammateRec, type Team, type RoleAdvice,
 } from '../../services/capstone';
+import { useAuth } from '../../contexts/AuthContext';
 import { getCertificate, downloadCertificatePdf, type Certificate as CertificateData } from '../../services/certificate';
 import { Certificate } from '../../components/Certificate';
 
@@ -54,7 +55,7 @@ function ScoreMeter({ score }: { score: number | null }) {
     );
 }
 
-type Tab = 'overview' | 'submit' | 'repo' | 'team' | 'results';
+type Tab = 'overview' | 'repo' | 'team' | 'results';
 
 export default function CapstonePage() {
     const { courseId } = useParams<{ courseId: string }>();
@@ -65,13 +66,10 @@ export default function CapstonePage() {
     const [loading, setLoading] = useState(true);
     const [tab, setTab] = useState<Tab>('overview');
 
-    // Archive submit state
-    const [codeBundle, setCodeBundle] = useState('');
+    // Submit state (single repo-based submission flow)
     const [submitting, setSubmitting] = useState(false);
 
-    // Repo submit state
-    const [repoUrl, setRepoUrl] = useState('');
-    const [commitSha, setCommitSha] = useState('');
+    // Repo provisioning state
     const [githubUsername, setGithubUsername] = useState('');
     const [provisioning, setProvisioning] = useState(false);
     const [provisionedUrl, setProvisionedUrl] = useState('');
@@ -83,10 +81,15 @@ export default function CapstonePage() {
     const [submittingProposal, setSubmittingProposal] = useState(false);
 
     // Team / matchmaking state
+    const { user } = useAuth();
     const [team, setTeam] = useState<Team | null>(null);
     const [recs, setRecs] = useState<TeammateRec[]>([]);
     const [inQueue, setInQueue] = useState(false);
     const [queueBusy, setQueueBusy] = useState(false);
+    const [matchBusy, setMatchBusy] = useState(false);
+    // The team's shared proposal (or the student's own, solo) for agreement state.
+    const [myProposal, setMyProposal] = useState<CapstoneProposal | null>(null);
+    const [proposalBusy, setProposalBusy] = useState(false);
 
     // Advisory team role suggestions
     const [roleAdvice, setRoleAdvice] = useState<RoleAdvice | null>(null);
@@ -106,6 +109,7 @@ export default function CapstonePage() {
             setCapstone(cap);
             if (cap) {
                 getMySubmission(cap.id).then(sub => setSubmission(sub));
+                getMyProposals().then(ps => setMyProposal(ps.find(p => p.capstone === cap.id) ?? null)).catch(() => {});
                 if (cap.team_mode === 'team') {
                     getMyTeam(cap.id).then(t => setTeam(t)).catch(() => {});
                 }
@@ -226,21 +230,6 @@ export default function CapstonePage() {
         }
     }
 
-    async function handleSubmitArchive() {
-        if (!capstone || !codeBundle.trim()) return;
-        setSubmitting(true);
-        try {
-            const result = await submitArchive(capstone.id, codeBundle);
-            setSubmission(result);
-            setTab('results');
-            toast.success('Submission evaluated!');
-        } catch {
-            toast.error('Submission failed. Please try again.');
-        } finally {
-            setSubmitting(false);
-        }
-    }
-
     async function handleProvisionRepo() {
         if (!capstone || !githubUsername.trim()) return;
         setProvisioning(true);
@@ -277,17 +266,86 @@ export default function CapstonePage() {
         if (!capstone) return;
         setSubmittingProposal(true);
         try {
-            await submitProposal({
+            const created = await submitProposal({
                 capstone: capstone.id,
                 title: proposalTitle,
                 description: proposalDesc,
                 planned_features: proposalFeatures.split('\n').map(s => s.trim()).filter(Boolean),
             });
-            toast.success('Proposal submitted! Waiting for admin review.');
-        } catch {
-            toast.error('Proposal submission failed.');
+            setMyProposal(created);
+            toast.success(
+                capstone.team_mode === 'team'
+                    ? 'Proposal drafted — your teammates need to agree before it’s final.'
+                    : 'Proposal submitted! Waiting for admin review.',
+            );
+        } catch (e: unknown) {
+            const err = e as { response?: { data?: { detail?: string } } };
+            toast.error(err?.response?.data?.detail || 'Proposal submission failed.');
         } finally {
             setSubmittingProposal(false);
+        }
+    }
+
+    async function handleAgreeProposal() {
+        if (!myProposal) return;
+        setProposalBusy(true);
+        try {
+            const updated = await agreeProposal(myProposal.id);
+            setMyProposal(updated);
+            toast.success(updated.fully_agreed ? 'Everyone agreed — proposal is final!' : 'You agreed to the proposal.');
+        } catch {
+            toast.error('Could not record your agreement.');
+        } finally {
+            setProposalBusy(false);
+        }
+    }
+
+    async function handleRejectIdea() {
+        if (!myProposal) return;
+        setProposalBusy(true);
+        try {
+            await rejectProposalIdea(myProposal.id);
+            setMyProposal(null);
+            toast.success('Idea rejected — your team can draft a new one.');
+        } catch {
+            toast.error('Could not reject the idea.');
+        } finally {
+            setProposalBusy(false);
+        }
+    }
+
+    async function handleAcceptMatch() {
+        if (!team) return;
+        setMatchBusy(true);
+        try {
+            const updated = await acceptMatch(team.id);
+            setTeam(updated);
+            toast.success(updated.status === 'active' ? 'Team confirmed — you’re all set!' : 'Accepted. Waiting on your teammates.');
+        } catch {
+            toast.error('Could not accept the team.');
+        } finally {
+            setMatchBusy(false);
+        }
+    }
+
+    async function handleDeclineMatch() {
+        if (!team || !capstone) return;
+        setMatchBusy(true);
+        try {
+            await declineMatch(team.id);
+            // Back to the queue; refresh team (likely null) + recommendations.
+            const [t, r] = await Promise.all([
+                getMyTeam(capstone.id).catch(() => null),
+                getRecommendations(capstone.id).catch(() => []),
+            ]);
+            setTeam(t);
+            setRecs(r);
+            setInQueue(true);
+            toast.success('Declined — you’re back in the queue and won’t be re-matched with them.');
+        } catch {
+            toast.error('Could not decline the team.');
+        } finally {
+            setMatchBusy(false);
         }
     }
 
@@ -311,8 +369,7 @@ export default function CapstonePage() {
 
     const tabs: { id: Tab; label: string }[] = [
         { id: 'overview', label: 'Overview' },
-        { id: 'submit', label: 'Submit Code' },
-        { id: 'repo', label: 'GitHub Repo' },
+        { id: 'repo', label: 'Repo & Submit' },
         ...(capstone.team_mode === 'team' ? [{ id: 'team' as Tab, label: 'Team' }] : []),
         { id: 'results', label: 'Results' },
     ];
@@ -358,18 +415,58 @@ export default function CapstonePage() {
                             <Code2 size={16} /> OPEN IN-PLATFORM EDITOR
                         </Link>
 
-                        {/* Proposal form for student_proposed capstones */}
+                        {/* Proposal form / agreement for student_proposed capstones */}
                         {capstone.spec_mode === 'student_proposed' && (
-                            <div style={cardStyle}>
-                                <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)' }}>Submit Your Proposal</h2>
-                                <input className="input" placeholder="Project title" value={proposalTitle} onChange={e => setProposalTitle(e.target.value)} />
-                                <textarea className="input" style={{ minHeight: 80, resize: 'vertical' }} placeholder="Description" value={proposalDesc} onChange={e => setProposalDesc(e.target.value)} />
-                                <textarea className="input" style={{ minHeight: 60, resize: 'vertical' }} placeholder="Planned features (one per line)" value={proposalFeatures} onChange={e => setProposalFeatures(e.target.value)} />
-                                <button onClick={handleSubmitProposal} disabled={submittingProposal || !proposalTitle || !proposalDesc} className="btn btn-red" style={{ padding: '10px 16px', width: 'fit-content' }}>
-                                    {submittingProposal ? <Loader2 size={16} className="animate-spin" /> : null}
-                                    SUBMIT PROPOSAL
-                                </button>
-                            </div>
+                            myProposal ? (
+                                <div style={cardStyle}>
+                                    <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)' }}>Your Proposal</h2>
+                                    <div>
+                                        <div className="t-body" style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{myProposal.title}</div>
+                                        <p className="t-body" style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: '4px 0 0' }}>{myProposal.description}</p>
+                                    </div>
+                                    {capstone.team_mode === 'team' && team && (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--hairline)', paddingTop: 12 }}>
+                                            <div className="t-label" style={{ color: myProposal.fully_agreed ? 'var(--accent-success)' : 'var(--accent-warm)' }}>
+                                                {myProposal.fully_agreed ? 'ALL MEMBERS AGREED' : 'AWAITING TEAM AGREEMENT'}
+                                            </div>
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                                {team.members.map((mid, i) => (
+                                                    <span key={mid} className="tag-steel">
+                                                        {team.member_usernames[i]}{myProposal.agreed_member_ids.includes(mid) ? ' · agreed' : ' · pending'}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                            {user && !myProposal.agreed_member_ids.includes(user.id) && !myProposal.fully_agreed && (
+                                                <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                                                    <button onClick={handleAgreeProposal} disabled={proposalBusy} className="btn btn-red" style={{ padding: '10px 16px' }}>
+                                                        {proposalBusy ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />} AGREE
+                                                    </button>
+                                                    <button onClick={handleRejectIdea} disabled={proposalBusy} className="btn btn-ghost-dark" style={{ padding: '10px 16px' }}>
+                                                        <XCircle size={16} /> REJECT IDEA
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <div style={cardStyle}>
+                                    <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)' }}>Submit Your Proposal</h2>
+                                    {capstone.team_mode === 'team' && (
+                                        <p className="t-body" style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0 }}>
+                                            This is a team project — your team submits <strong style={{ color: 'var(--text-primary)' }}>one shared proposal</strong>.
+                                            Form your team first (Team tab); any member can draft the idea, and <strong style={{ color: 'var(--text-primary)' }}>every member must agree</strong> before it’s final.
+                                        </p>
+                                    )}
+                                    <input className="input" placeholder="Project title" value={proposalTitle} onChange={e => setProposalTitle(e.target.value)} />
+                                    <textarea className="input" style={{ minHeight: 80, resize: 'vertical' }} placeholder="Description" value={proposalDesc} onChange={e => setProposalDesc(e.target.value)} />
+                                    <textarea className="input" style={{ minHeight: 60, resize: 'vertical' }} placeholder="Planned features (one per line)" value={proposalFeatures} onChange={e => setProposalFeatures(e.target.value)} />
+                                    <button onClick={handleSubmitProposal} disabled={submittingProposal || !proposalTitle || !proposalDesc} className="btn btn-red" style={{ padding: '10px 16px', width: 'fit-content' }}>
+                                        {submittingProposal ? <Loader2 size={16} className="animate-spin" /> : null}
+                                        {capstone.team_mode === 'team' ? 'SUBMIT TEAM PROPOSAL' : 'SUBMIT PROPOSAL'}
+                                    </button>
+                                </div>
+                            )
                         )}
 
                         {/* Rubric overview */}
@@ -382,13 +479,24 @@ export default function CapstonePage() {
                                     {capstone.rubric_items
                                         .filter(i => i.min_team_size <= 1)
                                         .map(item => (
-                                            <li key={item.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                                                <span style={{ marginTop: 2, color: item.category === 'core' ? 'var(--accent-primary)' : 'var(--steel-light)' }}>
-                                                    {item.category === 'core' ? '●' : '◌'}
-                                                </span>
-                                                <span className="t-body" style={{ fontSize: 14, color: 'var(--text-primary)' }}>{item.text}</span>
-                                                {item.weight > 1 && (
-                                                    <span className="t-mono steel" style={{ marginLeft: 'auto', flexShrink: 0 }}>×{item.weight}</span>
+                                            <li key={item.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                                                    <span style={{ marginTop: 2, color: item.category === 'core' ? 'var(--accent-primary)' : 'var(--steel-light)' }}>
+                                                        {item.category === 'core' ? '●' : '◌'}
+                                                    </span>
+                                                    <span className="t-body" style={{ fontSize: 14, color: 'var(--text-primary)' }}>{item.text}</span>
+                                                    {item.weight > 1 && (
+                                                        <span className="t-mono steel" style={{ marginLeft: 'auto', flexShrink: 0 }}>×{item.weight}</span>
+                                                    )}
+                                                </div>
+                                                {item.checks && item.checks.length > 0 && (
+                                                    <ul style={{ listStyle: 'none', margin: 0, padding: '0 0 0 20px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                                        {item.checks.map((c, ci) => (
+                                                            <li key={ci} className="t-body" style={{ fontSize: 12.5, color: 'var(--text-secondary)', display: 'flex', gap: 6 }}>
+                                                                <span style={{ color: 'var(--steel-light)' }}>—</span>{c.text}
+                                                            </li>
+                                                        ))}
+                                                    </ul>
                                                 )}
                                             </li>
                                         ))}
@@ -407,70 +515,95 @@ export default function CapstonePage() {
                     </div>
                 )}
 
-                {/* Submit code (archive) */}
-                {tab === 'submit' && (
-                    <div style={cardStyle}>
-                        <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)' }}>Paste Your Code</h2>
-                        <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>
-                            Paste your complete code (all files concatenated, or a ZIP as base64) for AI evaluation.
-                        </p>
-                        <textarea
-                            className="input"
-                            style={{ minHeight: 300, resize: 'vertical', fontFamily: 'var(--ff-mono)', fontSize: 13 }}
-                            placeholder="# Paste your code here..."
-                            value={codeBundle}
-                            onChange={e => setCodeBundle(e.target.value)}
-                        />
-                        <button onClick={handleSubmitArchive} disabled={submitting || !codeBundle.trim()} className="btn btn-red" style={{ padding: '10px 18px', width: 'fit-content' }}>
-                            {submitting ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
-                            {submitting ? 'EVALUATING…' : 'SUBMIT & EVALUATE'}
-                        </button>
-                    </div>
-                )}
+                {/* GitHub repo + single submission flow */}
+                {tab === 'repo' && (() => {
+                    const repoUrl = provisionedUrl || submission?.repo_url || '';
+                    const hasRepo = Boolean(repoUrl);
+                    return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                            <div style={cardStyle}>
+                                <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <Github size={20} /> {capstone.team_mode === 'team' ? 'Your Team Repo' : 'Your Repo'}
+                                </h2>
+                                <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>
+                                    {capstone.team_mode === 'team'
+                                        ? "We'll create one private GitHub repo for your whole team and invite every member as a collaborator — you all work on the same codebase."
+                                        : "We'll create a private GitHub repo from the course template under the course org and invite you as a collaborator."}
+                                    {' '}You commit on the <code>work</code> branch and CI runs automatically.
+                                </p>
+                                {!hasRepo && (
+                                    <>
+                                        <input className="input" placeholder="Your GitHub username" value={githubUsername} onChange={e => setGithubUsername(e.target.value)} />
+                                        <button onClick={handleProvisionRepo} disabled={provisioning || !githubUsername.trim()} className="btn btn-red" style={{ padding: '10px 16px', width: 'fit-content' }}>
+                                            {provisioning ? <Loader2 size={16} className="animate-spin" /> : <Github size={16} />}
+                                            {provisioning ? 'CREATING…' : 'GET MY REPO'}
+                                        </button>
+                                    </>
+                                )}
+                                {hasRepo && (
+                                    <a href={repoUrl} target="_blank" rel="noopener noreferrer" className="t-body" style={{ fontSize: 13, color: 'var(--accent-primary)', textDecoration: 'underline' }}>
+                                        {repoUrl}
+                                    </a>
+                                )}
+                            </div>
 
-                {/* GitHub repo flow */}
-                {tab === 'repo' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                        <div style={cardStyle}>
-                            <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <Github size={20} /> Provision Your Repo
-                            </h2>
-                            <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>
-                                We'll create a public GitHub repo from the course template under the course org and invite you as a collaborator.
-                            </p>
-                            <input className="input" placeholder="Your GitHub username" value={githubUsername} onChange={e => setGithubUsername(e.target.value)} />
-                            <button onClick={handleProvisionRepo} disabled={provisioning || !githubUsername.trim()} className="btn btn-red" style={{ padding: '10px 16px', width: 'fit-content' }}>
-                                {provisioning ? <Loader2 size={16} className="animate-spin" /> : <Github size={16} />}
-                                {provisioning ? 'CREATING…' : 'GET MY REPO'}
-                            </button>
-                            {provisionedUrl && (
-                                <a href={provisionedUrl} target="_blank" rel="noopener noreferrer" className="t-body" style={{ fontSize: 13, color: 'var(--accent-primary)', textDecoration: 'underline' }}>
-                                    {provisionedUrl}
-                                </a>
-                            )}
+                            <div style={cardStyle}>
+                                <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)' }}>Submit for Grading</h2>
+                                <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>
+                                    When you're ready, submit your <code>work</code> branch. Grading runs on the exact
+                                    commit at its head — but only once <strong style={{ color: 'var(--text-primary)' }}>CI is green</strong> on it.
+                                    Your <code>main</code> branch is never touched, and your code is read transiently and never stored.
+                                </p>
+                                <button onClick={handleSubmitFromRepo} disabled={submitting || !hasRepo} className="btn btn-red" style={{ padding: '10px 16px', width: 'fit-content' }}>
+                                    {submitting ? <Loader2 size={16} className="animate-spin" /> : <Github size={16} />}
+                                    {submitting ? 'SUBMITTING…' : 'SUBMIT FOR GRADING'}
+                                </button>
+                                {!hasRepo && (
+                                    <p className="t-mono steel" style={{ fontSize: 12 }}>Provision your repo first.</p>
+                                )}
+                            </div>
                         </div>
-
-                        <div style={cardStyle}>
-                            <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)' }}>Record a Commit</h2>
-                            <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>
-                                After pushing to your repo, paste the repo URL and commit SHA to record your submission.
-                                CI will run automatically and results will appear in the Results tab.
-                            </p>
-                            <input className="input" placeholder="https://github.com/org/repo-name" value={repoUrl} onChange={e => setRepoUrl(e.target.value)} />
-                            <input className="input" style={{ fontFamily: 'var(--ff-mono)' }} placeholder="Commit SHA (40 characters)" value={commitSha} onChange={e => setCommitSha(e.target.value)} />
-                            <button onClick={handleSubmitFromRepo} disabled={submitting || !repoUrl || !commitSha} className="btn btn-red" style={{ padding: '10px 16px', width: 'fit-content' }}>
-                                {submitting ? <Loader2 size={16} className="animate-spin" /> : <Github size={16} />}
-                                RECORD SUBMISSION
-                            </button>
-                        </div>
-                    </div>
-                )}
+                    );
+                })()}
 
                 {/* Team / matchmaking */}
                 {tab === 'team' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                         {team ? (
                             <>
+                                {/* Proposed team — confirm or decline (no force-assign) */}
+                                {team.status === 'forming' && (
+                                    <div style={{ ...cardStyle, border: '1px solid var(--accent-primary)' }}>
+                                        <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                            <UserPlus size={20} style={{ color: 'var(--accent-primary)' }} /> You’ve been matched
+                                        </h2>
+                                        <p className="t-body" style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                                            We matched you with these teammates based on complementary strengths. The team
+                                            is confirmed only when <strong style={{ color: 'var(--text-primary)' }}>everyone accepts</strong>.
+                                            If you decline, you’ll go back to the queue and we won’t pair you with them again.
+                                        </p>
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                            {team.member_usernames.map(u => (
+                                                <span key={u} className="tag-steel">
+                                                    {u}{team.awaiting_confirmation.includes(u) ? ' · pending' : ' · accepted'}
+                                                </span>
+                                            ))}
+                                        </div>
+                                        {user && !team.confirmed_member_ids.includes(user.id) ? (
+                                            <div style={{ display: 'flex', gap: 10 }}>
+                                                <button onClick={handleAcceptMatch} disabled={matchBusy} className="btn btn-red" style={{ padding: '10px 18px' }}>
+                                                    {matchBusy ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />} ACCEPT TEAM
+                                                </button>
+                                                <button onClick={handleDeclineMatch} disabled={matchBusy} className="btn btn-ghost-dark" style={{ padding: '10px 18px' }}>
+                                                    <UserMinus size={16} /> DECLINE
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <p className="t-mono steel" style={{ fontSize: 12 }}>You accepted — waiting on {team.awaiting_confirmation.length} teammate(s).</p>
+                                        )}
+                                    </div>
+                                )}
+
                                 <div style={cardStyle}>
                                     <h2 className="t-heading" style={{ fontSize: 17, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
                                         <Users size={20} /> {team.name || `Team ${team.id}`}
@@ -654,9 +787,22 @@ export default function CapstonePage() {
                                                                     {item.category}
                                                                 </span>
                                                             </div>
-                                                            {r?.evidence && (
+                                                            {r?.checks && Object.keys(r.checks).length > 0 ? (
+                                                                <ul style={{ listStyle: 'none', margin: '6px 0 0 24px', padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                                                    {Object.entries(r.checks).map(([cid, chk]) => (
+                                                                        <li key={cid} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                                                                            {chk.passed
+                                                                                ? <CheckCircle size={13} style={{ color: 'var(--accent-success)', flexShrink: 0, marginTop: 2 }} />
+                                                                                : <XCircle size={13} style={{ color: 'var(--error-red)', flexShrink: 0, marginTop: 2 }} />}
+                                                                            <span className="t-body" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                                                                                {chk.text}{chk.evidence ? ` — ${chk.evidence}` : ''}
+                                                                            </span>
+                                                                        </li>
+                                                                    ))}
+                                                                </ul>
+                                                            ) : (r?.evidence && (
                                                                 <p className="t-body" style={{ margin: '4px 0 0 24px', fontSize: 12, color: 'var(--text-secondary)' }}>{r.evidence}</p>
-                                                            )}
+                                                            ))}
                                                         </li>
                                                     );
                                                 })}

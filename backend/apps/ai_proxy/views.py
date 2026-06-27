@@ -68,6 +68,44 @@ def _body_without_student_id(request) -> dict:
     return {k: v for k, v in data.items() if k != "student_id"}
 
 
+def _session_lock_response(request, course_id, session_number):
+    """Enforce sequential session access server-side.
+
+    A session is unlocked only up to the enrollment's ``current_session_number``
+    (advanced by the completion service when the prior session is finished). This
+    is the authoritative lock: the browser can navigate to any session URL, but
+    it cannot fetch that session's chunks/slides until it's actually reached.
+
+    Returns a 403 ``Response`` when the session is locked, else ``None`` (allow).
+    Admins bypass. Fails OPEN only when the session number is unparseable (so an
+    unrelated payload shape never wrongly traps a caller).
+    """
+    if getattr(request.user, "role", None) == "admin":
+        return None
+    if session_number is None:
+        return None
+    try:
+        sn = int(session_number)
+    except (TypeError, ValueError):
+        return None
+
+    from apps.courses.models import Enrollment
+    enr = Enrollment.objects.filter(
+        student=request.user, course_id=course_id
+    ).first()
+    if enr is None:
+        return Response({"detail": "Not enrolled in this course."},
+                        status=status.HTTP_403_FORBIDDEN)
+    allowed = enr.current_session_number or 1
+    if sn > allowed:
+        return Response(
+            {"detail": f"Session {sn} is locked. Complete session {allowed} first.",
+             "allowed_session_number": allowed},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
+
 # ── Group A: student-context ─────────────────────────────────────
 
 
@@ -158,16 +196,22 @@ def pathway_provenance(request, course_id: str):
 @permission_classes([permissions.IsAuthenticated])
 def pathway_session_chunks(request):
     """POST: fetch the raw chunks for a session of the student's cached plan."""
-    return _forward(request, "POST", "/pathway/session-chunks",
-                    json=_body_without_student_id(request), timeout=90)
+    body = _body_without_student_id(request)
+    locked = _session_lock_response(request, body.get("course_id"), body.get("session_number"))
+    if locked is not None:
+        return locked
+    return _forward(request, "POST", "/pathway/session-chunks", json=body, timeout=90)
 
 
 @api_view(["POST"])
 @permission_classes([permissions.IsAuthenticated])
 def slides_generate(request):
     """POST: generate a slide deck for the authenticated student."""
-    return _forward(request, "POST", "/slides/generate",
-                    json=_body_without_student_id(request), timeout=300)
+    body = _body_without_student_id(request)
+    locked = _session_lock_response(request, body.get("course_id"), body.get("session_number"))
+    if locked is not None:
+        return locked
+    return _forward(request, "POST", "/slides/generate", json=body, timeout=300)
 
 
 @api_view(["GET"])
@@ -179,6 +223,9 @@ def slides_persisted(request, course_id: str):
         v = request.query_params.get(k)
         if v is not None:
             params[k] = v
+    locked = _session_lock_response(request, course_id, params.get("session_number"))
+    if locked is not None:
+        return locked
     return _forward(request, "GET", "/slides/persisted", params=params)
 
 

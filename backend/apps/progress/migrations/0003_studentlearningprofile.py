@@ -19,7 +19,7 @@ class Migration(migrations.Migration):
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('last_updated', models.DateTimeField(auto_now=True)),
                 ('sessions_count', models.IntegerField(default=0)),
-                ('profile_summary', models.TextField(blank=True, default='', help_text='Concise plain-English paragraph (max 5 sentences) written by the profiler LLM. This is what Dr. Nova reads at session start.')),
+                ('profile_summary', models.TextField(blank=True, default='', help_text='Concise plain-English paragraph (max 5 sentences) written by the profiler LLM. This is what LearnPal reads at session start.')),
                 ('profile_data', models.JSONField(default=dict, help_text='Structured data used by the profiler LLM to rewrite intelligently. Keys: learning_style_signals, engagement_patterns, emotional_tendencies, recommended_approaches, topics_of_difficulty, topics_of_strength.')),
                 ('student', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='learning_profile', to=settings.AUTH_USER_MODEL)),
             ],

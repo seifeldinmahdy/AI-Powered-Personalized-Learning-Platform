@@ -26,8 +26,10 @@ import {
 } from '../services/tutor';
 
 import { fuseEmotions } from '../services/emotionFusion';
-import { Nova3DAvatar } from './Nova3DAvatar';
+import { LearnPal3DAvatar } from './LearnPal3DAvatar';
 import type { BlendshapeData } from '../services/tutor';
+import reactionLines from '../data/reactionLines.json';
+import reactionClips from '../data/reactionClips.generated.json';
 import { INTENT_OPTIONS as FALLBACK_INTENT_OPTIONS } from '../lib/intents';
 import type { IntentName } from '../services/tutor';
 
@@ -49,6 +51,15 @@ const ctrlBtnStyle: CSSProperties = {
   color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
 };
 const ctrlBtnActive: CSSProperties = { border: '1px solid var(--accent-primary)', background: 'var(--accent-primary)', color: '#fff' };
+
+// Playful avatar reactions (easter eggs) when someone fiddles with LearnPal.
+// The quip pools + per-kind animation/emotion live in data/reactionLines.json;
+// their pre-synthesized voicelines (real TTS voice + A2F lip-sync) are baked
+// into data/reactionClips.generated.json by scripts/bake-reactions.mjs.
+type ReactionKind = keyof typeof reactionLines;
+type FaceReaction = 'laugh' | 'frown' | 'dizzy';
+const REACTIONS = reactionLines as unknown as Record<ReactionKind, { anim: string; emotion: string; face?: FaceReaction; quips: string[] }>;
+const REACTION_CLIPS = reactionClips as unknown as Record<string, { audio_base64: string; blendshapes: BlendshapeData | null }>;
 
 interface TranscriptEntry {
   role: 'tutor' | 'student' | 'checkpoint';
@@ -90,6 +101,10 @@ interface CompactTutorProps {
   onSpeakingChange?: (speaking: boolean) => void;
   studentProfileSummary?: string;
   isFloating?: boolean;
+  // Width (px) of the docked panel. The parent owns this so a drag-handle between
+  // the slides and the tutor can resize the panel (and reflow the slides, which
+  // are flex:1). Ignored in floating mode. Defaults to 320.
+  dockedWidth?: number;
 }
 
 export function CompactTutor({
@@ -110,6 +125,7 @@ export function CompactTutor({
   onSpeakingChange,
   studentProfileSummary,
   isFloating = false,
+  dockedWidth = 320,
 }: CompactTutorProps) {
   const navigate = useNavigate();
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
@@ -130,6 +146,9 @@ export function CompactTutor({
   const [started, setStarted] = useState(false);
   const [tutorEmotion, setTutorEmotion] = useState('calm');
   const [currentBlendshapes, setCurrentBlendshapes] = useState<BlendshapeData | null>(null);
+  // performance.now() ms that frame 0 of currentBlendshapes aligns to, so the
+  // avatar can resume the lecture at the right frame after a reaction interrupts.
+  const [bsEpoch, setBsEpoch] = useState<number | null>(null);
   const [sessionContext, setSessionContext] = useState('');
   const [intentOptions, setIntentOptions] = useState<IntentChoice[]>(FALLBACK_INTENT_OPTIONS);
   const [correctingIndex, setCorrectingIndex] = useState<number | null>(null);
@@ -147,10 +166,31 @@ export function CompactTutor({
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // ── Playful reactions when the user messes with the avatar ──
+  // A transient quip bubble + an orb animation + an offline voiceline (the
+  // browser's built-in speechSynthesis, so it works at the exhibition with no
+  // network/audio assets). All reactions respect the mute toggle.
+  const [reactionText, setReactionText] = useState<string | null>(null);
+  const [orbAnim, setOrbAnim] = useState<string | null>(null);
+  const [avatarReaction, setAvatarReaction] = useState<{ kind: FaceReaction; token: number } | null>(null);
+  const reactionCooldownRef = useRef(0);
+  const reactionTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const lastDragPosRef = useRef({ x: 0, y: 0 });
+  // Reaction voiceline playback state (kept in refs for the trigger callbacks).
+  const reactionActiveRef = useRef(false);
+  const reactionAudioRef = useRef<HTMLAudioElement | null>(null);
+  const isSpeakingRef = useRef(false);
+  const currentBsRef = useRef<BlendshapeData | null>(null);
+  const bsEpochRef = useRef<number | null>(null);
+  useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   
   // Streaming Audio Context
   const audioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef<number>(0);
+  // Master output gain — all lecture/answer audio routes through this so Mute can
+  // actually silence playback (incl. mid-sentence), not just flip a flag.
+  const masterGainRef = useRef<GainNode | null>(null);
 
 
   const sessionIdRef = useRef<string | null>(null);
@@ -160,6 +200,9 @@ export function CompactTutor({
   const isLoadingRef = useRef(false);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<{ stop: () => void } | null>(null);
+  // Synchronously accumulates the current lecture turn's streamed text, so we can
+  // persist it (e.g. label slide 1's opening lecture) without a render-timing race.
+  const lectureTurnTextRef = useRef('');
   const visitedSlidesRef = useRef<Set<number>>(new Set([0]));
   const currentSlideRef = useRef(0);  // tracks latest slide for staleness checks
   // True when the tutor's last turn asked the student something (background
@@ -169,12 +212,18 @@ export function CompactTutor({
 
   const blendshapeTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
+  // Blendshape swaps scheduled on the AudioContext clock (NOT wall-clock), so
+  // they stay locked to the audio across suspend()/resume() — which is what lets
+  // a reaction freeze the lecture and resume it in sync. Drained by a rAF pump.
+  const bsScheduleRef = useRef<{ at: number; bs: BlendshapeData }[]>([]);
+
   const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
 
   const stopCurrentAudio = useCallback(() => {
     blendshapeTimeoutsRef.current.forEach(id => clearTimeout(id));
     blendshapeTimeoutsRef.current.clear();
-    
+    bsScheduleRef.current = [];  // drop any pending blendshape swaps
+
     activeSourcesRef.current.forEach(source => {
       try { source.stop(); } catch(e) {}
     });
@@ -193,7 +242,57 @@ export function CompactTutor({
     isPausedRef.current = false;
     setIsPaused(false);
     setCurrentBlendshapes(null);
+    currentBsRef.current = null;
+    setBsEpoch(null);
+    bsEpochRef.current = null;
   }, []);
+
+  // Set the avatar's active blendshape track + its epoch (state and refs in
+  // lockstep so the reaction callbacks can snapshot/restore the lecture track).
+  const applyBlendshapes = useCallback((bs: BlendshapeData | null, epoch: number | null) => {
+    setCurrentBlendshapes(bs);
+    currentBsRef.current = bs;
+    setBsEpoch(epoch);
+    bsEpochRef.current = epoch;
+  }, []);
+
+  // The node lecture/answer audio sources connect to. Lazily creates the master
+  // gain (honoring the current mute state) so Mute can silence everything.
+  const outputNode = useCallback((): GainNode | null => {
+    const ctx = audioContextRef.current;
+    if (!ctx) return null;
+    if (!masterGainRef.current) {
+      const gain = ctx.createGain();
+      gain.gain.value = isMutedRef.current ? 0 : 1;
+      gain.connect(ctx.destination);
+      masterGainRef.current = gain;
+    }
+    return masterGainRef.current;
+  }, []);
+
+  // Pump: drive the lecture's blendshape swaps off the AudioContext clock. When
+  // a reaction suspends the context, currentTime freezes → no swaps fire; on
+  // resume they fire at the right moments, so the avatar's mouth stays locked to
+  // the audio even for chunks that streamed in during the reaction.
+  useEffect(() => {
+    let raf = 0;
+    const pump = () => {
+      raf = requestAnimationFrame(pump);
+      const ctx = audioContextRef.current;
+      const q = bsScheduleRef.current;
+      if (!ctx || reactionActiveRef.current || q.length === 0) return;
+      const t = ctx.currentTime;
+      let due = -1;
+      for (let i = 0; i < q.length; i++) { if (q[i].at <= t) due = i; else break; }
+      if (due >= 0) {
+        const entry = q[due];
+        q.splice(0, due + 1);           // drop everything up to the latest due swap
+        applyBlendshapes(entry.bs, performance.now());
+      }
+    };
+    raf = requestAnimationFrame(pump);
+    return () => cancelAnimationFrame(raf);
+  }, [applyBlendshapes]);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -243,7 +342,102 @@ export function CompactTutor({
     return () => { cancelled = true; };
   }, [courseId, lessonId]);
 
+  // Play a pre-baked reaction voiceline (LearnPal's real voice + A2F lip-sync).
+  // If the tutor is mid-lecture, freeze its audio + animation, play the quip
+  // lip-synced, then resume the lecture exactly where it left off.
+  const playReactionVoiceline = useCallback((clip: { audio_base64: string; blendshapes: BlendshapeData | null }) => {
+    // Stop any reaction already in flight.
+    if (reactionAudioRef.current) {
+      try { reactionAudioRef.current.pause(); } catch { /* noop */ }
+      reactionAudioRef.current = null;
+    }
+
+    const wasSpeaking = isSpeakingRef.current;
+    const savedBs = currentBsRef.current;
+    const savedEpoch = bsEpochRef.current;
+    const reactionStart = performance.now();
+    reactionActiveRef.current = true;
+
+    // Freeze the lecture: suspend its Web Audio clock. Both the audio AND the
+    // blendshape pump read this clock, so they freeze together and resume in
+    // lockstep — pending swaps in bsScheduleRef are preserved, not dropped, so
+    // chunks that stream in during the reaction still fire in sync afterwards.
+    // The pump also skips while reactionActiveRef is set (belt and suspenders).
+    if (wasSpeaking && audioContextRef.current && audioContextRef.current.state === 'running') {
+      audioContextRef.current.suspend().catch(() => {});
+    }
+
+    // Show the reaction on the avatar (its own lip-sync track, anchored now).
+    applyBlendshapes(clip.blendshapes, performance.now());
+    setIsSpeaking(true);
+
+    // Decode + play the clip audio on an independent element (the lecture's
+    // AudioContext is suspended, so it can't go through that path).
+    const bin = atob(clip.audio_base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }));
+    const audio = new Audio(url);
+    reactionAudioRef.current = audio;
+
+    const finish = () => {
+      if (reactionAudioRef.current !== audio) return; // superseded by a newer reaction
+      reactionActiveRef.current = false;
+      reactionAudioRef.current = null;
+      URL.revokeObjectURL(url);
+      const elapsed = performance.now() - reactionStart;
+      if (wasSpeaking) {
+        // Resume the lecture audio and re-anchor its blendshapes so the avatar
+        // picks up at the same frame the (now-resumed) audio is at.
+        applyBlendshapes(savedBs, savedEpoch != null ? savedEpoch + elapsed : performance.now());
+        setIsSpeaking(true);
+        if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+          audioContextRef.current.resume().catch(() => {});
+        }
+      } else {
+        setIsSpeaking(false);
+        applyBlendshapes(null, null);
+      }
+    };
+    audio.onended = finish;
+    audio.onerror = finish;
+    audio.play().catch(() => finish());
+    // Safety net: estimate the clip length from the blendshape frame count
+    // (~30fps) in case onended never fires.
+    const frames = clip.blendshapes?.frames?.length ?? 45;
+    const safetyMs = (frames / 30) * 1000 + 600;
+    setTimeout(() => finish(), safetyMs);
+    // Block the next reaction until this voiceline ends, so we never re-snapshot
+    // the lecture state mid-reaction (avoids overlapping voicelines).
+    reactionCooldownRef.current = Math.max(reactionCooldownRef.current, Date.now() + safetyMs);
+  }, [applyBlendshapes]);
+
   // ── Drag: starts inline, becomes floating when dragged away, snaps back when dropped on panel ──
+  const triggerReaction = useCallback((kind: ReactionKind) => {
+    const now = Date.now();
+    if (now < reactionCooldownRef.current) return; // debounce bursts
+    reactionCooldownRef.current = now + 1600;
+
+    const r = REACTIONS[kind];
+    const text = r.quips[Math.floor(Math.random() * r.quips.length)];
+    setReactionText(text);
+    setOrbAnim(r.anim);
+    if (r.face) setAvatarReaction({ kind: r.face, token: Date.now() });
+
+    // Voiceline: the pre-baked clip in LearnPal's real voice with lip-sync.
+    // Respect mute; if a clip wasn't baked yet, we still show the quip + wobble.
+    const clip = REACTION_CLIPS[text];
+    if (!isMutedRef.current && clip?.audio_base64) {
+      playReactionVoiceline(clip);
+    }
+
+    reactionTimersRef.current.forEach(clearTimeout);
+    reactionTimersRef.current = [
+      setTimeout(() => setOrbAnim(null), 900),
+      setTimeout(() => setReactionText(null), 2600),
+    ];
+  }, [playReactionVoiceline]);
+
   const onDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     isDraggingRef.current = true;
@@ -257,7 +451,13 @@ export function CompactTutor({
     if (!isDetached) {
       setAvatarPos({ x: startX, y: startY });
       setIsDetached(true);
+      triggerReaction('detach');  // pulled out of the dock
     }
+
+    // Per-drag tracking for shake/throw detection (closure-local).
+    let prevX = e.clientX;
+    let lastDir = 0, reversals = 0, shakeWindow = performance.now();
+    let lastT = performance.now(), lastX = e.clientX, lastY = e.clientY, releaseSpeed = 0;
 
     const onMove = (ev: MouseEvent) => {
       if (!isDraggingRef.current) return;
@@ -266,6 +466,25 @@ export function CompactTutor({
       const clampedX = Math.max(margin, Math.min(window.innerWidth - margin, ev.clientX - offsetX));
       const clampedY = Math.max(margin, Math.min(window.innerHeight - margin, ev.clientY - offsetY));
       setAvatarPos({ x: clampedX, y: clampedY });
+      lastDragPosRef.current = { x: clampedX, y: clampedY };
+
+      const now = performance.now();
+      // Shake: count horizontal direction reversals inside a rolling window.
+      if (now - shakeWindow > 700) { shakeWindow = now; reversals = 0; }
+      const dx = ev.clientX - prevX;
+      prevX = ev.clientX;
+      if (Math.abs(dx) > 6) {
+        const dir = dx > 0 ? 1 : -1;
+        if (lastDir !== 0 && dir !== lastDir) {
+          reversals += 1;
+          if (reversals >= 5) { triggerReaction('shake'); reversals = 0; shakeWindow = now; }
+        }
+        lastDir = dir;
+      }
+      // Track recent pointer speed (px/ms) for a throw on release.
+      const dt = now - lastT;
+      if (dt > 0) releaseSpeed = Math.hypot(ev.clientX - lastX, ev.clientY - lastY) / dt;
+      lastT = now; lastX = ev.clientX; lastY = ev.clientY;
     };
     const onUp = (ev: MouseEvent) => {
       isDraggingRef.current = false;
@@ -273,19 +492,42 @@ export function CompactTutor({
       window.removeEventListener('mouseup', onUp);
       // If dropped over the panel, snap back to docked
       const panel = panelRef.current;
+      let docked = false;
       if (panel) {
         const rect = panel.getBoundingClientRect();
         if (ev.clientX >= rect.left && ev.clientX <= rect.right && ev.clientY >= rect.top && ev.clientY <= rect.bottom) {
           setIsDetached(false);
+          triggerReaction('dock');  // returned home
+          docked = true;
+        }
+      }
+      if (!docked) {
+        if (releaseSpeed > 2.2) {
+          triggerReaction('throw');  // flung across the screen
+        } else {
+          // Dropped in a screen corner?
+          const { x: fx, y: fy } = lastDragPosRef.current;
+          const nearX = fx < 150 || fx > window.innerWidth - 150;
+          const nearY = fy < 150 || fy > window.innerHeight - 150;
+          if (nearX && nearY) triggerReaction('corner');
         }
       }
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  }, [avatarPos, isDetached]);
+  }, [avatarPos, isDetached, triggerReaction]);
 
   // Reset to docked when switching modes
   useEffect(() => { setIsDetached(false); }, [isFloating]);
+
+  // Stop any pending reaction quip/timers/audio on unmount.
+  useEffect(() => () => {
+    reactionTimersRef.current.forEach(clearTimeout);
+    if (reactionAudioRef.current) {
+      try { reactionAudioRef.current.pause(); } catch { /* noop */ }
+      reactionAudioRef.current = null;
+    }
+  }, []);
 
   // Handle auto-explain on new slide visit
   useEffect(() => {
@@ -328,6 +570,7 @@ export function CompactTutor({
     let isFirstChunk = true;
     return async (chunk: TutorStreamChunk) => {
       if (chunk.text_chunk) {
+        lectureTurnTextRef.current += (lectureTurnTextRef.current ? ' ' : '') + chunk.text_chunk;
         setTranscript((prev) => {
           const last = prev[prev.length - 1];
           if (last && last.role === 'tutor' && last.is_streaming) {
@@ -349,32 +592,29 @@ export function CompactTutor({
           const audioBuffer = await audioContextRef.current.decodeAudioData(bytes.buffer);
           const source = audioContextRef.current.createBufferSource();
           source.buffer = audioBuffer;
-          source.connect(audioContextRef.current.destination);
+          source.connect(outputNode() ?? audioContextRef.current.destination);
           activeSourcesRef.current.add(source);
           
           const currentTime = audioContextRef.current.currentTime;
           // Add a tiny buffer if we're falling behind
           const startTime = Math.max(currentTime + 0.05, nextStartTimeRef.current);
-          
-          const delayMs = Math.max(0, (startTime - currentTime) * 1000);
-          
+
+          // Schedule the blendshape swap on the AUDIO clock (when this chunk's
+          // audio actually starts), so the pump applies it in lockstep with the
+          // audio even after a reaction suspends/resumes the context.
           if (chunk.blendshapes) {
-            const tId = setTimeout(() => {
-              setCurrentBlendshapes(chunk.blendshapes!);
-              blendshapeTimeoutsRef.current.delete(tId);
-            }, delayMs);
-            blendshapeTimeoutsRef.current.add(tId);
+            bsScheduleRef.current.push({ at: startTime, bs: chunk.blendshapes });
           }
-          
+
           source.start(startTime);
           nextStartTimeRef.current = startTime + audioBuffer.duration;
           setIsSpeaking(true);
-          
+
           source.onended = () => {
             activeSourcesRef.current.delete(source);
-            if (audioContextRef.current && audioContextRef.current.currentTime >= nextStartTimeRef.current - 0.1) {
+            if (!reactionActiveRef.current && audioContextRef.current && audioContextRef.current.currentTime >= nextStartTimeRef.current - 0.1) {
               setIsSpeaking(false);
-              setCurrentBlendshapes(null);
+              applyBlendshapes(null, null);
             }
           };
         } catch (e) {
@@ -446,7 +686,29 @@ export function CompactTutor({
       isLoadingRef.current = false;
       setIsLoading(false);
       onSessionStart?.();
+
+      // Label the opening lecture as the current slide's checkpoint so it shows
+      // a divider and is rebuilt on reload — slide 1 was previously the only
+      // slide with no checkpoint (its index 0 is pre-seeded as "visited", so the
+      // per-slide auto-explain skips it). Mark it here for parity.
+      const startSlideNo = (currentSlideRef.current ?? 0) + 1;
+      const startTitle = currentSlideTitle ?? '';
+      setTranscript((prev) => [...prev, { role: 'checkpoint', text: startTitle, slideNumber: startSlideNo, slideTitle: startTitle }]);
+
+      lectureTurnTextRef.current = '';
       await fetchAndPlay(session.session_id);
+
+      // Persist the opening lecture under the slide marker (mirrors auto-explain).
+      if (lessonId && courseId) {
+        persistChatLog({
+          course: Number(courseId),
+          session_number: lessonId,
+          transcript_text: slideExplainMarker(startSlideNo, startTitle),
+          ai_response_text: lectureTurnTextRef.current,
+          session_id: sessionIdRef.current ?? undefined,
+          session_context: sessionContext,
+        }).catch(() => { /* non-critical */ });
+      }
     } catch {
       setError('LearnPal is unavailable right now.');
       setIsLoading(false);
@@ -477,12 +739,18 @@ export function CompactTutor({
   };
 
   const handleMute = () => {
-    // We cannot easily mute an AudioContext without a GainNode.
-    // We can just track it and not connect source to destination in onChunk.
-    // For now we just update state.
     const next = !isMutedRef.current;
     isMutedRef.current = next;
     setIsMuted(next);
+    // Silence (or restore) all output via the master gain — works mid-sentence.
+    const gain = outputNode();
+    if (gain && audioContextRef.current) {
+      const t = audioContextRef.current.currentTime;
+      gain.gain.cancelScheduledValues(t);
+      gain.gain.setTargetAtTime(next ? 0 : 1, t, 0.015);  // quick fade, no click
+    }
+    // Also mute a reaction voiceline if one is mid-play (it's a plain Audio el).
+    if (reactionAudioRef.current) reactionAudioRef.current.muted = next;
   };
 
   const handleAskQuestion = async (overrideQuestion?: string, overrideEmotion?: string, isAutoTrigger = false, triggeredForSlide?: number) => {
@@ -560,7 +828,7 @@ export function CompactTutor({
           const audioBuffer = await audioContextRef.current!.decodeAudioData(bytes.buffer);
           const source = audioContextRef.current!.createBufferSource();
           source.buffer = audioBuffer;
-          source.connect(audioContextRef.current!.destination);
+          source.connect(outputNode() ?? audioContextRef.current!.destination);
           source.start();
           isPausedRef.current = false;
           setIsPaused(false);
@@ -617,7 +885,7 @@ export function CompactTutor({
           const audioBuffer = await audioContextRef.current!.decodeAudioData(bytes.buffer);
           const source = audioContextRef.current!.createBufferSource();
           source.buffer = audioBuffer;
-          source.connect(audioContextRef.current!.destination);
+          source.connect(outputNode() ?? audioContextRef.current!.destination);
           source.start();
           isPausedRef.current = false;
           setIsPaused(false);
@@ -887,7 +1155,7 @@ export function CompactTutor({
       className="codex"
       style={isFloating
         ? { position: 'absolute', width: 320, maxWidth: '90vw', top: 16, left: 16, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 16, border: '1px solid var(--hairline)', background: 'var(--bg-surface)', boxShadow: '0 12px 40px rgba(0,0,0,0.18)', zIndex: 50 }
-        : { width: 320, minWidth: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderLeft: '1px solid var(--hairline)', background: 'var(--bg-surface)' }}>
+        : { width: dockedWidth, minWidth: dockedWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderLeft: '1px solid var(--hairline)', background: 'var(--bg-surface)' }}>
 
 
       {/* Header — always visible when docked */}
@@ -929,13 +1197,16 @@ export function CompactTutor({
             <GripHorizontal size={12} style={{ color: 'var(--steel)', marginLeft: 4 }} />
           </div>
           <div className="relative transition-all duration-300">
+            {reactionText && <div className="react-quip">{reactionText}</div>}
             <div className="absolute inset-0 rounded-full blur-xl opacity-40 pointer-events-none transition-all duration-300" style={{ background: 'var(--accent-primary)' }} />
-            <div className="relative rounded-full shadow-2xl transition-all duration-300 flex items-center justify-center"
+            <div className={`relative rounded-full shadow-2xl transition-all duration-300 flex items-center justify-center learnpal-orb${isSpeaking ? ' is-speaking' : ''}${orbAnim ? ' ' + orbAnim : ''}`}
                  style={{ width: 144 * bubbleScale, height: 144 * bubbleScale, background: 'var(--accent-primary)', padding: 6 }}>
-              <Nova3DAvatar
+              <LearnPal3DAvatar
                 isSpeaking={isSpeaking}
                 emotion={fusedEmotion || tutorEmotion}
                 blendshapeData={currentBlendshapes}
+                blendshapeEpochMs={bsEpoch}
+                reaction={avatarReaction}
                 size={144 * bubbleScale - 12}
                 isFloating={false}
               />
@@ -955,7 +1226,7 @@ export function CompactTutor({
             <button onClick={handleMute} title={isMuted ? 'Unmute' : 'Mute'} style={ctrlDotStyle}>
               {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
             </button>
-            <button onClick={() => setBubbleScale(s => s === 1 ? 1.5 : 1)} title={bubbleScale === 1 ? 'Enlarge' : 'Shrink'} style={ctrlDotStyle}>
+            <button onClick={() => setBubbleScale(s => { const next = s === 1 ? 1.5 : 1; triggerReaction(next > 1 ? 'enlarge' : 'shrink'); return next; })} title={bubbleScale === 1 ? 'Enlarge' : 'Shrink'} style={ctrlDotStyle}>
               {bubbleScale === 1 ? <Maximize2 size={14} /> : <Minimize2 size={14} />}
             </button>
           </div>
@@ -971,12 +1242,15 @@ export function CompactTutor({
             onMouseDown={started ? onDragStart : undefined}
             style={{ marginBottom: started ? 8 : 12, cursor: started ? 'grab' : 'default', userSelect: started ? 'none' : undefined }}
           >
+            {reactionText && <div className="react-quip">{reactionText}</div>}
             <div className="absolute inset-0 rounded-full blur-xl opacity-30 pointer-events-none" style={{ background: 'var(--accent-primary)' }} />
-            <div className="relative rounded-full shadow-xl" style={{ width: 160, height: 160, background: 'var(--accent-primary)', padding: 6 }}>
-              <Nova3DAvatar
+            <div className={`relative rounded-full shadow-xl learnpal-orb${isSpeaking ? ' is-speaking' : ''}${orbAnim ? ' ' + orbAnim : ''}`} style={{ width: 160, height: 160, background: 'var(--accent-primary)', padding: 6 }}>
+              <LearnPal3DAvatar
                 isSpeaking={isSpeaking}
                 emotion={fusedEmotion || tutorEmotion}
                 blendshapeData={currentBlendshapes}
+                blendshapeEpochMs={bsEpoch}
+                reaction={avatarReaction}
                 size={154}
                 isFloating={isFloating}
               />

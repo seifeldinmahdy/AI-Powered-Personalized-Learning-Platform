@@ -189,11 +189,28 @@ def recommend_teammates(student, capstone, candidates, top_n: int = 3) -> list[d
     return scored[:top_n]
 
 
+def _declined_ids(ctx: dict) -> set:
+    """User ids this context's student has declined (or been declined by)."""
+    entry = ctx.get("entry")
+    return set(getattr(entry, "declined_user_ids", None) or []) if entry else set()
+
+
+def _compatible(team: list[dict], cand: dict) -> bool:
+    """Don't pair students who previously declined each other."""
+    cand_id = cand["student"].id
+    cand_declined = _declined_ids(cand)
+    for m in team:
+        if m["student"].id in cand_declined or cand_id in _declined_ids(m):
+            return False
+    return True
+
+
 def greedy_group(contexts: list[dict], team_cap: int) -> list[list[dict]]:
     """
     Greedy grouping: seed a team with the unassigned student, then repeatedly
-    add whichever remaining student maximizes average pairwise score with the
-    current team, until the team reaches team_cap or no one is left.
+    add whichever remaining COMPATIBLE student maximizes average pairwise score
+    with the current team, until the team reaches team_cap or no one is left.
+    Students who previously declined each other are never grouped together.
     """
     remaining = list(contexts)
     teams: list[list[dict]] = []
@@ -204,6 +221,8 @@ def greedy_group(contexts: list[dict], team_cap: int) -> list[list[dict]]:
         while len(team) < team_cap and remaining:
             best_idx, best_score = None, float("-inf")
             for i, cand in enumerate(remaining):
+                if not _compatible(team, cand):
+                    continue
                 avg = sum(pair_score(m, cand) for m in team) / len(team)
                 if avg > best_score:
                     best_idx, best_score = i, avg
@@ -259,9 +278,15 @@ def process_queue(capstone, force: bool = False) -> list:
 
     created = []
     for group in groups:
-        team = Team.objects.create(capstone=capstone, status="active")
         members = [ctx["student"] for ctx in group]
+        # A multi-member team is PROPOSED ('forming') and must be confirmed by
+        # every member before it goes 'active'. A solo team (queue never
+        # deadlocks) has no one to disagree, so it's auto-confirmed + active.
+        solo = len(members) == 1
+        team = Team.objects.create(capstone=capstone, status="active" if solo else "forming")
         team.members.set(members)
+        if solo:
+            team.confirmed_members.set(members)
         if not team.name:
             team.name = f"Team {team.pk}"
             team.save(update_fields=["name"])
@@ -271,7 +296,7 @@ def process_queue(capstone, force: bool = False) -> list:
             entry.team = team
             entry.save(update_fields=["status", "team"])
         created.append(team)
-        logger.info("Formed %s with %s members for capstone %s", team, len(members), capstone.id)
+        logger.info("Proposed %s with %s members for capstone %s", team, len(members), capstone.id)
 
         # Advisory only — generate the suggested division of labor in the
         # background once a real team (>=2) forms. Non-fatal: the team stands

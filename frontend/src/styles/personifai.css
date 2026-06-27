@@ -56,6 +56,95 @@
 .codex,
 .codex * { letter-spacing: -0.005em; }
 
+/* LearnPal avatar orb — solid brand blue at rest (set inline by the component),
+   animated blue→green gradient while the tutor is speaking. Shared by the live
+   session avatar; the lab avatar mirrors this with its own .lab-orb-flow. */
+.learnpal-orb { position: relative; }
+/* The blue→green gradient lives on an overlay that cross-fades via opacity, so
+   it eases in/out instead of popping (you can't transition a solid background
+   into a gradient image). Solid blue stays as the orb's own background beneath. */
+.learnpal-orb::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-image: linear-gradient(135deg, var(--accent-primary), var(--accent-success), var(--accent-primary));
+  background-size: 200% 200%;
+  opacity: 0;
+  transition: opacity 450ms ease;
+  pointer-events: none;
+  z-index: 0;
+}
+.learnpal-orb.is-speaking::before {
+  opacity: 1;
+  animation: learnpal-orb-flow 2.4s ease infinite;
+}
+/* Keep the 3D avatar above the gradient overlay. */
+.learnpal-orb > div { position: relative; z-index: 1; }
+@keyframes learnpal-orb-flow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* ── Playful reactions (easter eggs) ── */
+/* Orb animations fired when the user shakes / throws / resizes / docks LearnPal. */
+.learnpal-orb.react-wobble { animation: react-wobble 0.8s ease-in-out; }
+.learnpal-orb.react-pop    { animation: react-pop 0.6s ease-out; }
+.learnpal-orb.react-sulk   { animation: react-sulk 0.9s ease-in-out; }
+@keyframes react-wobble {
+  0%, 100% { transform: rotate(0deg); }
+  15% { transform: rotate(-13deg); }
+  30% { transform: rotate(11deg); }
+  45% { transform: rotate(-9deg); }
+  60% { transform: rotate(6deg); }
+  80% { transform: rotate(-3deg); }
+}
+@keyframes react-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.18); }
+  70% { transform: scale(0.93); }
+  100% { transform: scale(1); }
+}
+@keyframes react-sulk {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(7px); }
+}
+
+/* The transient quip speech-bubble that floats above the avatar. */
+.react-quip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 10px;
+  z-index: 60;
+  white-space: nowrap;
+  padding: 7px 13px;
+  border-radius: 14px;
+  background: var(--accent-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 8px 22px rgba(37, 99, 235, 0.35);
+  pointer-events: none;
+  animation: quip-pop 280ms cubic-bezier(0.22, 1.4, 0.4, 1);
+}
+/* little tail */
+.react-quip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: var(--accent-primary);
+}
+@keyframes quip-pop {
+  0% { opacity: 0; transform: translateX(-50%) translateY(6px) scale(0.85); }
+  100% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
 /* Type tokens */
 .t-display    { font-family: var(--ff-display); font-weight: 700; letter-spacing: -0.04em; line-height: 0.88; }
 .t-heading    { font-family: var(--ff-display); font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; }

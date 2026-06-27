@@ -378,7 +378,7 @@ def _consolidate_log_by_slide(events: list[dict]) -> list[dict]:
             if qt:
                 entry["student_questions"].append(qt)
         elif etype == "tutor_event":
-            text = p.get("dr_nova_response_summary") or p.get("text", "")
+            text = p.get("learnpal_response_summary") or p.get("text", "")
             if text:
                 entry["tutor_responses"].append(text)
             et = p.get("event_type", "")
@@ -404,6 +404,33 @@ def _consolidate_log_by_slide(events: list[dict]) -> list[dict]:
     return result
 
 
+def _consolidate_checkpoints(events: list[dict]) -> list[dict]:
+    """Compact summary of in-session MCQ checkpoints for the profiler prompt.
+
+    Checkpoint events aren't slide-indexed, so they fall outside the per-slide
+    consolidation. A low score or a long ``missed`` list signals concepts the
+    student couldn't recall under testing — strong evidence for difficulty
+    claims the session profiler would otherwise never see.
+    """
+    out: list[dict] = []
+    for ev in events:
+        if ev.get("event_type") != "checkpoint":
+            continue
+        p = ev.get("payload", {})
+        out.append({
+            "checkpoint_index": p.get("checkpoint_index"),
+            "score": p.get("score"),
+            "correct": p.get("correct_count"),
+            "total": p.get("total_count"),
+            "missed": [
+                {"topic": m.get("topic", ""), "question": m.get("question", ""),
+                 "correct_answer": m.get("correct_answer", "")}
+                for m in (p.get("mistakes") or [])
+            ],
+        })
+    return out
+
+
 async def run_session_profiler(session_id: str, student_id: str, lesson_title: str = "") -> dict:
     """Consolidate a session's DURABLE log into claims (idempotent).
 
@@ -426,14 +453,22 @@ async def run_session_profiler(session_id: str, student_id: str, lesson_title: s
 
     max_id = max(e["id"] for e in events)
     by_slide = _consolidate_log_by_slide(events)
+    checkpoints = _consolidate_checkpoints(events)
 
     claims = []
     summary = None
-    if by_slide and os.getenv("OLLAMA_API_KEY", ""):
+    if (by_slide or checkpoints) and os.getenv("OLLAMA_API_KEY", ""):
         user_prompt = (
             f"Lesson: {lesson_title}\n\nSESSION LOG (per slide):\n"
             f"{json.dumps(by_slide, indent=2)}"
         )
+        if checkpoints:
+            user_prompt += (
+                "\n\nIN-SESSION MCQ CHECKPOINTS (a low score or items under "
+                "'missed' = concepts the student struggled to recall under "
+                "testing — weigh these for topics_of_difficulty claims):\n"
+                f"{json.dumps(checkpoints, indent=2)}"
+            )
         try:
             client = _get_ollama_client()
             raw = client.chat_json(
